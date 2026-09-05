@@ -34,8 +34,8 @@ impl User {
         skip_all,
         fields(
             room_id = %self.room_id(),
-            user_id = ?self.user_id(),
-            connection_id = ?self.connection_id()
+            user_id = %self.user_id().path_segment(),
+            connection_id = self.connection_id().as_u64()
         )
     )]
     pub(super) async fn renegotiate(&mut self) -> Result<UserOutput, UserError> {
@@ -49,8 +49,8 @@ impl User {
         skip_all,
         fields(
             room_id = %self.room_id(),
-            user_id = ?self.user_id(),
-            connection_id = ?self.connection_id(),
+            user_id = %self.user_id().path_segment(),
+            connection_id = self.connection_id().as_u64(),
             ?stream_type,
             active
         )
@@ -77,8 +77,8 @@ impl User {
         skip_all,
         fields(
             room_id = %self.room_id(),
-            user_id = ?self.user_id(),
-            connection_id = ?self.connection_id(),
+            user_id = %self.user_id().path_segment(),
+            connection_id = self.connection_id().as_u64(),
             target_session_id = field::Empty,
             source_count = field::Empty
         )
@@ -90,7 +90,10 @@ impl User {
     ) -> Result<UserOutput, UserError> {
         let target_user_id = target_user_id.normalized_for_runtime();
         let span = Span::current();
-        span.record("target_session_id", field::debug(&target_user_id));
+        span.record(
+            "target_session_id",
+            field::display(target_user_id.path_segment()),
+        );
         let source_intents = DiscussStream::all()
             .filter_map(|stream| stream.subscription_intent_if_requested(&states))
             .collect::<BTreeMap<_, _>>();
@@ -106,8 +109,8 @@ impl User {
         skip_all,
         fields(
             room_id = %self.room_id(),
-            user_id = ?self.user_id(),
-            connection_id = ?self.connection_id()
+            user_id = %self.user_id().path_segment(),
+            connection_id = self.connection_id().as_u64()
         )
     )]
     pub(super) async fn run_initial_offer(&mut self) -> Result<UserOutput, UserError> {

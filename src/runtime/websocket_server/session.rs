@@ -145,7 +145,7 @@ async fn establish(
 #[instrument(
     name = "room.join",
     skip_all,
-    fields(room_id = %room.uuid(), user_id = ?claims.user_id)
+    fields(room_id = %room.uuid(), user_id = %claims.user_id.path_segment())
 )]
 async fn admit(
     services: &WebSocketServices,
@@ -221,8 +221,11 @@ impl AuthenticatedSession {
     fn record_current_span(&self) {
         let span = Span::current();
         span.record("room_id", field::display(self.user.room_id()));
-        span.record("user_id", field::debug(self.user.user_id()));
-        span.record("connection_id", field::debug(self.user.connection_id()));
+        span.record(
+            "user_id",
+            field::display(self.user.user_id().path_segment()),
+        );
+        span.record("connection_id", self.user.connection_id().as_u64());
         span.record(
             telemetry_field::REMOTE_ADDRESS,
             field::display(self.user.remote_address()),
@@ -235,8 +238,8 @@ impl AuthenticatedSession {
         let span = telemetry::activated_span(info_span!(
             "user.initialize",
             room_id = %self.user.room_id(),
-            user_id = ?self.user.user_id(),
-            connection_id = ?self.user.connection_id(),
+            user_id = %self.user.user_id().path_segment(),
+            connection_id = self.user.connection_id().as_u64(),
             remote_address = %self.user.remote_address()
         ));
         async move {

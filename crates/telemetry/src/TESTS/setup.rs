@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex, PoisonError},
 };
 
+use o_sfu_model::UserId;
 use tracing::{Subscriber, subscriber};
 #[cfg(feature = "otel-tracing")]
 use tracing_opentelemetry::OpenTelemetryLayer;
@@ -164,6 +165,72 @@ fn json_formatter_preserves_initial_transport_health_origin() -> Result<(), Box<
     Ok(())
 }
 
+#[test]
+fn json_formatter_inherits_span_correlation_fields() -> Result<(), Box<dyn Error>> {
+    let writer = SharedWriter::default();
+    let subscriber = json_test_subscriber(writer.clone());
+    subscriber::with_default(subscriber, || {
+        let outer = activated_span(tracing::info_span!(
+            "ws.handshake",
+            room_id = field::Empty,
+            user_id = field::Empty,
+            connection_id = field::Empty,
+            remote_address = "remote-outer",
+            stream_type = "webcam",
+            active = field::Empty,
+        ));
+        // Late-record via Span::record, same shape as session.rs::record_current_span.
+        outer.record("room_id", field::display("room-late"));
+        outer.record("user_id", field::display(UserId::Integer(7).path_segment()));
+        outer.record("connection_id", 42_u64);
+        outer.record("active", true);
+        let _outer_guard = outer.enter();
+
+        tracing::info!(event = schema::event::USER_JOINED, "outer event");
+
+        let inner = activated_span(tracing::info_span!(
+            "room.join",
+            user_id = "u-inner",
+            source_count = 3_u64,
+        ));
+        let _inner_guard = inner.enter();
+
+        tracing::info!(
+            event = schema::event::USER_JOINED,
+            room_id = "room-explicit",
+            "inner event",
+        );
+    });
+
+    let values = json_values(&writer)?;
+    let [outer_event, inner_event] = values.as_slice() else {
+        return Err(io::Error::other("expected two JSON logs").into());
+    };
+
+    assert_json_string(outer_event, "room_id", "room-late");
+    assert_json_string(outer_event, "user_id", "7");
+    assert_eq!(
+        outer_event.get("connection_id").and_then(Value::as_u64),
+        Some(42)
+    );
+    assert_json_string(outer_event, "remote_address", "remote-outer");
+
+    assert_json_string(inner_event, "room_id", "room-explicit");
+    assert_json_string(inner_event, "user_id", "u-inner");
+    assert_eq!(
+        inner_event.get("connection_id").and_then(Value::as_u64),
+        Some(42)
+    );
+    assert_json_string(inner_event, "remote_address", "remote-outer");
+
+    for event in [outer_event, inner_event] {
+        assert!(event.get("stream_type").is_none());
+        assert!(event.get("active").is_none());
+        assert!(event.get("source_count").is_none());
+    }
+    Ok(())
+}
+
 fn json_test_config() -> TelemetryConfig {
     TelemetryConfig {
         log_format: TelemetryLogFormat::Json,
@@ -184,6 +251,7 @@ fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
     let tracer = tracer_provider.tracer(TRACE_EXPORTER_NAME);
     Registry::default()
         .with(EnvFilter::new(DEFAULT_ENV_FILTER))
+        .with(SpanFieldCaptureLayer)
         .with(
             fmt_layer()
                 .fmt_fields(JsonFields::new())
@@ -199,6 +267,7 @@ fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
     let resource = telemetry_resource_fields(&json_test_config(), 7);
     Registry::default()
         .with(EnvFilter::new(DEFAULT_ENV_FILTER))
+        .with(SpanFieldCaptureLayer)
         .with(
             fmt_layer()
                 .fmt_fields(JsonFields::new())

@@ -6,15 +6,16 @@ use time::format_description::well_known::Rfc3339;
 use tracing::{
     Span, Subscriber, field,
     field::{Field, Visit},
+    span::{Attributes, Id, Record},
 };
 use tracing_subscriber::{
-    EnvFilter, Registry,
+    EnvFilter, Layer, Registry,
     fmt::{
         FmtContext,
         format::{FormatEvent, FormatFields, JsonFields, Writer},
         layer as fmt_layer,
     },
-    layer::SubscriberExt,
+    layer::{Context as LayerContext, SubscriberExt},
     registry::LookupSpan,
     util::SubscriberInitExt,
 };
@@ -37,6 +38,12 @@ use {
 use crate::{TelemetryConfig, TelemetryLogFormat, schema};
 
 const DEFAULT_ENV_FILTER: &str = "o_sfu=info,o_sfu_core=info,o_sfu_router=info";
+const INHERITED_CORRELATION_FIELDS: &[&str] = &[
+    schema::field::CONNECTION_ID,
+    schema::field::REMOTE_ADDRESS,
+    schema::field::ROOM_ID,
+    schema::field::USER_ID,
+];
 #[cfg(feature = "otel-tracing")]
 const PRODUCTION_ENVIRONMENT_NAME: &str = "production";
 #[cfg(feature = "otel-tracing")]
@@ -67,6 +74,14 @@ struct RuntimeJsonFormatter {
 struct JsonEventVisitor {
     fields: Map<String, Value>,
 }
+
+#[derive(Debug, Default)]
+struct SpanFieldStore {
+    fields: Map<String, Value>,
+}
+
+#[derive(Debug, Default)]
+struct SpanFieldCaptureLayer;
 
 impl TelemetryHandle {
     #[cfg(feature = "otel-tracing")]
@@ -112,6 +127,13 @@ where
         let mut visitor = JsonEventVisitor::default();
         event.record(&mut visitor);
         let mut payload = visitor.fields;
+        for span in ctx.event_scope().into_iter().flatten() {
+            if let Some(store) = span.extensions().get::<SpanFieldStore>() {
+                for (key, value) in &store.fields {
+                    payload.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
         if payload.get(schema::field::EVENT).and_then(Value::as_str)
             == Some(schema::event::TRANSPORT_HEALTH_CHANGED)
         {
@@ -199,6 +221,35 @@ impl Visit for JsonEventVisitor {
     }
 }
 
+impl<S> Layer<S> for SpanFieldCaptureLayer
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: LayerContext<'_, S>) {
+        let Some(span) = ctx.span(id) else { return };
+        let mut visitor = JsonEventVisitor::default();
+        attrs.record(&mut visitor);
+        visitor
+            .fields
+            .retain(|name, _| INHERITED_CORRELATION_FIELDS.contains(&name.as_str()));
+        span.extensions_mut().insert(SpanFieldStore {
+            fields: visitor.fields,
+        });
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: LayerContext<'_, S>) {
+        let Some(span) = ctx.span(id) else { return };
+        let mut visitor = JsonEventVisitor::default();
+        values.record(&mut visitor);
+        visitor
+            .fields
+            .retain(|name, _| INHERITED_CORRELATION_FIELDS.contains(&name.as_str()));
+        if let Some(store) = span.extensions_mut().get_mut::<SpanFieldStore>() {
+            store.fields.extend(visitor.fields);
+        }
+    }
+}
+
 #[cfg(feature = "otel-tracing")]
 /// # Errors
 ///
@@ -223,6 +274,7 @@ pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<Telemet
             .try_init()?,
         TelemetryLogFormat::Json => Registry::default()
             .with(env_filter)
+            .with(SpanFieldCaptureLayer)
             .with(
                 fmt_layer()
                     .fmt_fields(JsonFields::new())
@@ -269,6 +321,7 @@ pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<Telemet
             .try_init()?,
         TelemetryLogFormat::Json => Registry::default()
             .with(env_filter)
+            .with(SpanFieldCaptureLayer)
             .with(
                 fmt_layer()
                     .fmt_fields(JsonFields::new())
