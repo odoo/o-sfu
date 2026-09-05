@@ -58,11 +58,14 @@ impl<'a> SourcePolicySnapshot<'a> {
             media_limits.max_active_audio_speakers(),
         );
         let deaf_receiver_connection_ids = deaf_receiver_connection_ids(room);
-        let featured_source_user_ids = featured_source_user_ids(room, &ranked_sources);
-        let active_speaker_rank_by_user = active_speaker_rank_by_user(room, &ranked_sources);
-        let desired_featured_user_id = ranked_sources.iter().find_map(|source| {
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        });
+        let ActiveSpeakerFacts {
+            featured_source_user_ids,
+            active_speaker_rank_by_user,
+            desired_featured_user_id,
+        } = active_speaker_facts(
+            |media_id| featured_source_owner_for_active_speaker_source(room, media_id),
+            &ranked_sources,
+        );
         let featured_user_updates = featured_user_updates(room, desired_featured_user_id.as_ref());
         // Include policy-paused routes so later turns can resume them. Filtering
         // on `delivery_active()` would make a policy pause self-perpetuating.
@@ -245,33 +248,6 @@ fn deaf_receiver_connection_ids(room: &RoomState) -> BTreeSet<ConnectionId> {
         .collect()
 }
 
-fn featured_source_user_ids(room: &RoomState, sources: &[ActiveSpeakerSource]) -> BTreeSet<UserId> {
-    sources
-        .iter()
-        .filter_map(|source| {
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        })
-        .take(ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT)
-        .collect()
-}
-
-fn active_speaker_rank_by_user(
-    room: &RoomState,
-    sources: &[ActiveSpeakerSource],
-) -> BTreeMap<UserId, usize> {
-    let mut ranks = BTreeMap::new();
-    for source in sources {
-        let Some(user_id) =
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        else {
-            continue;
-        };
-        let next_rank = ranks.len();
-        ranks.entry(user_id).or_insert(next_rank);
-    }
-    ranks
-}
-
 fn featured_source_owner_for_active_speaker_source(
     room: &RoomState,
     transport_media_id: TransportMediaId,
@@ -303,4 +279,150 @@ fn featured_user_updates(
             })
         })
         .collect()
+}
+
+struct ActiveSpeakerFacts {
+    featured_source_user_ids: BTreeSet<UserId>,
+    active_speaker_rank_by_user: BTreeMap<UserId, usize>,
+    desired_featured_user_id: Option<UserId>,
+}
+
+fn active_speaker_facts(
+    get_owner: impl Fn(TransportMediaId) -> Option<UserId>,
+    ranked_sources: &[ActiveSpeakerSource],
+) -> ActiveSpeakerFacts {
+    let mut featured_source_user_ids = BTreeSet::new();
+    let mut active_speaker_rank_by_user = BTreeMap::new();
+    let mut desired_featured_user_id = None;
+    for (eligible_index, user_id) in ranked_sources
+        .iter()
+        .filter_map(|source| get_owner(source.transport_media_id()))
+        .enumerate()
+    {
+        if eligible_index == 0 {
+            desired_featured_user_id = Some(user_id.clone());
+        }
+        if eligible_index < ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT {
+            featured_source_user_ids.insert(user_id.clone());
+        }
+        let next_rank = active_speaker_rank_by_user.len();
+        active_speaker_rank_by_user
+            .entry(user_id)
+            .or_insert(next_rank);
+    }
+    ActiveSpeakerFacts {
+        featured_source_user_ids,
+        active_speaker_rank_by_user,
+        desired_featured_user_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use std::{collections::HashMap, time::Instant};
+
+    use super::*;
+
+    fn setup_speaker_sources(
+        ranked_owners: &[(TransportMediaId, UserId)],
+    ) -> (HashMap<TransportMediaId, UserId>, Vec<ActiveSpeakerSource>) {
+        let now = Instant::now();
+        let mut media_to_user_map = HashMap::new();
+        let mut active_speaker_sources = Vec::new();
+        for (media_id, user_id) in ranked_owners.iter().cloned() {
+            media_to_user_map.insert(media_id, user_id);
+            active_speaker_sources.push(ActiveSpeakerSource::new(media_id, now));
+        }
+        (media_to_user_map, active_speaker_sources)
+    }
+
+    #[test]
+    fn active_speaker_facts_features_top_ranked_owner() {
+        let ranked_owners = [
+            (TransportMediaId::new(102), UserId::from(2)),
+            (TransportMediaId::new(103), UserId::from(3)),
+        ];
+        let (media_to_user_map, active_speaker_sources) = setup_speaker_sources(&ranked_owners);
+        let active_speaker_facts = active_speaker_facts(
+            |media_id| media_to_user_map.get(&media_id).cloned(),
+            &active_speaker_sources,
+        );
+        assert_eq!(
+            active_speaker_facts.desired_featured_user_id,
+            Some(UserId::from(2))
+        );
+    }
+
+    #[test]
+    fn active_speaker_facts_ranks_users_by_first_seen_source() {
+        let ranked_owners = [
+            (TransportMediaId::new(106), UserId::from(2)),
+            (TransportMediaId::new(105), UserId::from(2)),
+            (TransportMediaId::new(104), UserId::from(3)),
+            (TransportMediaId::new(103), UserId::from(3)),
+            (TransportMediaId::new(102), UserId::from(2)),
+            (TransportMediaId::new(101), UserId::from(1)),
+        ];
+        let (media_to_user_map, active_speaker_sources) = setup_speaker_sources(&ranked_owners);
+        let active_speaker_facts = active_speaker_facts(
+            |media_id| media_to_user_map.get(&media_id).cloned(),
+            &active_speaker_sources,
+        );
+        assert_eq!(
+            active_speaker_facts.active_speaker_rank_by_user,
+            BTreeMap::from([
+                (UserId::from(2), 0),
+                (UserId::from(3), 1),
+                (UserId::from(1), 2),
+            ])
+        );
+    }
+
+    #[test]
+    fn active_speaker_facts_truncates_featured_users_at_clear_limit() {
+        let mut ranked_owners = Vec::with_capacity(ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT + 1);
+        let mut current_id = 0u64;
+        while ranked_owners.len() < ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT {
+            ranked_owners.push((TransportMediaId::new(current_id), UserId::from(1)));
+            current_id += 1;
+        }
+        let overflow_media_id = TransportMediaId::new(999);
+        let overflow_user_id = UserId::from(999);
+        ranked_owners.push((overflow_media_id, overflow_user_id.clone()));
+        let (media_to_user_map, active_speaker_sources) = setup_speaker_sources(&ranked_owners);
+        let active_speaker_facts = active_speaker_facts(
+            |media_id| media_to_user_map.get(&media_id).cloned(),
+            &active_speaker_sources,
+        );
+        assert!(
+            !active_speaker_facts
+                .featured_source_user_ids
+                .contains(&overflow_user_id)
+        );
+        assert!(
+            active_speaker_facts
+                .active_speaker_rank_by_user
+                .contains_key(&overflow_user_id)
+        );
+    }
+
+    #[test]
+    fn active_speaker_facts_skips_sources_without_owner() {
+        let ranked_owners = [(TransportMediaId::new(2), UserId::from(2))];
+        let (media_to_user_map, mut active_speaker_sources) = setup_speaker_sources(&ranked_owners);
+        //add a active speaker source without owner.
+        active_speaker_sources.push(ActiveSpeakerSource::new(
+            TransportMediaId::new(999),
+            Instant::now(),
+        ));
+        let active_speaker_facts = active_speaker_facts(
+            |media_id| media_to_user_map.get(&media_id).cloned(),
+            &active_speaker_sources,
+        );
+        assert_eq!(
+            active_speaker_facts.active_speaker_rank_by_user,
+            BTreeMap::from([(UserId::from(2), 0)])
+        );
+    }
 }
