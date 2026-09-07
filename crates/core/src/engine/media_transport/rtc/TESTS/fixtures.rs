@@ -23,7 +23,7 @@ use o_sfu_router::{
 pub(super) use str0m::media::{MediaKind as Str0mMediaKind, Mid};
 
 pub(super) use crate::{
-    Bitrate, CodecPreferences, MediaCodecFlags,
+    Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits,
     engine::{
         UserId,
         media_transport::{
@@ -37,6 +37,7 @@ pub(super) use crate::{
                 test_support::{DebugPacketGate, test_transport_session_key},
                 worker::RtcWorker,
             },
+            test_support::{test_media_transport_config, test_rtc_port_range},
         },
         metrics::test_support::RuntimeMetricsSnapshotTestExt,
     },
@@ -110,22 +111,23 @@ pub(super) fn rtc_with_bitrate_limits(
     max_bitrate_in: Bitrate,
     max_bitrate_out: Bitrate,
 ) -> RtcWorker {
-    RtcWorker::test_builder()
-        .bitrate_limits(max_bitrate_in, max_bitrate_out)
-        .build()
+    let mut config = test_media_transport_config(1, test_rtc_port_range());
+    config.bitrate_limits = SessionBitrateLimits::new(max_bitrate_in, max_bitrate_out);
+    RtcWorker::for_test(config)
 }
 
 pub(super) fn rtc_with_codec_flags(codec_flags: MediaCodecFlags) -> RtcWorker {
-    RtcWorker::test_builder().codec_flags(codec_flags).build()
+    rtc_with_codec_policy(codec_flags, CodecPreferences::default())
 }
 
 pub(super) fn rtc_with_codec_policy(
     codec_flags: MediaCodecFlags,
     codec_preferences: CodecPreferences,
 ) -> RtcWorker {
-    RtcWorker::test_builder()
-        .codec_policy(codec_flags, codec_preferences)
-        .build()
+    let mut config = test_media_transport_config(1, test_rtc_port_range());
+    config.codec_flags = codec_flags;
+    config.codec_preferences = codec_preferences;
+    RtcWorker::for_test(config)
 }
 
 pub(super) async fn expect_initial_offer(

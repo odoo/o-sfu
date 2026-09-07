@@ -75,14 +75,12 @@ pub(super) fn handle_server_response(
     response: ServerResponse,
 ) -> Commands {
     match response {
-        ServerResponse::StartRecording(payload) => resolve_request(
-            core,
+        ServerResponse::StartRecording(payload) => core.request_tracker.resolve_response(
             response_to,
             PendingRequestKind::StartRecording,
             payload.ok,
         ),
-        ServerResponse::StopRecording(payload) => resolve_request(
-            core,
+        ServerResponse::StopRecording(payload) => core.request_tracker.resolve_response(
             response_to,
             PendingRequestKind::StopRecording,
             payload.ok,
@@ -142,14 +140,4 @@ fn begin_request(
     }];
     commands.extend(core.enqueue_envelope(envelope, FlushMode::Batched));
     commands
-}
-
-fn resolve_request(
-    core: &mut ProtocolCore,
-    response_to: &RequestId,
-    expected_kind: PendingRequestKind,
-    ok: bool,
-) -> Commands {
-    core.request_tracker
-        .resolve_response(response_to, expected_kind, ok)
 }

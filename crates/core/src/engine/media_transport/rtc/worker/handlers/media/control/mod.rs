@@ -38,9 +38,8 @@ mod selected_rid;
 pub use responses::{apply_media_control_batch, apply_route_control_request};
 pub use routes::remove_source_route;
 pub(in crate::engine::media_transport::rtc) use routes::{
-    ConsumerRouteRegistration, consumer_payload_type, ensure_existing_route_src,
-    ensure_local_producer_mid, ensure_route_src_registered, register_consumer_route,
-    remove_consumer_route,
+    ConsumerRouteRegistration, ensure_existing_route_src, ensure_local_producer_mid,
+    ensure_route_src_registered, register_consumer_route, remove_consumer_route,
 };
 pub use selected_rid::apply_src_decoder_ready;
 #[cfg(feature = "internal-benchmarks")]

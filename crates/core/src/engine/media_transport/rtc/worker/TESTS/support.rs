@@ -10,21 +10,15 @@ use {
         },
     },
     crate::{
-        CodecPreferences, MediaCodecFlags, MediaWorkerId, RtcPortRange, RtcUdpIoBackend,
-        SessionBitrateLimits,
-        engine::{
-            media_transport::{
-                MediaTransportConfig, MediaTransportDeps, SourcePolicySignal,
-                test_support::test_rtc_port_range,
+        MediaWorkerId,
+        engine::media_transport::{
+            MediaTransportConfig, SourcePolicySignal,
+            test_support::{
+                test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
             },
-            metrics::RuntimeMetrics,
-            packet_sink_registry::RoomPacketSinkRegistry,
         },
     },
-    std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        sync::Arc,
-    },
+    std::{net::SocketAddr, sync::Arc},
 };
 #[cfg(any(test, feature = "testing-transport"))]
 use {
@@ -81,12 +75,6 @@ impl RtcWorker {
         delay_ms: Option<u64>,
     ) {
         self.handle.packet_loop_delay.set_for_test(delay_ms);
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn test_builder() -> RtcWorkerTestBuilder {
-        RtcWorkerTestBuilder::default()
     }
 
     pub fn debug_set_session_transport_health(
@@ -353,73 +341,20 @@ impl RtcWorker {
 }
 
 #[cfg(test)]
-pub(crate) struct RtcWorkerTestBuilder {
-    max_bitrate_in: Bitrate,
-    max_bitrate_out: Bitrate,
-    rtc_port_range: RtcPortRange,
-    codec_flags: MediaCodecFlags,
-    codec_preferences: CodecPreferences,
-}
-
-#[cfg(test)]
-impl RtcWorkerTestBuilder {
-    #[must_use]
-    pub(crate) fn bitrate_limits(
-        mut self,
-        max_bitrate_in: Bitrate,
-        max_bitrate_out: Bitrate,
-    ) -> Self {
-        self.max_bitrate_in = max_bitrate_in;
-        self.max_bitrate_out = max_bitrate_out;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn codec_flags(mut self, codec_flags: MediaCodecFlags) -> Self {
-        self.codec_flags = codec_flags;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn codec_policy(
-        mut self,
-        codec_flags: MediaCodecFlags,
-        codec_preferences: CodecPreferences,
-    ) -> Self {
-        self.codec_flags = codec_flags;
-        self.codec_preferences = codec_preferences;
-        self
-    }
-
+impl RtcWorker {
     #[must_use]
     #[expect(
         clippy::expect_used,
         reason = "test setup must fail when its RTC profile or worker cannot start"
     )]
-    pub(crate) fn build(self) -> RtcWorker {
-        let profile = RtpProfile::compile(self.codec_flags, self.codec_preferences)
+    pub(crate) fn for_test(config: MediaTransportConfig) -> Self {
+        let profile = RtpProfile::compile(config.codec_flags, config.codec_preferences)
             .expect("test RTP profile should compile");
-        RtcWorker::start(
-            &MediaTransportConfig {
-                worker_count: 1,
-                announced_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                bitrate_limits: SessionBitrateLimits::new(
-                    self.max_bitrate_in,
-                    self.max_bitrate_out,
-                ),
-                video_bitrate_limits: crate::VideoBitrateLimits::default(),
-                rtc_port_range: self.rtc_port_range,
-                rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
-                codec_flags: self.codec_flags,
-                codec_preferences: self.codec_preferences,
-                media_quality_interval: None,
-            },
+        Self::start(
+            &config,
             Arc::new(profile),
-            self.rtc_port_range,
-            &MediaTransportDeps {
-                packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
-                metrics: Arc::new(RuntimeMetrics::default()),
-            },
+            config.rtc_port_range,
+            &test_media_transport_deps(),
             SourcePolicySignal::default(),
             0,
             MediaWorkerId::from_raw(0),
@@ -429,21 +364,8 @@ impl RtcWorkerTestBuilder {
 }
 
 #[cfg(test)]
-impl Default for RtcWorkerTestBuilder {
-    fn default() -> Self {
-        Self {
-            max_bitrate_in: Bitrate::from_mbps(8),
-            max_bitrate_out: Bitrate::from_mbps(10),
-            rtc_port_range: test_rtc_port_range(),
-            codec_flags: MediaCodecFlags::default(),
-            codec_preferences: CodecPreferences::default(),
-        }
-    }
-}
-
-#[cfg(test)]
 impl Default for RtcWorker {
     fn default() -> Self {
-        Self::test_builder().build()
+        Self::for_test(test_media_transport_config(1, test_rtc_port_range()))
     }
 }

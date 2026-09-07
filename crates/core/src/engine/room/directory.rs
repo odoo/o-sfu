@@ -234,18 +234,15 @@ impl RoomDirectory {
     }
 
     #[must_use]
-    pub(crate) fn entry_by_issuer(&self, issuer: &str) -> Option<RoomDirectoryEntry> {
+    pub(crate) fn entry_by_issuer(&self, issuer: &str) -> Option<&RoomDirectoryEntry> {
         let uuid = self.uuid_by_issuer.get(issuer)?;
-        self.entry(uuid)
+        self.by_uuid.get(uuid)
     }
 
     #[must_use]
-    pub(crate) fn entry_by_instance_id(
-        &self,
-        room_instance_id: RoomInstanceId,
-    ) -> Option<RoomDirectoryEntry> {
+    pub(crate) fn get_by_instance_id(&self, room_instance_id: RoomInstanceId) -> Option<Arc<Room>> {
         let uuid = self.uuid_by_instance.get(&room_instance_id)?;
-        self.entry(uuid)
+        self.get_by_uuid(uuid)
     }
 
     #[must_use]

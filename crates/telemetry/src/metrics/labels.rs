@@ -5,10 +5,18 @@ use o_sfu_model::WebSocketCloseCode;
 use super::counter::{ExportedMetricLabel, HistogramBucketLabel, MetricBucketLabel, MetricLabel};
 
 macro_rules! impl_metric_label {
+    ($visibility:vis enum $label:ident { $($variant:ident => $value:tt),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        $visibility enum $label {
+            $($variant),+
+        }
+
+        impl_metric_label!($label { $($variant => $value),+ });
+    };
     ($label:ty { $($variant:ident => $index:expr),+ $(,)? }) => {
         impl MetricLabel for $label {
             const VARIANTS: &'static [Self] = &[$(Self::$variant),+];
-            const COUNT: usize = <[()]>::len(&[$(impl_metric_label!(@unit $variant)),+]);
+            const COUNT: usize = Self::VARIANTS.len();
 
             fn as_index(self) -> usize {
                 match self {
@@ -17,12 +25,17 @@ macro_rules! impl_metric_label {
             }
         }
     };
-    (@unit $_variant:ident) => {
-        ()
-    };
 }
 
 macro_rules! impl_exported_metric_label {
+    ($visibility:vis enum $label:ident { $($variant:ident => $value:tt),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        $visibility enum $label {
+            $($variant),+
+        }
+
+        impl_exported_metric_label!($label { $($variant => $value),+ });
+    };
     ($label:ty { $($variant:ident => ($index:expr, $label_value:literal)),+ $(,)? }) => {
         impl_metric_label!($label {
             $($variant => $index),+
@@ -39,6 +52,14 @@ macro_rules! impl_exported_metric_label {
 }
 
 macro_rules! impl_exported_metric_label_pair {
+    ($visibility:vis enum $label:ident { $($variant:ident => $value:tt),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        $visibility enum $label {
+            $($variant),+
+        }
+
+        impl_exported_metric_label_pair!($label { $($variant => $value),+ });
+    };
     ($label:ty { $($variant:ident => ($index:expr, [($first_name:literal, $first_value:literal), ($second_name:literal, $second_value:literal)])),+ $(,)? }) => {
         impl_metric_label!($label {
             $($variant => $index),+
@@ -72,149 +93,6 @@ pub enum WsSessionLoopExitReason {
     OutboundQueueOverflow,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HttpRoute {
-    Noop,
-    Stats,
-    Room,
-    Disconnect,
-    Metrics,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HttpRoomResponseStatus {
-    Success,
-    Unauthorized,
-    Forbidden,
-    BadRequest,
-    Conflict,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum HttpDisconnectResponseStatus {
-    Success,
-    BadRequest,
-    UnprocessableEntity,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ControlPlaneDurationBucket {
-    Le10Millis,
-    Le50Millis,
-    Le100Millis,
-    Le250Millis,
-    Le500Millis,
-    Le1Second,
-    Le5Seconds,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WsConnectionStage {
-    Accepted,
-    CredentialsReceived,
-    Joined,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WsStartupFailureKind {
-    StartupSend,
-    SessionInitialize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WsBusDirection {
-    Received,
-    Sent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WsBusFailureKind {
-    InvalidInput,
-    UnsupportedFeature,
-    Send,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum WsBusClientFrameKind {
-    Request,
-    Message,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RtpFlowDirection {
-    Ingress,
-    Egress,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtpForwardDestinationKind {
-    LocalRtc,
-    Recording,
-    IntraNodeRelay,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtpDecoderRefreshScope {
-    Rid,
-    Source,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtpRelayDropKind {
-    IntraNodeRelay,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcDatagramRoutePath {
-    Indexed,
-    Scan,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcDatagramDropReason {
-    RecentMissCache,
-    SourceRateLimited,
-    NoUser,
-    Malformed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcNackDirection {
-    SentToPublisher,
-    ReceivedFromSubscriber,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcOutputBudgetLimit {
-    Packets,
-    PayloadBytes,
-    PacketsAndPayloadBytes,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcRouteControlOutcome {
-    Absorbed,
-    Forwarded,
-    RouteGatedRelayDrop,
-    LayerAllowed,
-    LayerDropped,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcKeyframeRequestOutcome {
-    Forwarded,
-    Absorbed,
-    Retry,
-    Cleared,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcRelayEnqueueResult {
-    IntraNodeEnqueued,
-    IntraNodeOverloaded,
-    IntraNodeClosed,
-}
-
 impl RtcRelayEnqueueResult {
     #[must_use]
     pub const fn target_label(self) -> &'static str {
@@ -235,97 +113,7 @@ impl RtcRelayEnqueueResult {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcRemoteControlDropKind {
-    Keyframe,
-    PacketGate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcRemotePacketGateConvergence {
-    Retry,
-    Flushed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SourceSelectionKind {
-    Open,
-    Encoding,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BudgetSolverOutcome {
-    Degraded,
-    Paused,
-    Resumed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportIceState {
-    New,
-    Checking,
-    Connected,
-    Completed,
-    Disconnected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportHealthState {
-    Connected,
-    Disconnected,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TransportHealthTransition {
-    UnsetToConnected,
-    UnsetToDisconnected,
-    ConnectedToDisconnected,
-    DisconnectedToConnected,
-    ConnectedToUnset,
-    DisconnectedToUnset,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TransportUserLifetimeBucket {
-    Le1Second,
-    Le10Seconds,
-    Le60Seconds,
-    Le300Seconds,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaQualitySample {
-    Peer,
-    MediaIngress,
-    MediaEgress,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaQualityLossDirection {
-    Ingress,
-    Egress,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MediaQualityRttBucket {
-    Le50Millis,
-    Le100Millis,
-    Le250Millis,
-    Le500Millis,
-    Le1Second,
-    Le2Seconds,
-    Le5Seconds,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RecordingActionOutcome {
-    StartAccepted,
-    StartRejected,
-    StopAccepted,
-    StopRejected,
-}
-
-impl_exported_metric_label!(HttpRoute {
+impl_exported_metric_label!(pub enum HttpRoute {
     Noop => (0, "noop"),
     Stats => (1, "stats"),
     Room => (2, "room"),
@@ -333,7 +121,7 @@ impl_exported_metric_label!(HttpRoute {
     Metrics => (4, "metrics"),
 });
 
-impl_exported_metric_label!(HttpRoomResponseStatus {
+impl_exported_metric_label!(pub(super) enum HttpRoomResponseStatus {
     Success => (0, "success"),
     Unauthorized => (1, "unauthorized"),
     Forbidden => (2, "forbidden"),
@@ -341,36 +129,21 @@ impl_exported_metric_label!(HttpRoomResponseStatus {
     Conflict => (4, "conflict"),
 });
 
-impl_exported_metric_label!(HttpDisconnectResponseStatus {
+impl_exported_metric_label!(pub(super) enum HttpDisconnectResponseStatus {
     Success => (0, "success"),
     BadRequest => (1, "bad_request"),
     UnprocessableEntity => (2, "unprocessable_entity"),
 });
 
-impl MetricLabel for ControlPlaneDurationBucket {
-    const VARIANTS: &'static [Self] = &[
-        Self::Le10Millis,
-        Self::Le50Millis,
-        Self::Le100Millis,
-        Self::Le250Millis,
-        Self::Le500Millis,
-        Self::Le1Second,
-        Self::Le5Seconds,
-    ];
-    const COUNT: usize = 7;
-
-    fn as_index(self) -> usize {
-        match self {
-            Self::Le10Millis => 0,
-            Self::Le50Millis => 1,
-            Self::Le100Millis => 2,
-            Self::Le250Millis => 3,
-            Self::Le500Millis => 4,
-            Self::Le1Second => 5,
-            Self::Le5Seconds => 6,
-        }
-    }
-}
+impl_metric_label!(pub(super) enum ControlPlaneDurationBucket {
+    Le10Millis => 0,
+    Le50Millis => 1,
+    Le100Millis => 2,
+    Le250Millis => 3,
+    Le500Millis => 4,
+    Le1Second => 5,
+    Le5Seconds => 6,
+});
 
 impl MetricBucketLabel for ControlPlaneDurationBucket {
     fn upper_bound(self) -> &'static str {
@@ -410,7 +183,7 @@ impl HistogramBucketLabel for ControlPlaneDurationBucket {
     }
 }
 
-impl_exported_metric_label!(WsConnectionStage {
+impl_exported_metric_label!(pub(super) enum WsConnectionStage {
     Accepted => (0, "accepted"),
     CredentialsReceived => (1, "credentials_received"),
     Joined => (2, "joined"),
@@ -427,7 +200,7 @@ impl_exported_metric_label!(WebSocketCloseCode {
     Kicked => (7, "kicked"),
 });
 
-impl_exported_metric_label!(WsStartupFailureKind {
+impl_exported_metric_label!(pub(super) enum WsStartupFailureKind {
     StartupSend => (0, "startup_send"),
     SessionInitialize => (1, "user_initialize"),
 });
@@ -445,66 +218,66 @@ impl_exported_metric_label!(WsSessionLoopExitReason {
     RuntimeShutdown => (9, "runtime_shutdown"),
 });
 
-impl_exported_metric_label!(WsBusDirection {
+impl_exported_metric_label!(pub(super) enum WsBusDirection {
     Received => (0, "received"),
     Sent => (1, "sent"),
 });
 
-impl_exported_metric_label!(WsBusFailureKind {
+impl_exported_metric_label!(pub(super) enum WsBusFailureKind {
     InvalidInput => (0, "invalid_input"),
     UnsupportedFeature => (1, "unsupported_feature"),
     Send => (2, "send"),
 });
 
-impl_exported_metric_label!(WsBusClientFrameKind {
+impl_exported_metric_label!(pub(super) enum WsBusClientFrameKind {
     Request => (0, "request"),
     Message => (1, "message"),
 });
 
-impl_exported_metric_label!(RtpFlowDirection {
+impl_exported_metric_label!(pub(super) enum RtpFlowDirection {
     Ingress => (0, "ingress"),
     Egress => (1, "egress"),
 });
 
-impl_exported_metric_label!(RtpForwardDestinationKind {
+impl_exported_metric_label!(pub enum RtpForwardDestinationKind {
     LocalRtc => (0, "local_rtc"),
     Recording => (1, "recording"),
     IntraNodeRelay => (2, "intra_node_relay"),
 });
 
-impl_exported_metric_label!(RtpDecoderRefreshScope {
+impl_exported_metric_label!(pub enum RtpDecoderRefreshScope {
     Rid => (0, "rid"),
     Source => (1, "source"),
 });
 
-impl_exported_metric_label!(RtpRelayDropKind {
+impl_exported_metric_label!(pub enum RtpRelayDropKind {
     IntraNodeRelay => (0, "intra_node_relay"),
 });
 
-impl_exported_metric_label!(RtcDatagramRoutePath {
+impl_exported_metric_label!(pub enum RtcDatagramRoutePath {
     Indexed => (0, "indexed"),
     Scan => (1, "scan"),
 });
 
-impl_exported_metric_label!(RtcDatagramDropReason {
+impl_exported_metric_label!(pub enum RtcDatagramDropReason {
     RecentMissCache => (0, "recent_miss_cache"),
     SourceRateLimited => (1, "source_rate_limited"),
     NoUser => (2, "no_user"),
     Malformed => (3, "malformed"),
 });
 
-impl_exported_metric_label!(RtcNackDirection {
+impl_exported_metric_label!(pub enum RtcNackDirection {
     SentToPublisher => (0, "sent_to_publisher"),
     ReceivedFromSubscriber => (1, "received_from_subscriber"),
 });
 
-impl_exported_metric_label!(RtcOutputBudgetLimit {
+impl_exported_metric_label!(pub enum RtcOutputBudgetLimit {
     Packets => (0, "packets"),
     PayloadBytes => (1, "payload_bytes"),
     PacketsAndPayloadBytes => (2, "packets_and_payload_bytes"),
 });
 
-impl_exported_metric_label!(RtcRouteControlOutcome {
+impl_exported_metric_label!(pub enum RtcRouteControlOutcome {
     Absorbed => (0, "absorbed"),
     Forwarded => (1, "forwarded"),
     RouteGatedRelayDrop => (2, "route_gated_relay_drop"),
@@ -512,14 +285,14 @@ impl_exported_metric_label!(RtcRouteControlOutcome {
     LayerDropped => (4, "layer_dropped"),
 });
 
-impl_exported_metric_label!(RtcKeyframeRequestOutcome {
+impl_exported_metric_label!(pub enum RtcKeyframeRequestOutcome {
     Forwarded => (0, "forwarded"),
     Absorbed => (1, "absorbed"),
     Retry => (2, "retry"),
     Cleared => (3, "cleared"),
 });
 
-impl_metric_label!(RtcRelayEnqueueResult {
+impl_metric_label!(pub enum RtcRelayEnqueueResult {
     IntraNodeEnqueued => 0,
     IntraNodeOverloaded => 1,
     IntraNodeClosed => 2,
@@ -534,28 +307,28 @@ impl ExportedMetricLabelPair for RtcRelayEnqueueResult {
     }
 }
 
-impl_exported_metric_label!(RtcRemoteControlDropKind {
+impl_exported_metric_label!(pub enum RtcRemoteControlDropKind {
     Keyframe => (0, "keyframe"),
     PacketGate => (1, "packet_gate"),
 });
 
-impl_exported_metric_label!(RtcRemotePacketGateConvergence {
+impl_exported_metric_label!(pub enum RtcRemotePacketGateConvergence {
     Retry => (0, "retry"),
     Flushed => (1, "flushed"),
 });
 
-impl_exported_metric_label!(SourceSelectionKind {
+impl_exported_metric_label!(pub enum SourceSelectionKind {
     Open => (0, "open"),
     Encoding => (1, "encoding"),
 });
 
-impl_exported_metric_label!(BudgetSolverOutcome {
+impl_exported_metric_label!(pub enum BudgetSolverOutcome {
     Degraded => (0, "degraded"),
     Paused => (1, "paused"),
     Resumed => (2, "resumed"),
 });
 
-impl_exported_metric_label!(TransportIceState {
+impl_exported_metric_label!(pub enum TransportIceState {
     New => (0, "new"),
     Checking => (1, "checking"),
     Connected => (2, "connected"),
@@ -563,12 +336,12 @@ impl_exported_metric_label!(TransportIceState {
     Disconnected => (4, "disconnected"),
 });
 
-impl_exported_metric_label!(TransportHealthState {
+impl_exported_metric_label!(pub enum TransportHealthState {
     Connected => (0, "connected"),
     Disconnected => (1, "disconnected"),
 });
 
-impl_exported_metric_label_pair!(TransportHealthTransition {
+impl_exported_metric_label_pair!(pub(super) enum TransportHealthTransition {
     UnsetToConnected => (0, [("from", "unset"), ("to", "connected")]),
     UnsetToDisconnected => (1, [("from", "unset"), ("to", "disconnected")]),
     ConnectedToDisconnected => (2, [("from", "connected"), ("to", "disconnected")]),
@@ -577,7 +350,7 @@ impl_exported_metric_label_pair!(TransportHealthTransition {
     DisconnectedToUnset => (5, [("from", "disconnected"), ("to", "unset")]),
 });
 
-impl_metric_label!(TransportUserLifetimeBucket {
+impl_metric_label!(pub(super) enum TransportUserLifetimeBucket {
     Le1Second => 0,
     Le10Seconds => 1,
     Le60Seconds => 2,
@@ -595,18 +368,18 @@ impl MetricBucketLabel for TransportUserLifetimeBucket {
     }
 }
 
-impl_exported_metric_label!(MediaQualitySample {
+impl_exported_metric_label!(pub enum MediaQualitySample {
     Peer => (0, "peer"),
     MediaIngress => (1, "media_ingress"),
     MediaEgress => (2, "media_egress"),
 });
 
-impl_exported_metric_label!(MediaQualityLossDirection {
+impl_exported_metric_label!(pub enum MediaQualityLossDirection {
     Ingress => (0, "ingress"),
     Egress => (1, "egress"),
 });
 
-impl_metric_label!(MediaQualityRttBucket {
+impl_metric_label!(pub(super) enum MediaQualityRttBucket {
     Le50Millis => 0,
     Le100Millis => 1,
     Le250Millis => 2,
@@ -654,7 +427,7 @@ impl HistogramBucketLabel for MediaQualityRttBucket {
     }
 }
 
-impl_exported_metric_label_pair!(RecordingActionOutcome {
+impl_exported_metric_label_pair!(pub(super) enum RecordingActionOutcome {
     StartAccepted => (0, [("action", "start"), ("outcome", "accepted")]),
     StartRejected => (1, [("action", "start"), ("outcome", "rejected")]),
     StopAccepted => (2, [("action", "stop"), ("outcome", "accepted")]),

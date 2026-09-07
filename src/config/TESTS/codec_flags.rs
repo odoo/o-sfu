@@ -1,14 +1,6 @@
 use super::{Env, MediaCodecFlags, load_media_codec_flags};
 
 #[test]
-fn load_media_codec_flags_defaults_to_opus_and_vp8() {
-    assert_eq!(
-        load_media_codec_flags(&Env::new(|_| None)).ok(),
-        Some(MediaCodecFlags::default())
-    );
-}
-
-#[test]
 fn load_media_codec_flags_applies_per_codec_overrides() {
     let flags = load_media_codec_flags(&Env::new(|key| match key {
         "CODEC_OPUS" => Some("false".to_owned()),

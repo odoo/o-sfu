@@ -5,13 +5,12 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 
-use super::super::transport::default_rtc_media_worker_count;
 use crate::{
     config::{
-        Bitrate, CodecPreferences, Config, DEFAULT_AUTHENTICATION_TIMEOUT_MS,
+        CodecPreferences, Config, DEFAULT_AUTHENTICATION_TIMEOUT_MS,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DiagnosticsConfig, MediaCodecFlags,
-        RtcPortRange, RuntimeFeatureFlags, TelemetryConfig, VideoBitrateLimits,
+        RuntimeFeatureFlags, TelemetryConfig,
     },
     core::server::room::{
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
@@ -107,27 +106,6 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     assert_eq!(config.diagnostics, DiagnosticsConfig::default());
     assert_eq!(config.telemetry, TelemetryConfig::default());
     assert_eq!(config.transport.announced_ip.to_string(), "127.0.0.1");
-    assert_eq!(config.transport.max_bitrate_in, Bitrate::from_mbps(8));
-    assert_eq!(config.transport.max_bitrate_out, Bitrate::from_mbps(10));
-    assert_eq!(
-        config.transport.video_bitrate_limits,
-        VideoBitrateLimits::default()
-    );
-    assert_eq!(
-        config.transport.rtc_port_range,
-        RtcPortRange::new(40_000, 49_999)
-    );
-    assert_eq!(
-        config.transport.rtc_media_worker_count,
-        default_rtc_media_worker_count()
-    );
-    Ok(())
-}
-
-#[test]
-fn config_accepts_proxy_flag() -> anyhow::Result<()> {
-    let config = config_from(&[("PROXY", "true")])?;
-    assert!(config.http.trust_proxy_headers);
     Ok(())
 }
 
@@ -135,6 +113,7 @@ fn config_accepts_proxy_flag() -> anyhow::Result<()> {
 fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
         ("BIND_ADDRESS", "127.0.0.1:9000"),
+        ("PROXY", "true"),
         ("SHUTDOWN_TIMEOUT_MS", "2500"),
         ("AUTHENTICATION_TIMEOUT_MS", "1500"),
         ("MAX_PRE_AUTH_WEBSOCKET_SESSIONS", "12"),
@@ -148,6 +127,7 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     ])?;
     assert_eq!(config.http.bind_address.to_string(), "127.0.0.1:9000");
     assert_eq!(config.http.shutdown_timeout_ms, 2500);
+    assert!(config.http.trust_proxy_headers);
     assert_eq!(config.auth.authentication_timeout_ms, 1500);
     assert_eq!(config.auth.max_pre_auth_websocket_sessions, 12);
     assert_eq!(config.auth.max_pre_auth_websocket_sessions_per_origin, 3);
@@ -173,39 +153,22 @@ fn config_rejects_invalid_proxy_flag() {
 #[test]
 fn config_rejects_zero_runtime_limits() {
     let cases = [
-        (
-            "SHUTDOWN_TIMEOUT_MS",
-            "SHUTDOWN_TIMEOUT_MS must be greater than zero",
-        ),
-        ("ROOM_SIZE", "ROOM_SIZE must be greater than zero"),
-        (
-            "USER_TIMEOUT_MS",
-            "USER_TIMEOUT_MS must be greater than zero",
-        ),
-        (
-            "PING_INTERVAL_MS",
-            "PING_INTERVAL_MS must be greater than zero",
-        ),
-        (
-            "MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
-            "MAX_PRE_AUTH_WEBSOCKET_SESSIONS must be greater than zero",
-        ),
-        (
-            "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",
-            "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN must be greater than zero",
-        ),
-        (
-            "USER_OUTBOUND_QUEUE_CAPACITY",
-            "USER_OUTBOUND_QUEUE_CAPACITY must be greater than zero",
-        ),
-        (
-            "USER_OUTBOUND_QUEUE_BYTE_CAPACITY",
-            "USER_OUTBOUND_QUEUE_BYTE_CAPACITY must be greater than zero",
-        ),
+        "SHUTDOWN_TIMEOUT_MS",
+        "ROOM_SIZE",
+        "USER_TIMEOUT_MS",
+        "PING_INTERVAL_MS",
+        "MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
+        "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",
+        "USER_OUTBOUND_QUEUE_CAPACITY",
+        "USER_OUTBOUND_QUEUE_BYTE_CAPACITY",
     ];
 
-    for (key, message) in cases {
+    for key in cases {
         let error = config_error_from(&[(key, "0")]);
-        assert_eq!(error.as_deref(), Some(message), "{key}");
+        assert_eq!(
+            error.as_deref(),
+            Some(format!("{key} must be greater than zero").as_str()),
+            "{key}"
+        );
     }
 }

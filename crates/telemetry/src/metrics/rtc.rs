@@ -291,21 +291,19 @@ impl RtcMetricsSnapshot {
     }
 
     fn add_recorder(&mut self, recorder: &RtcMetricsRecorder) {
-        for path in <RtcDatagramRoutePath as MetricLabel>::VARIANTS {
-            self.add_datagram_route(*path, recorder.datagram_routes.load(*path));
-        }
-        for reason in <RtcDatagramDropReason as MetricLabel>::VARIANTS {
-            self.add_datagram_drop(*reason, recorder.datagram_drops.load(*reason));
-        }
+        recorder
+            .datagram_routes
+            .accumulate_into(&mut self.datagram_routes);
+        recorder
+            .datagram_drops
+            .accumulate_into(&mut self.datagram_drops);
         self.datagram_fallback_scans = self
             .datagram_fallback_scans
             .saturating_add(recorder.datagram_fallback_scans.load());
         self.datagram_scan_users = self
             .datagram_scan_users
             .saturating_add(recorder.datagram_scan_users.load());
-        for direction in <RtcNackDirection as MetricLabel>::VARIANTS {
-            self.add_nack(*direction, recorder.nacks.load(*direction));
-        }
+        recorder.nacks.accumulate_into(&mut self.nacks);
         self.rtx_packets_received_from_publisher = self
             .rtx_packets_received_from_publisher
             .saturating_add(recorder.rtx_packets_received_from_publisher.load());
@@ -315,24 +313,21 @@ impl RtcMetricsSnapshot {
         self.rtcp_ingress_budget_drops = self
             .rtcp_ingress_budget_drops
             .saturating_add(recorder.rtcp_ingress_budget_drops.load());
-        for limit in <RtcOutputBudgetLimit as MetricLabel>::VARIANTS {
-            self.add_output_budget_exhaustion(
-                *limit,
-                recorder.output_budget_exhaustions.load(*limit),
-            );
-        }
+        recorder
+            .output_budget_exhaustions
+            .accumulate_into(&mut self.output_budget_exhaustions);
         self.output_budget_session_closes = self
             .output_budget_session_closes
             .saturating_add(recorder.output_budget_session_closes.load());
-        for outcome in <RtcRouteControlOutcome as MetricLabel>::VARIANTS {
-            self.add_route_control(*outcome, recorder.route_control.load(*outcome));
-        }
-        for outcome in <RtcKeyframeRequestOutcome as MetricLabel>::VARIANTS {
-            self.add_keyframe_request(*outcome, recorder.keyframe_requests.load(*outcome));
-        }
-        for result in <RtcRelayEnqueueResult as MetricLabel>::VARIANTS {
-            self.add_relay_enqueue(*result, recorder.relay_enqueues.load(*result));
-        }
+        recorder
+            .route_control
+            .accumulate_into(&mut self.route_control);
+        recorder
+            .keyframe_requests
+            .accumulate_into(&mut self.keyframe_requests);
+        recorder
+            .relay_enqueues
+            .accumulate_into(&mut self.relay_enqueues);
         self.relay_mailbox_depth_samples = self
             .relay_mailbox_depth_samples
             .saturating_add(recorder.relay_mailbox_depth_samples.load());
@@ -348,75 +343,11 @@ impl RtcMetricsSnapshot {
         self.relay_drain_cap_hits = self
             .relay_drain_cap_hits
             .saturating_add(recorder.relay_drain_cap_hits.load());
-        for kind in <RtcRemoteControlDropKind as MetricLabel>::VARIANTS {
-            self.add_remote_control_drop(*kind, recorder.remote_control_drops.load(*kind));
-        }
-        for outcome in <RtcRemotePacketGateConvergence as MetricLabel>::VARIANTS {
-            self.add_remote_packet_gate_convergence(
-                *outcome,
-                recorder.remote_packet_gate_convergence.load(*outcome),
-            );
-        }
-    }
-
-    fn add_datagram_route(&mut self, path: RtcDatagramRoutePath, count: u64) {
-        if let Some(counter) = self.datagram_routes.get_mut(path.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_datagram_drop(&mut self, reason: RtcDatagramDropReason, count: u64) {
-        if let Some(counter) = self.datagram_drops.get_mut(reason.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_nack(&mut self, direction: RtcNackDirection, count: u64) {
-        if let Some(counter) = self.nacks.get_mut(direction.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_output_budget_exhaustion(&mut self, limit: RtcOutputBudgetLimit, count: u64) {
-        if let Some(counter) = self.output_budget_exhaustions.get_mut(limit.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_route_control(&mut self, outcome: RtcRouteControlOutcome, count: u64) {
-        if let Some(counter) = self.route_control.get_mut(outcome.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_keyframe_request(&mut self, outcome: RtcKeyframeRequestOutcome, count: u64) {
-        if let Some(counter) = self.keyframe_requests.get_mut(outcome.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_relay_enqueue(&mut self, result: RtcRelayEnqueueResult, count: u64) {
-        if let Some(counter) = self.relay_enqueues.get_mut(result.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_remote_control_drop(&mut self, kind: RtcRemoteControlDropKind, count: u64) {
-        if let Some(counter) = self.remote_control_drops.get_mut(kind.as_index()) {
-            *counter = counter.saturating_add(count);
-        }
-    }
-
-    fn add_remote_packet_gate_convergence(
-        &mut self,
-        outcome: RtcRemotePacketGateConvergence,
-        count: u64,
-    ) {
-        if let Some(counter) = self
+        recorder
+            .remote_control_drops
+            .accumulate_into(&mut self.remote_control_drops);
+        recorder
             .remote_packet_gate_convergence
-            .get_mut(outcome.as_index())
-        {
-            *counter = counter.saturating_add(count);
-        }
+            .accumulate_into(&mut self.remote_packet_gate_convergence);
     }
 }

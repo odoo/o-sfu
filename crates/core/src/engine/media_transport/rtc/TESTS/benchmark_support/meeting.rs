@@ -124,7 +124,7 @@ use super::super::{
         BenchmarkPacketStaging, BenchmarkStreamIdentity, restage_packet_for_benchmark,
         sample_local_forwarded_packet_for_benchmark, test_transport_session_key,
     },
-    worker::{apply_media_control_batch, consumer_payload_type, guarded_pkt_gate},
+    worker::{apply_media_control_batch, guarded_pkt_gate},
 };
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
@@ -1483,7 +1483,7 @@ impl MeetingFlowBenchFixture {
             MediaKind::Video => Some(vp8_parameters()),
             MediaKind::Audio => None,
         };
-        let dest_payload_type = consumer_rtp.as_ref().and_then(consumer_payload_type);
+        let dest_payload_type = consumer_rtp.as_ref().and_then(codec::primary_payload_type);
         let requires_decoder_refresh = consumer_rtp.as_ref().is_some_and(|parameters| {
             codec::requires_decoder_refresh(parameters, dest_payload_type)
         });

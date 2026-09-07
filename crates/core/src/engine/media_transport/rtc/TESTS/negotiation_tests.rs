@@ -157,10 +157,8 @@ async fn rtc_initial_session_offer_advertises_vp8_simulcast_receive_surface() {
     let adapter = rtc_with_codec_flags(MediaCodecFlags::default().with_h264(true));
     let session_key = transport_key(1, 134, UserId::Integer(134));
 
-    let (offer_sdp, upload_slots) = adapter
-        .create_initial_session_offer("test-room", &session_key)
+    let (offer_sdp, upload_slots) = expect_initial_offer(&adapter, &session_key)
         .await
-        .expect("initial offer should succeed")
         .into_parts();
 
     assert!(
@@ -217,10 +215,8 @@ async fn rtc_initial_session_offer_advertises_h264_simulcast_when_h264_leads() {
     );
     let session_key = transport_key(1, 136, UserId::Integer(136));
 
-    let (offer_sdp, upload_slots) = adapter
-        .create_initial_session_offer("test-room", &session_key)
+    let (offer_sdp, upload_slots) = expect_initial_offer(&adapter, &session_key)
         .await
-        .expect("initial offer should succeed")
         .into_parts();
 
     assert!(
@@ -295,10 +291,8 @@ async fn rtc_initial_session_offer_reports_configured_codec_preferences() {
     let adapter = rtc_with_codec_policy(codec_flags, codec_preferences);
     let session_key = transport_key(1, 137, UserId::Integer(137));
 
-    let (offer_sdp, upload_slots) = adapter
-        .create_initial_session_offer("test-room", &session_key)
+    let (offer_sdp, upload_slots) = expect_initial_offer(&adapter, &session_key)
         .await
-        .expect("initial offer should succeed")
         .into_parts();
 
     let offer = SdpOffer::from_sdp_string(&offer_sdp).expect("initial offer should parse");
@@ -425,10 +419,11 @@ async fn rtc_initial_session_offer_projects_client_capabilities_from_answer() {
 
 #[tokio::test]
 async fn rtc_simulcast_publish_intent_preserves_negotiated_encoding_facts() {
-    let adapter = RtcWorker::test_builder()
-        .bitrate_limits(Bitrate::from_bps(2_222_222), Bitrate::from_bps(3_333_333))
-        .codec_flags(MediaCodecFlags::default().with_vp8(false).with_h264(true))
-        .build();
+    let mut config = test_media_transport_config(1, test_rtc_port_range());
+    config.bitrate_limits =
+        SessionBitrateLimits::new(Bitrate::from_bps(2_222_222), Bitrate::from_bps(3_333_333));
+    config.codec_flags = MediaCodecFlags::default().with_vp8(false).with_h264(true);
+    let adapter = RtcWorker::for_test(config);
     let session_key = transport_key(1, 135, UserId::Integer(135));
 
     let mut remote = complete_initial_offer_answer(&adapter, &session_key, 55_135).await;
@@ -796,12 +791,7 @@ async fn rtc_initial_session_offer_rejects_overlapping_pending_offer() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 35, UserId::Integer(35));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     let handle = adapter.test_handle();
     let first_counter = handle
         .bitrate_registry
@@ -1101,12 +1091,7 @@ async fn rtc_session_renegotiation_offer_stages_protocol_consumer_additions() {
     let src_key = transport_key(1, 36, UserId::Integer(36));
     let consumer_key = transport_key(1, 37, UserId::Integer(37));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &src_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &src_key).await;
     let source_media_id = adapter
         .add_recv_media(
             &src_key,
@@ -1168,12 +1153,7 @@ async fn rtc_session_answer_releases_declined_consumer_without_follow_up_offer()
     let src_key = transport_key(1, 49, UserId::Integer(49));
     let consumer_key = transport_key(1, 50, UserId::Integer(50));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &src_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &src_key).await;
     let source_media_id = adapter
         .add_recv_media(
             &src_key,
@@ -1247,12 +1227,7 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
     let src_key = transport_key(1, 39, UserId::Integer(39));
     let consumer_key = transport_key(1, 40, UserId::Integer(40));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &src_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &src_key).await;
     let source_media_id = adapter
         .add_recv_media(
             &src_key,

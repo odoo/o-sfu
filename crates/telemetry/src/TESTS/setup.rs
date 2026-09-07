@@ -19,21 +19,14 @@ struct SharedWriter {
 }
 
 impl<'writer> MakeWriter<'writer> for SharedWriter {
-    type Writer = SharedBufferGuard;
+    type Writer = Self;
 
     fn make_writer(&'writer self) -> Self::Writer {
-        SharedBufferGuard {
-            buffer: Arc::clone(&self.buffer),
-        }
+        self.clone()
     }
 }
 
-#[derive(Debug)]
-struct SharedBufferGuard {
-    buffer: Arc<Mutex<Vec<u8>>>,
-}
-
-impl io::Write for SharedBufferGuard {
+impl io::Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer
             .lock()

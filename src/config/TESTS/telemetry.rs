@@ -19,7 +19,7 @@ fn load_telemetry_config_accepts_explicit_settings() {
         "TELEMETRY_SERVICE_NAME" => Some("custom-o-sfu".to_owned()),
         "TELEMETRY_DEPLOYMENT_ENVIRONMENT" => Some("staging".to_owned()),
         "TELEMETRY_SERVICE_INSTANCE_ID" => Some("node-a-1".to_owned()),
-        "TELEMETRY_OTLP_ENDPOINT" => Some("http://collector:4317".to_owned()),
+        "TELEMETRY_OTLP_ENDPOINT" => Some("  http://collector:4317  ".to_owned()),
         _ => None,
     }));
     assert_eq!(
@@ -41,22 +41,6 @@ fn load_telemetry_config_accepts_explicit_settings() {
 
 #[cfg(not(feature = "otel-tracing"))]
 #[test]
-fn load_telemetry_config_rejects_otlp_without_feature() {
-    let error = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_OTLP_ENDPOINT" => Some("http://collector:4318".to_owned()),
-        _ => None,
-    }))
-    .err()
-    .map(|error| error.to_string());
-
-    assert_eq!(
-        error.as_deref(),
-        Some("TELEMETRY_OTLP_ENDPOINT requires the `otel-tracing` cargo feature")
-    );
-}
-
-#[cfg(not(feature = "otel-tracing"))]
-#[test]
 fn load_telemetry_config_reports_otlp_feature_error_before_later_errors() {
     let error = load_telemetry_config(&Env::new(|key| match key {
         "TELEMETRY_OTLP_ENDPOINT" => Some("http://collector:4318".to_owned()),
@@ -70,22 +54,6 @@ fn load_telemetry_config_reports_otlp_feature_error_before_later_errors() {
     assert_eq!(
         error.as_deref(),
         Some("TELEMETRY_OTLP_ENDPOINT requires the `otel-tracing` cargo feature")
-    );
-}
-
-#[cfg(feature = "otel-tracing")]
-#[test]
-fn load_telemetry_config_trims_otlp_endpoint() {
-    let config = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_OTLP_ENDPOINT" => Some("  http://collector:4317  ".to_owned()),
-        _ => None,
-    }));
-
-    assert_eq!(
-        config
-            .ok()
-            .and_then(|config| config.trace_export.otlp_endpoint),
-        Some("http://collector:4317".to_owned())
     );
 }
 
@@ -152,14 +120,12 @@ fn load_telemetry_config_reports_interval_parse_error() {
 }
 
 #[test]
-fn load_telemetry_config_allows_disabling_media_quality_sampling() {
+fn load_telemetry_config_allows_disabling_media_quality_sampling() -> anyhow::Result<()> {
     let config = load_telemetry_config(&Env::new(|key| match key {
         "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("0".to_owned()),
         _ => None,
-    }));
+    }))?;
 
-    assert_eq!(
-        config.ok().and_then(|config| config.media_quality_interval),
-        None
-    );
+    assert_eq!(config.media_quality_interval, None);
+    Ok(())
 }

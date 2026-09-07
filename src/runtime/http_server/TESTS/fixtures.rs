@@ -81,31 +81,6 @@ pub(super) fn signed_disconnect_claims(
     .ok()
 }
 
-pub(super) fn build_request(builder: HttpRequestBuilder, body: Body) -> Option<Request<Body>> {
-    builder.body(body).ok()
-}
-
-pub(super) fn request(
-    builder: HttpRequestBuilder,
-    body: Body,
-    context: &'static str,
-) -> TestResult<Request<Body>> {
-    require_some(build_request(builder, body), context)
-}
-
-pub(super) async fn response(
-    state: &RuntimeState,
-    request: Request<Body>,
-    context: &'static str,
-) -> TestResult<AxumResponse> {
-    require_ok(
-        app(state.clone(), state.config.http.bind_address)
-            .oneshot(request)
-            .await,
-        context,
-    )
-}
-
 pub(super) async fn route_response(
     state: &RuntimeState,
     builder: HttpRequestBuilder,
@@ -113,7 +88,13 @@ pub(super) async fn route_response(
     expected_status: StatusCode,
     context: &'static str,
 ) -> TestResult<AxumResponse> {
-    let response = response(state, request(builder, body, context)?, context).await?;
+    let request = require_ok(builder.body(body), context)?;
+    let response = require_ok(
+        app(state.clone(), state.config.http.bind_address)
+            .oneshot(request)
+            .await,
+        context,
+    )?;
     assert_eq!(response.status(), expected_status);
     Ok(response)
 }
@@ -141,13 +122,6 @@ where
     T: DeserializeOwned,
 {
     let response = route_response(state, builder, body, expected_status, context).await?;
-    response_json(response, context).await
-}
-
-pub(super) async fn response_json<T>(response: AxumResponse, context: &'static str) -> TestResult<T>
-where
-    T: DeserializeOwned,
-{
     let bytes = require_ok(to_bytes(response.into_body(), usize::MAX).await, context)?;
     require_ok(serde_json::from_slice::<T>(&bytes), context)
 }

@@ -298,8 +298,10 @@ fn featured_user_updates(
                 None if current_featured.is_some() => Some(false),
                 None => None,
             };
-            (desired_featured != current_featured).then(|| {
-                FeaturedUserUpdate::new(user_id.clone(), user.connection_id, desired_featured)
+            (desired_featured != current_featured).then(|| FeaturedUserUpdate {
+                user_id: user_id.clone(),
+                connection_id: user.connection_id,
+                featured: desired_featured,
             })
         })
         .collect()

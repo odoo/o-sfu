@@ -14,7 +14,7 @@ use super::{
         ControlPlaneDurationBucket, ExportedMetricLabelPair, HttpRoute, RtcRelayEnqueueResult,
     },
     rtc::RtcMetricsSnapshot,
-    rtp::{RtpMetricsSnapshot, RtpWorkerMetricsSnapshot},
+    rtp::{RtpMetricsSnapshot, RtpTrafficSnapshot},
 };
 
 #[cfg(test)]
@@ -541,9 +541,9 @@ metric_catalog! {
         help: "Total RTP packets processed by flow direction.",
         kind: Counter,
         samples: |metrics, capture, output| write_snapshot_counters(output,
-            &capture.rtp,
+            &capture.rtp.traffic,
             "direction",
-            RtpMetricsSnapshot::packets
+            RtpTrafficSnapshot::packets
         )
     },
     RtpPayloadBytesTotal {
@@ -551,9 +551,9 @@ metric_catalog! {
         help: "Total RTP payload bytes processed by flow direction.",
         kind: Counter,
         samples: |metrics, capture, output| write_snapshot_counters(output,
-            &capture.rtp,
+            &capture.rtp.traffic,
             "direction",
-            RtpMetricsSnapshot::payload_bytes
+            RtpTrafficSnapshot::payload_bytes
         )
     },
     RtpForwardedPacketsTotal {
@@ -561,9 +561,9 @@ metric_catalog! {
         help: "Total RTP packet fan-out operations by forwarding destination.",
         kind: Counter,
         samples: |metrics, capture, output| write_snapshot_counters(output,
-            &capture.rtp,
+            &capture.rtp.traffic,
             "destination",
-            RtpMetricsSnapshot::forwarded_packets
+            RtpTrafficSnapshot::forwarded_packets
         )
     },
     RtpForwardedPayloadBytesTotal {
@@ -571,9 +571,9 @@ metric_catalog! {
         help: "Total RTP payload bytes fanned out by forwarding destination.",
         kind: Counter,
         samples: |metrics, capture, output| write_snapshot_counters(output,
-            &capture.rtp,
+            &capture.rtp.traffic,
             "destination",
-            RtpMetricsSnapshot::forwarded_payload_bytes
+            RtpTrafficSnapshot::forwarded_payload_bytes
         )
     },
     WorkerRtpPacketsTotal {
@@ -583,7 +583,7 @@ metric_catalog! {
         samples: |metrics, capture, output| write_rtp_worker_counters(output,
             &capture.rtp,
             "direction",
-            RtpWorkerMetricsSnapshot::packets
+            RtpTrafficSnapshot::packets
         )
     },
     WorkerRtpPayloadBytesTotal {
@@ -593,7 +593,7 @@ metric_catalog! {
         samples: |metrics, capture, output| write_rtp_worker_counters(output,
             &capture.rtp,
             "direction",
-            RtpWorkerMetricsSnapshot::payload_bytes
+            RtpTrafficSnapshot::payload_bytes
         )
     },
     WorkerRtpForwardedPacketsTotal {
@@ -603,7 +603,7 @@ metric_catalog! {
         samples: |metrics, capture, output| write_rtp_worker_counters(output,
             &capture.rtp,
             "destination",
-            RtpWorkerMetricsSnapshot::forwarded_packets
+            RtpTrafficSnapshot::forwarded_packets
         )
     },
     WorkerRtpForwardedPayloadBytesTotal {
@@ -613,7 +613,7 @@ metric_catalog! {
         samples: |metrics, capture, output| write_rtp_worker_counters(output,
             &capture.rtp,
             "destination",
-            RtpWorkerMetricsSnapshot::forwarded_payload_bytes
+            RtpTrafficSnapshot::forwarded_payload_bytes
         )
     },
     RtpRelayOverloadDropsTotal {
@@ -942,7 +942,7 @@ fn write_rtp_worker_counters<L>(
     output: &mut MetricOutput,
     snapshot: &RtpMetricsSnapshot,
     label_name: &'static str,
-    read: fn(&RtpWorkerMetricsSnapshot, L) -> u64,
+    read: fn(&RtpTrafficSnapshot, L) -> u64,
 ) where
     L: ExportedMetricLabel,
 {
@@ -953,7 +953,7 @@ fn write_rtp_worker_counters<L>(
                     MetricLabel::number("media_worker_id", worker.media_worker_id()),
                     MetricLabel::text(label_name, label.label_value()),
                 ],
-                read(worker, *label),
+                read(&worker.traffic, *label),
             );
         }
     }

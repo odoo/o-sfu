@@ -23,7 +23,7 @@ fn parse_codec_list<T>(
     parse_codec: impl Fn(&str) -> Option<T>,
 ) -> Result<Vec<T>>
 where
-    T: Copy + PartialEq,
+    T: PartialEq,
 {
     let mut codecs = Vec::new();
     for raw_codec in value.split(',') {
@@ -40,36 +40,19 @@ where
         );
         codecs.push(codec);
     }
-    ensure!(!codecs.is_empty(), "{env_key} cannot be empty");
     Ok(codecs)
 }
 
 fn audio_codec_preference(codec_name: &str) -> Option<AudioCodecPreference> {
-    if codec_name.eq_ignore_ascii_case(AudioCodecPreference::Opus.wire_name()) {
-        Some(AudioCodecPreference::Opus)
-    } else if codec_name.eq_ignore_ascii_case(AudioCodecPreference::Pcmu.wire_name()) {
-        Some(AudioCodecPreference::Pcmu)
-    } else if codec_name.eq_ignore_ascii_case(AudioCodecPreference::Pcma.wire_name()) {
-        Some(AudioCodecPreference::Pcma)
-    } else {
-        None
-    }
+    CodecPreferences::DEFAULT_AUDIO
+        .into_iter()
+        .find(|codec| codec_name.eq_ignore_ascii_case(codec.wire_name()))
 }
 
 fn video_codec_preference(codec_name: &str) -> Option<VideoCodecPreference> {
-    if codec_name.eq_ignore_ascii_case(VideoCodecPreference::Vp8.wire_name()) {
-        Some(VideoCodecPreference::Vp8)
-    } else if codec_name.eq_ignore_ascii_case(VideoCodecPreference::H264.wire_name()) {
-        Some(VideoCodecPreference::H264)
-    } else if codec_name.eq_ignore_ascii_case(VideoCodecPreference::H265.wire_name()) {
-        Some(VideoCodecPreference::H265)
-    } else if codec_name.eq_ignore_ascii_case(VideoCodecPreference::Vp9.wire_name()) {
-        Some(VideoCodecPreference::Vp9)
-    } else if codec_name.eq_ignore_ascii_case(VideoCodecPreference::Av1.wire_name()) {
-        Some(VideoCodecPreference::Av1)
-    } else {
-        None
-    }
+    CodecPreferences::DEFAULT_VIDEO
+        .into_iter()
+        .find(|codec| codec_name.eq_ignore_ascii_case(codec.wire_name()))
 }
 
 #[cfg(test)]

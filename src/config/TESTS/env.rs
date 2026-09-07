@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Env, EnvKey, non_empty, positive};
+use super::{Env, non_empty, positive};
 
 fn error<T>(result: anyhow::Result<T>) -> Option<String> {
     result.err().map(|error| error.to_string())
@@ -92,12 +92,12 @@ fn env_validates_default_values() {
 
 #[test]
 fn env_runs_chained_checks_in_order() {
-    fn less_than_ten(key: EnvKey, value: usize) -> anyhow::Result<usize> {
+    fn less_than_ten(key: &'static str, value: usize) -> anyhow::Result<usize> {
         anyhow::ensure!(value < 10, "{key} must be less than ten");
         Ok(value)
     }
 
-    fn even(key: EnvKey, value: usize) -> anyhow::Result<usize> {
+    fn even(key: &'static str, value: usize) -> anyhow::Result<usize> {
         anyhow::ensure!(value.is_multiple_of(2), "{key} must be even");
         Ok(value)
     }

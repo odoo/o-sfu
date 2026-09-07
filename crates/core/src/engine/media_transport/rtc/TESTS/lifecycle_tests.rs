@@ -23,10 +23,8 @@ async fn rtc_initial_session_offer_contains_real_ice_and_dtls_parameters() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 13, UserId::Integer(13));
 
-    let offer_sdp = adapter
-        .create_initial_session_offer("test-room", &session_key)
+    let offer_sdp = expect_initial_offer(&adapter, &session_key)
         .await
-        .expect("initial offer should succeed")
         .into_parts()
         .0;
 
@@ -94,31 +92,16 @@ async fn rtc_transport_close_session_allows_recreating_the_initial_offer() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 14, UserId::Integer(14));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     assert!(adapter.close_session(&session_key).await.is_ok());
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
 }
 
 #[tokio::test]
 async fn rtc_transport_close_session_cleans_transport_health_snapshot() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 143, UserId::Integer(143));
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
 
     adapter.debug_set_session_transport_health(&session_key, TransportSessionHealth::Disconnected);
     let metrics_snapshot = adapter.metrics.snapshot();
@@ -140,12 +123,7 @@ async fn rtc_transport_close_session_cleans_transport_health_snapshot() {
 async fn rtc_transport_close_session_cleans_remote_addr_demux_state() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 140, UserId::Integer(140));
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
 
     let source_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 45_000);
     adapter
@@ -166,21 +144,11 @@ async fn rtc_transport_close_session_cleans_remote_addr_demux_state() {
 async fn rtc_transport_close_last_session_reuses_idle_packet_loop_worker() {
     let adapter = RtcWorker::default();
     let first_session_key = transport_key(1, 141, UserId::Integer(141));
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &first_session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &first_session_key).await;
     assert!(adapter.close_session(&first_session_key).await.is_ok());
 
     let second_session_key = transport_key(1, 142, UserId::Integer(142));
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &second_session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &second_session_key).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -262,18 +230,8 @@ async fn rtc_transport_distinguishes_same_session_id_across_channels() {
     let first_session_key = transport_key_on_worker(1, 0, 30, UserId::Integer(30));
     let second_session_key = transport_key_on_worker(2, 1, 30, UserId::Integer(30));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &first_session_key)
-            .await
-            .is_ok()
-    );
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &second_session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &first_session_key).await;
+    let _offer = expect_initial_offer(&adapter, &second_session_key).await;
 
     adapter.debug_set_session_transport_health(
         &second_session_key,
@@ -322,18 +280,8 @@ async fn rtc_transport_concurrent_last_session_close_keeps_worker_reusable() {
     let first_session_key = transport_key(4, 301, UserId::Integer(301));
     let second_session_key = transport_key(4, 302, UserId::Integer(302));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &first_session_key)
-            .await
-            .is_ok()
-    );
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &second_session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &first_session_key).await;
+    let _offer = expect_initial_offer(&adapter, &second_session_key).await;
 
     let close_results = timeout(Duration::from_secs(1), async {
         tokio::join!(
@@ -350,10 +298,5 @@ async fn rtc_transport_concurrent_last_session_close_keeps_worker_reusable() {
     assert!(second_close.is_ok());
 
     let next_session_key = transport_key(4, 303, UserId::Integer(303));
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &next_session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &next_session_key).await;
 }

@@ -9,68 +9,23 @@ use super::{
 };
 use crate::shared::{RecordingStateUpdate, UserInfo};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WireTag {
-    Auth,
-    Broadcast,
-    Info,
-    Offer,
-    PeerInfo,
-    PeerJoined,
-    PeerLeft,
-    Publish,
-    RecordingChange,
-    Renegotiate,
-    StartRecording,
-    StopRecording,
-    Subscribe,
-    Sources,
-    Tracks,
-    Unpublish,
-    Welcome,
-}
-
-impl WireTag {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auth => "auth",
-            Self::Broadcast => "broadcast",
-            Self::Info => "info",
-            Self::Offer => "offer",
-            Self::PeerInfo => "peerinfo",
-            Self::PeerJoined => "peerjoined",
-            Self::PeerLeft => "peerleft",
-            Self::Publish => "publish",
-            Self::RecordingChange => "recordingchange",
-            Self::Renegotiate => "renegotiate",
-            Self::StartRecording => "startrecording",
-            Self::StopRecording => "stoprecording",
-            Self::Subscribe => "subscribe",
-            Self::Sources => "sources",
-            Self::Tracks => "tracks",
-            Self::Unpublish => "unpublish",
-            Self::Welcome => "welcome",
-        }
-    }
-}
-
-type EntryDecode<T> = fn(WireTag, Option<Value>) -> Result<T, EnvelopeDecodeError>;
-
-#[derive(Clone, Copy)]
-struct EnvelopeEntry<T> {
-    tag: WireTag,
-    decode: EntryDecode<T>,
-}
-
-impl<T> EnvelopeEntry<T> {
-    const fn new(tag: WireTag, decode: EntryDecode<T>) -> Self {
-        Self { tag, decode }
-    }
-
-    fn decode(&self, payload: Option<Value>) -> Result<T, EnvelopeDecodeError> {
-        (self.decode)(self.tag, payload)
-    }
-}
+const AUTH: &str = "auth";
+const BROADCAST: &str = "broadcast";
+const INFO: &str = "info";
+const OFFER: &str = "offer";
+const PEER_INFO: &str = "peerinfo";
+const PEER_JOINED: &str = "peerjoined";
+const PEER_LEFT: &str = "peerleft";
+const PUBLISH: &str = "publish";
+const RECORDING_CHANGE: &str = "recordingchange";
+const RENEGOTIATE: &str = "renegotiate";
+const START_RECORDING: &str = "startrecording";
+const STOP_RECORDING: &str = "stoprecording";
+const SUBSCRIBE: &str = "subscribe";
+const SOURCES: &str = "sources";
+const TRACKS: &str = "tracks";
+const UNPUBLISH: &str = "unpublish";
+const WELCOME: &str = "welcome";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnvelopeDecodeError {
@@ -90,40 +45,27 @@ pub enum ClientMessage {
 }
 
 impl ClientMessage {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::Auth, |tag, payload| {
-            decode_payload(tag, payload, Self::Auth)
-        }),
-        EnvelopeEntry::new(WireTag::Publish, |tag, payload| {
-            decode_payload(tag, payload, Self::Publish)
-        }),
-        EnvelopeEntry::new(WireTag::Unpublish, |tag, payload| {
-            decode_payload(tag, payload, Self::Unpublish)
-        }),
-        EnvelopeEntry::new(WireTag::Subscribe, |tag, payload| {
-            decode_payload(tag, payload, Self::Subscribe)
-        }),
-        EnvelopeEntry::new(WireTag::Info, |tag, payload| {
-            decode_payload(tag, payload, Self::Info)
-        }),
-        EnvelopeEntry::new(WireTag::Broadcast, |tag, payload| {
-            decode_payload(tag, payload, Self::Broadcast)
-        }),
-    ];
-
     pub(crate) fn into_envelope(self) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::Auth(payload) => encode_message(WireTag::Auth, payload),
-            Self::Publish(payload) => encode_message(WireTag::Publish, payload),
-            Self::Unpublish(payload) => encode_message(WireTag::Unpublish, payload),
-            Self::Subscribe(payload) => encode_message(WireTag::Subscribe, payload),
-            Self::Info(payload) => encode_message(WireTag::Info, payload),
-            Self::Broadcast(payload) => encode_message(WireTag::Broadcast, payload),
+            Self::Auth(payload) => encode_message(AUTH, payload),
+            Self::Publish(payload) => encode_message(PUBLISH, payload),
+            Self::Unpublish(payload) => encode_message(UNPUBLISH, payload),
+            Self::Subscribe(payload) => encode_message(SUBSCRIBE, payload),
+            Self::Info(payload) => encode_message(INFO, payload),
+            Self::Broadcast(payload) => encode_message(BROADCAST, payload),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            AUTH => parse_payload(tag, payload).map(Self::Auth),
+            PUBLISH => parse_payload(tag, payload).map(Self::Publish),
+            UNPUBLISH => parse_payload(tag, payload).map(Self::Unpublish),
+            SUBSCRIBE => parse_payload(tag, payload).map(Self::Subscribe),
+            INFO => parse_payload(tag, payload).map(Self::Info),
+            BROADCAST => parse_payload(tag, payload).map(Self::Broadcast),
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
@@ -134,33 +76,25 @@ pub enum ClientRequest {
 }
 
 impl ClientRequest {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::StartRecording, |tag, payload| {
-            decode_payload(tag, payload, Self::StartRecording)
-        }),
-        EnvelopeEntry::new(WireTag::StopRecording, |tag, payload| {
-            decode_empty(tag, payload.as_ref(), Self::StopRecording)
-        }),
-    ];
-
     pub(crate) fn into_envelope(
         self,
         request_id: RequestId,
     ) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::StartRecording(payload) => {
-                encode_request(WireTag::StartRecording, request_id, payload)
-            }
-            Self::StopRecording => Ok(Envelope::request(
-                WireTag::StopRecording.as_str(),
-                request_id,
-                None,
-            )),
+            Self::StartRecording(payload) => encode_request(START_RECORDING, request_id, payload),
+            Self::StopRecording => Ok(Envelope::request(STOP_RECORDING, request_id, None)),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            START_RECORDING => parse_payload(tag, payload).map(Self::StartRecording),
+            STOP_RECORDING => {
+                ensure_empty_payload(tag, payload.as_ref())?;
+                Ok(Self::StopRecording)
+            }
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
@@ -171,15 +105,6 @@ pub enum ServerRequest {
 }
 
 impl ServerRequest {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::Offer, |tag, payload| {
-            decode_payload(tag, payload, Self::Offer)
-        }),
-        EnvelopeEntry::new(WireTag::Renegotiate, |tag, payload| {
-            decode_payload(tag, payload, Self::Renegotiate)
-        }),
-    ];
-
     /// encode one server-authored request into the Odoo wire envelope
     ///
     /// # Errors
@@ -188,13 +113,17 @@ impl ServerRequest {
     /// JSON envelope payload
     pub fn into_envelope(self, request_id: RequestId) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::Offer(payload) => encode_request(WireTag::Offer, request_id, payload),
-            Self::Renegotiate(payload) => encode_request(WireTag::Renegotiate, request_id, payload),
+            Self::Offer(payload) => encode_request(OFFER, request_id, payload),
+            Self::Renegotiate(payload) => encode_request(RENEGOTIATE, request_id, payload),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            OFFER => parse_payload(tag, payload).map(Self::Offer),
+            RENEGOTIATE => parse_payload(tag, payload).map(Self::Renegotiate),
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
@@ -205,29 +134,22 @@ pub enum ClientResponse {
 }
 
 impl ClientResponse {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::Offer, |tag, payload| {
-            decode_payload(tag, payload, Self::Offer)
-        }),
-        EnvelopeEntry::new(WireTag::Renegotiate, |tag, payload| {
-            decode_payload(tag, payload, Self::Renegotiate)
-        }),
-    ];
-
     pub(crate) fn into_envelope(
         self,
         response_to: RequestId,
     ) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::Offer(payload) => encode_response(WireTag::Offer, response_to, payload),
-            Self::Renegotiate(payload) => {
-                encode_response(WireTag::Renegotiate, response_to, payload)
-            }
+            Self::Offer(payload) => encode_response(OFFER, response_to, payload),
+            Self::Renegotiate(payload) => encode_response(RENEGOTIATE, response_to, payload),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            OFFER => parse_payload(tag, payload).map(Self::Offer),
+            RENEGOTIATE => parse_payload(tag, payload).map(Self::Renegotiate),
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
@@ -244,33 +166,6 @@ pub enum ServerMessage {
 }
 
 impl ServerMessage {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::Welcome, |tag, payload| {
-            decode_payload(tag, payload, Self::Welcome)
-        }),
-        EnvelopeEntry::new(WireTag::Tracks, |tag, payload| {
-            decode_payload(tag, payload, Self::Tracks)
-        }),
-        EnvelopeEntry::new(WireTag::Sources, |tag, payload| {
-            decode_payload(tag, payload, Self::Sources)
-        }),
-        EnvelopeEntry::new(WireTag::PeerInfo, |tag, payload| {
-            decode_payload(tag, payload, Self::PeerInfo)
-        }),
-        EnvelopeEntry::new(WireTag::PeerJoined, |tag, payload| {
-            decode_payload(tag, payload, Self::PeerJoined)
-        }),
-        EnvelopeEntry::new(WireTag::PeerLeft, |tag, payload| {
-            decode_payload(tag, payload, Self::PeerLeft)
-        }),
-        EnvelopeEntry::new(WireTag::Broadcast, |tag, payload| {
-            decode_payload(tag, payload, Self::Broadcast)
-        }),
-        EnvelopeEntry::new(WireTag::RecordingChange, |tag, payload| {
-            decode_payload(tag, payload, Self::RecordingChange)
-        }),
-    ];
-
     /// encode one server message into the Odoo wire envelope
     ///
     /// # Errors
@@ -279,19 +174,29 @@ impl ServerMessage {
     /// JSON envelope payload
     pub fn into_envelope(self) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::Welcome(payload) => encode_message(WireTag::Welcome, payload),
-            Self::Tracks(payload) => encode_message(WireTag::Tracks, payload),
-            Self::Sources(payload) => encode_message(WireTag::Sources, payload),
-            Self::PeerInfo(payload) => encode_message(WireTag::PeerInfo, payload),
-            Self::PeerJoined(payload) => encode_message(WireTag::PeerJoined, payload),
-            Self::PeerLeft(payload) => encode_message(WireTag::PeerLeft, payload),
-            Self::Broadcast(payload) => encode_message(WireTag::Broadcast, payload),
-            Self::RecordingChange(payload) => encode_message(WireTag::RecordingChange, payload),
+            Self::Welcome(payload) => encode_message(WELCOME, payload),
+            Self::Tracks(payload) => encode_message(TRACKS, payload),
+            Self::Sources(payload) => encode_message(SOURCES, payload),
+            Self::PeerInfo(payload) => encode_message(PEER_INFO, payload),
+            Self::PeerJoined(payload) => encode_message(PEER_JOINED, payload),
+            Self::PeerLeft(payload) => encode_message(PEER_LEFT, payload),
+            Self::Broadcast(payload) => encode_message(BROADCAST, payload),
+            Self::RecordingChange(payload) => encode_message(RECORDING_CHANGE, payload),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            WELCOME => parse_payload(tag, payload).map(Self::Welcome),
+            TRACKS => parse_payload(tag, payload).map(Self::Tracks),
+            SOURCES => parse_payload(tag, payload).map(Self::Sources),
+            PEER_INFO => parse_payload(tag, payload).map(Self::PeerInfo),
+            PEER_JOINED => parse_payload(tag, payload).map(Self::PeerJoined),
+            PEER_LEFT => parse_payload(tag, payload).map(Self::PeerLeft),
+            BROADCAST => parse_payload(tag, payload).map(Self::Broadcast),
+            RECORDING_CHANGE => parse_payload(tag, payload).map(Self::RecordingChange),
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
@@ -302,15 +207,6 @@ pub enum ServerResponse {
 }
 
 impl ServerResponse {
-    const ENTRIES: &'static [EnvelopeEntry<Self>] = &[
-        EnvelopeEntry::new(WireTag::StartRecording, |tag, payload| {
-            decode_payload(tag, payload, Self::StartRecording)
-        }),
-        EnvelopeEntry::new(WireTag::StopRecording, |tag, payload| {
-            decode_payload(tag, payload, Self::StopRecording)
-        }),
-    ];
-
     /// encode one server response into the Odoo wire envelope
     ///
     /// # Errors
@@ -319,85 +215,46 @@ impl ServerResponse {
     /// JSON envelope payload
     pub fn into_envelope(self, response_to: RequestId) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::StartRecording(payload) => {
-                encode_response(WireTag::StartRecording, response_to, payload)
-            }
-            Self::StopRecording(payload) => {
-                encode_response(WireTag::StopRecording, response_to, payload)
-            }
+            Self::StartRecording(payload) => encode_response(START_RECORDING, response_to, payload),
+            Self::StopRecording(payload) => encode_response(STOP_RECORDING, response_to, payload),
         }
     }
 
     pub(crate) fn decode(tag: &str, payload: Option<Value>) -> Result<Self, EnvelopeDecodeError> {
-        decode_entry(tag, payload, Self::ENTRIES)
+        match tag {
+            START_RECORDING => parse_payload(tag, payload).map(Self::StartRecording),
+            STOP_RECORDING => parse_payload(tag, payload).map(Self::StopRecording),
+            _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
+        }
     }
 }
 
-fn encode_message<T: Serialize>(tag: WireTag, payload: T) -> Result<Envelope, serde_json::Error> {
-    Ok(Envelope::message(
-        tag.as_str(),
-        Some(serde_json::to_value(payload)?),
-    ))
+fn encode_message<T: Serialize>(tag: &str, payload: T) -> Result<Envelope, serde_json::Error> {
+    Ok(Envelope::message(tag, Some(serde_json::to_value(payload)?)))
 }
 
 fn encode_request<T: Serialize>(
-    tag: WireTag,
+    tag: &str,
     request_id: RequestId,
     payload: T,
 ) -> Result<Envelope, serde_json::Error> {
     Ok(Envelope::request(
-        tag.as_str(),
+        tag,
         request_id,
         Some(serde_json::to_value(payload)?),
     ))
 }
 
 fn encode_response<T: Serialize>(
-    tag: WireTag,
+    tag: &str,
     response_to: RequestId,
     payload: T,
 ) -> Result<Envelope, serde_json::Error> {
     Ok(Envelope::response(
-        tag.as_str(),
+        tag,
         response_to,
         Some(serde_json::to_value(payload)?),
     ))
-}
-
-fn decode_entry<T>(
-    tag: &str,
-    payload: Option<Value>,
-    entries: &[EnvelopeEntry<T>],
-) -> Result<T, EnvelopeDecodeError> {
-    entries
-        .iter()
-        .find(|entry| entry.tag.as_str() == tag)
-        .ok_or_else(|| unknown_tag(tag))?
-        .decode(payload)
-}
-
-fn decode_payload<T, P>(
-    tag: WireTag,
-    payload: Option<Value>,
-    build: fn(P) -> T,
-) -> Result<T, EnvelopeDecodeError>
-where
-    P: DeserializeOwned,
-{
-    parse_payload(tag.as_str(), payload).map(build)
-}
-
-fn decode_empty<T>(
-    tag: WireTag,
-    payload: Option<&Value>,
-    value: T,
-) -> Result<T, EnvelopeDecodeError> {
-    ensure_empty_payload(tag.as_str(), payload)?;
-    Ok(value)
-}
-
-fn unknown_tag(tag: &str) -> EnvelopeDecodeError {
-    EnvelopeDecodeError::UnknownTag(tag.to_owned())
 }
 
 fn parse_payload<T: DeserializeOwned>(

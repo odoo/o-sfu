@@ -347,11 +347,12 @@ pub(super) fn allocate_source_descriptor(
                 max_bitrate: binding
                     .max_bitrate()
                     .map(Bitrate::from_bps)
-                    .or_else(|| upload_profile.and_then(MatchedUploadEncoding::max_bitrate)),
-                resolution_scale: upload_profile.and_then(MatchedUploadEncoding::resolution_scale),
-                max_framerate: upload_profile.and_then(MatchedUploadEncoding::max_framerate),
-                policy_role: upload_profile.map(|profile| {
-                    upload_layer_policy_role_for_rank(profile.rank, upload_encodings.len())
+                    .or_else(|| upload_profile.and_then(|(_, encoding)| encoding.max_bitrate)),
+                resolution_scale: upload_profile
+                    .and_then(|(_, encoding)| encoding.resolution_scale),
+                max_framerate: upload_profile.and_then(|(_, encoding)| encoding.max_framerate),
+                policy_role: upload_profile.map(|(rank, _)| {
+                    upload_layer_policy_role_for_rank(rank, upload_encodings.len())
                 }),
                 negotiated_format: negotiated_format_for_binding(
                     consumable_rtp_parameters,
@@ -374,33 +375,12 @@ pub(super) fn allocate_source_descriptor(
 fn upload_profile_for_rid<'a>(
     upload_encodings: &'a [SessionUploadEncoding],
     rid: Option<&str>,
-) -> Option<MatchedUploadEncoding<'a>> {
+) -> Option<(usize, &'a SessionUploadEncoding)> {
     let rid = rid?;
     upload_encodings
         .iter()
         .enumerate()
         .find(|(_rank, encoding)| encoding.rid == rid)
-        .map(|(rank, encoding)| MatchedUploadEncoding { rank, encoding })
-}
-
-#[derive(Debug, Clone, Copy)]
-struct MatchedUploadEncoding<'a> {
-    rank: usize,
-    encoding: &'a SessionUploadEncoding,
-}
-
-impl MatchedUploadEncoding<'_> {
-    const fn max_bitrate(self) -> Option<Bitrate> {
-        self.encoding.max_bitrate
-    }
-
-    const fn resolution_scale(self) -> Option<u16> {
-        self.encoding.resolution_scale
-    }
-
-    const fn max_framerate(self) -> Option<u16> {
-        self.encoding.max_framerate
-    }
 }
 
 const fn upload_layer_policy_role_for_rank(

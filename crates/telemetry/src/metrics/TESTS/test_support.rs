@@ -22,6 +22,14 @@ macro_rules! snapshot_gauge_accessors {
     };
 }
 
+macro_rules! snapshot_forwarders {
+    ($return_type:ty; $($method:ident => $delegate:ident($($argument:expr),*)),+ $(,)?) => {
+        $(fn $method(&self) -> $return_type {
+            self.$delegate($($argument),*)
+        })+
+    };
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DurationHistogramSnapshot {
     pub le_10_millis: u64,
@@ -234,12 +242,10 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn connected_transport_users(&self) -> i64 {
-        self.transport_health_users(TransportHealthState::Connected)
-    }
-
-    fn disconnected_transport_users(&self) -> i64 {
-        self.transport_health_users(TransportHealthState::Disconnected)
+    snapshot_forwarders! {
+        i64;
+        connected_transport_users => transport_health_users(TransportHealthState::Connected),
+        disconnected_transport_users => transport_health_users(TransportHealthState::Disconnected),
     }
 
     fn transport_ice_state_changes(&self, state: TransportIceState) -> u64 {
@@ -249,24 +255,13 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn transport_ice_state_changes_new(&self) -> u64 {
-        self.transport_ice_state_changes(TransportIceState::New)
-    }
-
-    fn transport_ice_state_changes_checking(&self) -> u64 {
-        self.transport_ice_state_changes(TransportIceState::Checking)
-    }
-
-    fn transport_ice_state_changes_connected(&self) -> u64 {
-        self.transport_ice_state_changes(TransportIceState::Connected)
-    }
-
-    fn transport_ice_state_changes_completed(&self) -> u64 {
-        self.transport_ice_state_changes(TransportIceState::Completed)
-    }
-
-    fn transport_ice_state_changes_disconnected(&self) -> u64 {
-        self.transport_ice_state_changes(TransportIceState::Disconnected)
+    snapshot_forwarders! {
+        u64;
+        transport_ice_state_changes_new => transport_ice_state_changes(TransportIceState::New),
+        transport_ice_state_changes_checking => transport_ice_state_changes(TransportIceState::Checking),
+        transport_ice_state_changes_connected => transport_ice_state_changes(TransportIceState::Connected),
+        transport_ice_state_changes_completed => transport_ice_state_changes(TransportIceState::Completed),
+        transport_ice_state_changes_disconnected => transport_ice_state_changes(TransportIceState::Disconnected),
     }
 
     fn rtp_forwarded_packets(&self, destination: RtpForwardDestinationKind) -> u64 {
@@ -276,16 +271,11 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtp_forwarded_packets_local_rtc(&self) -> u64 {
-        self.rtp_forwarded_packets(RtpForwardDestinationKind::LocalRtc)
-    }
-
-    fn rtp_forwarded_packets_recording(&self) -> u64 {
-        self.rtp_forwarded_packets(RtpForwardDestinationKind::Recording)
-    }
-
-    fn rtp_forwarded_packets_intra_node_relay(&self) -> u64 {
-        self.rtp_forwarded_packets(RtpForwardDestinationKind::IntraNodeRelay)
+    snapshot_forwarders! {
+        u64;
+        rtp_forwarded_packets_local_rtc => rtp_forwarded_packets(RtpForwardDestinationKind::LocalRtc),
+        rtp_forwarded_packets_recording => rtp_forwarded_packets(RtpForwardDestinationKind::Recording),
+        rtp_forwarded_packets_intra_node_relay => rtp_forwarded_packets(RtpForwardDestinationKind::IntraNodeRelay),
     }
 
     fn rtp_forwarded_payload_bytes(&self, destination: RtpForwardDestinationKind) -> u64 {
@@ -295,16 +285,11 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtp_forwarded_payload_bytes_local_rtc(&self) -> u64 {
-        self.rtp_forwarded_payload_bytes(RtpForwardDestinationKind::LocalRtc)
-    }
-
-    fn rtp_forwarded_payload_bytes_recording(&self) -> u64 {
-        self.rtp_forwarded_payload_bytes(RtpForwardDestinationKind::Recording)
-    }
-
-    fn rtp_forwarded_payload_bytes_intra_node_relay(&self) -> u64 {
-        self.rtp_forwarded_payload_bytes(RtpForwardDestinationKind::IntraNodeRelay)
+    snapshot_forwarders! {
+        u64;
+        rtp_forwarded_payload_bytes_local_rtc => rtp_forwarded_payload_bytes(RtpForwardDestinationKind::LocalRtc),
+        rtp_forwarded_payload_bytes_recording => rtp_forwarded_payload_bytes(RtpForwardDestinationKind::Recording),
+        rtp_forwarded_payload_bytes_intra_node_relay => rtp_forwarded_payload_bytes(RtpForwardDestinationKind::IntraNodeRelay),
     }
 
     fn rtp_relay_overload_drops(&self, destination: RtpRelayDropKind) -> u64 {
@@ -314,8 +299,9 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtp_relay_overload_drops_intra_node_relay(&self) -> u64 {
-        self.rtp_relay_overload_drops(RtpRelayDropKind::IntraNodeRelay)
+    snapshot_forwarders! {
+        u64;
+        rtp_relay_overload_drops_intra_node_relay => rtp_relay_overload_drops(RtpRelayDropKind::IntraNodeRelay),
     }
 
     fn rtp_decoder_refreshes(&self, scope: RtpDecoderRefreshScope) -> u64 {
@@ -325,12 +311,10 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtp_decoder_refreshes_rid(&self) -> u64 {
-        self.rtp_decoder_refreshes(RtpDecoderRefreshScope::Rid)
-    }
-
-    fn rtp_decoder_refreshes_source(&self) -> u64 {
-        self.rtp_decoder_refreshes(RtpDecoderRefreshScope::Source)
+    snapshot_forwarders! {
+        u64;
+        rtp_decoder_refreshes_rid => rtp_decoder_refreshes(RtpDecoderRefreshScope::Rid),
+        rtp_decoder_refreshes_source => rtp_decoder_refreshes(RtpDecoderRefreshScope::Source),
     }
 
     fn rtc_datagram_routes(&self, path: RtcDatagramRoutePath) -> u64 {
@@ -340,12 +324,10 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_datagram_routes_indexed(&self) -> u64 {
-        self.rtc_datagram_routes(RtcDatagramRoutePath::Indexed)
-    }
-
-    fn rtc_datagram_routes_scan(&self) -> u64 {
-        self.rtc_datagram_routes(RtcDatagramRoutePath::Scan)
+    snapshot_forwarders! {
+        u64;
+        rtc_datagram_routes_indexed => rtc_datagram_routes(RtcDatagramRoutePath::Indexed),
+        rtc_datagram_routes_scan => rtc_datagram_routes(RtcDatagramRoutePath::Scan),
     }
 
     fn rtc_datagram_drops(&self, reason: RtcDatagramDropReason) -> u64 {
@@ -355,20 +337,12 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_datagram_drops_recent_miss_cache(&self) -> u64 {
-        self.rtc_datagram_drops(RtcDatagramDropReason::RecentMissCache)
-    }
-
-    fn rtc_datagram_drops_source_rate_limited(&self) -> u64 {
-        self.rtc_datagram_drops(RtcDatagramDropReason::SourceRateLimited)
-    }
-
-    fn rtc_datagram_drops_no_user(&self) -> u64 {
-        self.rtc_datagram_drops(RtcDatagramDropReason::NoUser)
-    }
-
-    fn rtc_datagram_drops_malformed(&self) -> u64 {
-        self.rtc_datagram_drops(RtcDatagramDropReason::Malformed)
+    snapshot_forwarders! {
+        u64;
+        rtc_datagram_drops_recent_miss_cache => rtc_datagram_drops(RtcDatagramDropReason::RecentMissCache),
+        rtc_datagram_drops_source_rate_limited => rtc_datagram_drops(RtcDatagramDropReason::SourceRateLimited),
+        rtc_datagram_drops_no_user => rtc_datagram_drops(RtcDatagramDropReason::NoUser),
+        rtc_datagram_drops_malformed => rtc_datagram_drops(RtcDatagramDropReason::Malformed),
     }
 
     fn rtc_nacks(&self, direction: RtcNackDirection) -> u64 {
@@ -392,24 +366,13 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_route_control_absorbed(&self) -> u64 {
-        self.rtc_route_control(RtcRouteControlOutcome::Absorbed)
-    }
-
-    fn rtc_route_control_forwarded(&self) -> u64 {
-        self.rtc_route_control(RtcRouteControlOutcome::Forwarded)
-    }
-
-    fn rtc_route_control_route_gated_relay_drops(&self) -> u64 {
-        self.rtc_route_control(RtcRouteControlOutcome::RouteGatedRelayDrop)
-    }
-
-    fn rtc_route_control_layer_allowed(&self) -> u64 {
-        self.rtc_route_control(RtcRouteControlOutcome::LayerAllowed)
-    }
-
-    fn rtc_route_control_layer_dropped(&self) -> u64 {
-        self.rtc_route_control(RtcRouteControlOutcome::LayerDropped)
+    snapshot_forwarders! {
+        u64;
+        rtc_route_control_absorbed => rtc_route_control(RtcRouteControlOutcome::Absorbed),
+        rtc_route_control_forwarded => rtc_route_control(RtcRouteControlOutcome::Forwarded),
+        rtc_route_control_route_gated_relay_drops => rtc_route_control(RtcRouteControlOutcome::RouteGatedRelayDrop),
+        rtc_route_control_layer_allowed => rtc_route_control(RtcRouteControlOutcome::LayerAllowed),
+        rtc_route_control_layer_dropped => rtc_route_control(RtcRouteControlOutcome::LayerDropped),
     }
 
     fn rtc_keyframe_requests(&self, outcome: RtcKeyframeRequestOutcome) -> u64 {
@@ -419,36 +382,23 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_keyframe_requests_forwarded(&self) -> u64 {
-        self.rtc_keyframe_requests(RtcKeyframeRequestOutcome::Forwarded)
-    }
-
-    fn rtc_keyframe_requests_absorbed(&self) -> u64 {
-        self.rtc_keyframe_requests(RtcKeyframeRequestOutcome::Absorbed)
-    }
-
-    fn rtc_keyframe_requests_retried(&self) -> u64 {
-        self.rtc_keyframe_requests(RtcKeyframeRequestOutcome::Retry)
-    }
-
-    fn rtc_keyframe_requests_cleared(&self) -> u64 {
-        self.rtc_keyframe_requests(RtcKeyframeRequestOutcome::Cleared)
+    snapshot_forwarders! {
+        u64;
+        rtc_keyframe_requests_forwarded => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Forwarded),
+        rtc_keyframe_requests_absorbed => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Absorbed),
+        rtc_keyframe_requests_retried => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Retry),
+        rtc_keyframe_requests_cleared => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Cleared),
     }
 
     fn rtc_relay_enqueue(&self, result: RtcRelayEnqueueResult) -> u64 {
         self.counter_value(MetricName::RtcRelayEnqueuesTotal, &result.label_pair())
     }
 
-    fn rtc_relay_enqueue_intra_node_enqueued(&self) -> u64 {
-        self.rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeEnqueued)
-    }
-
-    fn rtc_relay_enqueue_intra_node_overloaded(&self) -> u64 {
-        self.rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeOverloaded)
-    }
-
-    fn rtc_relay_enqueue_intra_node_closed(&self) -> u64 {
-        self.rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeClosed)
+    snapshot_forwarders! {
+        u64;
+        rtc_relay_enqueue_intra_node_enqueued => rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeEnqueued),
+        rtc_relay_enqueue_intra_node_overloaded => rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeOverloaded),
+        rtc_relay_enqueue_intra_node_closed => rtc_relay_enqueue(RtcRelayEnqueueResult::IntraNodeClosed),
     }
 
     fn rtc_remote_control_drops(&self, kind: RtcRemoteControlDropKind) -> u64 {
@@ -458,12 +408,10 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_remote_control_keyframe_drops(&self) -> u64 {
-        self.rtc_remote_control_drops(RtcRemoteControlDropKind::Keyframe)
-    }
-
-    fn rtc_remote_control_packet_gate_drops(&self) -> u64 {
-        self.rtc_remote_control_drops(RtcRemoteControlDropKind::PacketGate)
+    snapshot_forwarders! {
+        u64;
+        rtc_remote_control_keyframe_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::Keyframe),
+        rtc_remote_control_packet_gate_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::PacketGate),
     }
 
     fn rtc_remote_packet_gate_convergence(&self, outcome: RtcRemotePacketGateConvergence) -> u64 {
@@ -473,36 +421,16 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         )
     }
 
-    fn rtc_remote_packet_gate_retries(&self) -> u64 {
-        self.rtc_remote_packet_gate_convergence(RtcRemotePacketGateConvergence::Retry)
-    }
-
-    fn rtc_remote_packet_gate_flushes(&self) -> u64 {
-        self.rtc_remote_packet_gate_convergence(RtcRemotePacketGateConvergence::Flushed)
-    }
-
-    fn transport_user_lifetime_le_1_second(&self) -> u64 {
-        self.transport_user_lifetime_bucket("1")
-    }
-
-    fn transport_user_lifetime_le_10_seconds(&self) -> u64 {
-        self.transport_user_lifetime_bucket("10")
-    }
-
-    fn transport_user_lifetime_le_60_seconds(&self) -> u64 {
-        self.transport_user_lifetime_bucket("60")
-    }
-
-    fn transport_user_lifetime_le_300_seconds(&self) -> u64 {
-        self.transport_user_lifetime_bucket("300")
-    }
-
-    fn transport_user_lifetime_count(&self) -> u64 {
-        self.histogram_count_value(MetricName::TransportUserLifetimeSeconds, &[])
-    }
-
-    fn transport_user_lifetime_sum_micros(&self) -> u64 {
-        self.histogram_sum_micros_value(MetricName::TransportUserLifetimeSeconds, &[])
+    snapshot_forwarders! {
+        u64;
+        rtc_remote_packet_gate_retries => rtc_remote_packet_gate_convergence(RtcRemotePacketGateConvergence::Retry),
+        rtc_remote_packet_gate_flushes => rtc_remote_packet_gate_convergence(RtcRemotePacketGateConvergence::Flushed),
+        transport_user_lifetime_le_1_second => transport_user_lifetime_bucket("1"),
+        transport_user_lifetime_le_10_seconds => transport_user_lifetime_bucket("10"),
+        transport_user_lifetime_le_60_seconds => transport_user_lifetime_bucket("60"),
+        transport_user_lifetime_le_300_seconds => transport_user_lifetime_bucket("300"),
+        transport_user_lifetime_count => histogram_count_value(MetricName::TransportUserLifetimeSeconds, &[]),
+        transport_user_lifetime_sum_micros => histogram_sum_micros_value(MetricName::TransportUserLifetimeSeconds, &[]),
     }
 
     fn transport_user_lifetime_bucket(&self, upper_bound: &str) -> u64 {

@@ -40,10 +40,14 @@ use str0m::{
 
 use crate::{VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
 
+const LOW_LAYER_RESOLUTION_SCALE: u16 = 4;
+const MIDDLE_LAYER_RESOLUTION_SCALE: u16 = 2;
+const HIGH_LAYER_RESOLUTION_SCALE: u16 = 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SimulcastProfile {
-    Vp8(vp8::SimulcastProfile),
-    H264(h264::SimulcastProfile),
+    Vp8(VideoBitrateLimits),
+    H264(VideoBitrateLimits),
 }
 
 impl SimulcastProfile {
@@ -56,10 +60,8 @@ impl SimulcastProfile {
             return None;
         }
         match rtp_profile.simulcast_codec()? {
-            Codec::Vp8 => Some(Self::Vp8(vp8::SimulcastProfile::new(video_bitrate_limits))),
-            Codec::H264 => Some(Self::H264(h264::SimulcastProfile::new(
-                video_bitrate_limits,
-            ))),
+            Codec::Vp8 => Some(Self::Vp8(video_bitrate_limits)),
+            Codec::H264 => Some(Self::H264(video_bitrate_limits)),
             _ => None,
         }
     }
@@ -73,26 +75,51 @@ impl SimulcastProfile {
             return None;
         }
         match capabilities::primary_codec(parameters)? {
-            MediaCodec::Vp8 => Some(Self::Vp8(vp8::SimulcastProfile::new(video_bitrate_limits))),
-            MediaCodec::H264 => Some(Self::H264(h264::SimulcastProfile::new(
-                video_bitrate_limits,
-            ))),
+            MediaCodec::Vp8 => Some(Self::Vp8(video_bitrate_limits)),
+            MediaCodec::H264 => Some(Self::H264(video_bitrate_limits)),
             _ => None,
         }
     }
 
-    fn recv_simulcast(self, parameters: Option<&MediaStream>) -> Option<Simulcast> {
-        match self {
-            Self::Vp8(profile) => profile.recv_simulcast(parameters),
-            Self::H264(profile) => profile.recv_simulcast(parameters),
+    fn layers(self, parameters: Option<&MediaStream>) -> Option<Vec<rid::LayerSpec<'_>>> {
+        let limits = match self {
+            Self::Vp8(limits) | Self::H264(limits) => limits,
+        };
+        let Some(parameters) = parameters else {
+            return Some(rid::default_layers(limits).into());
+        };
+        if matches!(self, Self::H264(_)) && !parameters.formats().any(h264::is_promoted_format) {
+            return None;
         }
+        rid::layers_from_bindings(parameters)
+    }
+
+    fn recv_simulcast(self, parameters: Option<&MediaStream>) -> Option<Simulcast> {
+        self.layers(parameters)
+            .map(|layers| rid::recv_simulcast(&layers))
     }
 
     fn upload_encodings(self, parameters: Option<&MediaStream>) -> Vec<SessionUploadEncoding> {
-        match self {
-            Self::Vp8(profile) => profile.upload_encodings(parameters),
-            Self::H264(profile) => profile.upload_encodings(parameters),
-        }
+        self.layers(parameters).map_or_else(Vec::new, |layers| {
+            let layer_count = layers.len();
+            layers
+                .into_iter()
+                .enumerate()
+                .map(|(index, layer)| SessionUploadEncoding {
+                    rid: layer.rid.to_owned(),
+                    max_bitrate: layer.max_bitrate,
+                    // Two-RID VP8 publishers retain their existing 4:1 spatial ladder.
+                    resolution_scale: matches!(self, Self::Vp8(_)).then_some(if index == 0 {
+                        LOW_LAYER_RESOLUTION_SCALE
+                    } else if index + 1 == layer_count {
+                        HIGH_LAYER_RESOLUTION_SCALE
+                    } else {
+                        MIDDLE_LAYER_RESOLUTION_SCALE
+                    }),
+                    max_framerate: None,
+                })
+                .collect()
+        })
     }
 }
 

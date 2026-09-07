@@ -38,13 +38,11 @@ impl RouteSourceKind {
 }
 
 pub(in crate::engine::media_transport::rtc) use control::apply_route_control_request;
+#[cfg(feature = "internal-benchmarks")]
+pub(in crate::engine::media_transport::rtc) use control::guarded_pkt_gate;
 #[cfg(test)]
 use control::observe_src_rid_ready;
 pub use control::{apply_media_control_batch, apply_src_decoder_ready};
-#[cfg(feature = "internal-benchmarks")]
-pub(in crate::engine::media_transport::rtc) use control::{
-    consumer_payload_type, guarded_pkt_gate,
-};
 pub(super) use control::{remove_consumer_route, remove_source_route};
 pub use keyframe::{KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target};
 pub(super) use lifecycle::{

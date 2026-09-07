@@ -14,8 +14,8 @@ const MEDIA_QUALITY_INTERVAL_ENV: &str = "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS";
 
 impl EnvParse for TelemetryLogFormat {
     fn parse(value: EnvValue) -> Result<Self> {
-        let key = value.key();
-        match value.as_str() {
+        let key = value.key;
+        match value.raw.as_str() {
             "compact" => Ok(Self::Compact),
             "json" => Ok(Self::Json),
             _ => Err(anyhow!("{key} must be either `compact` or `json`")),

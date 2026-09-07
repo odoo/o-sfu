@@ -1,5 +1,4 @@
 use std::{
-    fmt,
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
@@ -8,42 +7,9 @@ use anyhow::{Context, Result, anyhow, ensure};
 
 type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
-#[derive(Clone, Copy)]
-pub(super) struct EnvKey(&'static str);
-
-impl EnvKey {
-    fn new(key: &'static str) -> Self {
-        Self(key)
-    }
-
-    fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-impl fmt::Display for EnvKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
-    }
-}
-
 pub(super) struct EnvValue {
-    key: EnvKey,
-    raw: String,
-}
-
-impl EnvValue {
-    pub(super) fn key(&self) -> EnvKey {
-        self.key
-    }
-
-    pub(super) fn as_str(&self) -> &str {
-        &self.raw
-    }
-
-    fn into_raw(self) -> String {
-        self.raw
-    }
+    pub(super) key: &'static str,
+    pub(super) raw: String,
 }
 
 pub(super) struct Env<'a> {
@@ -60,7 +26,7 @@ impl<'a> Env<'a> {
     pub(super) fn var<T>(&self, key: &'static str) -> Var<'a, '_, T> {
         Var {
             lookup: self.lookup.as_ref(),
-            key: EnvKey::new(key),
+            key,
             checks: Vec::new(),
             aliases: Vec::new(),
         }
@@ -69,22 +35,22 @@ impl<'a> Env<'a> {
 
 pub(super) struct Var<'env, 'lookup, T> {
     lookup: &'lookup Lookup<'env>,
-    key: EnvKey,
-    checks: Vec<fn(EnvKey, T) -> Result<T>>,
-    aliases: Vec<EnvKey>,
+    key: &'static str,
+    checks: Vec<fn(&'static str, T) -> Result<T>>,
+    aliases: Vec<&'static str>,
 }
 
 impl<T> Var<'_, '_, T>
 where
     T: EnvParse,
 {
-    pub(super) fn check(mut self, check: fn(EnvKey, T) -> Result<T>) -> Self {
+    pub(super) fn check(mut self, check: fn(&'static str, T) -> Result<T>) -> Self {
         self.checks.push(check);
         self
     }
 
     pub(super) fn alias(mut self, alias: &'static str) -> Self {
-        self.aliases.push(EnvKey::new(alias));
+        self.aliases.push(alias);
         self
     }
 
@@ -115,16 +81,16 @@ where
         })
     }
 
-    fn load_key(&self, key: EnvKey) -> Option<EnvValue> {
-        (self.lookup)(key.as_str()).map(|raw| EnvValue { key, raw })
+    fn load_key(&self, key: &'static str) -> Option<EnvValue> {
+        (self.lookup)(key).map(|raw| EnvValue { key, raw })
     }
 
     fn parse(&self, value: EnvValue) -> Result<T> {
-        let key = value.key();
+        let key = value.key;
         self.validate(key, T::parse(value)?)
     }
 
-    fn validate(&self, key: EnvKey, mut value: T) -> Result<T> {
+    fn validate(&self, key: &'static str, mut value: T) -> Result<T> {
         for check in &self.checks {
             value = check(key, value)?;
         }
@@ -140,9 +106,9 @@ macro_rules! parse_from_str {
     ($type:ty, $name:literal) => {
         impl EnvParse for $type {
             fn parse(value: EnvValue) -> Result<Self> {
-                let key = value.key();
+                let key = value.key;
                 value
-                    .into_raw()
+                    .raw
                     .parse()
                     .map_err(|_error| anyhow!("{key} must be a valid {}", $name))
             }
@@ -159,9 +125,9 @@ parse_from_str!(usize, "usize");
 
 impl EnvParse for bool {
     fn parse(value: EnvValue) -> Result<Self> {
-        let key = value.key();
+        let key = value.key;
         value
-            .into_raw()
+            .raw
             .parse()
             .map_err(|_error| anyhow!("{key} must be either `true` or `false`"))
     }
@@ -169,22 +135,22 @@ impl EnvParse for bool {
 
 impl EnvParse for String {
     fn parse(value: EnvValue) -> Result<Self> {
-        Ok(value.into_raw())
+        Ok(value.raw)
     }
 }
 
 impl EnvParse for Duration {
     fn parse(value: EnvValue) -> Result<Self> {
-        let key = value.key();
+        let key = value.key;
         let seconds = value
-            .into_raw()
+            .raw
             .parse()
             .map_err(|_error| anyhow!("{key} must be a valid duration in seconds"))?;
         Ok(Self::from_secs(seconds))
     }
 }
 
-pub(super) fn positive<T>(key: EnvKey, value: T) -> Result<T>
+pub(super) fn positive<T>(key: &'static str, value: T) -> Result<T>
 where
     T: From<u8> + PartialOrd,
 {
@@ -192,7 +158,7 @@ where
     Ok(value)
 }
 
-pub(super) fn non_empty(key: EnvKey, value: String) -> Result<String> {
+pub(super) fn non_empty(key: &'static str, value: String) -> Result<String> {
     let trimmed = value.trim();
     ensure!(!trimmed.is_empty(), "{key} must not be empty");
     if trimmed.len() == value.len() {

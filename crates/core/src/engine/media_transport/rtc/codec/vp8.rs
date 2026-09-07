@@ -3,71 +3,9 @@
 use o_sfu_rfc::rtp::{CodecName, vp8, vp8::LONG_PICTURE_ID_MODULUS};
 use o_sfu_router::rtp::MediaStream;
 use str0m::{
-    media::{Pt, Simulcast},
+    media::Pt,
     rtp::{RtpWrite, Vp8Descriptor, Vp8Patch, Vp8PatchError},
 };
-
-use super::rid::{self, LayerSpec};
-use crate::{VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
-
-const LOW_LAYER_RESOLUTION_SCALE: u16 = 4;
-const MIDDLE_LAYER_RESOLUTION_SCALE: u16 = 2;
-const HIGH_LAYER_RESOLUTION_SCALE: u16 = 1;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct SimulcastProfile {
-    video_bitrate_limits: VideoBitrateLimits,
-}
-
-impl SimulcastProfile {
-    pub(super) const fn new(video_bitrate_limits: VideoBitrateLimits) -> Self {
-        Self {
-            video_bitrate_limits,
-        }
-    }
-
-    pub(super) fn recv_simulcast(self, parameters: Option<&MediaStream>) -> Option<Simulcast> {
-        self.layers(parameters)
-            .map(|layers| rid::recv_simulcast(&layers))
-    }
-
-    pub(super) fn upload_encodings(
-        self,
-        parameters: Option<&MediaStream>,
-    ) -> Vec<SessionUploadEncoding> {
-        self.layers(parameters).map_or_else(Vec::new, |layers| {
-            let layer_count = layers.len();
-            layers
-                .into_iter()
-                .enumerate()
-                .map(|(index, layer)| SessionUploadEncoding {
-                    rid: layer.rid.to_owned(),
-                    max_bitrate: layer.max_bitrate,
-                    // Two-RID publishers retain their existing 4:1 spatial ladder.
-                    resolution_scale: Some(if index == 0 {
-                        LOW_LAYER_RESOLUTION_SCALE
-                    } else if index + 1 == layer_count {
-                        HIGH_LAYER_RESOLUTION_SCALE
-                    } else {
-                        MIDDLE_LAYER_RESOLUTION_SCALE
-                    }),
-                    max_framerate: None,
-                })
-                .collect()
-        })
-    }
-
-    fn layers(self, parameters: Option<&MediaStream>) -> Option<Vec<LayerSpec<'_>>> {
-        parameters.map_or_else(
-            || Some(rid::default_layers(self.video_bitrate_limits).into()),
-            Self::layers_from_parameters,
-        )
-    }
-
-    fn layers_from_parameters(parameters: &MediaStream) -> Option<Vec<LayerSpec<'_>>> {
-        rid::layers_from_bindings(parameters)
-    }
-}
 
 pub(super) fn payload_types(parameters: &MediaStream) -> impl Iterator<Item = Pt> + '_ {
     parameters
@@ -97,10 +35,6 @@ pub(super) fn payload_type_matches((lower, upper): (u64, u64), payload_type: Pt)
     half & (1 << (payload_type % 64)) != 0
 }
 
-pub(super) fn payload_starts_decoder_refresh(payload: &[u8]) -> bool {
-    vp8::payload_starts_keyframe(payload)
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct Packet {
     descriptor: Option<Vp8Descriptor>,
@@ -116,7 +50,7 @@ impl Packet {
         Self {
             identity: descriptor.map_or_else(Identity::default, Identity::from),
             descriptor,
-            decoder_refresh: payload_starts_decoder_refresh(payload),
+            decoder_refresh: vp8::payload_starts_keyframe(payload),
         }
     }
 

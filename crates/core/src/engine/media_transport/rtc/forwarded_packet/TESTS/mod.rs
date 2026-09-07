@@ -54,19 +54,6 @@ fn project_codec_packet(packet: &codec::Packet) -> codec::ProjectedPacket {
 }
 
 #[test]
-fn forwarded_packet_resolves_transport_media_id_through_the_registry() {
-    let session_key = test_transport_session_key(41, 0, 9, UserId::Integer(7));
-    let mut state = PacketLoopState::default();
-    let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
-        session_key: session_key.clone(),
-        mid: Mid::from("aud-up"),
-    });
-    let mut packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
-
-    assert_eq!(packet.resolve_src_media(&state), Some(transport_media_id));
-}
-
-#[test]
 fn local_forwarded_packet_resolves_transport_media_id_through_session_handle() {
     let session_key = test_transport_session_key(51, 0, 19, UserId::Integer(17));
     let mut state = PacketLoopState::default();

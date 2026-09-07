@@ -18,8 +18,8 @@ use super::{
 
 impl EnvParse for RtcUdpIoBackend {
     fn parse(value: EnvValue) -> Result<Self> {
-        let key = value.key();
-        match value.as_str() {
+        let key = value.key;
+        match value.raw.as_str() {
             "tokio" => Ok(Self::Tokio),
             "io_uring" => {
                 ensure!(

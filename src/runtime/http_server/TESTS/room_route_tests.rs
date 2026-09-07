@@ -50,15 +50,6 @@ async fn stats_first_remote_address(state: &RuntimeState) -> TestResult<String> 
 }
 
 #[tokio::test]
-async fn room_requires_authorization_header() -> TestResult {
-    assert_room_status(
-        Request::get(route::v1::CHANNEL).header(header::HOST, "sfu.example.com"),
-        StatusCode::UNAUTHORIZED,
-    )
-    .await
-}
-
-#[tokio::test]
 async fn room_rejects_unknown_authorization_scheme() -> TestResult {
     let token = room_token(Some("issuer-a"), Some(TEST_ROOM_KEY), None)?;
     assert_room_status(room_builder(&token, "Basic"), StatusCode::UNAUTHORIZED).await

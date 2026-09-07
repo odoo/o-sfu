@@ -141,18 +141,3 @@ pub(super) struct FeaturedUserUpdate {
     pub(super) connection_id: ConnectionId,
     pub(super) featured: Option<bool>,
 }
-
-impl FeaturedUserUpdate {
-    #[must_use]
-    pub(super) fn new(
-        user_id: UserId,
-        connection_id: ConnectionId,
-        featured: Option<bool>,
-    ) -> Self {
-        Self {
-            user_id,
-            connection_id,
-            featured,
-        }
-    }
-}

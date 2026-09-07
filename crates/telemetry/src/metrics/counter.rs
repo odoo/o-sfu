@@ -146,6 +146,15 @@ impl<L: MetricLabel> Default for PaddedCounterFamily<L> {
 }
 
 impl<L: MetricLabel> PaddedCounterFamily<L> {
+    pub(super) fn accumulate_into(&self, totals: &mut [u64]) {
+        for label in L::VARIANTS {
+            let count = self.load(*label);
+            if let Some(total) = totals.get_mut(label.as_index()) {
+                *total = total.saturating_add(count);
+            }
+        }
+    }
+
     pub(super) fn increment(&self, label: L) {
         if let Some(counter) = self.counters.get(label.as_index()) {
             counter.increment();

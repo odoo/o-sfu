@@ -4,7 +4,7 @@ use o_sfu_rfc::jwt::HS256_MIN_KEY_BYTES;
 use super::{
     AuthConfig, DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
     DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
-    env::{Env, EnvKey, positive},
+    env::{Env, positive},
 };
 use crate::runtime::auth::decode_key;
 
@@ -28,7 +28,7 @@ impl AuthConfig {
     }
 }
 
-fn validate_auth_key(key: EnvKey, value: String) -> Result<String> {
+fn validate_auth_key(key: &'static str, value: String) -> Result<String> {
     let key_len = decode_key(&value)
         .map_err(|_error| anyhow!("{key} must be valid base64"))?
         .len();

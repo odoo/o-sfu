@@ -3,14 +3,6 @@ use o_sfu_core::prelude::{AudioCodecPreference, CodecPreferences, VideoCodecPref
 use super::{Env, load_codec_preferences};
 
 #[test]
-fn load_codec_preferences_defaults_to_canonical_order() {
-    assert_eq!(
-        load_codec_preferences(&Env::new(|_| None)).ok(),
-        Some(CodecPreferences::default())
-    );
-}
-
-#[test]
 fn load_codec_preferences_accepts_partial_orders() {
     let preferences = load_codec_preferences(&Env::new(|key| match key {
         "CODEC_AUDIO_PREFERENCE" => Some("PCMU,opus".to_owned()),

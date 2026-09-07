@@ -87,6 +87,7 @@ impl RtpMetrics {
                     worker_snapshots
                         .entry(media_worker_id)
                         .or_insert_with(|| RtpWorkerMetricsSnapshot::new(media_worker_id))
+                        .traffic
                         .add_recorder(&worker.recorder);
                 }
             }
@@ -105,40 +106,12 @@ struct RtpWorkerMetricsRecorder {
 
 #[derive(Debug, Default)]
 pub(super) struct RtpMetricsSnapshot {
-    packets: [u64; RTP_FLOW_DIRECTION_COUNT],
-    payload_bytes: [u64; RTP_FLOW_DIRECTION_COUNT],
-    forwarded_packets: [u64; RTP_FORWARD_DESTINATION_COUNT],
-    forwarded_payload_bytes: [u64; RTP_FORWARD_DESTINATION_COUNT],
+    pub(super) traffic: RtpTrafficSnapshot,
     decoder_refreshes: [u64; RTP_DECODER_REFRESH_SCOPE_COUNT],
     worker_snapshots: Vec<RtpWorkerMetricsSnapshot>,
 }
 
 impl RtpMetricsSnapshot {
-    pub(super) fn packets(&self, direction: RtpFlowDirection) -> u64 {
-        self.packets.get(direction.as_index()).copied().unwrap_or(0)
-    }
-
-    pub(super) fn payload_bytes(&self, direction: RtpFlowDirection) -> u64 {
-        self.payload_bytes
-            .get(direction.as_index())
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub(super) fn forwarded_packets(&self, destination: RtpForwardDestinationKind) -> u64 {
-        self.forwarded_packets
-            .get(destination.as_index())
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub(super) fn forwarded_payload_bytes(&self, destination: RtpForwardDestinationKind) -> u64 {
-        self.forwarded_payload_bytes
-            .get(destination.as_index())
-            .copied()
-            .unwrap_or(0)
-    }
-
     pub(super) fn decoder_refreshes(&self, scope: RtpDecoderRefreshScope) -> u64 {
         self.decoder_refreshes
             .get(scope.as_index())
@@ -151,45 +124,9 @@ impl RtpMetricsSnapshot {
     }
 
     fn add_recorder(&mut self, recorder: &RtpMetricsRecorder) {
-        for direction in <RtpFlowDirection as MetricLabel>::VARIANTS {
-            self.add_flow(
-                *direction,
-                recorder.packets.load(*direction),
-                recorder.payload_bytes.load(*direction),
-            );
-        }
-        for destination in <RtpForwardDestinationKind as MetricLabel>::VARIANTS {
-            self.add_forwarded(
-                *destination,
-                recorder.forwarded_packets.load(*destination),
-                recorder.forwarded_payload_bytes.load(*destination),
-            );
-        }
+        self.traffic.add_recorder(recorder);
         for scope in <RtpDecoderRefreshScope as MetricLabel>::VARIANTS {
             self.add_decoder_refresh(*scope, recorder.decoder_refreshes.load(*scope));
-        }
-    }
-
-    fn add_flow(&mut self, direction: RtpFlowDirection, packets: u64, payload_bytes: u64) {
-        if let Some(counter) = self.packets.get_mut(direction.as_index()) {
-            *counter = counter.saturating_add(packets);
-        }
-        if let Some(counter) = self.payload_bytes.get_mut(direction.as_index()) {
-            *counter = counter.saturating_add(payload_bytes);
-        }
-    }
-
-    fn add_forwarded(
-        &mut self,
-        destination: RtpForwardDestinationKind,
-        packets: u64,
-        payload_bytes: u64,
-    ) {
-        if let Some(counter) = self.forwarded_packets.get_mut(destination.as_index()) {
-            *counter = counter.saturating_add(packets);
-        }
-        if let Some(counter) = self.forwarded_payload_bytes.get_mut(destination.as_index()) {
-            *counter = counter.saturating_add(payload_bytes);
         }
     }
 
@@ -203,10 +140,7 @@ impl RtpMetricsSnapshot {
 #[derive(Debug, Default)]
 pub(super) struct RtpWorkerMetricsSnapshot {
     media_worker_id: usize,
-    packets: [u64; RTP_FLOW_DIRECTION_COUNT],
-    payload_bytes: [u64; RTP_FLOW_DIRECTION_COUNT],
-    forwarded_packets: [u64; RTP_FORWARD_DESTINATION_COUNT],
-    forwarded_payload_bytes: [u64; RTP_FORWARD_DESTINATION_COUNT],
+    pub(super) traffic: RtpTrafficSnapshot,
 }
 
 impl RtpWorkerMetricsSnapshot {
@@ -220,7 +154,17 @@ impl RtpWorkerMetricsSnapshot {
     pub(super) const fn media_worker_id(&self) -> usize {
         self.media_worker_id
     }
+}
 
+#[derive(Debug, Default)]
+pub(super) struct RtpTrafficSnapshot {
+    packets: [u64; RTP_FLOW_DIRECTION_COUNT],
+    payload_bytes: [u64; RTP_FLOW_DIRECTION_COUNT],
+    forwarded_packets: [u64; RTP_FORWARD_DESTINATION_COUNT],
+    forwarded_payload_bytes: [u64; RTP_FORWARD_DESTINATION_COUNT],
+}
+
+impl RtpTrafficSnapshot {
     pub(super) fn packets(&self, direction: RtpFlowDirection) -> u64 {
         self.packets.get(direction.as_index()).copied().unwrap_or(0)
     }

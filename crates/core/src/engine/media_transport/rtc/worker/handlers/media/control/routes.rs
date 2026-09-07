@@ -1,5 +1,5 @@
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
-use str0m::media::{Mid, Pt};
+use str0m::media::Mid;
 
 use super::{super::RouteSourceKind, selected_rid};
 use crate::engine::media_transport::{
@@ -105,7 +105,7 @@ pub fn register_consumer_route(
         consumer_rtp,
         active,
     } = registration;
-    let dest_payload_type = consumer_payload_type(consumer_rtp);
+    let dest_payload_type = codec::primary_payload_type(consumer_rtp);
     let repair_enabled = codec::repair_enabled(consumer_rtp);
     let requires_decoder_refresh = codec::requires_decoder_refresh(consumer_rtp, dest_payload_type);
     let (packet_gate, pending_gate) = selected_rid::guarded_pkt_gate(
@@ -136,10 +136,6 @@ pub fn register_consumer_route(
         src_media,
         Some(dst_idx),
     );
-}
-
-pub fn consumer_payload_type(consumer_rtp: &RouterRtpParameters) -> Option<Pt> {
-    codec::primary_payload_type(consumer_rtp)
 }
 
 pub(super) fn set_remote_src_pkt_gate(

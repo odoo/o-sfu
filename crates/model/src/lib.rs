@@ -236,27 +236,15 @@ impl UserInfo {
     /// `None` means "unchanged", matching the wire contract for incremental
     /// user-info updates
     pub fn apply_partial_update(&mut self, update: &Self) {
-        if let Some(is_talking) = update.is_talking {
-            self.is_talking = Some(is_talking);
-        }
-        if let Some(is_featured) = update.is_featured {
-            self.is_featured = Some(is_featured);
-        }
-        if let Some(is_camera_on) = update.is_camera_on {
-            self.is_camera_on = Some(is_camera_on);
-        }
-        if let Some(is_screen_sharing_on) = update.is_screen_sharing_on {
-            self.is_screen_sharing_on = Some(is_screen_sharing_on);
-        }
-        if let Some(is_self_muted) = update.is_self_muted {
-            self.is_self_muted = Some(is_self_muted);
-        }
-        if let Some(is_deaf) = update.is_deaf {
-            self.is_deaf = Some(is_deaf);
-        }
-        if let Some(is_raising_hand) = update.is_raising_hand {
-            self.is_raising_hand = Some(is_raising_hand);
-        }
+        *self = Self {
+            is_talking: update.is_talking.or(self.is_talking),
+            is_featured: update.is_featured.or(self.is_featured),
+            is_camera_on: update.is_camera_on.or(self.is_camera_on),
+            is_screen_sharing_on: update.is_screen_sharing_on.or(self.is_screen_sharing_on),
+            is_self_muted: update.is_self_muted.or(self.is_self_muted),
+            is_deaf: update.is_deaf.or(self.is_deaf),
+            is_raising_hand: update.is_raising_hand.or(self.is_raising_hand),
+        };
     }
 
     /// return this presence payload with the room-layout featured flag applied

@@ -117,22 +117,9 @@ impl RoomState {
         &mut self,
         user_id: &UserId,
         connection_id: ConnectionId,
-        is_new: bool,
+        previous_connection: Option<ConnectionId>,
         home_placement: RouterPlacement,
     ) -> Result<SessionPlacementCommit, RoomJoinError> {
-        let previous_connection = if is_new {
-            None
-        } else {
-            let Some(previous_connection) = self.users.get(user_id).map(|user| user.connection_id)
-            else {
-                error!(
-                    ?user_id,
-                    "missing previous room user for replacement join routing"
-                );
-                return Err(RoomJoinError::RouterState);
-            };
-            Some(previous_connection)
-        };
         self.topology
             .commit_session_placement(user_id, connection_id, previous_connection, home_placement)
             .map_err(|rejection| {
@@ -236,7 +223,8 @@ impl RoomState {
             BTreeSet::new()
         };
         source_recipients.remove(user_id);
-        let placement = self.apply_join_routing(user_id, connection_id, is_new, home_placement)?;
+        let placement =
+            self.apply_join_routing(user_id, connection_id, previous_connection, home_placement)?;
         let receipt = placement.receipt;
         let mut transport_plan = placement.replacement_transport_plan;
         if let Some(previous_connection) = previous_connection {

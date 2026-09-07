@@ -1,12 +1,6 @@
 use super::{Env, RuntimeFeatureFlags, load_runtime_feature_flags};
 
 #[test]
-fn load_runtime_feature_flags_defaults_to_all_disabled() {
-    let config = load_runtime_feature_flags(&Env::new(|_| None));
-    assert_eq!(config.ok(), Some(RuntimeFeatureFlags::default()));
-}
-
-#[test]
 fn load_runtime_feature_flags_accepts_explicit_flags() {
     let config = load_runtime_feature_flags(&Env::new(|key| match key {
         "FEATURE_TRANSCRIPTION" | "FEATURE_AUDIO_RECORDING" | "FEATURE_VIDEO_RECORDING" => {

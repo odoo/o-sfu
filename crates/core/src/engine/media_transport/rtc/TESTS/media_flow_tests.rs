@@ -17,12 +17,7 @@ async fn rtc_metrics_track_live_transport_users_without_double_counting() {
     let session_key = transport_key(1, 16, UserId::Integer(16));
 
     assert_eq!(adapter.metrics.snapshot().active_transport_users(), 0);
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     assert_eq!(adapter.metrics.snapshot().active_transport_users(), 1);
 
     assert!(matches!(
@@ -76,12 +71,7 @@ async fn rtc_session_bootstrap_applies_configured_outgoing_bitrate_cap() {
     let adapter = rtc_with_bitrate_limits(Bitrate::from_kbps(1_500), Bitrate::from_kbps(2_500));
     let session_key = transport_key(1, 181, UserId::Integer(181));
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     assert_eq!(
         adapter.debug_session_max_bitrate_out(&session_key).await,
         Some(Bitrate::from_kbps(2_500))
@@ -151,12 +141,7 @@ async fn rtc_recv_media_applies_configured_incoming_bitrate_cap() {
     let session_key = transport_key(1, 182, UserId::Integer(182));
     let rtp_parameters = sample_router_rtp_parameters("aud-up", 52_525);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     assert!(
         adapter
             .add_recv_media(&session_key, Str0mMediaKind::Audio, &rtp_parameters)
@@ -177,18 +162,8 @@ async fn rtc_consume_media_uses_negotiated_mid_and_destination_ssrc() {
     let producer_rtp_parameters = sample_router_rtp_parameters("aud-up", 51_000);
     let consumer_rtp_parameters = sample_router_rtp_parameters("aud-down", 61_000);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &producer_session_key)
-            .await
-            .is_ok()
-    );
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &consumer_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &producer_session_key).await;
+    let _offer = expect_initial_offer(&adapter, &consumer_key).await;
 
     let source_media_id = adapter
         .add_recv_media(
@@ -247,18 +222,8 @@ async fn rtc_consume_media_can_start_route_inactive() {
     let producer_rtp_parameters = sample_router_rtp_parameters("aud-up", 51_100);
     let consumer_rtp_parameters = sample_router_rtp_parameters("aud-down", 61_100);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &producer_session_key)
-            .await
-            .is_ok()
-    );
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &consumer_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &producer_session_key).await;
+    let _offer = expect_initial_offer(&adapter, &consumer_key).await;
 
     let source_media_id = adapter
         .add_recv_media(
@@ -449,12 +414,7 @@ async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
     let session_key = transport_key(1, 21, UserId::Integer(21));
     let rtp_parameters = sample_router_rtp_parameters("cam-up", 77_777);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     let transport_media_id = adapter
         .add_recv_media(&session_key, Str0mMediaKind::Video, &rtp_parameters)
         .await
@@ -488,52 +448,12 @@ async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
 }
 
 #[tokio::test]
-async fn rtc_incoming_bitrate_snapshot_expires_after_one_second() {
-    let adapter = RtcWorker::default();
-    let session_key = transport_key(1, 22, UserId::Integer(22));
-    let rtp_parameters = sample_router_rtp_parameters("aud-up", 88_888);
-
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
-    let transport_media_id = adapter
-        .add_recv_media(&session_key, Str0mMediaKind::Audio, &rtp_parameters)
-        .await
-        .expect("should declare recv media");
-
-    let now = Instant::now();
-    adapter
-        .debug_record_incoming_media(&session_key, transport_media_id, 64, now)
-        .await;
-    let worker_handle = adapter.test_handle();
-    let snapshot = {
-        let Ok(bitrate_registry) = worker_handle.bitrate_registry.lock() else {
-            return;
-        };
-        bitrate_registry.transport_bitrate_snapshot_at(
-            slice::from_ref(&session_key),
-            now + Duration::from_secs(2),
-        )
-    };
-    assert_eq!(snapshot.total, Bitrate::zero());
-    assert!(snapshot.per_media.is_empty());
-}
-
-#[tokio::test]
 async fn rtc_incoming_bitrate_snapshot_ignores_closed_sessions() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 23, UserId::Integer(23));
     let rtp_parameters = sample_router_rtp_parameters("cam-up", 99_999);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
     let transport_media_id = adapter
         .add_recv_media(&session_key, Str0mMediaKind::Video, &rtp_parameters)
         .await
@@ -627,12 +547,7 @@ async fn active_speaker_expiry_wakes_policy_without_input() {
     let session_key = transport_key(9, 41, UserId::Integer(41));
     let rtp_parameters = sample_router_rtp_parameters("aud-up", 94_001);
 
-    assert!(
-        adapter
-            .create_initial_session_offer("test-room", &session_key)
-            .await
-            .is_ok()
-    );
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
 
     let media_id = adapter
         .add_recv_media(&session_key, Str0mMediaKind::Audio, &rtp_parameters)

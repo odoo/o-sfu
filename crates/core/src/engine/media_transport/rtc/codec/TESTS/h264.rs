@@ -1,15 +1,15 @@
 use o_sfu_rfc::rtp::{self as rfc_rtp, h264::PacketizationMode};
 use o_sfu_router::{
     MediaKind,
-    rtp::{CodecSetting, MediaFormat, PayloadType, StreamBinding},
+    rtp::{CodecSetting, MediaFormat, MediaStream, PayloadType, StreamBinding},
 };
 
-use super::*;
-use crate::Bitrate;
+use super::super::{SimulcastProfile, rid};
+use crate::{Bitrate, VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
 
 #[test]
 fn profile_accepts_only_the_promoted_chromium_format() {
-    let profile = SimulcastProfile::new(VideoBitrateLimits::default());
+    let profile = SimulcastProfile::H264(VideoBitrateLimits::default());
     let parameters = h264_parameters(PacketizationMode::NonInterleaved, "42E01F");
     assert!(profile.recv_simulcast(Some(&parameters)).is_some());
 
@@ -25,7 +25,7 @@ fn profile_accepts_only_the_promoted_chromium_format() {
 
 #[test]
 fn default_policy_advertises_three_rids_without_resolution_hints() {
-    let profile = SimulcastProfile::new(VideoBitrateLimits::default());
+    let profile = SimulcastProfile::H264(VideoBitrateLimits::default());
     let simulcast = profile.recv_simulcast(None);
 
     assert_eq!(
@@ -74,7 +74,7 @@ fn publication_policy_preserves_rid_bitrates_without_resolution_hints() {
                 .with_max_bitrate(800_000),
         ],
     );
-    let profile = SimulcastProfile::new(VideoBitrateLimits::default());
+    let profile = SimulcastProfile::H264(VideoBitrateLimits::default());
 
     assert_eq!(
         profile.upload_encodings(Some(&parameters)),

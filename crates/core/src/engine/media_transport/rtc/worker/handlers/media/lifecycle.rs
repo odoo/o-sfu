@@ -521,7 +521,7 @@ pub fn worker_add_send_media(
         source_route_kind = route_source.label(),
         ?transport_media_id,
         ?media_kind,
-        consumer_payload_type = ?super::control::consumer_payload_type(consumer_rtp_parameters),
+        consumer_payload_type = ?codec::primary_payload_type(consumer_rtp_parameters),
         active,
         downstream_rid_policy = "single_ridless_stream",
         "declared send-only media and registered media route for consumer"

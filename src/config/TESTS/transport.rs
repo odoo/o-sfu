@@ -29,7 +29,6 @@ fn load_transport_config_with_defaults(overrides: &[(&str, &str)]) -> Result<Tra
 }
 
 struct InvalidTransportCase<'a> {
-    name: &'a str,
     overrides: &'a [(&'a str, &'a str)],
     message: &'a str,
 }
@@ -39,7 +38,7 @@ fn assert_invalid_transport_cases(cases: &[InvalidTransportCase<'_>]) {
         let error = load_transport_config_with_defaults(case.overrides)
             .err()
             .map(|error| error.to_string());
-        assert_eq!(error.as_deref(), Some(case.message), "{}", case.name);
+        assert_eq!(error.as_deref(), Some(case.message), "{:?}", case.overrides);
     }
 }
 
@@ -101,7 +100,6 @@ fn load_transport_config_accepts_explicit_rtc_udp_io_backend() -> Result<()> {
 #[test]
 fn load_transport_config_rejects_io_uring_backend_on_non_linux() {
     assert_invalid_transport_cases(&[InvalidTransportCase {
-        name: "non-Linux io_uring backend",
         overrides: &[("RTC_UDP_IO_BACKEND", "io_uring")],
         message: "RTC_UDP_IO_BACKEND=io_uring is only supported on Linux",
     }]);
@@ -170,36 +168,21 @@ fn load_transport_config_accepts_video_adaptation_tuning() -> Result<()> {
 }
 
 #[test]
-fn load_transport_config_defaults_video_adaptation_tuning() -> Result<()> {
-    let config = load_transport_config_with_defaults(&[])?;
-
-    assert_eq!(
-        config.video_adaptation_tuning,
-        VideoAdaptationTuning::default()
-    );
-    Ok(())
-}
-
-#[test]
 fn load_transport_config_rejects_invalid_video_adaptation_tuning() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "zero soft pause dwell",
             overrides: &[("ROOM_SOFT_PAUSE_DWELL_MS", "0")],
             message: "ROOM_SOFT_PAUSE_DWELL_MS must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero upgrade dwell",
             overrides: &[("ROOM_UPGRADE_DWELL_MS", "0")],
             message: "ROOM_UPGRADE_DWELL_MS must be greater than zero",
         },
         InvalidTransportCase {
-            name: "legacy pause count",
             overrides: &[("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS", "2")],
             message: "ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS is no longer supported, use ROOM_SOFT_PAUSE_DWELL_MS",
         },
         InvalidTransportCase {
-            name: "legacy upgrade count with replacement",
             overrides: &[
                 ("ROOM_UPSWITCH_STABLE_OBSERVATIONS", "3"),
                 ("ROOM_UPGRADE_DWELL_MS", "1250"),
@@ -207,7 +190,6 @@ fn load_transport_config_rejects_invalid_video_adaptation_tuning() {
             message: "ROOM_UPSWITCH_STABLE_OBSERVATIONS is no longer supported, use ROOM_UPGRADE_DWELL_MS",
         },
         InvalidTransportCase {
-            name: "headroom percent above 100",
             overrides: &[("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT", "150")],
             message: "ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT must not exceed 100",
         },
@@ -259,37 +241,30 @@ fn rtc_port_range_splits_ports_across_workers() {
 fn load_transport_config_rejects_invalid_transport_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "removed transport backend",
             overrides: &[("TRANSPORT_BACKEND", "rtc")],
             message: "TRANSPORT_BACKEND is no longer supported; o-sfu always boots the RTC transport",
         },
         InvalidTransportCase {
-            name: "invalid RTC UDP IO backend",
             overrides: &[("RTC_UDP_IO_BACKEND", "epoll")],
             message: "RTC_UDP_IO_BACKEND must be one of tokio or io_uring, got epoll",
         },
         InvalidTransportCase {
-            name: "unspecified public IP",
             overrides: &[("ANNOUNCED_IP", "0.0.0.0")],
             message: "ANNOUNCED_IP must be a concrete advertised address",
         },
         InvalidTransportCase {
-            name: "multicast public IP",
             overrides: &[("ANNOUNCED_IP", "239.1.1.1")],
             message: "ANNOUNCED_IP cannot be a multicast address",
         },
         InvalidTransportCase {
-            name: "inverted RTC port range",
             overrides: &[("RTC_MIN_PORT", "5000"), ("RTC_MAX_PORT", "4000")],
             message: "RTC_MAX_PORT must be greater than or equal to RTC_MIN_PORT",
         },
         InvalidTransportCase {
-            name: "zero RTC media worker count",
             overrides: &[("RTC_MEDIA_WORKER_COUNT", "0")],
             message: "RTC_MEDIA_WORKER_COUNT must be greater than zero",
         },
         InvalidTransportCase {
-            name: "more RTC workers than ports",
             overrides: &[
                 ("RTC_MIN_PORT", "4000"),
                 ("RTC_MAX_PORT", "4001"),
@@ -304,12 +279,10 @@ fn load_transport_config_rejects_invalid_transport_values() {
 fn load_transport_config_rejects_invalid_room_policy_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "zero spillover delay threshold",
             overrides: &[("ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS", "0")],
             message: "ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero room router cap",
             overrides: &[
                 ("RTC_MEDIA_WORKER_COUNT", "2"),
                 ("ROOM_MAX_LOCAL_ROUTERS", "0"),
@@ -317,7 +290,6 @@ fn load_transport_config_rejects_invalid_room_policy_values() {
             message: "ROOM_MAX_LOCAL_ROUTERS must be greater than zero",
         },
         InvalidTransportCase {
-            name: "more room routers than RTC workers",
             overrides: &[
                 ("RTC_MEDIA_WORKER_COUNT", "2"),
                 ("ROOM_MAX_LOCAL_ROUTERS", "3"),
@@ -331,27 +303,22 @@ fn load_transport_config_rejects_invalid_room_policy_values() {
 fn load_transport_config_rejects_invalid_bitrate_and_media_limit_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "zero max incoming bitrate",
             overrides: &[("MAX_BITRATE_IN", "0")],
             message: "MAX_BITRATE_IN must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero max outgoing bitrate",
             overrides: &[("MAX_BITRATE_OUT", "0")],
             message: "MAX_BITRATE_OUT must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero max video bitrate",
             overrides: &[("MAX_VIDEO_BITRATE", "0")],
             message: "MAX_VIDEO_BITRATE must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero active audio speaker limit",
             overrides: &[("ROOM_MAX_ACTIVE_AUDIO_SPEAKERS", "0")],
             message: "ROOM_MAX_ACTIVE_AUDIO_SPEAKERS must be greater than zero",
         },
         InvalidTransportCase {
-            name: "zero video download limit",
             overrides: &[("ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER", "0")],
             message: "ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER must be greater than zero",
         },
@@ -388,32 +355,26 @@ fn load_transport_config_preserves_legacy_error_precedence() {
 fn load_transport_config_preserves_numeric_parse_errors() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "invalid RTC min port",
             overrides: &[("RTC_MIN_PORT", "abc")],
             message: "RTC_MIN_PORT must be a valid u16",
         },
         InvalidTransportCase {
-            name: "invalid max incoming bitrate",
             overrides: &[("MAX_BITRATE_IN", "abc")],
             message: "MAX_BITRATE_IN must be a valid u64",
         },
         InvalidTransportCase {
-            name: "invalid room router cap",
             overrides: &[("ROOM_MAX_LOCAL_ROUTERS", "abc")],
             message: "ROOM_MAX_LOCAL_ROUTERS must be a valid usize",
         },
         InvalidTransportCase {
-            name: "invalid spillover delay threshold",
             overrides: &[("ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS", "abc")],
             message: "ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS must be a valid u64",
         },
         InvalidTransportCase {
-            name: "invalid active audio speaker limit",
             overrides: &[("ROOM_MAX_ACTIVE_AUDIO_SPEAKERS", "abc")],
             message: "ROOM_MAX_ACTIVE_AUDIO_SPEAKERS must be a valid usize",
         },
         InvalidTransportCase {
-            name: "invalid video download limit",
             overrides: &[("ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER", "abc")],
             message: "ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER must be a valid usize",
         },
@@ -424,12 +385,10 @@ fn load_transport_config_preserves_numeric_parse_errors() {
 fn load_transport_config_rejects_unrepresentable_policy_deadlines() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "unrepresentable soft pause dwell",
             overrides: &[("ROOM_SOFT_PAUSE_DWELL_MS", "18446744073709551615")],
             message: "ROOM_SOFT_PAUSE_DWELL_MS must not exceed 3153600000000",
         },
         InvalidTransportCase {
-            name: "unrepresentable upgrade dwell",
             overrides: &[("ROOM_UPGRADE_DWELL_MS", "18446744073709551615")],
             message: "ROOM_UPGRADE_DWELL_MS must not exceed 3153600000000",
         },

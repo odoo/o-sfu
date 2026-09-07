@@ -94,7 +94,7 @@ fn retrieve_room_reservation(
         return Err(RoomManagerServeError::ConflictingReservation);
     }
     entry.lifecycle.renew_reservation();
-    Ok(Some(entry.room))
+    Ok(Some(Arc::clone(&entry.room)))
 }
 
 /// Coordinates current room admission and lifecycle.
@@ -332,7 +332,7 @@ impl RoomManager {
         connection_id: ConnectionId,
         media_transport: &MediaTransport,
     ) -> bool {
-        let Some((_room, did_remove_active_session)) = self
+        let Some(did_remove_active_session) = self
             .run_current_room_mutation(
                 room_id,
                 |room| async move {
@@ -391,9 +391,7 @@ impl RoomManager {
         F: FnOnce(Arc<Room>) -> Fut,
         Fut: Future<Output = T>,
     {
-        self.run_current_room_mutation(room_id, action, false)
-            .await
-            .map(|(_, output)| output)
+        self.run_current_room_mutation(room_id, action, false).await
     }
 
     async fn run_current_room_mutation<T, F, Fut>(
@@ -401,17 +399,16 @@ impl RoomManager {
         room_id: &str,
         action: F,
         remove_if_empty: bool,
-    ) -> Option<(Arc<Room>, T)>
+    ) -> Option<T>
     where
         F: FnOnce(Arc<Room>) -> Fut,
         Fut: Future<Output = T>,
     {
         let mutation = self.begin_current_room_mutation(room_id).await?;
-        let room = Arc::clone(&mutation.room);
-        let output = action(Arc::clone(&room)).await;
+        let output = action(Arc::clone(&mutation.room)).await;
         self.finish_session_mutation(room_id, mutation, remove_if_empty)
             .await;
-        Some((room, output))
+        Some(output)
     }
 
     async fn finish_session_mutation(
@@ -465,8 +462,7 @@ impl RoomManager {
         let directory = self.directory.read().await;
         room_instance_ids
             .iter()
-            .filter_map(|room_instance_id| directory.entry_by_instance_id(*room_instance_id))
-            .map(|entry| entry.room)
+            .filter_map(|room_instance_id| directory.get_by_instance_id(*room_instance_id))
             .collect()
     }
 

@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::*;
+use super::{super::EnvelopeDecodeError, *};
 
 #[test]
 fn protocol_start_recording_request_decodes_with_request_id() {
@@ -93,4 +93,28 @@ fn protocol_server_start_recording_response_serializes_to_wire_envelope() -> ser
         })
     );
     Ok(())
+}
+
+#[test]
+fn stop_recording_request_requires_an_absent_payload() {
+    let request_id = RequestId::new("stop-recording");
+    assert_eq!(
+        ClientEnvelope::decode(Envelope::request("stoprecording", request_id.clone(), None)),
+        Ok(ClientEnvelope::Request {
+            request_id: request_id.clone(),
+            request: ClientRequest::StopRecording,
+        })
+    );
+    for payload in [json!(null), json!({})] {
+        assert_eq!(
+            ClientEnvelope::decode(Envelope::request(
+                "stoprecording",
+                request_id.clone(),
+                Some(payload)
+            )),
+            Err(EnvelopeDecodeError::UnexpectedPayload(
+                "stoprecording".to_owned()
+            ))
+        );
+    }
 }

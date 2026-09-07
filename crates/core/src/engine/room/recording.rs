@@ -8,7 +8,8 @@ impl Room {
         _connection_id: ConnectionId,
         _options: RecordingOptions,
     ) -> bool {
-        self.reject_recording_start()
+        self.metrics.record_recording_start_rejected();
+        false
     }
 
     pub(crate) fn apply_recording_stop(
@@ -16,15 +17,6 @@ impl Room {
         _user_id: &UserId,
         _connection_id: ConnectionId,
     ) -> bool {
-        self.reject_recording_stop()
-    }
-
-    fn reject_recording_start(&self) -> bool {
-        self.metrics.record_recording_start_rejected();
-        false
-    }
-
-    fn reject_recording_stop(&self) -> bool {
         self.metrics.record_recording_stop_rejected();
         false
     }
