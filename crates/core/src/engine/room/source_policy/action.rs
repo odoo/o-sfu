@@ -1,4 +1,6 @@
-use super::super::media_graph::SubscriptionKey;
+use std::time::Instant;
+
+use super::super::media_graph::{PendingUpgrade, SubscriptionKey};
 use crate::{
     Bitrate,
     engine::{
@@ -39,6 +41,7 @@ pub(super) struct VideoRouteAllocation {
     pub(super) key: SubscriptionKey,
     pub(super) source_id: PublishedSourceId,
     pub(super) route: TransportConsumerRoute,
+    pub(super) interrupts_upgrade: bool,
     pub(super) captured: VideoRouteAllocationState,
     pub(super) planned: Option<VideoRouteAllocationState>,
 }
@@ -51,6 +54,24 @@ pub(super) struct ReceiverVideoBudgetPlan {
     pub(super) routes: Vec<VideoRouteAllocation>,
 }
 
+/// Receiver timing captured before transport work, including cancellation.
+#[derive(Debug)]
+pub(super) struct ReceiverPolicyTiming {
+    pub receiver: UserId,
+    pub connection_id: ConnectionId,
+    pub soft_pause_deadline: Option<Instant>,
+    pub next_deadline: Option<Instant>,
+    /// Existing eligible wakeups survive rejection of an unrelated control.
+    pub retained_deadline: Option<Instant>,
+}
+
+/// Only changed upgrade state requires validation and a topology write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UpgradeChange {
+    Unchanged,
+    Set(Option<PendingUpgrade>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::engine::room) struct ConsumerPacketSelectionUpdate {
     pub(super) key: SubscriptionKey,
@@ -61,8 +82,8 @@ pub(in crate::engine::room) struct ConsumerPacketSelectionUpdate {
     pub(super) planned_budget: ReceiverVideoBudgetDiagnostics,
     pub(super) transition: Option<VideoRouteTransition>,
     pub(super) selected_estimated_bitrate: Option<Bitrate>,
-    pub(super) pressure_observations: u8,
-    pub(super) upgrade_observations: u8,
+    pub(super) upgrade: UpgradeChange,
+    pub(super) interrupts_upgrade: bool,
     pub(super) packet_gate: Option<SourcePacketGate>,
     pub(super) route_activity_changed: bool,
     pub(super) request_keyframe: bool,
@@ -85,8 +106,8 @@ impl ConsumerPacketSelectionUpdate {
             planned_budget: current_selection.budget(),
             transition: None,
             selected_estimated_bitrate: None,
-            pressure_observations: current_selection.pressure_observations(),
-            upgrade_observations: current_selection.upgrade_observations(),
+            upgrade: UpgradeChange::Unchanged,
+            interrupts_upgrade: false,
             packet_gate: None,
             route_activity_changed: true,
             request_keyframe: false,
@@ -95,10 +116,6 @@ impl ConsumerPacketSelectionUpdate {
 
     pub(super) const fn requires_media_transport_effect(&self) -> bool {
         self.packet_gate.is_some() || self.route_activity_changed || self.request_keyframe
-    }
-
-    pub(super) const fn requires_follow_up(&self) -> bool {
-        self.pressure_observations > 0 || self.upgrade_observations > 0
     }
 
     pub(in crate::engine::room) fn route_control(&self) -> ConsumerRouteControl {

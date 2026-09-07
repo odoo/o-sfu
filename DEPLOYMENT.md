@@ -344,12 +344,12 @@ after the media transport and current room topology accept it. `outcome` is
 A resume reports the policy `reason` that was cleared. Route identity, receiver
 bandwidth, selected budget and selected encoding fields provide the route-level
 context. `planned_active_video_route_count` and
-`planned_selected_video_bitrate_bps` report the final post-hysteresis solver
+`planned_selected_video_bitrate_bps` report the final post-dwell solver
 snapshot. They can include a sibling route displaced while transport work was
 in flight.
 
 `osfu_budget_solver_outcomes_total` counts the same committed transitions.
-Held hysteresis, pause reason replacements, budget-only updates, initial
+Pending dwell, pause reason replacements, budget-only updates, initial
 selector resolution and rejected stale work do not increment it.
 
 ## NGINX public edge
@@ -582,10 +582,19 @@ receiver video adaptation tuning:
 | --- | --- | --- |
 | `ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD` | `3` | receiver count at or above which scalable video is layer-selected per receiver instead of forwarded at full quality |
 | `ROOM_THUMBNAIL_BUDGET_DIVISOR` | `2` | divisor applied to the per-source budget when a source is shown as a thumbnail |
-| `ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS` | `2` | consecutive over-budget observations required before dropping a receiver to a lower layer |
-| `ROOM_UPSWITCH_STABLE_OBSERVATIONS` | `3` | consecutive within-budget observations required before raising a receiver to a higher layer |
+| `ROOM_SOFT_PAUSE_DWELL_MS` | `750` | positive duration of continuous receiver pressure before soft policy pauses |
+| `ROOM_UPGRADE_DWELL_MS` | `750` | positive duration of continuous eligibility for the exact post-fit upgrade or soft-resume target |
 | `ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT` | `0` | percent of the receiver bandwidth estimate held back from the video budget for RTP, RTX and FEC overhead, from `0` to `100` |
 | `ROOM_AUDIO_RESERVE_PER_SPEAKER_BPS` | `0` | fixed bitrate in bps held back from each receiver's video budget for every admitted audio speaker that receiver consumes; a receiver with audio disabled reserves nothing; `0` disables audio reservation |
+
+Eligible layer downsteps are immediate. Soft pauses may keep the selected video
+bitrate above the receiver budget until `ROOM_SOFT_PAUSE_DWELL_MS` expires.
+Hard media limits remain immediate. Both dwells are bounded to
+`3153600000000` ms to keep deadline addition within the portable `Instant`
+range. The legacy
+`ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS` and
+`ROOM_UPSWITCH_STABLE_OBSERVATIONS` variables now reject startup with an error
+naming the corresponding duration variable. Replace them before upgrading.
 
 telemetry:
 

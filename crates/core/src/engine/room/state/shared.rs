@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::Instant,
 };
 
 use o_sfu_router::rtp::{MediaCapabilities, MediaCapabilities as RouterRtpCapabilities};
@@ -45,6 +46,8 @@ pub struct ActiveUser {
     pub(super) server_featured: Option<bool>,
     pub parsed_client_rtp_capabilities: Option<RouterRtpCapabilities>,
     pub connection_id: ConnectionId,
+    /// Continuous receiver pressure survives victim changes within this connection.
+    pub(in crate::engine::room) video_soft_pause_deadline: Option<Instant>,
     pub sender: OutboundSender,
 }
 

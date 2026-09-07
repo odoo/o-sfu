@@ -199,8 +199,8 @@ export async function connectPeer(page, { channelUuid, iceServers, jwt, url = TE
     );
 }
 
-export async function publishSyntheticCamera(page, label) {
-    return publishSyntheticVideo(page, "camera", label);
+export async function publishSyntheticCamera(page, label, options) {
+    return publishSyntheticVideo(page, "camera", label, options);
 }
 
 export async function publishSyntheticScreen(page, label) {
@@ -237,12 +237,26 @@ export async function publishSyntheticAudio(page, label) {
     }, label);
 }
 
-export async function publishSyntheticVideo(page, streamType, label) {
+export async function publishSyntheticVideo(
+    page,
+    streamType,
+    label,
+    { width = 96, height = 96, frameRate = 10, movingPattern = false } = {}
+) {
     assertStreamType(streamType);
     const colors = syntheticVideoColors(streamType, label);
     const fillPixel = pixelFromHex(colors[0]);
     return page.evaluate(
-        async ({ colors, fillPixel, label, streamType }) => {
+        async ({
+            colors,
+            fillPixel,
+            label,
+            streamType,
+            width,
+            height,
+            frameRate,
+            movingPattern
+        }) => {
             const harness = globalThis.__liveHarness;
             if (!harness.client) {
                 throw new Error("browser harness client is not connected");
@@ -250,8 +264,8 @@ export async function publishSyntheticVideo(page, streamType, label) {
             await globalThis.__liveHarnessStopLocalMedia(harness, streamType);
 
             const canvas = document.createElement("canvas");
-            canvas.width = 96;
-            canvas.height = 96;
+            canvas.width = width;
+            canvas.height = height;
             const context = canvas.getContext("2d");
             if (!context) {
                 throw new Error("expected 2D canvas context for synthetic video track");
@@ -265,11 +279,20 @@ export async function publishSyntheticVideo(page, streamType, label) {
                 context.fillText(label, 8, 28);
                 context.fillText(streamType, 8, 42);
                 context.fillText(String(frame), 8, 56);
+                if (movingPattern) {
+                    const palette = [...colors, "#f3f4f6"];
+                    for (let y = 0; y < canvas.height; y += 12) {
+                        for (let x = 0; x < canvas.width; x += 12) {
+                            context.fillStyle = palette[(x / 12 + y / 12 + frame) % palette.length];
+                            context.fillRect(x, y, 10, 10);
+                        }
+                    }
+                }
                 frame += 1;
             };
             draw();
-            const ticker = window.setInterval(draw, 100);
-            const stream = canvas.captureStream(10);
+            const ticker = window.setInterval(draw, 1000 / frameRate);
+            const stream = canvas.captureStream(frameRate);
             const [track] = stream.getVideoTracks();
             if (!track) {
                 throw new Error("expected synthetic canvas capture to expose a video track");
@@ -288,7 +311,7 @@ export async function publishSyntheticVideo(page, streamType, label) {
                 trackId: track.id
             };
         },
-        { colors, fillPixel, label, streamType }
+        { colors, fillPixel, label, streamType, width, height, frameRate, movingPattern }
     );
 }
 
@@ -554,7 +577,8 @@ export async function streamDiagnostics({
     return {
         publication,
         source,
-        subscription
+        subscription,
+        transport: consumer?.transport ?? null
     };
 }
 
@@ -729,6 +753,8 @@ export async function spawnLiveServer({
     announcedIp = host,
     rtcMaxPort,
     rtcMinPort,
+    maxBitrateOut,
+    maxVideoBitrate,
     codecFlags = {}
 }) {
     const env = {
@@ -743,6 +769,12 @@ export async function spawnLiveServer({
     };
     if (Object.hasOwn(codecFlags, "vp8")) {
         env.CODEC_VP8 = String(Boolean(codecFlags.vp8));
+    }
+    if (maxBitrateOut !== undefined) {
+        env.MAX_BITRATE_OUT = String(maxBitrateOut);
+    }
+    if (maxVideoBitrate !== undefined) {
+        env.MAX_VIDEO_BITRATE = String(maxVideoBitrate);
     }
     const child = spawn(
         "cargo",

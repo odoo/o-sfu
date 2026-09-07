@@ -19,7 +19,17 @@ export default defineConfig({
         },
         {
             name: "firefox",
-            use: { browserName: "firefox" }
+            use: {
+                browserName: "firefox",
+                launchOptions: {
+                    // Firefox needs camera permission to gather loopback candidates
+                    // for the synthetic canvas fixtures.
+                    firefoxUserPrefs: {
+                        "media.peerconnection.ice.loopback": true,
+                        "permissions.default.camera": 1
+                    }
+                }
+            }
         }
     ],
     webServer: [

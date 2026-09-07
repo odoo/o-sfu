@@ -1,8 +1,8 @@
 use o_sfu_router::MediaKind;
 
 use super::{
-    super::action::{ConsumerPacketSelectionUpdate, VideoRouteTransition},
-    solver::{AdaptationCounts, PlannedReceiverRoute, selector_bitrate},
+    super::action::{ConsumerPacketSelectionUpdate, UpgradeChange, VideoRouteTransition},
+    solver::{PlannedReceiverRoute, selector_bitrate},
 };
 use crate::engine::{
     media_transport::SourcePacketGate,
@@ -38,7 +38,7 @@ pub(super) fn consumer_packet_selection_update(
     if selection.selector == current_selection.selector()
         && selection.policy_pause_reason == current_selection.policy_pause_reason()
         && planned_budget == current_selection.budget()
-        && selection.counts == AdaptationCounts::from_current(current_selection)
+        && selection.pending_upgrade.as_ref() == input.pending_upgrade
     {
         return None;
     }
@@ -70,8 +70,12 @@ pub(super) fn consumer_packet_selection_update(
         planned_budget,
         transition,
         selected_estimated_bitrate,
-        pressure_observations: selection.counts.pressure,
-        upgrade_observations: selection.counts.upgrade,
+        upgrade: if selection.pending_upgrade.as_ref() == input.pending_upgrade {
+            UpgradeChange::Unchanged
+        } else {
+            UpgradeChange::Set(selection.pending_upgrade)
+        },
+        interrupts_upgrade: selection.interrupts_upgrade(input.pending_upgrade),
         packet_gate,
         route_activity_changed,
         request_keyframe: request_keyframe && input.source.media_kind() == MediaKind::Video,

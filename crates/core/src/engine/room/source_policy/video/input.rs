@@ -8,7 +8,10 @@ use crate::{
     engine::{
         UserId, VideoLayoutIntent,
         media_transport::TransportConsumerRoute,
-        room::{media_graph::SubscriptionKey, state::RoomState},
+        room::{
+            media_graph::{PendingUpgrade, SubscriptionKey},
+            state::RoomState,
+        },
         source_model::{
             ConsumerSourceSelection, PublishedSourceDescriptor, SourceAdaptationPolicy,
             SourceRoomPolicySelector,
@@ -48,6 +51,7 @@ pub(super) fn receiver_video_routes<'a>(
             key: route.key,
             route: route.route,
             current_selection: route.selection,
+            pending_upgrade: route.pending_upgrade,
             layout_role,
             visible_scalable_route_count: 1,
             active_speaker_rank: input
@@ -85,6 +89,7 @@ pub(super) struct ReceiverVideoRouteInput<'a> {
     pub(super) key: &'a SubscriptionKey,
     pub(super) route: &'a TransportConsumerRoute,
     pub(super) current_selection: ConsumerSourceSelection,
+    pub(super) pending_upgrade: Option<&'a PendingUpgrade>,
     pub(super) layout_role: SourceRoomPolicySelector,
     pub(super) visible_scalable_route_count: usize,
     pub(super) active_speaker_rank: Option<usize>,

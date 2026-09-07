@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, time::Duration};
 
 use crate::Bitrate;
 
@@ -176,22 +176,23 @@ impl Default for RoomMediaLimits {
     }
 }
 
-/// Room-wide video budget and adaptation hysteresis.
+/// Room-wide video budget and adaptation dwell.
 ///
 /// When room membership reaches `multiparty_scalable_video_threshold`,
 /// scalable-video per-route targets use available receiver bandwidth and the
 /// resolved layout role. Pinned, featured, readable-detail and active-speaker
 /// targets use the full receiver budget. When several visible scalable routes
 /// share a receiver, other scalable targets divide that budget by their count and
-/// `thumbnail_budget_divisor`. Observation counts require consecutive policy
-/// turns. Headroom is removed before `audio_reserve_per_speaker` is subtracted
+/// `thumbnail_budget_divisor`. Soft pauses require continuous receiver pressure
+/// for `soft_pause_dwell`. Upgrades require one eligible target for `upgrade_dwell`.
+/// Headroom is removed before `audio_reserve_per_speaker` is subtracted
 /// for each admitted audio route the receiver consumes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoAdaptationTuning {
     pub(crate) multiparty_scalable_video_threshold: usize,
     pub(crate) thumbnail_budget_divisor: u64,
-    pub(crate) downswitch_pressure_observations: u8,
-    pub(crate) upswitch_stable_observations: u8,
+    pub(crate) soft_pause_dwell: Duration,
+    pub(crate) upgrade_dwell: Duration,
     pub(crate) receiver_budget_headroom_percent: u8,
     pub(crate) audio_reserve_per_speaker: Bitrate,
 }
@@ -202,10 +203,14 @@ pub enum VideoAdaptationTuningError {
     MultipartyScalableVideoThresholdZero,
     #[error("thumbnail budget divisor must be greater than zero")]
     ThumbnailBudgetDivisorZero,
-    #[error("downswitch pressure observations must be greater than zero")]
-    DownswitchPressureObservationsZero,
-    #[error("upswitch stable observations must be greater than zero")]
-    UpswitchStableObservationsZero,
+    #[error("soft pause dwell must be greater than zero")]
+    SoftPauseDwellZero,
+    #[error("upgrade dwell must be greater than zero")]
+    UpgradeDwellZero,
+    #[error("soft pause dwell exceeds the portable deadline range")]
+    SoftPauseDwellTooLong,
+    #[error("upgrade dwell exceeds the portable deadline range")]
+    UpgradeDwellTooLong,
     #[error("receiver budget headroom percent must not exceed 100")]
     ReceiverBudgetHeadroomPercentTooHigh,
 }
@@ -213,8 +218,12 @@ pub enum VideoAdaptationTuningError {
 impl VideoAdaptationTuning {
     pub const DEFAULT_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD: usize = 3;
     pub const DEFAULT_THUMBNAIL_BUDGET_DIVISOR: u64 = 2;
-    pub const DEFAULT_DOWNSWITCH_PRESSURE_OBSERVATIONS: u8 = 2;
-    pub const DEFAULT_UPSWITCH_STABLE_OBSERVATIONS: u8 = 3;
+    pub const DEFAULT_SOFT_PAUSE_DWELL: Duration = Duration::from_millis(750);
+    pub const DEFAULT_UPGRADE_DWELL: Duration = Duration::from_millis(750);
+    /// Bounds deadline addition to the roughly 100-year portable `Instant` range.
+    ///
+    /// See [`Instant` OS-specific behavior](std::time::Instant#os-specific-behaviors).
+    pub const MAX_DWELL: Duration = Duration::from_hours(100 * 365 * 24);
     pub const DEFAULT_RECEIVER_BUDGET_HEADROOM_PERCENT: u8 = 0;
     pub const DEFAULT_AUDIO_RESERVE_PER_SPEAKER: Bitrate = Bitrate::zero();
 
@@ -223,13 +232,13 @@ impl VideoAdaptationTuning {
     /// # Errors
     ///
     /// Returns [`VideoAdaptationTuningError`] when the scalable-video threshold,
-    /// the thumbnail budget divisor or either observation knob is zero, or when
-    /// the headroom percent exceeds 100.
+    /// the thumbnail budget divisor or either dwell is zero, either dwell exceeds
+    /// [`Self::MAX_DWELL`] or the headroom percent exceeds 100.
     pub const fn try_new(
         multiparty_scalable_video_threshold: usize,
         thumbnail_budget_divisor: u64,
-        downswitch_pressure_observations: u8,
-        upswitch_stable_observations: u8,
+        soft_pause_dwell: Duration,
+        upgrade_dwell: Duration,
         receiver_budget_headroom_percent: u8,
         audio_reserve_per_speaker: Bitrate,
     ) -> Result<Self, VideoAdaptationTuningError> {
@@ -239,11 +248,17 @@ impl VideoAdaptationTuning {
         if thumbnail_budget_divisor == 0 {
             return Err(VideoAdaptationTuningError::ThumbnailBudgetDivisorZero);
         }
-        if downswitch_pressure_observations == 0 {
-            return Err(VideoAdaptationTuningError::DownswitchPressureObservationsZero);
+        if soft_pause_dwell.is_zero() {
+            return Err(VideoAdaptationTuningError::SoftPauseDwellZero);
         }
-        if upswitch_stable_observations == 0 {
-            return Err(VideoAdaptationTuningError::UpswitchStableObservationsZero);
+        if upgrade_dwell.is_zero() {
+            return Err(VideoAdaptationTuningError::UpgradeDwellZero);
+        }
+        if soft_pause_dwell.as_nanos() > Self::MAX_DWELL.as_nanos() {
+            return Err(VideoAdaptationTuningError::SoftPauseDwellTooLong);
+        }
+        if upgrade_dwell.as_nanos() > Self::MAX_DWELL.as_nanos() {
+            return Err(VideoAdaptationTuningError::UpgradeDwellTooLong);
         }
         if receiver_budget_headroom_percent > 100 {
             return Err(VideoAdaptationTuningError::ReceiverBudgetHeadroomPercentTooHigh);
@@ -251,8 +266,8 @@ impl VideoAdaptationTuning {
         Ok(Self {
             multiparty_scalable_video_threshold,
             thumbnail_budget_divisor,
-            downswitch_pressure_observations,
-            upswitch_stable_observations,
+            soft_pause_dwell,
+            upgrade_dwell,
             receiver_budget_headroom_percent,
             audio_reserve_per_speaker,
         })
@@ -264,8 +279,8 @@ impl Default for VideoAdaptationTuning {
         Self {
             multiparty_scalable_video_threshold: Self::DEFAULT_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD,
             thumbnail_budget_divisor: Self::DEFAULT_THUMBNAIL_BUDGET_DIVISOR,
-            downswitch_pressure_observations: Self::DEFAULT_DOWNSWITCH_PRESSURE_OBSERVATIONS,
-            upswitch_stable_observations: Self::DEFAULT_UPSWITCH_STABLE_OBSERVATIONS,
+            soft_pause_dwell: Self::DEFAULT_SOFT_PAUSE_DWELL,
+            upgrade_dwell: Self::DEFAULT_UPGRADE_DWELL,
             receiver_budget_headroom_percent: Self::DEFAULT_RECEIVER_BUDGET_HEADROOM_PERCENT,
             audio_reserve_per_speaker: Self::DEFAULT_AUDIO_RESERVE_PER_SPEAKER,
         }

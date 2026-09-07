@@ -37,15 +37,15 @@
 //! every `BudgetPressure` decision
 //! injecting the snapshot is what makes those paths run
 //!
-//! the trace walks down from comfortable headroom to hard overload and back, so
-//! consecutive turns disagree and the hysteresis counters carried in committed
-//! consumer selections actually advance
+//! Each bandwidth plateau lasts through the 750 ms dwell. Injected time makes
+//! pressure and upgrade eligibility deterministic.
 
 use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv4Addr},
     num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -96,21 +96,21 @@ const MAX_ACTIVE_AUDIO_SPEAKERS: usize = 4;
 /// video downloads the room admits per receiver
 const MAX_VIDEO_DOWNLOADS: usize = 3;
 
-/// one policy turn per receiver bandwidth report of a twelve second call
+/// one policy turn per receiver bandwidth report of a six second call
 const POLICY_TURNS: usize = 24;
 
 /// receiver bandwidth walked from headroom into hard overload and back
 ///
-/// a receiver holding one featured layer plus four thumbnails wants roughly
-/// 2 Mbps, so the lower half of this trace forces the budget solver to drop
-/// layers and the upper half lets it recover them
-const BANDWIDTH_TRACE_BPS: [u64; 8] = [
-    2_500_000, 2_000_000, 1_400_000, 900_000, 600_000, 900_000, 1_400_000, 2_000_000,
+/// The hard limit admits three routes with a combined 450 kbps floor. The
+/// 400 kbps plateau forces a pause after the dwell and later plateaus recover.
+const BANDWIDTH_TRACE_BPS: [u64; 12] = [
+    2_500_000, 2_500_000, 2_500_000, 2_500_000, 400_000, 400_000, 400_000, 400_000, 900_000,
+    900_000, 900_000, 900_000,
 ];
 /// bandwidth pair used by the out-of-window differential observation
 const RELAXED_BANDWIDTH_BPS: u64 = 2_500_000;
-const PRESSURED_BANDWIDTH_BPS: u64 = 600_000;
-/// turns driven at each bandwidth before observing, so hysteresis converges
+const PRESSURED_BANDWIDTH_BPS: u64 = 400_000;
+/// turns driven at each bandwidth before observing, so the 750 ms dwell expires
 const OBSERVATION_TURNS: usize = 4;
 /// top layer of the three-layer simulcast ladder the publishers offer
 const TOP_SIMULCAST_RID: &str = "hi";
@@ -156,7 +156,7 @@ impl Default for SourcePolicyFixture {
 impl SourcePolicyFixture {
     /// builds the room, its publications and its subscriptions
     ///
-    /// one warm-up turn at full headroom settles the initial selections so the
+    /// Four turns spanning 750 ms at full headroom settle initial selections so the
     /// measured turns are all bandwidth-driven changes
     #[expect(
         clippy::panic,
@@ -194,7 +194,7 @@ impl SourcePolicyFixture {
         let stats = self.scenario.stats;
         assert_eq!(
             stats.turns_with_work, stats.turns,
-            "the bandwidth trace changes every turn, so every turn must commit a plan, got {} of {}",
+            "each bandwidth or dwell turn must commit its receiver plan, got {} of {}",
             stats.turns_with_work, stats.turns
         );
     }
@@ -251,6 +251,7 @@ struct SourcePolicyScenario {
     outbound_metrics: Arc<RuntimeMetrics>,
     receivers: BTreeMap<RawUserId, UserOutboundReceiver>,
     room: Arc<Room>,
+    now: Instant,
     session_keys: Vec<TransportSessionKey>,
     stats: SourcePolicyStats,
     user_sessions: BTreeMap<RawUserId, MediaSession>,
@@ -275,14 +276,17 @@ impl SourcePolicyScenario {
             outbound_metrics: Arc::new(RuntimeMetrics::default()),
             receivers: BTreeMap::new(),
             room,
+            now: Instant::now(),
             session_keys: Vec::with_capacity(PARTICIPANTS),
             stats: SourcePolicyStats::default(),
             user_sessions: BTreeMap::new(),
         };
         scenario.build_room(&core).await?;
-        // one settling turn at full headroom keeps the measured turns focused on
-        // bandwidth-driven changes rather than first-time subscription plans
-        scenario.run_turn(BANDWIDTH_TRACE_BPS[0]).await?;
+        scenario.now = Instant::now();
+        // Settle initial exact-target upgrades before measuring pressure turns.
+        for _ in 0..OBSERVATION_TURNS {
+            scenario.run_turn(BANDWIDTH_TRACE_BPS[0]).await?;
+        }
         scenario.stats = SourcePolicyStats::default();
         Ok(scenario)
     }
@@ -308,9 +312,14 @@ impl SourcePolicyScenario {
                 .map(|session_key| (session_key, Bitrate::from_bps(bandwidth_bps)))
                 .collect(),
         };
-        let produced_work =
-            run_source_policy_turn_for_benchmark(&self.room, &self.media_transport, &bandwidth)
-                .await;
+        let produced_work = run_source_policy_turn_for_benchmark(
+            &self.room,
+            &self.media_transport,
+            &bandwidth,
+            self.now,
+        )
+        .await;
+        self.now += Duration::from_millis(250);
         self.stats.turns = self.stats.turns.saturating_add(1);
         if produced_work {
             self.stats.turns_with_work = self.stats.turns_with_work.saturating_add(1);

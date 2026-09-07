@@ -1,3 +1,4 @@
+use std::{cell::Cell, time::Duration};
 pub(super) use std::{sync::Arc, time::Instant};
 
 use o_sfu_router::test_support::rtp_samples::{
@@ -20,7 +21,8 @@ pub(super) use crate::{
     engine::{
         ConnectionId, TestSourceKind, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
         media_transport::{
-            AppliedSessionAnswer, MediaTransport, TransportMediaId, TransportSessionHealth,
+            AppliedSessionAnswer, MediaTransport, ReceiverBandwidthSnapshot,
+            TransportBitrateSnapshot, TransportMediaId, TransportSessionHealth,
             test_support::{
                 test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
             },
@@ -451,6 +453,7 @@ pub(super) async fn setup_three_ready_users_with_transport()
 }
 
 pub(super) struct SourcePolicyScenario {
+    pub(super) policy_now: Cell<Instant>,
     pub(super) room: Arc<super::super::Room>,
     pub(super) adapter: MediaTransport,
 }
@@ -458,7 +461,11 @@ pub(super) struct SourcePolicyScenario {
 impl SourcePolicyScenario {
     pub(super) async fn with_ready_users(user_ids: &[i64]) -> Self {
         let (room, adapter) = setup_ready_users_with_transport(user_ids).await;
-        Self { room, adapter }
+        Self {
+            room,
+            adapter,
+            policy_now: Cell::new(Instant::now()),
+        }
     }
 
     pub(super) async fn with_ready_users_and_media_limits(
@@ -467,7 +474,11 @@ impl SourcePolicyScenario {
     ) -> Self {
         let (room, adapter) =
             setup_ready_users_with_transport_and_media_limits(user_ids, media_limits).await;
-        Self { room, adapter }
+        Self {
+            room,
+            adapter,
+            policy_now: Cell::new(Instant::now()),
+        }
     }
 
     pub(super) async fn with_ready_users_and_tuning(
@@ -475,7 +486,11 @@ impl SourcePolicyScenario {
         tuning: VideoAdaptationTuning,
     ) -> Self {
         let (room, adapter) = setup_ready_users_with_transport_and_tuning(user_ids, tuning).await;
-        Self { room, adapter }
+        Self {
+            room,
+            adapter,
+            policy_now: Cell::new(Instant::now()),
+        }
     }
 
     pub(super) async fn three_ready_users() -> Self {
@@ -544,9 +559,25 @@ impl SourcePolicyScenario {
     }
 
     pub(super) async fn refresh_policy_until_upgrades_settle(&self) {
-        for _ in 0..3 {
-            self.refresh_policy().await;
+        let sources = self.adapter.active_speaker_source_snapshot().await;
+        let now = self.policy_now.get().max(Instant::now());
+        for elapsed in [Duration::ZERO, VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL] {
+            let tx = {
+                let state = self.room.state.read().await;
+                super::super::source_policy::SourcePolicyTransaction::plan(
+                    &state,
+                    &sources,
+                    &ReceiverBandwidthSnapshot::default(),
+                    &TransportBitrateSnapshot::default(),
+                    now + elapsed,
+                )
+            };
+            if let Some(tx) = tx {
+                tx.execute(&self.room, &self.adapter).await;
+            }
         }
+        self.policy_now
+            .set(now + VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL);
     }
 
     pub(super) async fn set_deaf(&self, raw_user_id: i64, is_deaf: bool) {

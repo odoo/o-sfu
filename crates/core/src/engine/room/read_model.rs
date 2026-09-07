@@ -7,22 +7,23 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use o_sfu_rfc::rtp::Ssrc;
 use o_sfu_router::{MediaKind, rtp::MediaFormat};
 use o_sfu_telemetry::diagnostics::{
     DiagnosticsActiveSpeaker, DiagnosticsActiveSpeakerReason, DiagnosticsActiveSpeakerState,
-    DiagnosticsIncomingBitrate, DiagnosticsMediaKind, DiagnosticsPolicyPauseReason,
-    DiagnosticsPublication, DiagnosticsQualitySummary, DiagnosticsRouteState, DiagnosticsSource,
-    DiagnosticsSourceEncoding, DiagnosticsSourceSelection, DiagnosticsSourceSelectionReason,
-    DiagnosticsSourceSelector, DiagnosticsSubscription, DiagnosticsTransportCounts,
-    DiagnosticsUserSummary, DiagnosticsUserTransport, DiagnosticsUserView,
-    DiagnosticsVideoLayoutRole, DiagnosticsVideoRoutePriority, DiagnosticsWorkerSummary,
+    DiagnosticsIncomingBitrate, DiagnosticsMediaKind, DiagnosticsPendingUpgrade,
+    DiagnosticsPolicyPauseReason, DiagnosticsPublication, DiagnosticsQualitySummary,
+    DiagnosticsRouteState, DiagnosticsSource, DiagnosticsSourceEncoding,
+    DiagnosticsSourceSelection, DiagnosticsSourceSelectionReason, DiagnosticsSourceSelector,
+    DiagnosticsSubscription, DiagnosticsTransportCounts, DiagnosticsUserSummary,
+    DiagnosticsUserTransport, DiagnosticsUserView, DiagnosticsVideoLayoutRole,
+    DiagnosticsVideoRoutePriority, DiagnosticsWorkerSummary,
 };
 
-use super::{Room, RoomMediaCounts, state::RoomState};
+use super::{Room, RoomMediaCounts, media_graph::PendingUpgrade, state::RoomState};
 use crate::{
     Bitrate,
     engine::{
@@ -255,6 +256,7 @@ struct CapturedUser {
     subscriptions: Vec<DiagnosticsSubscription>,
     user_id: UserId,
     user_info: UserInfo,
+    video_soft_pause_remaining_ms: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -317,10 +319,11 @@ impl Room {
 
     pub async fn diagnostics_detail_capture(&self) -> RoomDetailCapture {
         let state = self.state.read().await;
+        let now = Instant::now();
         let users = state
             .transport_user_entries()
             .filter_map(|(user_id, connection_id)| {
-                captured_user(&state, user_id.clone(), connection_id)
+                captured_user(&state, user_id.clone(), connection_id, now)
             })
             .collect::<Vec<_>>();
         let session_keys = users.iter().map(|user| user.session_key.clone()).collect();
@@ -344,12 +347,13 @@ impl Room {
 
     pub async fn diagnostics_user_capture(&self, user_key: &str) -> Option<RoomUserCapture> {
         let state = self.state.read().await;
+        let now = Instant::now();
         let (user_id, connection_id) = state
             .transport_user_entries()
             .find(|(user_id, _)| user_id.path_segment().as_ref() == user_key)?;
         Some(RoomUserCapture {
             recording_state: state.recording_state(),
-            user: captured_user(&state, user_id.clone(), connection_id)?,
+            user: captured_user(&state, user_id.clone(), connection_id, now)?,
         })
     }
 }
@@ -405,11 +409,16 @@ fn captured_user(
     state: &RoomState,
     user_id: UserId,
     connection_id: ConnectionId,
+    now: Instant,
 ) -> Option<CapturedUser> {
     Some(CapturedUser {
         publications: diagnostics_publications(state, &user_id, connection_id),
         session_key: state.transport_user_key(&user_id, connection_id),
-        subscriptions: diagnostics_subscriptions(state, &user_id, connection_id),
+        subscriptions: diagnostics_subscriptions(state, &user_id, connection_id, now),
+        video_soft_pause_remaining_ms: state
+            .user_for_connection(&user_id, connection_id)?
+            .video_soft_pause_deadline
+            .map(|deadline| duration_millis(deadline.saturating_duration_since(now))),
         user_info: state.user_info_snapshot(&user_id)?.1,
         user_id,
     })
@@ -448,9 +457,11 @@ fn diagnostics_subscriptions(
     state: &RoomState,
     user_id: &UserId,
     connection_id: ConnectionId,
+    now: Instant,
 ) -> Vec<DiagnosticsSubscription> {
     let project = |source: &PublishedSourceDescriptor,
                    route_selection: ConsumerSourceSelection,
+                   pending_upgrade: Option<PendingUpgrade>,
                    consumer_media: Option<TransportMediaId>,
                    source_media: TransportMediaId,
                    route_state| {
@@ -460,7 +471,7 @@ fn diagnostics_subscriptions(
             layout_priority: layout.map(|role| role.priority().into()),
             layout_role: layout.map(Into::into),
             producer_user_id: source.owner().user_id().clone(),
-            selection: selection(source, route_selection),
+            selection: selection(source, route_selection, pending_upgrade, now),
             source_id: source.source_id().as_u64(),
             source_transport_media_id: Some(source_media.as_u64()),
             state: route_state,
@@ -481,6 +492,7 @@ fn diagnostics_subscriptions(
             project(
                 source,
                 route.selection,
+                route.pending_upgrade.copied(),
                 Some(route.route.consumer_transport_media_id()),
                 route.route.source_transport_media_id(),
                 route_state,
@@ -496,6 +508,7 @@ fn diagnostics_subscriptions(
                 project(
                     source,
                     route.selection,
+                    None,
                     None,
                     route.source.transport.transport_media_id(),
                     DiagnosticsRouteState::Pending,
@@ -564,6 +577,7 @@ fn user_view(
     health: &TransportHealthSnapshot,
 ) -> DiagnosticsUserView {
     let transport = DiagnosticsUserTransport {
+        video_soft_pause_remaining_ms: user.video_soft_pause_remaining_ms,
         connection_id: user.session_key.connection_id().as_u64(),
         health: health
             .get(&user.session_key)
@@ -702,6 +716,8 @@ fn rid_activity<'a>(
 fn selection(
     source: &PublishedSourceDescriptor,
     selection: ConsumerSourceSelection,
+    pending_upgrade: Option<PendingUpgrade>,
+    now: Instant,
 ) -> DiagnosticsSourceSelection {
     let selected_encoding_id = selection.selector().selected_encoding();
     let budget = selection.budget();
@@ -724,7 +740,17 @@ fn selection(
             .map(Bitrate::as_bps),
         policy_allows_delivery: selection.policy_allows_delivery(),
         policy_pause_reason: selection.policy_pause_reason().map(Into::into),
-        pressure_observations: selection.pressure_observations(),
+        pending_upgrade: pending_upgrade.map(|pending| DiagnosticsPendingUpgrade {
+            selector: match pending.selector {
+                SourceSelector::Open => DiagnosticsSourceSelector::Open,
+                SourceSelector::Encoding(_) => DiagnosticsSourceSelector::Encoding,
+            },
+            encoding_id: pending
+                .selector
+                .selected_encoding()
+                .map(SourceEncodingId::as_u64),
+            remaining_ms: duration_millis(pending.deadline.saturating_duration_since(now)),
+        }),
         selection_reason,
         selector,
         selected_estimated_bitrate_bps: selected_encoding
@@ -736,7 +762,6 @@ fn selection(
         selected_rid: selected_encoding
             .and_then(SourceEncodingDescriptor::rid)
             .map(|rid| rid.as_str().to_owned()),
-        upgrade_observations: selection.upgrade_observations(),
     }
 }
 

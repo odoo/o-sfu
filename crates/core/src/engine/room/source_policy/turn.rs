@@ -1,6 +1,6 @@
 //! source-policy apply ownership without transport awaits under the room lock
 
-use std::{borrow::Cow, mem};
+use std::{borrow::Cow, collections::BTreeMap, mem, time::Instant};
 
 use o_sfu_router::MediaKind;
 use o_sfu_telemetry::schema::event as telemetry_event;
@@ -8,14 +8,15 @@ use tracing::info;
 
 use super::{
     action::{
-        ConsumerPacketSelectionUpdate, FeaturedUserUpdate, ReceiverVideoBudgetPlan,
-        VideoRouteTransition,
+        ConsumerPacketSelectionUpdate, FeaturedUserUpdate, ReceiverPolicyTiming,
+        ReceiverVideoBudgetPlan, UpgradeChange, VideoRouteTransition,
     },
     audio,
     input::SourcePolicySnapshot,
     video,
 };
 use crate::engine::{
+    ConnectionId,
     media_transport::{
         ActiveSpeakerSource, MediaTransport, ReceiverBandwidthSnapshot, ReceiverBweTargetUpdate,
         TransportBitrateSnapshot,
@@ -69,8 +70,14 @@ impl SourcePolicyTurn {
         media_transport: Option<&MediaTransport>,
         active_speaker_sources: Option<&[ActiveSpeakerSource]>,
     ) {
-        self.execute_observed(room, media_transport, active_speaker_sources, None)
-            .await;
+        self.execute_observed(
+            room,
+            media_transport,
+            active_speaker_sources,
+            None,
+            Instant::now(),
+        )
+        .await;
     }
 
     async fn execute_observed(
@@ -79,6 +86,7 @@ impl SourcePolicyTurn {
         media_transport: Option<&MediaTransport>,
         active_speaker_sources: Option<&[ActiveSpeakerSource]>,
         bandwidth: Option<&ReceiverBandwidthSnapshot>,
+        now: Instant,
     ) -> bool {
         if !self.requested {
             return false;
@@ -87,12 +95,13 @@ impl SourcePolicyTurn {
             return false;
         };
         let transaction = if let Some(sources) = active_speaker_sources {
-            run_packet_selection(room, sources, media_transport, bandwidth).await
+            run_packet_selection(room, sources, media_transport, bandwidth, now).await
         } else {
             let sources = media_transport.active_speaker_source_snapshot().await;
-            run_packet_selection(room, &sources, media_transport, bandwidth).await
+            run_packet_selection(room, &sources, media_transport, bandwidth, now).await
         };
         let Some(transaction) = transaction else {
+            media_transport.set_source_policy_deadline(room.instance_id(), None);
             return false;
         };
         transaction.commit(room, media_transport).await;
@@ -105,10 +114,11 @@ pub async fn run_source_policy_turn_for_benchmark(
     room: &Room,
     media_transport: &MediaTransport,
     bandwidth: &ReceiverBandwidthSnapshot,
+    now: Instant,
 ) -> bool {
     let _guard = room.source_policy_turn.lock().await;
     SourcePolicyTurn::packet_selection()
-        .execute_observed(room, Some(media_transport), None, Some(bandwidth))
+        .execute_observed(room, Some(media_transport), None, Some(bandwidth), now)
         .await
 }
 
@@ -117,6 +127,7 @@ async fn run_packet_selection(
     active_speakers: &[ActiveSpeakerSource],
     media_transport: &MediaTransport,
     bandwidth_override: Option<&ReceiverBandwidthSnapshot>,
+    now: Instant,
 ) -> Option<SourcePolicyTransaction> {
     let sessions = {
         let state = room.state.read().await;
@@ -136,17 +147,20 @@ async fn run_packet_selection(
         active_speakers,
         &receiver_bandwidth,
         &source_bitrate,
+        now,
     )
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(in crate::engine::room) struct SourcePolicyTransaction {
     route_effects: RoomRouteEffects,
     state_updates: Vec<ConsumerPacketSelectionUpdate>,
     receiver_video_budget_plans: Vec<ReceiverVideoBudgetPlan>,
     featured_users: Vec<FeaturedUserUpdate>,
     video_allocation_revision: u64,
-    expected_route_update_count: usize,
+    outstanding_controls: BTreeMap<ConnectionId, usize>,
+    receiver_timing: Vec<ReceiverPolicyTiming>,
+    planned_at: Instant,
 }
 
 impl SourcePolicyTransaction {
@@ -155,6 +169,7 @@ impl SourcePolicyTransaction {
         active_speakers: &[ActiveSpeakerSource],
         receiver_bandwidth: &ReceiverBandwidthSnapshot,
         source_bitrate: &TransportBitrateSnapshot,
+        now: Instant,
     ) -> Option<Self> {
         let mut input = SourcePolicySnapshot::from_state(
             state,
@@ -164,11 +179,17 @@ impl SourcePolicyTransaction {
         );
         let mut tx = Self {
             video_allocation_revision: state.topology.video_allocation_revision(),
-            ..Self::default()
+            route_effects: RoomRouteEffects::default(),
+            state_updates: Vec::new(),
+            receiver_video_budget_plans: Vec::new(),
+            featured_users: Vec::new(),
+            outstanding_controls: BTreeMap::new(),
+            receiver_timing: Vec::new(),
+            planned_at: now,
         };
         audio::append_audio_route_activity(&mut tx, &input);
         let receiver_bwe_targets = mem::take(&mut input.receiver_bwe_targets);
-        video::append_receiver_video_policy(&mut tx, state, &input, receiver_bwe_targets);
+        video::append_receiver_video_policy(&mut tx, state, &input, receiver_bwe_targets, now);
         tx.featured_users = input.featured_user_updates;
         (!tx.is_empty()).then_some(tx)
     }
@@ -178,12 +199,16 @@ impl SourcePolicyTransaction {
     }
 
     pub(super) fn push_route_update(&mut self, update: ConsumerPacketSelectionUpdate) {
-        self.expect_route_update();
+        self.expect_route_update(update.route.consumer_session_key().connection_id());
         self.route_effects.source_policy_update(update);
     }
 
-    pub(super) fn expect_route_update(&mut self) {
-        self.expected_route_update_count += 1;
+    pub(super) fn expect_route_update(&mut self, connection: ConnectionId) {
+        *self.outstanding_controls.entry(connection).or_default() += 1;
+    }
+
+    pub(super) fn push_receiver_timing(&mut self, timing: ReceiverPolicyTiming) {
+        self.receiver_timing.push(timing);
     }
 
     pub(super) fn push_receiver_video_budget_plan(&mut self, plan: ReceiverVideoBudgetPlan) {
@@ -201,7 +226,9 @@ impl SourcePolicyTransaction {
             receiver_video_budget_plans,
             featured_users,
             video_allocation_revision,
-            expected_route_update_count,
+            mut outstanding_controls,
+            receiver_timing,
+            planned_at,
         } = self;
         let accepted_route_updates = if route_effects.is_empty() {
             Vec::new()
@@ -210,25 +237,41 @@ impl SourcePolicyTransaction {
             // state must not claim a selection that its worker rejected.
             route_effects.execute(room.uuid(), media_transport).await
         };
-        // Unprojectable route controls increment only the expected count. `execute`
-        // returns every submitted source-policy update except rejected controls.
-        let all_route_controls_accepted =
-            accepted_route_updates.len() == expected_route_update_count;
+        // Rejections gate only their receiver's temporal state. PR1 budget
+        // reconciliation still observes acceptance across the whole transaction.
+        for update in &accepted_route_updates {
+            if let Some(remaining) =
+                outstanding_controls.get_mut(&update.route.consumer_session_key().connection_id())
+            {
+                *remaining -= 1;
+            }
+        }
         state_updates.extend(accepted_route_updates);
-        // Only committed nonzero counters schedule another observation. Rejected
-        // or topology-stale work must not advance adaptation hysteresis.
-        if commit_accepted_updates(
-            room,
+        if state_updates.is_empty()
+            && receiver_video_budget_plans.is_empty()
+            && featured_users.is_empty()
+            && receiver_timing.is_empty()
+        {
+            media_transport.set_source_policy_deadline(room.instance_id(), None);
+            return;
+        }
+        let mut state = room.state.write().await;
+        let (committed_updates, deadline) = commit_packet_updates(
+            &mut state,
             state_updates,
             &receiver_video_budget_plans,
-            &featured_users,
             video_allocation_revision,
-            all_route_controls_accepted,
-        )
-        .await
-        {
-            media_transport.schedule_source_policy_follow_up(room.instance_id());
+            &outstanding_controls,
+            &receiver_timing,
+            planned_at,
+        );
+        let info_fanout = commit_featured_user_updates(&mut state, &featured_users);
+        drop(state);
+        record_committed_selection_updates(room, &committed_updates);
+        if let Some(info_fanout) = info_fanout {
+            info_fanout.emit();
         }
+        media_transport.set_source_policy_deadline(room.instance_id(), deadline);
     }
 
     #[cfg(test)]
@@ -245,41 +288,8 @@ impl SourcePolicyTransaction {
             && self.route_effects.is_empty()
             && self.receiver_video_budget_plans.is_empty()
             && self.featured_users.is_empty()
+            && self.receiver_timing.is_empty()
     }
-}
-
-async fn commit_accepted_updates(
-    room: &Room,
-    state_updates: Vec<ConsumerPacketSelectionUpdate>,
-    receiver_video_budget_plans: &[ReceiverVideoBudgetPlan],
-    featured_users: &[FeaturedUserUpdate],
-    video_allocation_revision: u64,
-    all_route_controls_accepted: bool,
-) -> bool {
-    if state_updates.is_empty()
-        && receiver_video_budget_plans.is_empty()
-        && featured_users.is_empty()
-    {
-        return false;
-    }
-    let (committed_updates, info_fanout, requires_follow_up) = {
-        let mut state = room.state.write().await;
-        let (committed_updates, requires_follow_up) = commit_packet_updates(
-            &mut state,
-            state_updates,
-            receiver_video_budget_plans,
-            video_allocation_revision,
-            all_route_controls_accepted,
-        );
-        let info_fanout = commit_featured_user_updates(&mut state, featured_users);
-        drop(state);
-        (committed_updates, info_fanout, requires_follow_up)
-    };
-    record_committed_selection_updates(room, &committed_updates);
-    if let Some(info_fanout) = info_fanout {
-        info_fanout.emit();
-    }
-    requires_follow_up
 }
 
 fn record_committed_selection_updates(room: &Room, updates: &[ConsumerPacketSelectionUpdate]) {
@@ -368,12 +378,66 @@ fn commit_packet_updates(
     mut updates: Vec<ConsumerPacketSelectionUpdate>,
     receiver_video_budget_plans: &[ReceiverVideoBudgetPlan],
     video_allocation_revision: u64,
-    all_route_controls_accepted: bool,
-) -> (Vec<ConsumerPacketSelectionUpdate>, bool) {
+    outstanding_controls: &BTreeMap<ConnectionId, usize>,
+    receiver_timing: &[ReceiverPolicyTiming],
+    now: Instant,
+) -> (Vec<ConsumerPacketSelectionUpdate>, Option<Instant>) {
     let allocation_plan_is_current =
         state.topology.video_allocation_revision() == video_allocation_revision;
+    let all_route_controls_accepted = outstanding_controls.values().all(|count| *count == 0);
     let reconcile_planned_budgets = !allocation_plan_is_current || !all_route_controls_accepted;
-    let mut requires_follow_up = !allocation_plan_is_current && !updates.is_empty();
+    let receiver_controls_accepted = |connection| {
+        outstanding_controls
+            .get(&connection)
+            .is_none_or(|count| *count == 0)
+    };
+    let mut next_deadline = None;
+    // The allocation revision covers the captured subscriptions, sources and
+    // exact routes. Check it before selection writes advance it within this turn.
+    if allocation_plan_is_current {
+        for timing in receiver_timing {
+            let accepted = receiver_controls_accepted(timing.connection_id);
+            let Some(user) = state.user_mut_for_connection(&timing.receiver, timing.connection_id)
+            else {
+                continue;
+            };
+            // Recovery ends continuity even when a sibling control rejects.
+            if timing.soft_pause_deadline.is_none() || accepted {
+                user.video_soft_pause_deadline = timing.soft_pause_deadline;
+            }
+            // A rejected sibling cannot cancel an already committed future hold.
+            // Newly proposed deadlines still require acceptance and due retries
+            // remain unscheduled.
+            let deadline = if accepted {
+                timing.next_deadline
+            } else {
+                timing.retained_deadline
+            };
+            if let Some(deadline) = deadline.filter(|deadline| *deadline > now) {
+                next_deadline =
+                    Some(next_deadline.map_or(deadline, |next: Instant| next.min(deadline)));
+            }
+        }
+        // Cancellation follows eligibility, not transport acceptance. Rejected
+        // downsteps must not leave an old upgrade eligible through an interruption.
+        for route in receiver_video_budget_plans
+            .iter()
+            .flat_map(|plan| &plan.routes)
+            .filter(|route| route.interrupts_upgrade)
+        {
+            state
+                .topology
+                .update_consumer_upgrade(&route.key, route.source_id, &route.route, None);
+        }
+        for update in updates.iter().filter(|update| update.interrupts_upgrade) {
+            state.topology.update_consumer_upgrade(
+                &update.key,
+                update.source_id,
+                &update.route,
+                None,
+            );
+        }
+    }
     updates.retain_mut(|update| {
         let commit_planned_budget = allocation_plan_is_current
             && (!reconcile_planned_budgets
@@ -390,10 +454,6 @@ fn commit_packet_updates(
                 if commit_planned_budget {
                     selection.set_budget(update.planned_budget);
                 }
-                selection.set_adaptation_observations(
-                    update.pressure_observations,
-                    update.upgrade_observations,
-                );
             },
         );
         if committed
@@ -403,7 +463,20 @@ fn commit_packet_updates(
         {
             update.transition = None;
         }
-        requires_follow_up |= committed && update.requires_follow_up();
+        if let UpgradeChange::Set(pending_upgrade) = update.upgrade
+            && committed
+            && allocation_plan_is_current
+            && receiver_controls_accepted(update.route.consumer_session_key().connection_id())
+            && state.user_connection_id(&update.key.receiver)
+                == Some(update.route.consumer_session_key().connection_id())
+        {
+            state.topology.update_consumer_upgrade(
+                &update.key,
+                update.source_id,
+                &update.route,
+                pending_upgrade,
+            );
+        }
         committed
     });
     if reconcile_planned_budgets {
@@ -411,7 +484,7 @@ fn commit_packet_updates(
             reconcile_receiver_video_budget(state, plan);
         }
     }
-    (updates, requires_follow_up)
+    (updates, next_deadline)
 }
 
 fn route_transition_remains_observable(

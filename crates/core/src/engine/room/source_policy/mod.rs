@@ -12,8 +12,8 @@
 //! bandwidth estimates to encoding selectors, route activity and BWE targets.
 //!
 //! Gate and activity controls must be accepted before the matching
-//! [`ConsumerPacketSelectionUpdate`] commits to room state. Committed hysteresis
-//! observations schedule a delayed follow-up turn until the decision settles.
+//! [`ConsumerPacketSelectionUpdate`] commits to room state. Each turn replaces
+//! or cancels its earliest receiver-pressure or exact-target upgrade deadline.
 
 mod action;
 mod audio;

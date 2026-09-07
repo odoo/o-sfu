@@ -2,6 +2,7 @@ use std::{
     net::IpAddr,
     num::{NonZeroU64, NonZeroUsize},
     thread,
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow, ensure};
@@ -138,14 +139,34 @@ fn video_adaptation_tuning_from_env(env: &Env<'_>) -> Result<VideoAdaptationTuni
         .var("ROOM_THUMBNAIL_BUDGET_DIVISOR")
         .check(positive)
         .default(VideoAdaptationTuning::DEFAULT_THUMBNAIL_BUDGET_DIVISOR)?;
-    let downswitch_pressure_observations = env
-        .var("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS")
+    for (legacy, replacement) in [
+        (
+            "ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS",
+            "ROOM_SOFT_PAUSE_DWELL_MS",
+        ),
+        ("ROOM_UPSWITCH_STABLE_OBSERVATIONS", "ROOM_UPGRADE_DWELL_MS"),
+    ] {
+        ensure!(
+            env.var::<String>(legacy).optional()?.is_none(),
+            "{legacy} is no longer supported, use {replacement}"
+        );
+    }
+    let soft_pause_dwell = env
+        .var("ROOM_SOFT_PAUSE_DWELL_MS")
         .check(positive)
-        .default(VideoAdaptationTuning::DEFAULT_DOWNSWITCH_PRESSURE_OBSERVATIONS)?;
-    let upswitch_stable_observations = env
-        .var("ROOM_UPSWITCH_STABLE_OBSERVATIONS")
+        .optional()?
+        .map_or(
+            VideoAdaptationTuning::DEFAULT_SOFT_PAUSE_DWELL,
+            Duration::from_millis,
+        );
+    let upgrade_dwell = env
+        .var("ROOM_UPGRADE_DWELL_MS")
         .check(positive)
-        .default(VideoAdaptationTuning::DEFAULT_UPSWITCH_STABLE_OBSERVATIONS)?;
+        .optional()?
+        .map_or(
+            VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL,
+            Duration::from_millis,
+        );
     let receiver_budget_headroom_percent = env
         .var("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT")
         .default(VideoAdaptationTuning::DEFAULT_RECEIVER_BUDGET_HEADROOM_PERCENT)?;
@@ -155,8 +176,8 @@ fn video_adaptation_tuning_from_env(env: &Env<'_>) -> Result<VideoAdaptationTuni
     VideoAdaptationTuning::try_new(
         multiparty_scalable_video_threshold,
         thumbnail_budget_divisor,
-        downswitch_pressure_observations,
-        upswitch_stable_observations,
+        soft_pause_dwell,
+        upgrade_dwell,
         receiver_budget_headroom_percent,
         Bitrate::from_bps(audio_reserve_per_speaker_bps),
     )
@@ -175,11 +196,23 @@ fn video_adaptation_tuning_error(error: VideoAdaptationTuningError) -> anyhow::E
         VideoAdaptationTuningError::ThumbnailBudgetDivisorZero => {
             anyhow!("ROOM_THUMBNAIL_BUDGET_DIVISOR must be greater than zero")
         }
-        VideoAdaptationTuningError::DownswitchPressureObservationsZero => {
-            anyhow!("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS must be greater than zero")
+        VideoAdaptationTuningError::SoftPauseDwellZero => {
+            anyhow!("ROOM_SOFT_PAUSE_DWELL_MS must be greater than zero")
         }
-        VideoAdaptationTuningError::UpswitchStableObservationsZero => {
-            anyhow!("ROOM_UPSWITCH_STABLE_OBSERVATIONS must be greater than zero")
+        VideoAdaptationTuningError::UpgradeDwellZero => {
+            anyhow!("ROOM_UPGRADE_DWELL_MS must be greater than zero")
+        }
+        VideoAdaptationTuningError::SoftPauseDwellTooLong => {
+            anyhow!(
+                "ROOM_SOFT_PAUSE_DWELL_MS must not exceed {}",
+                VideoAdaptationTuning::MAX_DWELL.as_millis()
+            )
+        }
+        VideoAdaptationTuningError::UpgradeDwellTooLong => {
+            anyhow!(
+                "ROOM_UPGRADE_DWELL_MS must not exceed {}",
+                VideoAdaptationTuning::MAX_DWELL.as_millis()
+            )
         }
         VideoAdaptationTuningError::ReceiverBudgetHeadroomPercentTooHigh => {
             anyhow!("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT must not exceed 100")

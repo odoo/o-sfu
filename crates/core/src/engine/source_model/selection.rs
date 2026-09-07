@@ -49,8 +49,6 @@ pub struct ConsumerSourceSelection {
     selector: SourceSelector,
     policy_pause_reason: Option<PolicyPauseReason>,
     budget: ReceiverVideoBudgetDiagnostics,
-    pressure_observations: u8,
-    upgrade_observations: u8,
 }
 
 impl ConsumerSourceSelection {
@@ -61,8 +59,6 @@ impl ConsumerSourceSelection {
             selector: SourceSelector::Open,
             policy_pause_reason: None,
             budget: ReceiverVideoBudgetDiagnostics::new(None, None, 0, Bitrate::zero()),
-            pressure_observations: 0,
-            upgrade_observations: 0,
         }
     }
 
@@ -101,16 +97,6 @@ impl ConsumerSourceSelection {
         self.budget
     }
 
-    #[must_use]
-    pub const fn pressure_observations(self) -> u8 {
-        self.pressure_observations
-    }
-
-    #[must_use]
-    pub const fn upgrade_observations(self) -> u8 {
-        self.upgrade_observations
-    }
-
     pub const fn set_active(&mut self, active: bool) {
         self.active = active;
     }
@@ -125,14 +111,5 @@ impl ConsumerSourceSelection {
 
     pub const fn set_budget(&mut self, budget: ReceiverVideoBudgetDiagnostics) {
         self.budget = budget;
-    }
-
-    pub const fn set_adaptation_observations(
-        &mut self,
-        pressure_observations: u8,
-        upgrade_observations: u8,
-    ) {
-        self.pressure_observations = pressure_observations;
-        self.upgrade_observations = upgrade_observations;
     }
 }

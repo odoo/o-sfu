@@ -927,3 +927,149 @@ function parseFmtpParameters(formatParams) {
             })
     );
 }
+
+test("startup pressure holds the thumbnail through the soft pause dwell", async ({
+    browserName,
+    context
+}) => {
+    test.setTimeout(60_000);
+    // PR3 must recalibrate this band when the generated upload ladder changes.
+    const maxVideoBitrate = 200_000;
+    const server = await spawnLiveServer({
+        bindPort: browserName === "firefox" ? 18086 : 18085,
+        rtcMinPort: browserName === "firefox" ? 58328 : 58296,
+        rtcMaxPort: browserName === "firefox" ? 58359 : 58327,
+        maxBitrateOut: maxVideoBitrate,
+        maxVideoBitrate
+    });
+    try {
+        const channelUuid = await createChannel({
+            authKey: server.authKey,
+            httpBaseUrl: server.httpBaseUrl
+        });
+        const pinned = await createPeerPage(context);
+        const receiver = await createPeerPage(context);
+        const firstThumbnail = await createPeerPage(context);
+        const thumbnail = await createPeerPage(context);
+        const connect = async (page, sessionId) => {
+            await connectPeer(page, {
+                channelUuid,
+                jwt: createConnectToken(channelUuid, sessionId),
+                url: server.wsUrl
+            });
+            await expect.poll(async () => (await peerSnapshot(page)).state).toBe("connected");
+        };
+        const diagnostics = (producerSessionId) =>
+            streamDiagnostics({
+                consumerSessionId: 42,
+                httpBaseUrl: server.httpBaseUrl,
+                producerSessionId,
+                roomId: channelUuid,
+                streamType: "camera"
+            });
+        await connect(pinned, 41);
+        await connect(receiver, 42);
+        await connect(firstThumbnail, 44);
+        await connect(thumbnail, 43);
+        // Chromium limits tiny capture surfaces to one simulcast layer. Motion
+        // keeps real throughput high enough for BWE to sustain the test band.
+        await publishSyntheticCamera(pinned, "startup-pinned", {
+            width: 480,
+            height: 270,
+            frameRate: 30,
+            movingPattern: true
+        });
+        await setStreamDownload(receiver, 41, "camera", true, "pinned");
+        // Establish high quality before adding pressure so recovery timing cannot
+        // consume the thumbnail's grace before an over-budget sample is visible.
+        let initial;
+        try {
+            await expect
+                .poll(
+                    async () => {
+                        initial = await diagnostics(41);
+                        const selection = initial.subscription?.selection;
+                        return (
+                            initial.source?.currentIncomingBitrateBps > 0 &&
+                            selection?.latestReceiverBandwidthEstimateBps >= maxVideoBitrate &&
+                            selection.selectedRid === "hi"
+                        );
+                    },
+                    { intervals: [20, 50, 100], timeout: 15_000 }
+                )
+                .toBeTruthy();
+        } finally {
+            await test.info().attach("initial-camera-diagnostics", {
+                body: JSON.stringify(initial),
+                contentType: "application/json"
+            });
+        }
+        // Probes can reach twice the outgoing target. Two thumbnail floors
+        // keep the receiver over budget throughout that probe range.
+        await publishSyntheticCamera(firstThumbnail, "startup-first-thumbnail");
+        await setStreamDownload(receiver, 44, "camera", true, "visible_thumbnail");
+        // Committed publication order breaks ties between thumbnail priorities.
+        await expect.poll(async () => (await diagnostics(44)).publication?.active).toBe(true);
+        await publishSyntheticCamera(thumbnail, "startup-thumbnail");
+        await setStreamDownload(receiver, 43, "camera", true, "visible_thumbnail");
+        let grace;
+        await expect
+            .poll(
+                async () => {
+                    const sample = await diagnostics(43);
+                    const selection = sample.subscription?.selection;
+                    if (
+                        selection?.latestReceiverBandwidthEstimateBps >= maxVideoBitrate &&
+                        selection.selectedVideoBitrateBps > selection.selectedVideoBudgetBps &&
+                        sample.subscription.state === "active" &&
+                        sample.transport?.videoSoftPauseRemainingMs > 0
+                    ) {
+                        grace = sample;
+                    }
+                    return Boolean(grace);
+                },
+                { intervals: [10, 20, 50], timeout: 15_000 }
+            )
+            .toBeTruthy();
+        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeGreaterThanOrEqual(
+            maxVideoBitrate
+        );
+        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeLessThan(
+            maxVideoBitrate + 2 * 150_000
+        );
+        await test.info().attach("soft-pause-grace", {
+            body: JSON.stringify(grace),
+            contentType: "application/json"
+        });
+        await expect
+            .poll(async () => (await diagnostics(43)).subscription)
+            .toMatchObject({
+                state: "inactive",
+                selection: { policyPauseReason: "budget_pressure" }
+            });
+        await expectCameraTrackUpdate(receiver, 41, true);
+        if (browserName === "chromium") {
+            await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
+        }
+        // A BWE change during grace can restart the high-layer upgrade dwell.
+        try {
+            await expect
+                .poll(() =>
+                    cameraSubscriptionRid({
+                        consumerSessionId: 42,
+                        httpBaseUrl: server.httpBaseUrl,
+                        producerSessionId: 41,
+                        roomId: channelUuid
+                    })
+                )
+                .toBe("hi");
+        } finally {
+            await test.info().attach("final-camera-diagnostics", {
+                body: JSON.stringify(await diagnostics(41)),
+                contentType: "application/json"
+            });
+        }
+    } finally {
+        await server.stop();
+    }
+});

@@ -16,7 +16,9 @@ use super::{
     DeclaredConsumerSetup, PendingConsumerRouteView, PendingConsumerSetup, PublishedSource,
     ReceiverRouteActivity, SubscriptionKey, ValidatedPublish,
     producer::{PublicationCommitError, allocate_source_descriptor},
-    route_graph::{CurrentPublication, RelayRouteEffect, RemovedRoutes, RouteGraph},
+    route_graph::{
+        CurrentPublication, PendingUpgrade, RelayRouteEffect, RemovedRoutes, RouteGraph,
+    },
     source_index::PublishedSources,
 };
 use crate::engine::{
@@ -543,6 +545,25 @@ impl RoomTopology {
         updated
     }
 
+    /// Commits a hold only for the active source, subscription and exact route.
+    pub(in crate::engine::room) fn update_consumer_upgrade(
+        &mut self,
+        key: &SubscriptionKey,
+        source_id: PublishedSourceId,
+        route: &TransportConsumerRoute,
+        pending_upgrade: Option<PendingUpgrade>,
+    ) -> bool {
+        if !self
+            .sources
+            .source(source_id)
+            .is_some_and(|source| source.active)
+        {
+            return false;
+        }
+        self.route_graph
+            .update_upgrade(key, source_id, route, pending_upgrade)
+    }
+
     fn detach_user_sources(
         &mut self,
         user_id: &UserId,
@@ -574,12 +595,13 @@ impl RoomTopology {
         key: &'a SubscriptionKey,
         current: &'a CurrentPublication,
     ) -> Option<ConsumerRouteView<'a>> {
-        let (route, mid) = current.committed()?;
+        let committed = current.committed()?;
         let source = self.sources.source(current.source_id)?;
         Some(ConsumerRouteView {
             key,
-            route,
-            mid,
+            route: &committed.route,
+            mid: &committed.mid,
+            pending_upgrade: committed.pending_upgrade.as_ref(),
             source,
             selection: current.selection,
         })
@@ -712,6 +734,9 @@ impl RoomTopology {
         source.active = active;
         source.activity_revision = source.activity_revision.next();
         let revision = source.activity_revision;
+        if !active {
+            self.route_graph.clear_source_upgrades(source_id);
+        }
         self.invalidate_video_allocation();
         Some(revision)
     }

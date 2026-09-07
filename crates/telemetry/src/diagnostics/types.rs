@@ -170,6 +170,8 @@ pub struct DiagnosticsUserTransport {
     pub health: Option<DiagnosticsTransportHealth>,
     pub media_worker_id: usize,
     pub quality_summary: DiagnosticsQualitySummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video_soft_pause_remaining_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +240,15 @@ pub struct DiagnosticsSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DiagnosticsPendingUpgrade {
+    pub selector: DiagnosticsSourceSelector,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding_id: Option<u64>,
+    pub remaining_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiagnosticsSourceSelection {
     pub active: bool,
     pub active_video_route_count: usize,
@@ -246,7 +257,8 @@ pub struct DiagnosticsSourceSelection {
     pub policy_allows_delivery: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_pause_reason: Option<DiagnosticsPolicyPauseReason>,
-    pub pressure_observations: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_upgrade: Option<DiagnosticsPendingUpgrade>,
     pub selection_reason: DiagnosticsSourceSelectionReason,
     pub selector: DiagnosticsSourceSelector,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,7 +270,6 @@ pub struct DiagnosticsSourceSelection {
     pub selected_encoding_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_rid: Option<String>,
-    pub upgrade_observations: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

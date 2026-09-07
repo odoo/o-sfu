@@ -147,7 +147,6 @@ fn intent_survives_detach_and_resets_source_selection() {
                 2,
                 Bitrate::from_kbps(500),
             ));
-            selection.set_adaptation_observations(3, 4);
         })
     );
     graph.detach_source(SOURCE_ONE);
@@ -251,7 +250,7 @@ fn pending_and_committed_counts_follow_realization_state() {
         .current(&committed_key)
         .and_then(|(_, current)| current.committed())
         .expect("committed realization should be projected");
-    assert_eq!(committed.1, "mid");
+    assert_eq!(committed.mid, "mid");
 
     assert!(graph.release_consumer_setup(pending).is_empty());
     assert_eq!(graph.subscription_count(), 1);

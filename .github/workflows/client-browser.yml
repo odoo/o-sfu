@@ -69,5 +69,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: playwright-report-${{ matrix.browser }}
-          path: crates/client/playwright-report
+          path: crates/client/output/playwright/results
           retention-days: 14

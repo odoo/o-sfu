@@ -179,6 +179,7 @@ impl RoomState {
             user.reset_presentation();
             user.parsed_client_rtp_capabilities = None;
             user.connection_id = connection_id;
+            user.video_soft_pause_deadline = None;
             return Some(old_sender);
         }
         self.users.insert(
@@ -190,6 +191,7 @@ impl RoomState {
                 server_featured: None,
                 parsed_client_rtp_capabilities: None,
                 connection_id,
+                video_soft_pause_deadline: None,
                 sender,
             },
         );

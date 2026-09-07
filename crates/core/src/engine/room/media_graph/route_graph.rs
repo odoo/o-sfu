@@ -48,6 +48,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, btree_map::Entry},
     mem,
+    time::Instant,
 };
 
 use o_sfu_router::topology::RoutedConsumerId;
@@ -62,7 +63,9 @@ use crate::engine::{
         RelayRouteActivity, TransportConsumerRoute, TransportMediaId, TransportRelayRouteAction,
         TransportSessionKey, TransportSourceKey,
     },
-    source_model::{PolicyPauseReason, PublishedSourceId, SourceSubscriptionIntent},
+    source_model::{
+        PolicyPauseReason, PublishedSourceId, SourceSelector, SourceSubscriptionIntent,
+    },
 };
 
 #[derive(Debug, Default)]
@@ -94,12 +97,24 @@ enum ConsumerRealization {
     #[default]
     Absent,
     Pending(RouteReservationId, Option<RouteRelay>),
-    Committed(
-        TransportConsumerRoute,
-        String,
-        RoutedConsumerId,
-        Option<RouteRelay>,
-    ),
+    Committed(CommittedConsumerRoute),
+}
+
+/// Transport realization and adaptation hold share the exact route lifetime.
+#[derive(Debug)]
+pub(super) struct CommittedConsumerRoute {
+    pub route: TransportConsumerRoute,
+    pub mid: String,
+    routed: RoutedConsumerId,
+    relay: Option<RouteRelay>,
+    pub pending_upgrade: Option<PendingUpgrade>,
+}
+
+/// Eligibility must remain continuous for this exact deliverable post-fit target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::engine::room) struct PendingUpgrade {
+    pub selector: SourceSelector,
+    pub deadline: Instant,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -179,7 +194,7 @@ impl RouteGraph {
         let entry = self.entry(key);
         entry.intent.merge(update);
         if let (Some(active), Some(current)) = (update.active(), entry.current.as_mut()) {
-            current.selection.set_active(active);
+            current.set_active(active);
         }
     }
 
@@ -222,12 +237,12 @@ impl RouteGraph {
                 .get_mut(key)
                 .and_then(|entry| entry.current.as_mut())
                 .filter(|current| current.source_id == source_id)?;
-            if let ConsumerRealization::Committed(route, ..) = &current.realization
-                && route.consumer_session_key().connection_id() != connection_id
+            if let ConsumerRealization::Committed(committed) = &current.realization
+                && committed.route.consumer_session_key().connection_id() != connection_id
             {
                 return None;
             }
-            current.selection.set_active(active);
+            current.set_active(active);
             if let Some(reason) = policy_pause_reason {
                 current.selection.set_policy_pause_reason(Some(reason));
             }
@@ -295,7 +310,13 @@ impl RouteGraph {
             return Err(relay.map_or_else(Vec::new, |relay| self.release_relay(&key, &relay)));
         };
         current.selection = selection;
-        current.realization = ConsumerRealization::Committed(route, mid, routed, relay);
+        current.realization = ConsumerRealization::Committed(CommittedConsumerRoute {
+            route,
+            mid,
+            routed,
+            relay,
+            pending_upgrade: None,
+        });
         Ok(())
     }
 
@@ -313,14 +334,49 @@ impl RouteGraph {
         else {
             return false;
         };
-        let ConsumerRealization::Committed(current_route, ..) = &current.realization else {
+        let ConsumerRealization::Committed(committed) = &current.realization else {
             return false;
         };
-        if current.source_id != source_id || current_route != route {
+        if current.source_id != source_id || &committed.route != route {
             return false;
         }
         update(&mut current.selection);
+        if !current.selection.active() {
+            current.clear_upgrade();
+        }
         true
+    }
+
+    pub(super) fn update_upgrade(
+        &mut self,
+        key: &SubscriptionKey,
+        source_id: PublishedSourceId,
+        route: &TransportConsumerRoute,
+        pending_upgrade: Option<PendingUpgrade>,
+    ) -> bool {
+        let Some(current) = self.current_mut(key, source_id) else {
+            return false;
+        };
+        let ConsumerRealization::Committed(committed) = &mut current.realization else {
+            return false;
+        };
+        if &committed.route != route || !current.selection.active() {
+            return false;
+        }
+        committed.pending_upgrade = pending_upgrade;
+        true
+    }
+
+    pub(super) fn clear_source_upgrades(&mut self, source_id: PublishedSourceId) {
+        let (entries, by_source) = (&mut self.entries, &self.by_source);
+        for key in by_source.get(&source_id).into_iter().flatten() {
+            if let Some(current) = entries
+                .get_mut(key)
+                .and_then(|entry| entry.current.as_mut())
+            {
+                current.clear_upgrade();
+            }
+        }
     }
 
     pub(super) fn selection(
@@ -409,8 +465,8 @@ impl RouteGraph {
                     ConsumerSourceSelection::open(entry.intent.active().unwrap_or(true));
                 match mem::take(&mut current.realization) {
                     ConsumerRealization::Absent => None,
-                    ConsumerRealization::Pending(_, relay)
-                    | ConsumerRealization::Committed(_, _, _, relay) => relay,
+                    ConsumerRealization::Pending(_, relay) => relay,
+                    ConsumerRealization::Committed(committed) => committed.relay,
                 }
             };
             if let Some(relay) = relay {
@@ -456,11 +512,11 @@ impl RouteGraph {
                 else {
                     continue;
                 };
-                let ConsumerRealization::Committed(route, ..) = &current.realization else {
+                let ConsumerRealization::Committed(committed) = &current.realization else {
                     continue;
                 };
-                if route.consumer_session_key() != session
-                    || !declined.contains(&route.consumer_transport_media_id())
+                if committed.route.consumer_session_key() != session
+                    || !declined.contains(&committed.route.consumer_transport_media_id())
                 {
                     continue;
                 }
@@ -567,10 +623,10 @@ impl RouteGraph {
         let relay = match realization {
             ConsumerRealization::Absent => None,
             ConsumerRealization::Pending(_, relay) => relay,
-            ConsumerRealization::Committed(route, _, consumer, relay) => {
-                removed.routes.push(route);
-                removed.consumers.push(consumer);
-                relay
+            ConsumerRealization::Committed(committed) => {
+                removed.routes.push(committed.route);
+                removed.consumers.push(committed.routed);
+                committed.relay
             }
         };
         if let Some(relay) = relay {
@@ -650,13 +706,26 @@ impl Subscription {
 }
 
 impl CurrentPublication {
+    fn set_active(&mut self, active: bool) {
+        self.selection.set_active(active);
+        if !active {
+            self.clear_upgrade();
+        }
+    }
+
+    fn clear_upgrade(&mut self) {
+        if let ConsumerRealization::Committed(committed) = &mut self.realization {
+            committed.pending_upgrade = None;
+        }
+    }
+
     pub(super) const fn is_pending(&self) -> bool {
         matches!(self.realization, ConsumerRealization::Pending(..))
     }
 
-    pub(super) fn committed(&self) -> Option<(&TransportConsumerRoute, &str)> {
+    pub(super) fn committed(&self) -> Option<&CommittedConsumerRoute> {
         match &self.realization {
-            ConsumerRealization::Committed(route, mid, ..) => Some((route, mid)),
+            ConsumerRealization::Committed(committed) => Some(committed),
             ConsumerRealization::Absent | ConsumerRealization::Pending(..) => None,
         }
     }
@@ -666,7 +735,8 @@ impl ConsumerRealization {
     fn set_relay_activity(&mut self, activity: RelayRouteActivity) -> Option<RouteRelay> {
         let relay = match self {
             Self::Absent => return None,
-            Self::Pending(_, relay) | Self::Committed(_, _, _, relay) => relay.as_mut()?,
+            Self::Pending(_, relay) => relay.as_mut()?,
+            Self::Committed(committed) => committed.relay.as_mut()?,
         };
         if relay.activity == activity {
             return None;

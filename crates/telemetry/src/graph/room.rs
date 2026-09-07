@@ -229,8 +229,7 @@ fn download_edge(
         "detail__selector": format!("{:?}", sub.selection.selector),
         "detail__selection_reason": format!("{:?}", sub.selection.selection_reason),
         "detail__selection_active": sub.selection.active,
-        "detail__pressure_observations": sub.selection.pressure_observations,
-        "detail__upgrade_observations": sub.selection.upgrade_observations,
+        "detail__pending_upgrade": sub.selection.pending_upgrade,
         "detail__source_transport_media_id": sub.source_transport_media_id,
         "detail__consumer_transport_media_id": sub.consumer_transport_media_id,
     });

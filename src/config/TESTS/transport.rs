@@ -1,4 +1,7 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 
 use anyhow::Result;
 
@@ -146,15 +149,22 @@ fn load_transport_config_accepts_video_adaptation_tuning() -> Result<()> {
     let config = load_transport_config_with_defaults(&[
         ("ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD", "5"),
         ("ROOM_THUMBNAIL_BUDGET_DIVISOR", "3"),
-        ("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS", "4"),
-        ("ROOM_UPSWITCH_STABLE_OBSERVATIONS", "6"),
+        ("ROOM_SOFT_PAUSE_DWELL_MS", "250"),
+        ("ROOM_UPGRADE_DWELL_MS", "1250"),
         ("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT", "15"),
         ("ROOM_AUDIO_RESERVE_PER_SPEAKER_BPS", "40000"),
     ])?;
 
     assert_eq!(
         config.video_adaptation_tuning,
-        VideoAdaptationTuning::try_new(5, 3, 4, 6, 15, Bitrate::from_bps(40_000))?
+        VideoAdaptationTuning::try_new(
+            5,
+            3,
+            Duration::from_millis(250),
+            Duration::from_millis(1250),
+            15,
+            Bitrate::from_bps(40_000)
+        )?
     );
     Ok(())
 }
@@ -174,9 +184,27 @@ fn load_transport_config_defaults_video_adaptation_tuning() -> Result<()> {
 fn load_transport_config_rejects_invalid_video_adaptation_tuning() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            name: "zero downswitch pressure observations",
-            overrides: &[("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS", "0")],
-            message: "ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS must be greater than zero",
+            name: "zero soft pause dwell",
+            overrides: &[("ROOM_SOFT_PAUSE_DWELL_MS", "0")],
+            message: "ROOM_SOFT_PAUSE_DWELL_MS must be greater than zero",
+        },
+        InvalidTransportCase {
+            name: "zero upgrade dwell",
+            overrides: &[("ROOM_UPGRADE_DWELL_MS", "0")],
+            message: "ROOM_UPGRADE_DWELL_MS must be greater than zero",
+        },
+        InvalidTransportCase {
+            name: "legacy pause count",
+            overrides: &[("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS", "2")],
+            message: "ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS is no longer supported, use ROOM_SOFT_PAUSE_DWELL_MS",
+        },
+        InvalidTransportCase {
+            name: "legacy upgrade count with replacement",
+            overrides: &[
+                ("ROOM_UPSWITCH_STABLE_OBSERVATIONS", "3"),
+                ("ROOM_UPGRADE_DWELL_MS", "1250"),
+            ],
+            message: "ROOM_UPSWITCH_STABLE_OBSERVATIONS is no longer supported, use ROOM_UPGRADE_DWELL_MS",
         },
         InvalidTransportCase {
             name: "headroom percent above 100",
@@ -388,6 +416,22 @@ fn load_transport_config_preserves_numeric_parse_errors() {
             name: "invalid video download limit",
             overrides: &[("ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER", "abc")],
             message: "ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER must be a valid usize",
+        },
+    ]);
+}
+
+#[test]
+fn load_transport_config_rejects_unrepresentable_policy_deadlines() {
+    assert_invalid_transport_cases(&[
+        InvalidTransportCase {
+            name: "unrepresentable soft pause dwell",
+            overrides: &[("ROOM_SOFT_PAUSE_DWELL_MS", "18446744073709551615")],
+            message: "ROOM_SOFT_PAUSE_DWELL_MS must not exceed 3153600000000",
+        },
+        InvalidTransportCase {
+            name: "unrepresentable upgrade dwell",
+            overrides: &[("ROOM_UPGRADE_DWELL_MS", "18446744073709551615")],
+            message: "ROOM_UPGRADE_DWELL_MS must not exceed 3153600000000",
         },
     ]);
 }
