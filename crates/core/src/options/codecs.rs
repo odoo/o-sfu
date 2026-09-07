@@ -49,6 +49,13 @@ macro_rules! media_codec_accessors {
 
 impl MediaCodecFlags {
     #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            enabled: MediaCodecSet::empty(),
+        }
+    }
+
+    #[must_use]
     fn with_flag(mut self, flag: MediaCodecSet, enabled: bool) -> Self {
         if enabled {
             self.enabled.insert(flag);
