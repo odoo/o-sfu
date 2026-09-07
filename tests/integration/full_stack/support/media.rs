@@ -97,20 +97,19 @@ async fn consume_video_source(
     track
 }
 
-pub(crate) async fn assert_video_subscription_selected_rid(
+pub(crate) async fn assert_featured_video_subscription(
     server: &TestServer,
     room: &str,
     subscriber: &ProtocolFakePeer,
     publisher_user_id: &UserId,
-    rid: &str,
 ) {
     assert!(
         server
-            .wait_for_video_subscription_selected_rid(
+            .wait_for_video_subscription_layout(
                 room,
                 subscriber.user_id(),
                 publisher_user_id,
-                rid,
+                DiagnosticsVideoLayoutRole::Featured,
             )
             .await
     );
@@ -122,7 +121,7 @@ pub(crate) async fn assert_packet_forwarded(
     source: &mut FakeMediaSource,
     clock: &mut FakeClock,
 ) -> u64 {
-    let Some(expected_payload) = publisher.send_rtp_packet(source, clock).await else {
+    let Some(expected_payload) = publisher.rtc().send_rtp_packet(source, clock).await else {
         panic!("synthetic packet should be accepted by fake publisher");
     };
     assert!(
@@ -144,7 +143,7 @@ pub(crate) async fn assert_synthetic_video_packet_forwarded(
     clock: &mut FakeClock,
 ) -> u64 {
     for _ in 0..3 {
-        let Some(expected_payload) = publisher.send_rtp_packet(source, clock).await else {
+        let Some(expected_payload) = publisher.rtc().send_rtp_packet(source, clock).await else {
             panic!("synthetic video packet should be accepted by fake publisher");
         };
         if read_expected_rtp_payload(
@@ -167,14 +166,23 @@ pub(crate) async fn assert_packet_dropped(
     source: &mut FakeMediaSource,
     clock: &mut FakeClock,
 ) {
-    assert!(publisher.send_rtp_packet(source, clock).await.is_some());
+    assert!(
+        publisher
+            .rtc()
+            .send_rtp_packet(source, clock)
+            .await
+            .is_some()
+    );
     let observation_window = Duration::from_millis(300);
     let (publisher_pumped, received_packet) = join!(
-        publisher.pump_rtc(observation_window),
-        subscriber.read_rtp_packet(observation_window),
+        publisher.rtc().pump(observation_window),
+        subscriber.rtc().read_rtp_packet(observation_window),
     );
     assert!(publisher_pumped.is_some());
-    assert!(received_packet.is_none());
+    assert!(
+        matches!(received_packet, Ok(None)),
+        "subscriber RTC should remain healthy without RTP: {received_packet:?}"
+    );
 }
 
 pub(crate) async fn read_expected_rtp_payload(
@@ -190,11 +198,15 @@ pub(crate) async fn read_expected_rtp_payload(
             return false;
         }
         let slice = Duration::from_millis(50).min(deadline - now);
-        let (publisher_pumped, received_packet) =
-            join!(publisher.pump_rtc(slice), subscriber.read_rtp_packet(slice),);
+        let (publisher_pumped, received_packet) = join!(
+            publisher.rtc().pump(slice),
+            subscriber.rtc().read_rtp_packet(slice),
+        );
         if publisher_pumped.is_none() {
             return false;
         }
+        let received_packet = received_packet
+            .unwrap_or_else(|error| panic!("subscriber RTC receive failed: {error:#}"));
         if received_packet.is_some_and(|packet| packet.payload.as_ref() == expected_payload) {
             return true;
         }

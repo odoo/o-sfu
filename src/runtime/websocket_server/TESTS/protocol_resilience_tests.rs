@@ -248,7 +248,6 @@ async fn invalid_protocol_initial_answer_closes_before_user_negotiates() {
     assert!(
         !room
             .test_api()
-            .inspect()
             .is_stream_published(
                 &UserId::Integer(91),
                 &stream_id_for_stream_type(StreamType::Camera),

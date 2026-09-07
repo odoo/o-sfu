@@ -19,7 +19,7 @@ async fn staged_negotiated_publish_rollback_cleans_transport_media_without_commi
     assert!(scenario.rollback_scalable_video().await);
 
     assert_eq!(scenario.staged_count().await, 0);
-    assert_eq!(scenario.room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(scenario.room.test_api().producer_count().await, 0);
     assert!(
         !scenario
             .route_for_staged_media_exists(transport_media_id)
@@ -64,7 +64,7 @@ async fn staged_negotiated_publish_commit_moves_through_room_owned_transaction()
                 .await
                 .is_err()
         );
-        assert_eq!(scenario.room.test_api().inspect().producer_count().await, 0);
+        assert_eq!(scenario.room.test_api().producer_count().await, 0);
         assert_eq!(scenario.staged_count().await, 1);
         drop(commit);
         drop(source_policy_guard);
@@ -110,7 +110,7 @@ async fn staged_publish_connection_teardown_rolls_back_every_staged_stream() {
     scenario.close_user().await;
 
     assert_eq!(scenario.staged_count().await, 0);
-    assert_eq!(scenario.room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(scenario.room.test_api().producer_count().await, 0);
     let publisher_output = scenario.drain_publisher();
     assert!(
         matches!(

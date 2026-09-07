@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use tokio::time::timeout;
 
-use super::{super::route_control::PacketLayerGate, fixtures::*};
+use super::{
+    super::{route_control::PacketLayerGate, test_support::RecordIncomingMediaProbe},
+    fixtures::*,
+};
 
 fn assert_applied(outcome: WorkerMediaControlBatchOutcome) {
     let WorkerMediaControlBatchOutcome::Applied(results) = outcome else {
@@ -409,6 +412,35 @@ async fn rtc_consumer_packet_gate_update_waits_for_live_rid_before_strict_aggreg
 }
 
 #[tokio::test]
+async fn incoming_media_probe_does_not_register_missing_publications() {
+    let adapter = RtcWorker::default();
+    let session_key = transport_key(1, 21, UserId::Integer(21));
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
+    let now = Instant::now();
+
+    let recorded = adapter
+        .test_handle()
+        .debug_handle
+        .probe(RecordIncomingMediaProbe {
+            transport_media_id: TransportMediaId::new(99),
+            payload_bytes: 120,
+            now,
+        })
+        .await;
+
+    assert_eq!(recorded, Some(false));
+    assert!(
+        adapter
+            .test_handle()
+            .bitrate_registry
+            .lock()
+            .expect("bitrate registry mutex should not be poisoned")
+            .incoming_bitrates_by_session
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 21, UserId::Integer(21));
@@ -427,7 +459,7 @@ async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
         (Duration::from_secs(1), 1),
     ] {
         adapter
-            .debug_record_incoming_media(&session_key, transport_media_id, bytes, now + elapsed)
+            .debug_record_incoming_media(transport_media_id, bytes, now + elapsed)
             .await;
     }
     let worker_handle = adapter.test_handle();
@@ -466,7 +498,7 @@ async fn rtc_incoming_bitrate_snapshot_ignores_closed_sessions() {
         (Duration::from_secs(1), 1),
     ] {
         adapter
-            .debug_record_incoming_media(&session_key, transport_media_id, bytes, now + elapsed)
+            .debug_record_incoming_media(transport_media_id, bytes, now + elapsed)
             .await;
     }
     let worker_handle = adapter.test_handle();

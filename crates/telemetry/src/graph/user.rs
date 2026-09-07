@@ -42,8 +42,8 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::common::{
-    download_main_stat, push_unique_edge, push_unique_node, route_state_color, route_state_label,
-    source_by_id, stream_id_color, stream_id_label, transport_health_label, user_by_id,
+    download_main_stat, route_state_color, route_state_label, source_by_id, stream_id_color,
+    stream_id_label, transport_health_label, user_by_id,
 };
 use crate::diagnostics::types::{
     DiagnosticsRoomDetail, DiagnosticsSource, DiagnosticsSubscription, DiagnosticsUserView,
@@ -105,198 +105,185 @@ fn path_source_node(room_uuid: &str, source: &DiagnosticsSource) -> Value {
     })
 }
 
-fn ensure_path_user(
-    nodes: &mut Vec<Value>,
-    seen_nodes: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    user: &DiagnosticsUserView,
-    selected: bool,
-) {
-    let room_uuid = detail.summary.uuid.as_str();
-    let user_id = user.user_id.path_segment();
-    push_unique_node(
-        nodes,
-        seen_nodes,
-        format!("user:{room_uuid}:{user_id}"),
-        path_user_node(room_uuid, user, selected),
-    );
-    push_unique_node(
-        nodes,
-        seen_nodes,
-        format!("worker:{}", user.transport.media_worker_id),
-        path_worker_node(detail, user.transport.media_worker_id),
-    );
+/// Preserves the first node and edge for each ID in traversal order.
+#[derive(Default)]
+struct UserGraph {
+    nodes: Vec<Value>,
+    edges: Vec<Value>,
+    seen_nodes: HashSet<String>,
+    seen_edges: HashSet<String>,
 }
 
-fn push_user_transport_edge(
-    edges: &mut Vec<Value>,
-    seen_edges: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    user: &DiagnosticsUserView,
-    direction: &str,
-) {
-    let room_uuid = detail.summary.uuid.as_str();
-    let user_id = user.user_id.path_segment();
-    let edge_id = format!(
-        "transport:{room_uuid}:{user_id}:{}",
-        user.transport.media_worker_id
-    );
-    push_unique_edge(
-        edges,
-        seen_edges,
-        edge_id.clone(),
-        json!({
-            "id": edge_id,
-            "source": format!("user:{}:{}", room_uuid, user_id),
-            "target": format!("worker:{}", user.transport.media_worker_id),
-            "mainStat": "transport",
-            "secondaryStat": transport_health_label(user.transport.health.as_ref()),
-            "detail__direction": direction,
-            "detail__connection": user.transport.connection_id,
-        }),
-    );
-}
-
-fn push_publish_path(
-    nodes: &mut Vec<Value>,
-    edges: &mut Vec<Value>,
-    seen_nodes: &mut HashSet<String>,
-    seen_edges: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    owner: &DiagnosticsUserView,
-    source: &DiagnosticsSource,
-) {
-    let room_uuid = detail.summary.uuid.as_str();
-    push_unique_node(
-        nodes,
-        seen_nodes,
-        format!("source:{room_uuid}:{}", source.source_id),
-        path_source_node(room_uuid, source),
-    );
-    let edge_id = format!("publish:{room_uuid}:{}", source.source_id);
-    push_unique_edge(
-        edges,
-        seen_edges,
-        edge_id.clone(),
-        json!({
-            "id": edge_id,
-            "source": format!("worker:{}", owner.transport.media_worker_id),
-            "target": format!("source:{}:{}", room_uuid, source.source_id),
-            "mainStat": format!("{} upload", stream_id_label(&source.stream_id)),
-            "secondaryStat": format!("{} bps", source.current_incoming_bitrate_bps),
-            "color": stream_id_color(&source.stream_id),
-            "detail__owner_user": owner.user_id.path_segment(),
-            "detail__stream_id": &source.stream_id,
-            "detail__transport_media_id": source.transport_media_id,
-        }),
-    );
-}
-
-fn push_subscription_delivery_path(
-    edges: &mut Vec<Value>,
-    seen_edges: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    receiver: &DiagnosticsUserView,
-    sub: &DiagnosticsSubscription,
-    direction: &str,
-) {
-    let room_uuid = detail.summary.uuid.as_str();
-    let receiver_id = receiver.user_id.path_segment();
-    let deliver_edge_id = format!("deliver:{room_uuid}:{}:{receiver_id}", sub.source_id);
-    push_unique_edge(
-        edges,
-        seen_edges,
-        deliver_edge_id.clone(),
-        json!({
-            "id": deliver_edge_id,
-            "source": format!("source:{}:{}", room_uuid, sub.source_id),
-            "target": format!("worker:{}", receiver.transport.media_worker_id),
-            "mainStat": download_main_stat(sub),
-            "secondaryStat": route_state_label(&sub.state),
-            "color": route_state_color(&sub.state),
-            "detail__direction": direction,
-            "detail__receiver_user": receiver_id,
-            "detail__selector": format!("{:?}", sub.selection.selector),
-            "detail__source_transport_media_id": sub.source_transport_media_id,
-            "detail__consumer_transport_media_id": sub.consumer_transport_media_id,
-        }),
-    );
-
-    let consume_edge_id = format!(
-        "consume:{room_uuid}:{}:{}",
-        sub.source_id,
-        receiver.user_id.path_segment()
-    );
-    push_unique_edge(
-        edges,
-        seen_edges,
-        consume_edge_id.clone(),
-        json!({
-            "id": consume_edge_id,
-            "source": format!("worker:{}", receiver.transport.media_worker_id),
-            "target": format!("user:{}:{}", room_uuid, receiver.user_id.path_segment()),
-            "mainStat": "consume",
-            "secondaryStat": direction,
-            "color": route_state_color(&sub.state),
-        }),
-    );
-}
-
-fn push_inbound_paths(
-    nodes: &mut Vec<Value>,
-    edges: &mut Vec<Value>,
-    seen_nodes: &mut HashSet<String>,
-    seen_edges: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    selected_user: &DiagnosticsUserView,
-) {
-    for sub in &selected_user.subscriptions {
-        let Some(source) = source_by_id(detail, sub.source_id) else {
-            continue;
-        };
-        let Some(owner) = user_by_id(detail, &source.owner_user_id) else {
-            continue;
-        };
-        ensure_path_user(nodes, seen_nodes, detail, owner, false);
-        push_user_transport_edge(edges, seen_edges, detail, owner, "inbound-source");
-        push_publish_path(nodes, edges, seen_nodes, seen_edges, detail, owner, source);
-        push_subscription_delivery_path(edges, seen_edges, detail, selected_user, sub, "inbound");
+impl UserGraph {
+    fn push_node(&mut self, id: String, node: Value) {
+        if self.seen_nodes.insert(id) {
+            self.nodes.push(node);
+        }
     }
-}
 
-fn push_outbound_paths(
-    nodes: &mut Vec<Value>,
-    edges: &mut Vec<Value>,
-    seen_nodes: &mut HashSet<String>,
-    seen_edges: &mut HashSet<String>,
-    detail: &DiagnosticsRoomDetail,
-    selected_user: &DiagnosticsUserView,
-) {
-    let selected_sources = detail
-        .sources
-        .iter()
-        .filter(|source| source.owner_user_id == selected_user.user_id);
-    for source in selected_sources {
-        push_publish_path(
-            nodes,
-            edges,
-            seen_nodes,
-            seen_edges,
-            detail,
-            selected_user,
-            source,
+    fn push_edge(&mut self, id: String, edge: Value) {
+        if self.seen_edges.insert(id) {
+            self.edges.push(edge);
+        }
+    }
+
+    fn ensure_path_user(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        user: &DiagnosticsUserView,
+        selected: bool,
+    ) {
+        let room_uuid = detail.summary.uuid.as_str();
+        let user_id = user.user_id.path_segment();
+        self.push_node(
+            format!("user:{room_uuid}:{user_id}"),
+            path_user_node(room_uuid, user, selected),
         );
-        for receiver in &detail.users {
-            for sub in receiver
-                .subscriptions
-                .iter()
-                .filter(|sub| sub.source_id == source.source_id)
-            {
-                ensure_path_user(nodes, seen_nodes, detail, receiver, false);
-                push_user_transport_edge(edges, seen_edges, detail, receiver, "outbound-target");
-                push_subscription_delivery_path(
-                    edges, seen_edges, detail, receiver, sub, "outbound",
-                );
+        self.push_node(
+            format!("worker:{}", user.transport.media_worker_id),
+            path_worker_node(detail, user.transport.media_worker_id),
+        );
+    }
+
+    fn push_user_transport_edge(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        user: &DiagnosticsUserView,
+        direction: &str,
+    ) {
+        let room_uuid = detail.summary.uuid.as_str();
+        let user_id = user.user_id.path_segment();
+        let edge_id = format!(
+            "transport:{room_uuid}:{user_id}:{}",
+            user.transport.media_worker_id
+        );
+        self.push_edge(
+            edge_id.clone(),
+            json!({
+                "id": edge_id,
+                "source": format!("user:{}:{}", room_uuid, user_id),
+                "target": format!("worker:{}", user.transport.media_worker_id),
+                "mainStat": "transport",
+                "secondaryStat": transport_health_label(user.transport.health.as_ref()),
+                "detail__direction": direction,
+                "detail__connection": user.transport.connection_id,
+            }),
+        );
+    }
+
+    fn push_publish_path(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        owner: &DiagnosticsUserView,
+        source: &DiagnosticsSource,
+    ) {
+        let room_uuid = detail.summary.uuid.as_str();
+        self.push_node(
+            format!("source:{room_uuid}:{}", source.source_id),
+            path_source_node(room_uuid, source),
+        );
+        let edge_id = format!("publish:{room_uuid}:{}", source.source_id);
+        self.push_edge(
+            edge_id.clone(),
+            json!({
+                "id": edge_id,
+                "source": format!("worker:{}", owner.transport.media_worker_id),
+                "target": format!("source:{}:{}", room_uuid, source.source_id),
+                "mainStat": format!("{} upload", stream_id_label(&source.stream_id)),
+                "secondaryStat": format!("{} bps", source.current_incoming_bitrate_bps),
+                "color": stream_id_color(&source.stream_id),
+                "detail__owner_user": owner.user_id.path_segment(),
+                "detail__stream_id": &source.stream_id,
+                "detail__transport_media_id": source.transport_media_id,
+            }),
+        );
+    }
+
+    fn push_subscription_delivery_path(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        receiver: &DiagnosticsUserView,
+        sub: &DiagnosticsSubscription,
+        direction: &str,
+    ) {
+        let room_uuid = detail.summary.uuid.as_str();
+        let receiver_id = receiver.user_id.path_segment();
+        let deliver_edge_id = format!("deliver:{room_uuid}:{}:{receiver_id}", sub.source_id);
+        self.push_edge(
+            deliver_edge_id.clone(),
+            json!({
+                "id": deliver_edge_id,
+                "source": format!("source:{}:{}", room_uuid, sub.source_id),
+                "target": format!("worker:{}", receiver.transport.media_worker_id),
+                "mainStat": download_main_stat(sub),
+                "secondaryStat": route_state_label(&sub.state),
+                "color": route_state_color(&sub.state),
+                "detail__direction": direction,
+                "detail__receiver_user": receiver_id,
+                "detail__selector": format!("{:?}", sub.selection.selector),
+                "detail__source_transport_media_id": sub.source_transport_media_id,
+                "detail__consumer_transport_media_id": sub.consumer_transport_media_id,
+            }),
+        );
+
+        let consume_edge_id = format!(
+            "consume:{room_uuid}:{}:{}",
+            sub.source_id,
+            receiver.user_id.path_segment()
+        );
+        self.push_edge(
+            consume_edge_id.clone(),
+            json!({
+                "id": consume_edge_id,
+                "source": format!("worker:{}", receiver.transport.media_worker_id),
+                "target": format!("user:{}:{}", room_uuid, receiver.user_id.path_segment()),
+                "mainStat": "consume",
+                "secondaryStat": direction,
+                "color": route_state_color(&sub.state),
+            }),
+        );
+    }
+
+    fn push_inbound_paths(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        selected_user: &DiagnosticsUserView,
+    ) {
+        for sub in &selected_user.subscriptions {
+            let Some(source) = source_by_id(detail, sub.source_id) else {
+                continue;
+            };
+            let Some(owner) = user_by_id(detail, &source.owner_user_id) else {
+                continue;
+            };
+            self.ensure_path_user(detail, owner, false);
+            self.push_user_transport_edge(detail, owner, "inbound-source");
+            self.push_publish_path(detail, owner, source);
+            self.push_subscription_delivery_path(detail, selected_user, sub, "inbound");
+        }
+    }
+
+    fn push_outbound_paths(
+        &mut self,
+        detail: &DiagnosticsRoomDetail,
+        selected_user: &DiagnosticsUserView,
+    ) {
+        let selected_sources = detail
+            .sources
+            .iter()
+            .filter(|source| source.owner_user_id == selected_user.user_id);
+        for source in selected_sources {
+            self.push_publish_path(detail, selected_user, source);
+            for receiver in &detail.users {
+                for sub in receiver
+                    .subscriptions
+                    .iter()
+                    .filter(|sub| sub.source_id == source.source_id)
+                {
+                    self.ensure_path_user(detail, receiver, false);
+                    self.push_user_transport_edge(detail, receiver, "outbound-target");
+                    self.push_subscription_delivery_path(detail, receiver, sub, "outbound");
+                }
             }
         }
     }
@@ -315,38 +302,14 @@ pub fn build_user_graph(detail: &DiagnosticsRoomDetail, requested_user_id: &str)
         .users
         .iter()
         .find(|user| user.user_id.path_segment().as_ref() == requested_user_id)?;
-    let mut nodes = Vec::new();
-    let mut edges = Vec::new();
-    let mut seen_nodes = HashSet::new();
-    let mut seen_edges = HashSet::new();
-
-    ensure_path_user(&mut nodes, &mut seen_nodes, detail, selected_user, true);
-    push_user_transport_edge(
-        &mut edges,
-        &mut seen_edges,
-        detail,
-        selected_user,
-        "selected",
-    );
-    push_inbound_paths(
-        &mut nodes,
-        &mut edges,
-        &mut seen_nodes,
-        &mut seen_edges,
-        detail,
-        selected_user,
-    );
-    push_outbound_paths(
-        &mut nodes,
-        &mut edges,
-        &mut seen_nodes,
-        &mut seen_edges,
-        detail,
-        selected_user,
-    );
+    let mut graph = UserGraph::default();
+    graph.ensure_path_user(detail, selected_user, true);
+    graph.push_user_transport_edge(detail, selected_user, "selected");
+    graph.push_inbound_paths(detail, selected_user);
+    graph.push_outbound_paths(detail, selected_user);
 
     Some(json!({
-        "nodes": nodes,
-        "edges": edges,
+        "nodes": graph.nodes,
+        "edges": graph.edges,
     }))
 }

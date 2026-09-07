@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use o_sfu_router::MediaKind;
 
@@ -23,7 +23,6 @@ pub(super) fn receiver_video_routes<'a>(
     state: &RoomState,
     input: &SourcePolicySnapshot<'a>,
 ) -> Vec<ReceiverVideoRouteInput<'a>> {
-    let mut visible_scalable_route_counts = BTreeMap::new();
     let mut routes = Vec::with_capacity(input.routes.len());
     for route in &input.routes {
         let source = &route.source.descriptor;
@@ -38,13 +37,6 @@ pub(super) fn receiver_video_routes<'a>(
             source,
             &input.featured_source_user_ids,
         );
-        if source.policy().adaptation() == SourceAdaptationPolicy::ScalableVideo
-            && layout_role.counts_toward_visible_budget()
-        {
-            *visible_scalable_route_counts
-                .entry(route.key.receiver.clone())
-                .or_default() += 1;
-        }
         routes.push(ReceiverVideoRouteInput {
             user_count: input.user_count,
             source,
@@ -73,15 +65,25 @@ pub(super) fn receiver_video_routes<'a>(
                 .unwrap_or_else(Bitrate::zero),
         });
     }
-    for route in &mut routes {
-        route.visible_scalable_route_count = visible_scalable_route_counts
-            .get(&route.key.receiver)
-            .copied()
-            .unwrap_or(1);
+    for receiver_routes in
+        routes.chunk_by_mut(|left, right| left.key.receiver == right.key.receiver)
+    {
+        let visible_scalable_route_count = receiver_routes
+            .iter()
+            .filter(|route| {
+                route.source.policy().adaptation() == SourceAdaptationPolicy::ScalableVideo
+                    && route.layout_role.counts_toward_visible_budget()
+            })
+            .count()
+            .max(1);
+        for route in receiver_routes {
+            route.visible_scalable_route_count = visible_scalable_route_count;
+        }
     }
     routes
 }
 
+/// Video route with adaptation or a source bitrate cap.
 #[derive(Debug)]
 pub(super) struct ReceiverVideoRouteInput<'a> {
     pub(super) user_count: usize,

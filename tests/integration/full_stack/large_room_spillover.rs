@@ -282,7 +282,8 @@ async fn pump_surviving_receiver(peers: &mut sp::LargeRoomSpilloverFakePeers) {
     // each bounded operation so the ICE-lite SFU keeps receiving STUN requests.
     // https://www.rfc-editor.org/rfc/rfc7675.html#section-5.1
     let pumped = peer_mut(&mut peers.receivers, 0)
-        .pump_rtc(s::Duration::from_millis(50))
+        .rtc()
+        .pump(s::Duration::from_millis(50))
         .await;
     assert!(
         pumped.is_some(),
@@ -341,7 +342,13 @@ async fn send_audio_activity(
     source: &mut s::FakeMediaSource,
     clock: &mut s::FakeClock,
 ) {
-    assert!(publisher.send_rtp_packets(source, clock, 3).await.is_some());
+    assert!(
+        publisher
+            .rtc()
+            .send_rtp_packets(source, clock, 3)
+            .await
+            .is_some()
+    );
 }
 
 async fn ready_video_subscription(

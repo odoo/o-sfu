@@ -1,4 +1,4 @@
-use super::super::super::{Room, media_graph::ConsumerRouteState};
+use super::{super::super::media_graph::ConsumerRouteState, RoomTestApi};
 #[cfg(test)]
 use crate::engine::source_model::PublishedSourceId;
 use crate::engine::{
@@ -10,12 +10,7 @@ use crate::engine::{
     },
 };
 
-#[derive(Clone, Copy)]
-pub struct RoomTestInspect<'a> {
-    pub(super) room: &'a Room,
-}
-
-impl RoomTestInspect<'_> {
+impl RoomTestApi<'_> {
     pub async fn session_client_rtp_codec_names(self, user_id: &UserId) -> Option<Vec<String>> {
         self.room
             .state

@@ -781,14 +781,12 @@ async fn rtc_diagnostics_group_workers_and_preserve_media_ids() {
     let first_worker = expect_worker_for_user(&adapter, &first_session);
     let second_worker = expect_worker_for_user(&adapter, &second_session);
     let now = Instant::now();
-    for (worker, session, media_id) in [
-        (first_worker, &first_session, first_media_id),
-        (first_worker, &first_session, sibling_media_id),
-        (second_worker, &second_session, second_media_id),
+    for (worker, media_id) in [
+        (first_worker, first_media_id),
+        (first_worker, sibling_media_id),
+        (second_worker, second_media_id),
     ] {
-        worker
-            .debug_record_incoming_media(session, media_id, 64, now)
-            .await;
+        worker.debug_record_incoming_media(media_id, 64, now).await;
     }
     first_worker
         .debug_observe_audio_activity(first_media_id, Some(true), None, now)

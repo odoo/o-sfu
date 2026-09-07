@@ -133,7 +133,7 @@ impl StagedPublish {
         staged_publish_key(
             self.descriptor.session_key.user_id(),
             self.descriptor.session_key.connection_id(),
-            &self.descriptor.stream_id,
+            self.descriptor.intent.stream_id(),
         )
     }
 
@@ -149,7 +149,7 @@ impl StagedPublish {
         else {
             let user = self.descriptor.session_key.user_id().clone();
             let connection = self.descriptor.session_key.connection_id();
-            let stream_id = self.descriptor.stream_id.clone();
+            let stream_id = self.descriptor.intent.stream_id().clone();
             self.release_reserved_media(operation).await;
             warn!(
                 user_id = ?user,
@@ -173,7 +173,7 @@ impl StagedPublish {
         let room = operation.room;
         let user = self.descriptor.session_key.user_id().clone();
         let connection = self.descriptor.session_key.connection_id();
-        let stream_id = self.descriptor.stream_id.clone();
+        let stream_id = self.descriptor.intent.stream_id().clone();
         let media = self.media;
         let worker = self.descriptor.session_key.media_worker_id();
         let committed = {

@@ -137,10 +137,7 @@ async fn room_route_persists_query_config() -> TestResult {
     )?;
 
     assert!(!room.web_rtc_enabled());
-    assert_eq!(
-        room.test_api().inspect().recording_address(),
-        Some(recording_address)
-    );
+    assert_eq!(room.test_api().recording_address(), Some(recording_address));
     let stats: StatsResponse = route_json(
         &test_state.state,
         Request::get(route::v1::STATS),

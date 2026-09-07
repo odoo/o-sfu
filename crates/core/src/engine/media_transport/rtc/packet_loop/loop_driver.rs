@@ -106,14 +106,12 @@ pub(crate) struct BenchmarkTurnInput {
 
 /// private contract for one packet-loop turn
 ///
-/// the turn owns the allocation surface, fairness budgets and staged relay input
-/// used by the driver
+/// the turn owns the allocation surface and fairness budgets used by the driver
 /// durable RTC state stays in `PacketLoopState` while async waits happen only
 /// after the turn has released mutable worker-state borrows
 pub(crate) struct PacketLoopTurn {
     buffers: PacketLoopBuffers,
     packet_sink_cache: PacketSinkRouteCache,
-    staged_relay_packet: Option<ForwardedPacket>,
     delay_publisher: PacketLoopDelayPublisher,
     ready_now_budget: usize,
     udp_burst_budget: usize,
@@ -134,7 +132,6 @@ pub(crate) struct PacketLoopApplyContext<'a> {
     pub config: &'a PacketLoopConfig,
     pub demux: &'a mut DemuxRecoveryState,
     pub ingress: &'a UdpIngress,
-    pub inputs: &'a mut PacketLoopInputReceivers,
 }
 
 impl PacketLoopTurn {
@@ -142,7 +139,6 @@ impl PacketLoopTurn {
         Self {
             buffers: PacketLoopBuffers::new(),
             packet_sink_cache: PacketSinkRouteCache::default(),
-            staged_relay_packet: None,
             delay_publisher: PacketLoopDelayPublisher::new(started_at),
             ready_now_budget: MAX_READY_NOW_INPUTS_BEFORE_YIELD,
             udp_burst_budget: MAX_UDP_DATAGRAMS_PER_TURN,
@@ -159,15 +155,19 @@ impl PacketLoopTurn {
         snapshot_state: &Arc<Mutex<RtcSnapshotState>>,
         config: &PacketLoopConfig,
         demux: &mut DemuxRecoveryState,
-        relay_rx: &mut mpsc::Receiver<ForwardedPacket>,
+        inputs: &mut PacketLoopInputReceivers,
     ) -> WaitPhaseSnapshot {
         self.buffers.clear();
+        // The relay wake precedes ready-session output in this turn's packet batch.
+        if let Some(packet) = inputs.take_woken_relay_packet() {
+            self.buffers.pending_packets.push(packet);
+        }
         let (snapshot, topology_changed) = self.pump_core(
             state,
             bitrate_registry,
             snapshot_state,
             config,
-            relay_rx,
+            inputs.relay_rx(),
             Instant::now(),
         );
         if topology_changed {
@@ -244,11 +244,6 @@ impl PacketLoopTurn {
         relay_rx: &mut mpsc::Receiver<ForwardedPacket>,
         now: Instant,
     ) -> (WaitPhaseSnapshot, bool) {
-        if let Some(packet) = self.staged_relay_packet.take() {
-            // the packet that woke the wait phase enters the same batch as packets
-            // drained from the relay mailbox below
-            self.buffers.pending_packets.push(packet);
-        }
         let session_drain_context = SessionDrainContext::new(
             snapshot_state,
             bitrate_registry,
@@ -397,8 +392,7 @@ impl PacketLoopTurn {
     /// invalidate ingress demux recovery hints
     /// queued UDP datagrams can resume following turns without another ingress await
     /// but every datagram still gets a pump between inputs
-    /// relay input is staged for the next pump so it reuses the same bounded relay
-    /// drain path as already queued relay packets
+    /// relay input remains in the receiver bundle until the next pump
     pub fn apply_input(
         &mut self,
         context: &mut PacketLoopApplyContext<'_>,
@@ -411,7 +405,7 @@ impl PacketLoopTurn {
         }
 
         match next_input {
-            PacketLoopTurnInput::Timeout => {}
+            PacketLoopTurnInput::Timeout | PacketLoopTurnInput::RelayPacket => {}
             PacketLoopTurnInput::Control(command) => {
                 command.dispatch(
                     context.packet_loop_state,
@@ -428,9 +422,6 @@ impl PacketLoopTurn {
                 // Control can change session or ICE ownership. Clear misses before
                 // a queued datagram is routed against the new topology.
                 context.demux.clear_on_topology_change();
-            }
-            PacketLoopTurnInput::RelayPacket => {
-                self.staged_relay_packet = context.inputs.take_woken_relay_packet();
             }
             PacketLoopTurnInput::Datagram(datagram) => {
                 let packet = route_datagram_to_session(
@@ -566,7 +557,6 @@ pub async fn run_packet_loop(
                     config: &config,
                     demux: &mut demux,
                     ingress: &shared_socket.ingress,
-                    inputs: &mut inputs,
                 },
                 input,
             );
@@ -578,7 +568,7 @@ pub async fn run_packet_loop(
             &snapshot_state,
             &config,
             &mut demux,
-            inputs.relay_rx(),
+            &mut inputs,
         );
 
         // Await socket I/O only after `pump` releases its mutable

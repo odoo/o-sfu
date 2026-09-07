@@ -36,7 +36,8 @@ use o_sfu_protocol::wire::{
 };
 use o_sfu_telemetry::diagnostics::{
     DiagnosticsActiveSpeaker, DiagnosticsActiveSpeakerReason, DiagnosticsActiveSpeakerState,
-    DiagnosticsRoomDetail, DiagnosticsRouteState, DiagnosticsVideoLayoutRole,
+    DiagnosticsRoomDetail, DiagnosticsRouteState, DiagnosticsSubscription,
+    DiagnosticsVideoLayoutRole,
 };
 use reqwest::StatusCode;
 use tokio::{
@@ -77,8 +78,6 @@ pub struct TestServer {
 }
 
 const TEST_POLL_DEADLINE: Duration = Duration::from_secs(5);
-const FEATURED_POLICY_ROLE: &str = "featured";
-const THUMBNAIL_POLICY_ROLE: &str = "thumbnail";
 
 impl TestServer {
     #[must_use]
@@ -202,6 +201,21 @@ impl TestServer {
         .await
     }
 
+    pub async fn wait_for_video_subscription_layout(
+        &self,
+        room_id: &str,
+        consumer_user_id: &UserId,
+        producer_user_id: &UserId,
+        expected_layout: DiagnosticsVideoLayoutRole,
+    ) -> bool {
+        wait_for_test_predicate(|| async {
+            let room = self.room_detail(room_id).await?;
+            let subscription = video_subscription(&room, consumer_user_id, producer_user_id)?;
+            (subscription.layout_role == Some(expected_layout)).then_some(())
+        })
+        .await
+    }
+
     pub async fn wait_for_user_media_worker(
         &self,
         room_id: &str,
@@ -294,8 +308,19 @@ fn video_subscription_selected_rid<'room>(
     consumer_user_id: &UserId,
     producer_user_id: &UserId,
 ) -> Option<&'room str> {
-    let subscription = room
-        .users
+    // Layout intent does not prove that the receiver policy selected an encoding.
+    video_subscription(room, consumer_user_id, producer_user_id)?
+        .selection
+        .selected_rid
+        .as_deref()
+}
+
+fn video_subscription<'room>(
+    room: &'room DiagnosticsRoomDetail,
+    consumer_user_id: &UserId,
+    producer_user_id: &UserId,
+) -> Option<&'room DiagnosticsSubscription> {
+    room.users
         .iter()
         .find(|user| user.user_id == *consumer_user_id)?
         .subscriptions
@@ -303,32 +328,7 @@ fn video_subscription_selected_rid<'room>(
         .find(|subscription| {
             subscription.producer_user_id == *producer_user_id
                 && subscription.stream_id == stream_id_for_stream_type(StreamType::Camera)
-        })?;
-
-    if let Some(selected_rid) = subscription.selection.selected_rid.as_deref() {
-        return Some(selected_rid);
-    }
-
-    let policy_role = policy_role_for_layout_role(subscription.layout_role?)?;
-    room.sources
-        .iter()
-        .find(|source| source.source_id == subscription.source_id)?
-        .encodings
-        .iter()
-        .find(|encoding| encoding.policy_role.as_deref() == Some(policy_role))?
-        .rid
-        .as_deref()
-}
-
-fn policy_role_for_layout_role(layout_role: DiagnosticsVideoLayoutRole) -> Option<&'static str> {
-    match layout_role {
-        DiagnosticsVideoLayoutRole::Pinned
-        | DiagnosticsVideoLayoutRole::Featured
-        | DiagnosticsVideoLayoutRole::ReadableDetail
-        | DiagnosticsVideoLayoutRole::ActiveSpeaker => Some(FEATURED_POLICY_ROLE),
-        DiagnosticsVideoLayoutRole::VisibleThumbnail => Some(THUMBNAIL_POLICY_ROLE),
-        DiagnosticsVideoLayoutRole::Hidden | DiagnosticsVideoLayoutRole::Overflow => None,
-    }
+        })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -631,3 +631,7 @@ where
     .flatten()
     .is_some()
 }
+
+#[cfg(test)]
+#[path = "TESTS/harness.rs"]
+mod tests;

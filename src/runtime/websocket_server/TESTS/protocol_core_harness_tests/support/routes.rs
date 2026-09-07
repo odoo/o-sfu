@@ -23,12 +23,10 @@ pub(crate) async fn real_rtc_route_activity(
     let core_consumer_user_id = consumer_user_id.clone();
     let _source_connection_id = room
         .test_api()
-        .inspect()
         .user_connection_id(&core_source_user_id)
         .await?;
     let consumer_connection_id = room
         .test_api()
-        .inspect()
         .user_connection_id(&core_consumer_user_id)
         .await?;
     let consumer_session_key = room

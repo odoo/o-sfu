@@ -183,7 +183,6 @@ pub fn sample_local_forwarded_packet_for_benchmark(
     ForwardedPacket {
         source: ForwardedPacketSource::Local(source_session_handle),
         src_media: None,
-        resolved_source_rid: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -240,7 +239,6 @@ fn sample_forwarded_packet_with_source(
     ForwardedPacket {
         source,
         src_media: None,
-        resolved_source_rid: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -281,7 +279,6 @@ pub fn sample_forwarded_packet_without_mid(
     ForwardedPacket {
         source: ForwardedPacketSource::Relayed(src_key),
         src_media: None,
-        resolved_source_rid: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -311,7 +308,6 @@ pub fn sample_forwarded_packet_without_mid(
 pub fn reset_packet_resolution(packet: &mut ForwardedPacket) {
     packet.facts = None;
     packet.src_media = None;
-    packet.resolved_source_rid = None;
 }
 
 /// restages one reusable packet as the next packet of its producer stream

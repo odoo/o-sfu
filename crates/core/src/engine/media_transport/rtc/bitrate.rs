@@ -154,45 +154,9 @@ fn bitrate_per_second(bytes: u64, elapsed_nanos: u64) -> Bitrate {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct SessionIncomingBitrates {
-    per_media: BTreeMap<TransportMediaId, Arc<MediaBitrateCounter>>,
-}
-
-impl SessionIncomingBitrates {
-    fn register(
-        &mut self,
-        transport_media_id: TransportMediaId,
-        now: Instant,
-    ) -> Arc<MediaBitrateCounter> {
-        Arc::clone(
-            self.per_media
-                .entry(transport_media_id)
-                .or_insert_with(|| Arc::new(MediaBitrateCounter::new(now))),
-        )
-    }
-
-    fn remove(&mut self, transport_media_id: TransportMediaId) {
-        self.per_media.remove(&transport_media_id);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.per_media.is_empty()
-    }
-
-    fn extend_snapshot(&self, now: Instant, snapshot: &mut TransportBitrateSnapshot) {
-        for (&media_id, counter) in &self.per_media {
-            let bitrate = counter.snapshot(now);
-            snapshot.total = snapshot.total.saturating_add(bitrate);
-            if bitrate > Bitrate::zero() {
-                snapshot.per_media.push((media_id, bitrate));
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
 pub struct BitrateRegistry {
-    pub(super) incoming_bitrates_by_session: BTreeMap<TransportSessionKey, SessionIncomingBitrates>,
+    pub(super) incoming_bitrates_by_session:
+        BTreeMap<TransportSessionKey, BTreeMap<TransportMediaId, Arc<MediaBitrateCounter>>>,
     pub(super) egress_bitrates_by_session: BTreeMap<TransportSessionKey, Arc<MediaBitrateCounter>>,
 }
 
@@ -203,10 +167,13 @@ impl BitrateRegistry {
         transport_media_id: TransportMediaId,
         now: Instant,
     ) -> Arc<MediaBitrateCounter> {
-        self.incoming_bitrates_by_session
-            .entry(session_key.clone())
-            .or_default()
-            .register(transport_media_id, now)
+        Arc::clone(
+            self.incoming_bitrates_by_session
+                .entry(session_key.clone())
+                .or_default()
+                .entry(transport_media_id)
+                .or_insert_with(|| Arc::new(MediaBitrateCounter::new(now))),
+        )
     }
 
     pub(super) fn register_session_egress(
@@ -226,7 +193,7 @@ impl BitrateRegistry {
         let Some(session_bitrates) = self.incoming_bitrates_by_session.get_mut(session_key) else {
             return;
         };
-        session_bitrates.remove(transport_media_id);
+        session_bitrates.remove(&transport_media_id);
         if session_bitrates.is_empty() {
             self.incoming_bitrates_by_session.remove(session_key);
         }
@@ -247,7 +214,13 @@ impl BitrateRegistry {
             let Some(session_bitrates) = self.incoming_bitrates_by_session.get(session_key) else {
                 continue;
             };
-            session_bitrates.extend_snapshot(now, &mut snapshot);
+            for (&media_id, counter) in session_bitrates {
+                let bitrate = counter.snapshot(now);
+                snapshot.total = snapshot.total.saturating_add(bitrate);
+                if bitrate > Bitrate::zero() {
+                    snapshot.per_media.push((media_id, bitrate));
+                }
+            }
         }
         snapshot
     }

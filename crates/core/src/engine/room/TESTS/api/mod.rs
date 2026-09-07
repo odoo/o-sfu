@@ -5,11 +5,7 @@ mod inspect;
 mod lifecycle;
 mod media;
 
-pub use self::{
-    inspect::RoomTestInspect,
-    lifecycle::RoomTestLifecycle,
-    media::{NegotiatedPublish, RoomTestMedia},
-};
+pub use self::media::NegotiatedPublish;
 
 #[derive(Clone, Copy)]
 pub struct RoomTestApi<'a> {
@@ -35,28 +31,11 @@ impl RoomManager {
     }
 }
 
-impl<'a> RoomTestApi<'a> {
-    #[must_use]
-    pub const fn lifecycle(self) -> RoomTestLifecycle<'a> {
-        RoomTestLifecycle { room: self.room }
-    }
-
-    #[must_use]
-    pub const fn media(self) -> RoomTestMedia<'a> {
-        RoomTestMedia { room: self.room }
-    }
-
-    #[must_use]
-    pub const fn inspect(self) -> RoomTestInspect<'a> {
-        RoomTestInspect { room: self.room }
-    }
-}
-
 impl RoomManagerTestApi<'_> {
     pub async fn has_session(self, room_id: &str, user_id: &UserId) -> bool {
         let Some(room) = self.manager.get_by_uuid(room_id).await else {
             return false;
         };
-        room.test_api().inspect().has_session(user_id).await
+        room.test_api().has_session(user_id).await
     }
 }

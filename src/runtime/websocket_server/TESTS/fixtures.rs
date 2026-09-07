@@ -366,16 +366,7 @@ pub(super) async fn authenticate_with_jwt(
     server: &TestServer,
     token: &str,
 ) -> Option<TestWebSocket> {
-    let mut websocket = connect_websocket(server).await?;
-    let payload = encode_protocol_auth(AuthPayload {
-        jwt: token.to_owned(),
-        channel: None,
-    })?;
-    websocket
-        .send(tungstenite::Message::Text(payload.into()))
-        .await
-        .ok()?;
-    Some(websocket)
+    authenticate_with_room(server, token, None).await
 }
 
 pub(super) async fn authenticate_with_room(
@@ -442,7 +433,7 @@ pub(super) async fn close_socket_and_wait_for_session_cleanup(
 pub(super) async fn wait_for_session_cleanup(room: &Room, user_id: &UserId) -> Option<()> {
     timeout(Duration::from_secs(1), async {
         loop {
-            if !room.test_api().inspect().has_session(user_id).await {
+            if !room.test_api().has_session(user_id).await {
                 break;
             }
             sleep(Duration::from_millis(10)).await;

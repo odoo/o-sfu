@@ -9,12 +9,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 pub(crate) struct PreAuthWebSocketAdmission {
     global: Arc<Semaphore>,
     per_origin_capacity: usize,
-    origins: Arc<Mutex<HashMap<Arc<str>, OriginAdmission>>>,
-}
-
-#[derive(Debug, Clone)]
-struct OriginAdmission {
-    semaphore: Arc<Semaphore>,
+    origins: Arc<Mutex<HashMap<Arc<str>, Arc<Semaphore>>>>,
 }
 
 /// holds global and origin pre-auth capacity until authentication releases it
@@ -27,7 +22,7 @@ pub(super) struct PreAuthWebSocketPermit {
     _global_permit: OwnedSemaphorePermit,
     origin_permit: Option<OwnedSemaphorePermit>,
     origin: Arc<str>,
-    origins: Arc<Mutex<HashMap<Arc<str>, OriginAdmission>>>,
+    origins: Arc<Mutex<HashMap<Arc<str>, Arc<Semaphore>>>>,
     per_origin_capacity: usize,
 }
 
@@ -57,13 +52,10 @@ impl PreAuthWebSocketAdmission {
             .try_acquire_owned()
             .map_err(|_error| PreAuthWebSocketAdmissionRejection::Global)?;
         let mut origins = lock_origins(&self.origins);
-        let origin_admission =
-            origins
-                .entry(Arc::clone(&origin))
-                .or_insert_with(|| OriginAdmission {
-                    semaphore: Arc::new(Semaphore::new(self.per_origin_capacity)),
-                });
-        let origin_permit = Arc::clone(&origin_admission.semaphore)
+        let origin_semaphore = origins
+            .entry(Arc::clone(&origin))
+            .or_insert_with(|| Arc::new(Semaphore::new(self.per_origin_capacity)));
+        let origin_permit = Arc::clone(origin_semaphore)
             .try_acquire_owned()
             .map_err(|_error| PreAuthWebSocketAdmissionRejection::Origin)?;
         drop(origins);
@@ -81,9 +73,9 @@ impl Drop for PreAuthWebSocketPermit {
     fn drop(&mut self) {
         drop(self.origin_permit.take());
         let mut origins = lock_origins(&self.origins);
-        let should_remove = origins.get(&self.origin).is_some_and(|admission| {
-            admission.semaphore.available_permits() == self.per_origin_capacity
-        });
+        let should_remove = origins
+            .get(&self.origin)
+            .is_some_and(|semaphore| semaphore.available_permits() == self.per_origin_capacity);
         if should_remove {
             origins.remove(&self.origin);
         }
@@ -91,7 +83,7 @@ impl Drop for PreAuthWebSocketPermit {
 }
 
 fn lock_origins(
-    origins: &Mutex<HashMap<Arc<str>, OriginAdmission>>,
-) -> MutexGuard<'_, HashMap<Arc<str>, OriginAdmission>> {
+    origins: &Mutex<HashMap<Arc<str>, Arc<Semaphore>>>,
+) -> MutexGuard<'_, HashMap<Arc<str>, Arc<Semaphore>>> {
     origins.lock().unwrap_or_else(PoisonError::into_inner)
 }

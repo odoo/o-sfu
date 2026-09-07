@@ -128,6 +128,7 @@ impl PacketLoopInputReceivers {
         self.shutdown_token.is_cancelled()
     }
 
+    /// Transfers the relay wake into the next pump before ready-session output.
     pub(super) fn take_woken_relay_packet(&mut self) -> Option<ForwardedPacket> {
         self.woken_relay_packet.take()
     }

@@ -39,14 +39,12 @@ async fn disconnect_route_kicks_live_users() -> TestResult {
 
     require_ok(
         room.test_api()
-            .lifecycle()
             .join_user(alice_id.clone(), None, UserPermissions::default(), alice_tx)
             .await,
         "alice should join",
     )?;
     require_ok(
         room.test_api()
-            .lifecycle()
             .join_user(bob_id.clone(), None, UserPermissions::default(), bob_tx)
             .await,
         "bob should join",

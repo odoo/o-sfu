@@ -110,43 +110,35 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
         let Some(token) = room_authorization_token(&parts.headers) else {
             return Err(record_room_rejection(state, StatusCode::UNAUTHORIZED));
         };
-        let claims = auth::verify::<HttpRoomClaims>(token, &state.config.auth.key)
+        let HttpRoomClaims {
+            registered: RegisteredJwtClaims { iss, .. },
+            key,
+            key_seed,
+        } = auth::verify::<HttpRoomClaims>(token, &state.config.auth.key)
             .map_err(|_error| record_room_rejection(state, StatusCode::UNAUTHORIZED))?;
-        match claims {
-            HttpRoomClaims {
-                registered: RegisteredJwtClaims { iss: None, .. },
-                ..
-            } => Err(record_room_rejection(state, StatusCode::FORBIDDEN)),
-            HttpRoomClaims {
-                registered:
-                    RegisteredJwtClaims {
-                        iss: Some(issuer), ..
-                    },
-                key,
-                key_seed,
-            } => {
-                let room_key = match (key, key_seed) {
-                    (None, None) => {
-                        return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
-                    }
-                    (Some(key), None) => key,
-                    (_, Some(seed)) if seed.is_empty() => {
-                        return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
-                    }
-                    (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, seed.as_ref())
-                        .map_err(|_error| record_room_rejection(state, StatusCode::BAD_REQUEST))?,
-                };
-                Ok(Self {
-                    issuer,
-                    room_key,
-                    config: RoomConfig {
-                        web_rtc_enabled: query.web_rtc_enabled(),
-                        recording_address: query.recording_address,
-                    },
-                    origin,
-                })
+        let Some(issuer) = iss else {
+            return Err(record_room_rejection(state, StatusCode::FORBIDDEN));
+        };
+        let room_key = match (key, key_seed) {
+            (None, None) => {
+                return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
             }
-        }
+            (Some(key), None) => key,
+            (_, Some(seed)) if seed.is_empty() => {
+                return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
+            }
+            (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, seed.as_ref())
+                .map_err(|_error| record_room_rejection(state, StatusCode::BAD_REQUEST))?,
+        };
+        Ok(Self {
+            issuer,
+            room_key,
+            config: RoomConfig {
+                web_rtc_enabled: query.web_rtc_enabled(),
+                recording_address: query.recording_address,
+            },
+            origin,
+        })
     }
 }
 

@@ -33,7 +33,6 @@ fn test_sender() -> UserOutboundSender {
 
 async fn join_user(room: &Arc<Room>, user_id: &UserId) -> ConnectionId {
     room.test_api()
-        .lifecycle()
         .join_user(
             user_id.clone(),
             None,
@@ -110,7 +109,7 @@ async fn staged_publish_is_not_visible_in_room_graph_before_answer() {
     let transport_media_id = staged_media_id(&room, &user_id, connection_id).await;
     let session_key = room.transport_user_key(&user_id, connection_id).await;
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(room.test_api().producer_count().await, 0);
     assert!(
         room.has_staged_publish(
             &user_id,
@@ -141,7 +140,7 @@ async fn missing_answered_producer_parameters_release_reserved_publish() {
         .commit_staged_publishes(&AppliedSessionAnswer::default())
         .await;
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(room.test_api().producer_count().await, 0);
     assert_eq!(room.staged_count(&user_id, connection_id).await, 0);
     assert!(
         media_transport
@@ -166,7 +165,7 @@ async fn stale_connection_commit_rejects_and_releases_reserved_publish() {
         .commit_staged_publishes(&applied_answer)
         .await;
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(room.test_api().producer_count().await, 0);
     assert!(
         media_transport
             .test_api()

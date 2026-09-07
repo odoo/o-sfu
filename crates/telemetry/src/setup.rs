@@ -83,18 +83,6 @@ struct SpanFieldStore {
 #[derive(Debug, Default)]
 struct SpanFieldCaptureLayer;
 
-impl TelemetryHandle {
-    #[cfg(feature = "otel-tracing")]
-    fn with_tracer_provider(tracer_provider: Option<SdkTracerProvider>) -> Self {
-        Self { tracer_provider }
-    }
-
-    #[cfg(not(feature = "otel-tracing"))]
-    const fn disabled() -> Self {
-        Self {}
-    }
-}
-
 #[cfg(feature = "otel-tracing")]
 impl Drop for TelemetryHandle {
     fn drop(&mut self) {
@@ -250,44 +238,62 @@ where
     }
 }
 
-#[cfg(feature = "otel-tracing")]
+/// Installs the configured tracing subscriber and retains its exporter until
+/// the returned handle is dropped.
+///
 /// # Errors
 ///
-/// Returns an error when subscriber initialization or OTLP exporter
-/// construction fails.
+/// Returns an [`anyhow::Error`] when subscriber initialization fails or when the
+/// `otel-tracing` feature is enabled and OTLP exporter construction fails.
 pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<TelemetryHandle> {
     let env_filter = default_env_filter();
     let resource = telemetry_resource_fields(config, process_id);
+    #[cfg(feature = "otel-tracing")]
     let tracer_provider = build_tracer_provider(config, &resource)?;
+    #[cfg(feature = "otel-tracing")]
     let tracer = tracer_provider
         .as_ref()
         .map(|provider| provider.tracer(TRACE_EXPORTER_NAME));
     match config.log_format {
-        TelemetryLogFormat::Compact => Registry::default()
-            .with(env_filter)
-            .with(fmt_layer().with_target(false).compact())
-            .with(
+        TelemetryLogFormat::Compact => {
+            let subscriber = Registry::default()
+                .with(env_filter)
+                .with(fmt_layer().with_target(false).compact());
+            #[cfg(feature = "otel-tracing")]
+            let subscriber = subscriber.with(
                 tracer
                     .as_ref()
                     .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer.clone())),
-            )
-            .try_init()?,
-        TelemetryLogFormat::Json => Registry::default()
-            .with(env_filter)
-            .with(SpanFieldCaptureLayer)
-            .with(
-                fmt_layer()
-                    .fmt_fields(JsonFields::new())
-                    .event_format(RuntimeJsonFormatter::new(resource.clone()))
-                    .with_ansi(false),
-            )
-            .with(
+            );
+            subscriber.try_init()?;
+        }
+        TelemetryLogFormat::Json => {
+            let subscriber = Registry::default()
+                .with(env_filter)
+                .with(SpanFieldCaptureLayer)
+                .with(
+                    fmt_layer()
+                        .fmt_fields(JsonFields::new())
+                        .event_format(RuntimeJsonFormatter::new(resource.clone()))
+                        .with_ansi(false),
+                );
+            #[cfg(feature = "otel-tracing")]
+            let subscriber = subscriber.with(
                 tracer
                     .as_ref()
                     .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer.clone())),
-            )
-            .try_init()?,
+            );
+            subscriber.try_init()?;
+        }
     }
+    #[cfg(feature = "otel-tracing")]
+    let trace_export_otlp_endpoint = config
+        .trace_export
+        .otlp_endpoint
+        .as_deref()
+        .unwrap_or("disabled");
+    #[cfg(not(feature = "otel-tracing"))]
+    let trace_export_otlp_endpoint = "feature_disabled";
     tracing::info!(
         event = schema::event::RUNTIME_TELEMETRY_INITIALIZED,
         service_name = resource.service_name.as_str(),
@@ -297,52 +303,13 @@ pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<Telemet
         log_format = config.log_format.as_str(),
         common_fields = ?schema::COMMON_FIELD_NAMES,
         correlation_fields = ?schema::CORRELATION_FIELD_NAMES,
-        trace_export_otlp_endpoint = config
-            .trace_export
-            .otlp_endpoint
-            .as_deref()
-            .unwrap_or("disabled"),
+        trace_export_otlp_endpoint,
         "initialized runtime telemetry"
     );
-    Ok(TelemetryHandle::with_tracer_provider(tracer_provider))
-}
-
-#[cfg(not(feature = "otel-tracing"))]
-/// # Errors
-///
-/// Returns an error when subscriber initialization fails.
-pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<TelemetryHandle> {
-    let env_filter = default_env_filter();
-    let resource = telemetry_resource_fields(config, process_id);
-    match config.log_format {
-        TelemetryLogFormat::Compact => Registry::default()
-            .with(env_filter)
-            .with(fmt_layer().with_target(false).compact())
-            .try_init()?,
-        TelemetryLogFormat::Json => Registry::default()
-            .with(env_filter)
-            .with(SpanFieldCaptureLayer)
-            .with(
-                fmt_layer()
-                    .fmt_fields(JsonFields::new())
-                    .event_format(RuntimeJsonFormatter::new(resource.clone()))
-                    .with_ansi(false),
-            )
-            .try_init()?,
-    }
-    tracing::info!(
-        event = schema::event::RUNTIME_TELEMETRY_INITIALIZED,
-        service_name = resource.service_name.as_str(),
-        service_version = resource.service_version.as_str(),
-        deployment_environment = resource.deployment_environment.as_str(),
-        service_instance_id = resource.service_instance_id.as_str(),
-        log_format = config.log_format.as_str(),
-        common_fields = ?schema::COMMON_FIELD_NAMES,
-        correlation_fields = ?schema::CORRELATION_FIELD_NAMES,
-        trace_export_otlp_endpoint = "feature_disabled",
-        "initialized runtime telemetry"
-    );
-    Ok(TelemetryHandle::disabled())
+    Ok(TelemetryHandle {
+        #[cfg(feature = "otel-tracing")]
+        tracer_provider,
+    })
 }
 
 #[must_use]

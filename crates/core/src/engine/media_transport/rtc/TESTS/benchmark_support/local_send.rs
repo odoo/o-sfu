@@ -13,7 +13,7 @@ use super::super::{
     bitrate::{BitrateRegistry, MediaBitrateCounter},
     bootstrap,
     forwarded_packet::ForwardedPacket,
-    forwarding_destination::{ForwardSendOutcome, ForwardingDestination},
+    forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
     route_control::PacketLayerGate,
     source_route::MediaRouteDestination,
     state::PacketLoopState,
@@ -38,7 +38,7 @@ pub struct LocalSendBenchFixture {
     session_keys: [TransportSessionKey; 1],
     observed_at: Instant,
     packet: ForwardedPacket,
-    destination: ForwardingDestination,
+    destination: LocalRtcPacketDestination,
     warmup_bytes: usize,
     sent_packets: usize,
     sent_bytes: u64,
@@ -101,11 +101,12 @@ impl LocalSendBenchFixture {
 
         let packet = sample_forwarded_packet(producer, "cam-up", LOCAL_SEND_PAYLOAD);
         let observed_at = packet.received_at();
-        let destination = ForwardingDestination::from_local_route_destination(src_media, dst_idx);
-        let ForwardSendOutcome::LocalRtc {
-            payload_bytes: Some(warmup_bytes),
-        } = destination.send(&mut state, &packet)
+        let ForwardingDestination::LocalRtc(destination) =
+            ForwardingDestination::from_local_route_destination(src_media, dst_idx)
         else {
+            panic!("benchmark destination should be a local RTC route");
+        };
+        let Some(warmup_bytes) = destination.send(&mut state, &packet) else {
             panic!("benchmark local-send warm-up should succeed");
         };
 
@@ -125,10 +126,7 @@ impl LocalSendBenchFixture {
 
     pub fn send_packets(&mut self) {
         for _ in 0..LOCAL_SEND_PACKETS {
-            if let ForwardSendOutcome::LocalRtc {
-                payload_bytes: Some(payload_bytes),
-            } = self.destination.send(&mut self.state, &self.packet)
-            {
+            if let Some(payload_bytes) = self.destination.send(&mut self.state, &self.packet) {
                 self.sent_packets = self.sent_packets.saturating_add(1);
                 self.sent_bytes = self
                     .sent_bytes

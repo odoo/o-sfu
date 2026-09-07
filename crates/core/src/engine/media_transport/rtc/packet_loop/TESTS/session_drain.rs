@@ -39,7 +39,7 @@ use crate::{
                 codec::RtpProfile,
                 commands::{RtcWorkerCommand, WorkerMediaControlBatch},
                 forwarded_packet::ForwardedPacket,
-                forwarding_destination::{ForwardSendOutcome, ForwardingDestination},
+                forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
                 local_send_rewrite::RTX_CACHE_LIFETIME,
                 route_control::PacketLayerGate,
                 routing_miss::DemuxRecoveryState,
@@ -167,7 +167,7 @@ struct LocalWriteDrainFixture {
     peer: Rtc,
     consumer: TransportSessionKey,
     stream: ConsumerStreamHandle,
-    destination: ForwardingDestination,
+    destination: LocalRtcPacketDestination,
     candidate_addr: SocketAddr,
     primary: Ssrc,
     repair: Ssrc,
@@ -210,12 +210,17 @@ impl LocalWriteDrainFixture {
                 pending_gate: None,
             },
         );
+        let ForwardingDestination::LocalRtc(destination) =
+            ForwardingDestination::from_local_route_destination(src_media, dst_idx)
+        else {
+            return Err("local write fixture requires a local RTC destination");
+        };
         Ok(Self {
             state,
             peer,
             consumer,
             stream,
-            destination: ForwardingDestination::from_local_route_destination(src_media, dst_idx),
+            destination,
             candidate_addr,
             primary: Ssrc::from(9_001),
             repair: Ssrc::from(9_002),
@@ -229,12 +234,7 @@ impl LocalWriteDrainFixture {
             source_ssrc,
             b"payload",
         );
-        assert!(matches!(
-            self.destination.send(&mut self.state, &packet),
-            ForwardSendOutcome::LocalRtc {
-                payload_bytes: Some(7)
-            }
-        ));
+        assert_eq!(self.destination.send(&mut self.state, &packet), Some(7));
     }
 
     fn deliver_primary(&mut self, buffers: PacketLoopBuffers) -> Result<(), &'static str> {
@@ -896,12 +896,19 @@ fn assert_authenticated_nack_exhaustion(
     drop(snapshot);
     assert!(!fixture.state.has_dirty_sessions());
     assert!(
-        !fixture
+        fixture
             .state
-            .session_timeouts
-            .contains_key(&offender_handle)
+            .users
+            .get_by_handle(offender_handle)
+            .is_none_or(|session| session.next_timeout.is_none())
     );
-    assert!(fixture.state.session_timeouts.contains_key(&sibling_handle));
+    assert!(
+        fixture
+            .state
+            .users
+            .get_by_handle(sibling_handle)
+            .is_some_and(|session| session.next_timeout.is_some())
+    );
     assert_eq!(fixture.buffers.pending_transmits.len(), 1);
     assert_eq!(
         fixture

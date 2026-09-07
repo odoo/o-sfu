@@ -191,11 +191,9 @@ async fn video_bitrate_cap_admits_video_sources_without_adaptation() {
         SourcePolicy::hidden().with_video_bitrate_cap(Bitrate::from_kbps(200)),
     );
     room.test_api()
-        .media()
         .publish_intent(
             &UserId::Integer(1),
             &intent,
-            MediaKind::Video,
             test_simulcast_video_rtp_parameters(),
             &adapter,
         )
@@ -225,14 +223,7 @@ async fn observed_ridless_source_above_cap_is_paused() {
             .with_video_bitrate_cap(Bitrate::from_kbps(200)),
     );
     room.test_api()
-        .media()
-        .publish_intent(
-            &publisher,
-            &intent,
-            MediaKind::Video,
-            test_video_rtp_parameters(),
-            &adapter,
-        )
+        .publish_intent(&publisher, &intent, test_video_rtp_parameters(), &adapter)
         .await
         .expect("capped readable video publication should succeed");
     let source_media = source_media_id(&room, &publisher, TestSourceKind::ReadableVideo).await;
@@ -330,11 +321,9 @@ async fn publish_capped_camera(room: &Arc<Room>, adapter: &MediaTransport, cap: 
             .with_video_bitrate_cap(cap),
     );
     room.test_api()
-        .media()
         .publish_intent(
             &UserId::Integer(1),
             &intent,
-            MediaKind::Video,
             test_simulcast_video_rtp_parameters(),
             adapter,
         )
@@ -356,7 +345,6 @@ async fn source_policy_resets_receiver_bwe_target_after_publication_deactivation
 
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(
                 &UserId::Integer(1),
                 &stream_id_for_source(TestSourceKind::ScalableVideo),
@@ -365,8 +353,8 @@ async fn source_policy_resets_receiver_bwe_target_after_publication_deactivation
             .await
     );
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 1);
-    assert_eq!(room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(room.test_api().producer_count().await, 1);
+    assert_eq!(room.test_api().consumer_count().await, 1);
     assert_receiver_bwe_target(&room, &adapter, &UserId::Integer(2), Bitrate::zero()).await;
 }
 
@@ -472,6 +460,46 @@ async fn active_speaker_camera_policy_selects_the_observed_speaker() {
 }
 
 #[tokio::test]
+async fn repeated_speaker_sources_count_toward_the_featured_limit() {
+    for (repeated_sources, third_camera_rid) in [(4, "hi"), (5, "lo")] {
+        let scenario = SourcePolicyScenario::three_ready_users().await;
+        scenario.publish_audio_and_camera_for_users(&[1, 3]).await;
+        let now = scenario.policy_now.get().max(Instant::now());
+        let first_audio = scenario.audio_media_id(1).await;
+        let third_audio = scenario.audio_media_id(3).await;
+        let mut speakers = vec![ActiveSpeakerSource::new(first_audio, now); repeated_sources];
+        speakers.push(ActiveSpeakerSource::new(
+            third_audio,
+            now.checked_sub(Duration::from_millis(1))
+                .expect("test instant should support speaker ordering"),
+        ));
+        let bandwidth = ReceiverBandwidthSnapshot::default();
+        policy_at(&scenario, &speakers, &bandwidth, now).await;
+        policy_at(
+            &scenario,
+            &speakers,
+            &bandwidth,
+            now + VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL,
+        )
+        .await;
+
+        assert_featured(&scenario, 1, true).await;
+        assert_featured(&scenario, 3, false).await;
+        for (publisher, rid) in [(1, "hi"), (3, third_camera_rid)] {
+            assert_subscription_selected_rid(
+                &scenario.room,
+                &scenario.adapter,
+                &UserId::Integer(2),
+                &UserId::Integer(publisher),
+                TestSourceKind::ScalableVideo,
+                rid,
+            )
+            .await;
+        }
+    }
+}
+
+#[tokio::test]
 async fn active_speaker_camera_policy_tracks_camera_activity() {
     let (room, adapter, _owner_rx, mut observer_rx) = setup_two_ready_users().await;
     let scenario = SourcePolicyScenario {
@@ -484,7 +512,6 @@ async fn active_speaker_camera_policy_tracks_camera_activity() {
         &scenario.room,
         &owner_id,
         TestSourceKind::AudioDetector,
-        MediaKind::Audio,
         test_audio_rtp_parameters(),
         &scenario.adapter,
     )
@@ -505,11 +532,9 @@ async fn active_speaker_camera_policy_tracks_camera_activity() {
     scenario
         .room
         .test_api()
-        .media()
         .publish_intent(
             &owner_id,
             &camera,
-            MediaKind::Video,
             test_simulcast_video_rtp_parameters(),
             &scenario.adapter,
         )
@@ -532,7 +557,7 @@ async fn active_speaker_camera_policy_tracks_camera_activity() {
         DeactivateIntentOutcome::Deactivated
     );
 
-    assert_eq!(scenario.room.test_api().inspect().producer_count().await, 2);
+    assert_eq!(scenario.room.test_api().producer_count().await, 2);
     assert_camera_feature_fanout(&mut observer_rx, &owner_id, false);
     assert!(matches!(
         scenario
@@ -600,7 +625,6 @@ async fn audio_speaker_limit_ignores_foreign_and_inactive_sources() {
             &scenario.room,
             &user_id,
             TestSourceKind::AudioDetector,
-            MediaKind::Audio,
             test_audio_rtp_parameters(),
             &scenario.adapter,
         )
@@ -654,7 +678,6 @@ async fn audio_speaker_limit_ignores_foreign_and_inactive_sources() {
         scenario
             .room
             .test_api()
-            .media()
             .deactivate_publication(
                 &UserId::Integer(1),
                 &stream_id_for_source(TestSourceKind::AudioDetector),
@@ -689,7 +712,6 @@ async fn audio_speaker_limit_prioritizes_screen_sharers() {
             &scenario.room,
             user_id,
             TestSourceKind::AudioDetector,
-            MediaKind::Audio,
             test_audio_rtp_parameters(),
             &scenario.adapter,
         )
@@ -703,11 +725,9 @@ async fn audio_speaker_limit_prioritizes_screen_sharers() {
     scenario
         .room
         .test_api()
-        .media()
         .publish_intent(
             &screen_sharer_id,
             &screen_sharing_intent,
-            MediaKind::Video,
             test_video_rtp_parameters(),
             &scenario.adapter,
         )
@@ -851,7 +871,6 @@ async fn undeafening_recomputes_the_audio_speaker_limit() {
             &scenario.room,
             &user_id,
             TestSourceKind::AudioDetector,
-            MediaKind::Audio,
             test_audio_rtp_parameters(),
             &scenario.adapter,
         )
@@ -1041,7 +1060,6 @@ async fn deafening_releases_the_receivers_audio_budget_reserve() {
             &scenario.room,
             &user_id,
             TestSourceKind::AudioDetector,
-            MediaKind::Audio,
             test_audio_rtp_parameters(),
             &scenario.adapter,
         )
@@ -1282,7 +1300,6 @@ async fn audio_only_receiver_reports_its_audio_reserve_as_bwe_demand() {
             &scenario.room,
             &user_id,
             TestSourceKind::AudioDetector,
-            MediaKind::Audio,
             test_audio_rtp_parameters(),
             &scenario.adapter,
         )
@@ -1430,7 +1447,6 @@ async fn aggregate_pressure_uses_intermediate_quality_before_pausing_thumbnails(
                 &scenario.room,
                 &publisher,
                 TestSourceKind::AudioDetector,
-                MediaKind::Audio,
                 test_audio_rtp_parameters(),
                 &scenario.adapter,
             )
@@ -1520,7 +1536,6 @@ async fn aggregate_pressure_preserves_pinned_quality_without_an_intermediate_bit
             &scenario.room,
             &UserId::Integer(1),
             TestSourceKind::ScalableVideo,
-            MediaKind::Video,
             parameters,
             &scenario.adapter,
         )
@@ -1564,7 +1579,6 @@ async fn pinned_video_without_a_ladder_keeps_the_soft_pause_dwell() {
         &scenario.room,
         &publisher,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &scenario.adapter,
     )
@@ -2084,7 +2098,6 @@ async fn zero_budget_pauses_observed_ridless_readable_video() {
         &room,
         &publisher,
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -2135,7 +2148,6 @@ async fn rejected_ridless_pause_preserves_observed_committed_bitrate() {
         &scenario.room,
         &publisher,
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &scenario.adapter,
     )
@@ -2252,7 +2264,6 @@ async fn screen_share_layout_uses_screen_specific_priority_in_diagnostics() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -2385,7 +2396,6 @@ async fn third_camera_policy_transaction(
     let third_camera_source_id = scenario
         .room
         .test_api()
-        .inspect()
         .source_id_for_owner_stream(&UserId::Integer(3), TestSourceKind::ScalableVideo)
         .await
         .expect("third camera should have a source id before stale source policy work");
@@ -2418,7 +2428,6 @@ async fn assert_featured(scenario: &SourcePolicyScenario, user_id: i64, expected
     let info = scenario
         .room
         .test_api()
-        .inspect()
         .user_info_snapshot(&UserId::Integer(user_id))
         .await
         .expect("user should still be present")
@@ -3179,7 +3188,6 @@ async fn readable_detail_holds_high_quality_until_pause_and_resume_expire() {
         &scenario.room,
         &publisher,
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         test_simulcast_video_rtp_parameters(),
         &scenario.adapter,
     )
@@ -3482,9 +3490,12 @@ async fn inactive_sources_and_subscriptions_cancel_route_and_receiver_holds() {
                     &UserId::Integer(1),
                     &stream_id_for_source(TestSourceKind::ScalableVideo),
                 );
-                state.topology.merge_subscription_intent(
-                    key,
+                let receiver_connection_id = state.user_connection_id(&UserId::Integer(2)).unwrap();
+                state.topology.apply_subscription_intent(
+                    &key,
+                    receiver_connection_id,
                     SourceSubscriptionIntent::new(Some(false), None),
+                    false,
                 );
             }
             state

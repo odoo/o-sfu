@@ -1,9 +1,9 @@
 //! Current-room registry and lifecycle coordinator.
 //!
 //! [`RoomManager`] publishes one current room per issuer, admits WebSocket
-//! sessions and runs background room work. Mutations acquire a lifecycle lease
-//! without holding the directory lock. Empty-room removal waits for every
-//! accepted lease to finish.
+//! sessions and runs background room work. Lease admission holds the directory
+//! read guard to prove currentness and releases it before room work begins.
+//! Empty-room removal waits for every accepted lease to finish.
 
 #[cfg(any(test, feature = "testing-transport"))]
 use std::sync::Mutex;
@@ -272,11 +272,6 @@ impl RoomManager {
     /// current. Returns [`RoomManagerJoinError::RoomFull`] when a new user
     /// exceeds room capacity. Returns [`RoomManagerJoinError::RouterState`] when
     /// router placement cannot commit.
-    ///
-    /// # Panics
-    ///
-    /// Panics when existing relay state refers to an uncommitted source
-    /// placement.
     pub async fn join_user(
         &self,
         room_id: &str,
@@ -315,7 +310,7 @@ impl RoomManager {
         self.finish_session_mutation(room_id, mutation, false).await;
         Ok(RoomUserAdmission {
             room,
-            connection_id: receipt.connection_id,
+            connection_id: receipt.transport_session_key.connection_id(),
             transport_session_key: receipt.transport_session_key,
         })
     }
@@ -429,20 +424,19 @@ impl RoomManager {
         }
     }
 
-    /// accepts work only against the directory-current room row
+    /// Accepts work while the directory read guard proves the row is current.
     ///
-    /// the returned mutation holds no directory lock. if the row is replaced
-    /// between snapshot and current check, the lease is cancelled and the caller
-    /// sees `None`
+    /// The returned lease protects subsequent room work without retaining the
+    /// directory guard.
     async fn begin_current_room_mutation(&self, room_id: &str) -> Option<CurrentRoomMutation> {
-        let entry = self.entry(room_id).await?;
+        let directory = self.directory.read().await;
+        let entry = directory.entry(room_id)?;
         let lease = entry.lifecycle.begin()?;
-        let room = entry.room;
-        if self.is_current_entry(room_id, &room).await {
-            return Some(CurrentRoomMutation { room, lease });
-        }
-        lease.cancel();
-        None
+        drop(directory);
+        Some(CurrentRoomMutation {
+            room: entry.room,
+            lease,
+        })
     }
 
     async fn entry(&self, room_id: &str) -> Option<RoomDirectoryEntry> {
@@ -480,11 +474,6 @@ impl RoomManager {
             users_stats,
             web_rtc_enabled: room.web_rtc_enabled(),
         }
-    }
-
-    async fn is_current_entry(&self, room_id: &str, room: &Arc<Room>) -> bool {
-        let directory = self.directory.read().await;
-        directory.contains_current(room_id, room)
     }
 }
 

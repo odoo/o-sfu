@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::{Context, Result, bail};
 use o_sfu_protocol::wire::SessionDescriptionPayload;
 use o_sfu_rfc::{
     rtp::{self, CodecName},
@@ -243,7 +244,8 @@ impl FakeRtcPeer {
         }
         match self
             .pump_until(Instant::now() + timeout_window, PumpTarget::Connected)
-            .await?
+            .await
+            .ok()?
         {
             PumpResult::Connected => Some(()),
             PumpResult::RtpPacket(_) | PumpResult::Deadline => None,
@@ -261,7 +263,8 @@ impl FakeRtcPeer {
             let frame = source.next_frame(clock);
             self.write_rtp_packet(frame)?;
             self.pump_until(Instant::now() + IO_SLICE, PumpTarget::Deadline)
-                .await?;
+                .await
+                .ok()?;
         }
         Some(())
     }
@@ -276,23 +279,37 @@ impl FakeRtcPeer {
         let expected_payload = frame.payload.clone();
         self.write_rtp_packet(frame)?;
         self.pump_until(Instant::now() + IO_SLICE, PumpTarget::Deadline)
-            .await?;
+            .await
+            .ok()?;
         Some(expected_payload)
     }
 
-    pub async fn read_rtp_packet(&mut self, timeout_window: Duration) -> Option<ReceivedRtpPacket> {
-        match self
-            .pump_until(Instant::now() + timeout_window, PumpTarget::RtpPacket)
-            .await?
-        {
-            PumpResult::RtpPacket(packet) => Some(packet),
-            PumpResult::Connected | PumpResult::Deadline => None,
-        }
+    /// Returns the next RTP packet or `Ok(None)` after a healthy receive timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`anyhow::Error`] for RTC processing, UDP I/O, invalid incoming
+    /// datagrams, missing received-media metadata or ICE disconnection. These
+    /// failures must not satisfy assertions that media was suppressed.
+    pub async fn read_rtp_packet(
+        &mut self,
+        timeout_window: Duration,
+    ) -> Result<Option<ReceivedRtpPacket>> {
+        Ok(
+            match self
+                .pump_until(Instant::now() + timeout_window, PumpTarget::RtpPacket)
+                .await?
+            {
+                PumpResult::RtpPacket(packet) => Some(packet),
+                PumpResult::Connected | PumpResult::Deadline => None,
+            },
+        )
     }
 
     pub async fn pump(&mut self, timeout_window: Duration) -> Option<()> {
         self.pump_until(Instant::now() + timeout_window, PumpTarget::Deadline)
-            .await?;
+            .await
+            .ok()?;
         Some(())
     }
 
@@ -305,7 +322,7 @@ impl FakeRtcPeer {
         self.outbound_rtp_hold = None;
     }
 
-    pub(super) fn try_delay_next_outbound_rtp(
+    pub fn try_delay_next_outbound_rtp(
         &mut self,
         payload_type: u8,
         ssrc: u32,
@@ -322,13 +339,13 @@ impl FakeRtcPeer {
         true
     }
 
-    pub(super) fn has_delayed_outbound_rtp(&self) -> bool {
+    pub fn has_delayed_outbound_rtp(&self) -> bool {
         self.outbound_rtp_delay
             .as_ref()
             .is_some_and(|delay| !delay.pending.is_empty())
     }
 
-    pub(super) async fn release_delayed_outbound_rtp(&mut self) -> Option<()> {
+    pub async fn release_delayed_outbound_rtp(&mut self) -> Option<()> {
         // Evaluate `Netem` at its own deadline so tests can release a late packet
         // deterministically without sleeping for the configured delay.
         let release_at = self.outbound_rtp_delay.as_ref()?.next_timeout()?;
@@ -504,11 +521,11 @@ impl FakeRtcPeer {
         Ssrc::from(ssrc)
     }
 
-    async fn pump_until(&mut self, deadline: Instant, target: PumpTarget) -> Option<PumpResult> {
+    async fn pump_until(&mut self, deadline: Instant, target: PumpTarget) -> Result<PumpResult> {
         let mut receive_buffer = [0_u8; RECEIVE_BUFFER_LEN];
         while Instant::now() < deadline {
             let now = Instant::now();
-            match self.rtc.poll_output().ok()? {
+            match self.rtc.poll_output()? {
                 Output::Transmit(transmit) => {
                     if self
                         .intercept_selected_rtp(RtcTraceDirection::Tx, transmit.contents.as_ref())
@@ -522,8 +539,7 @@ impl FakeRtcPeer {
                     };
                     self.socket
                         .send_to(&transmit.contents, transmit.destination)
-                        .await
-                        .ok()?;
+                        .await?;
                 }
                 Output::Event(Event::RawPacket(packet)) => {
                     if self.trace_enabled {
@@ -533,18 +549,19 @@ impl FakeRtcPeer {
                 Output::Event(Event::RtpPacket(packet)) => {
                     if target == PumpTarget::RtpPacket {
                         return into_received_rtp_packet(&mut self.rtc, &packet)
-                            .map(PumpResult::RtpPacket);
+                            .map(PumpResult::RtpPacket)
+                            .context("received RTP packet has no negotiated media metadata");
                     }
                 }
                 Output::Event(Event::Connected) => {
                     self.connected = true;
                     if target == PumpTarget::Connected {
-                        return Some(PumpResult::Connected);
+                        return Ok(PumpResult::Connected);
                     }
                 }
                 Output::Event(Event::IceConnectionStateChange(
                     IceConnectionState::Disconnected,
-                )) => return None,
+                )) => bail!("fake RTC peer disconnected"),
                 Output::Event(Event::KeyframeRequest(request)) => {
                     if self.trace_enabled {
                         self.trace.keyframe_requests += 1;
@@ -554,15 +571,17 @@ impl FakeRtcPeer {
                 Output::Event(_) => {}
                 Output::Timeout(timeout_at) => {
                     if timeout_at <= now {
-                        self.rtc.handle_input(Input::Timeout(now)).ok()?;
+                        self.rtc.handle_input(Input::Timeout(now))?;
                         continue;
                     }
-                    self.flush_delayed_outbound_rtp(now).await?;
+                    self.flush_delayed_outbound_rtp(now)
+                        .await
+                        .context("failed to send delayed RTP datagram")?;
                     let now = Instant::now();
 
                     let wait_duration = self.socket_wait_duration(timeout_at, now, deadline);
                     if wait_duration.is_zero() {
-                        self.rtc.handle_input(Input::Timeout(Instant::now())).ok()?;
+                        self.rtc.handle_input(Input::Timeout(Instant::now()))?;
                         continue;
                     }
 
@@ -571,7 +590,9 @@ impl FakeRtcPeer {
                             if received_size == 0 {
                                 continue;
                             }
-                            let packet = receive_buffer.get(..received_size)?;
+                            let packet = receive_buffer
+                                .get(..received_size)
+                                .context("received UDP datagram exceeds buffer")?;
                             // Trace before `handle_input` because str0m rejects a late primary
                             // recovered by RTX before `Event::RawPacket` or `Event::RtpPacket`.
                             if self.trace_enabled
@@ -586,21 +607,20 @@ impl FakeRtcPeer {
                                 proto: Protocol::Udp,
                                 source: source_addr,
                                 destination: self.local_addr,
-                                contents: packet.try_into().ok()?,
+                                contents: packet.try_into()?,
                             };
                             self.rtc
-                                .handle_input(Input::Receive(Instant::now(), receive))
-                                .ok()?;
+                                .handle_input(Input::Receive(Instant::now(), receive))?;
                         }
-                        Ok(Err(_error)) => return None,
+                        Ok(Err(error)) => return Err(error.into()),
                         Err(_elapsed) => {
-                            self.rtc.handle_input(Input::Timeout(Instant::now())).ok()?;
+                            self.rtc.handle_input(Input::Timeout(Instant::now()))?;
                         }
                     }
                 }
             }
         }
-        Some(PumpResult::Deadline)
+        Ok(PumpResult::Deadline)
     }
 
     fn socket_wait_duration(
@@ -1209,6 +1229,18 @@ impl OfferDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rtp_read_distinguishes_timeout_from_invalid_datagram() -> Result<()> {
+        let mut peer =
+            super::super::require_some(FakeRtcPeer::bind(0).await, "RTC peer should bind")?;
+        assert_eq!(peer.read_rtp_packet(Duration::from_millis(10)).await?, None);
+
+        let sender = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
+        sender.send_to(&[0], peer.local_addr).await?;
+        assert!(peer.read_rtp_packet(Duration::from_secs(1)).await.is_err());
+        Ok(())
+    }
 
     #[test]
     fn padding_bit_rejects_zero_padding_count() {

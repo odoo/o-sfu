@@ -125,15 +125,9 @@ impl RtpMetricsSnapshot {
 
     fn add_recorder(&mut self, recorder: &RtpMetricsRecorder) {
         self.traffic.add_recorder(recorder);
-        for scope in <RtpDecoderRefreshScope as MetricLabel>::VARIANTS {
-            self.add_decoder_refresh(*scope, recorder.decoder_refreshes.load(*scope));
-        }
-    }
-
-    fn add_decoder_refresh(&mut self, scope: RtpDecoderRefreshScope, refreshes: u64) {
-        if let Some(counter) = self.decoder_refreshes.get_mut(scope.as_index()) {
-            *counter = counter.saturating_add(refreshes);
-        }
+        recorder
+            .decoder_refreshes
+            .accumulate_into(&mut self.decoder_refreshes);
     }
 }
 

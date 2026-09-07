@@ -153,12 +153,7 @@ impl MediaTransportTestApi<'_> {
     ) {
         if let Some(worker) = self.transport.worker_for_user(source.session_key()) {
             worker
-                .debug_record_incoming_media(
-                    source.session_key(),
-                    source.transport_media_id(),
-                    payload_bytes,
-                    now,
-                )
+                .debug_record_incoming_media(source.transport_media_id(), payload_bytes, now)
                 .await;
         }
     }
@@ -183,15 +178,10 @@ impl MediaTransportTestApi<'_> {
         consumer_session_key: &TransportSessionKey,
         consumer_mid: Mid,
     ) -> Option<DebugRouteEntry> {
-        for worker in self.transport.all_workers() {
-            if let Some(entry) = worker
-                .debug_route_entry_by_consumer_mid(consumer_session_key, consumer_mid)
-                .await
-            {
-                return Some(entry);
-            }
-        }
-        None
+        self.transport
+            .worker_for_user(consumer_session_key)?
+            .debug_route_entry_by_consumer_mid(consumer_session_key, consumer_mid)
+            .await
     }
 
     pub async fn route_entry_by_media_id(

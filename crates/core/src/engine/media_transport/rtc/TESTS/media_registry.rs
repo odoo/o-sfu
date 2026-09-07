@@ -97,12 +97,7 @@ fn session_media_index_drives_bulk_session_removal() {
         mid: kept_mid,
     });
 
-    let removed_handles = state.remove_session_media_handles(&removed_session);
-
-    let mut removed_ids = removed_handles
-        .iter()
-        .map(|(transport_media_id, _handle)| *transport_media_id)
-        .collect::<Vec<_>>();
+    let mut removed_ids = state.remove_session_media_handles(&removed_session);
     removed_ids.sort_unstable();
     assert_eq!(removed_ids, vec![producer_media_id, consumer_media_id]);
     assert!(!state.session_has_registered_media(&removed_session));
@@ -187,12 +182,14 @@ fn dynamic_producer_ssrc_rid_lookup_clears_with_media_handle() {
         mid: producer_mid,
     });
 
-    state.learn_producer_ssrc_binding(
-        &producer_session,
+    let source = ForwardedPacketSource::Relayed(producer_session.clone());
+    assert!(state.learn_producer_ssrc_from_pkt(
+        &source,
         transport_media_id,
         producer_ssrc,
         Some(learned_rid),
-    );
+    ));
+    assert!(!state.learn_producer_ssrc_from_pkt(&source, transport_media_id, producer_ssrc, None));
 
     assert_eq!(
         state.src_media_for_ssrc(&producer_session, producer_ssrc),
@@ -301,12 +298,28 @@ fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
         mid: second_mid,
     });
 
-    state.learn_producer_ssrc_binding(&producer_session, first_media_id, shared_ssrc, None);
-    state.learn_producer_ssrc_binding(&producer_session, second_media_id, shared_ssrc, None);
+    let source = ForwardedPacketSource::Relayed(producer_session.clone());
+    let original_encoding = Rid::from("hi");
+    assert!(state.learn_producer_ssrc_from_pkt(
+        &source,
+        first_media_id,
+        shared_ssrc,
+        Some(original_encoding)
+    ));
+    assert!(!state.learn_producer_ssrc_from_pkt(
+        &source,
+        second_media_id,
+        shared_ssrc,
+        Some(Rid::from("lo"))
+    ));
 
     assert_eq!(
         state.src_media_for_ssrc(&producer_session, shared_ssrc),
         Some(first_media_id)
+    );
+    assert_eq!(
+        state.source_rid_for_ssrc(&producer_session, shared_ssrc),
+        Some(original_encoding)
     );
     assert_eq!(
         state.src_media_for_mid(&producer_session, second_mid),

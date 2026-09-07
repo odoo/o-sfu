@@ -160,26 +160,26 @@ impl MetricBucketLabel for ControlPlaneDurationBucket {
 }
 
 impl HistogramBucketLabel for ControlPlaneDurationBucket {
-    fn from_duration(duration: Duration) -> Self {
+    fn from_duration(duration: Duration) -> Option<Self> {
         if duration <= Duration::from_millis(10) {
-            return Self::Le10Millis;
+            return Some(Self::Le10Millis);
         }
         if duration <= Duration::from_millis(50) {
-            return Self::Le50Millis;
+            return Some(Self::Le50Millis);
         }
         if duration <= Duration::from_millis(100) {
-            return Self::Le100Millis;
+            return Some(Self::Le100Millis);
         }
         if duration <= Duration::from_millis(250) {
-            return Self::Le250Millis;
+            return Some(Self::Le250Millis);
         }
         if duration <= Duration::from_millis(500) {
-            return Self::Le500Millis;
+            return Some(Self::Le500Millis);
         }
         if duration <= Duration::from_secs(1) {
-            return Self::Le1Second;
+            return Some(Self::Le1Second);
         }
-        Self::Le5Seconds
+        (duration <= Duration::from_secs(5)).then_some(Self::Le5Seconds)
     }
 }
 
@@ -404,26 +404,26 @@ impl MetricBucketLabel for MediaQualityRttBucket {
 }
 
 impl HistogramBucketLabel for MediaQualityRttBucket {
-    fn from_duration(duration: Duration) -> Self {
+    fn from_duration(duration: Duration) -> Option<Self> {
         if duration <= Duration::from_millis(50) {
-            return Self::Le50Millis;
+            return Some(Self::Le50Millis);
         }
         if duration <= Duration::from_millis(100) {
-            return Self::Le100Millis;
+            return Some(Self::Le100Millis);
         }
         if duration <= Duration::from_millis(250) {
-            return Self::Le250Millis;
+            return Some(Self::Le250Millis);
         }
         if duration <= Duration::from_millis(500) {
-            return Self::Le500Millis;
+            return Some(Self::Le500Millis);
         }
         if duration <= Duration::from_secs(1) {
-            return Self::Le1Second;
+            return Some(Self::Le1Second);
         }
         if duration <= Duration::from_secs(2) {
-            return Self::Le2Seconds;
+            return Some(Self::Le2Seconds);
         }
-        Self::Le5Seconds
+        (duration <= Duration::from_secs(5)).then_some(Self::Le5Seconds)
     }
 }
 

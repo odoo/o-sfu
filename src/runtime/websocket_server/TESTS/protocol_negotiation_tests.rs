@@ -1,6 +1,6 @@
 use o_sfu_protocol::wire::{ServerMessage, ServerRequest, TrackBinding};
 use o_sfu_router::{
-    MediaKind, rtp::MediaStream, test_support::rtp_samples::sample_simulcast_video_rtp_parameters,
+    rtp::MediaStream, test_support::rtp_samples::sample_simulcast_video_rtp_parameters,
 };
 
 use super::fixtures::*;
@@ -137,11 +137,9 @@ async fn publish_until_ready(
         loop {
             if room
                 .test_api()
-                .media()
                 .publish_intent(
                     &UserId::Integer(81),
                     &source_publish_intent_for_stream_type(stream_type),
-                    MediaKind::Video,
                     sample_video_rtp_parameters(mid),
                     &server.media_transport,
                 )

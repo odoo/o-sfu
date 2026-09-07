@@ -123,7 +123,6 @@ async fn manager_leave_user_removes_empty_room() -> Result<()> {
     let connection_id = join_user(&manager, &room, 1, &media_transport).await?;
     let user_id = UserId::Integer(1);
     room.test_api()
-        .lifecycle()
         .make_session_ready(&user_id, &media_transport)
         .await?;
     publish_track(
@@ -136,7 +135,6 @@ async fn manager_leave_user_removes_empty_room() -> Result<()> {
     .await?;
     let media = room
         .test_api()
-        .inspect()
         .first_published_transport_media_id()
         .await
         .ok_or_else(|| anyhow!("published track should expose transport media"))?;
@@ -306,7 +304,7 @@ async fn subscription_change_pauses_and_resumes_consumer_silently() -> Result<()
     .await?;
     ready.assert_no_outbound(1)?;
     ready.assert_no_outbound(2)?;
-    assert_eq!(ready.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(ready.room.test_api().consumer_count().await, 1);
 
     update_subscription(
         &ready,
@@ -317,7 +315,7 @@ async fn subscription_change_pauses_and_resumes_consumer_silently() -> Result<()
     .await?;
     ready.assert_no_outbound(1)?;
     ready.assert_no_outbound(2)?;
-    assert_eq!(ready.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(ready.room.test_api().consumer_count().await, 1);
     Ok(())
 }
 
@@ -347,7 +345,7 @@ async fn subscription_change_persists_preference_for_future_consumer_setup() -> 
     )
     .await?;
 
-    assert_eq!(ready.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(ready.room.test_api().consumer_count().await, 1);
     Ok(())
 }
 
@@ -370,7 +368,7 @@ async fn subscription_change_handles_multiple_stream_types() -> Result<()> {
 
     ready.assert_no_outbound(1)?;
     ready.assert_no_outbound(2)?;
-    assert_eq!(ready.room.test_api().inspect().consumer_count().await, 2);
+    assert_eq!(ready.room.test_api().consumer_count().await, 2);
     Ok(())
 }
 
@@ -410,7 +408,6 @@ async fn publication_activity_after_source_owner_leave_is_a_noop() -> Result<()>
         !ready
             .room
             .test_api()
-            .media()
             .deactivate_publication(&publisher_id, &stream_id, &ready.media_transport,)
             .await
     );

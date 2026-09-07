@@ -17,8 +17,8 @@ use super::{
 use crate::engine::{
     MediaWorkerId,
     media_transport::{
-        ConsumerActivity, MediaTransport, ProducerActivity, SourceActivityUpdate,
-        TransportConsumerRoute, TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
+        MediaTransport, ProducerActivity, SourceActivityUpdate, TransportConsumerRoute,
+        TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
         TransportSourceActivityEffect, TransportSourceKey,
     },
     source_model::{PublishedSourceId, UserStreamId},
@@ -192,8 +192,6 @@ impl PendingConsumerSetup {
         media_transport: &MediaTransport,
         origin: ConsumerSetupOrigin,
     ) -> Result<DeclaredConsumerSetup, Self> {
-        let activity =
-            ConsumerActivity::from_active(self.reservation.selection().delivery_active());
         match media_transport
             .consume_media(
                 &self.target.session,
@@ -201,7 +199,7 @@ impl PendingConsumerSetup {
                 self.target.source.session_key(),
                 self.target.source.transport_media_id(),
                 &self.rtp,
-                activity,
+                self.reservation.declared_activity(),
             )
             .await
         {
@@ -266,9 +264,7 @@ impl ConsumerSetupTarget {
 
     pub(super) fn relay_route_key(&self, target_worker: MediaWorkerId) -> RelayRouteKey {
         RelayRouteKey {
-            source_user: self.source.session_key().user_id().clone(),
-            source_connection: self.source.session_key().connection_id(),
-            source_media: self.source.transport_media_id(),
+            source: self.source.clone(),
             target_worker,
         }
     }

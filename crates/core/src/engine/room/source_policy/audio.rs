@@ -93,10 +93,10 @@ fn audio_pause_reason(
     {
         return Some(PolicyPauseReason::ReceiverDeafened);
     }
-    let source_media_id = route.route.source_transport_media_id();
-    let active_speaker = input.active_speaker_media_ids.contains(&source_media_id);
-    let admitted = input.admitted_audio_media_ids.contains(&source_media_id);
-    (active_speaker && !admitted).then_some(PolicyPauseReason::AudioSpeakerLimit)
+    input
+        .limited_audio_media_ids
+        .contains(&route.route.source_transport_media_id())
+        .then_some(PolicyPauseReason::AudioSpeakerLimit)
 }
 
 fn owns_pause_reason(current_reason: Option<PolicyPauseReason>) -> bool {

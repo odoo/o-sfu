@@ -76,8 +76,6 @@ pub struct JoinCommit {
 #[derive(Debug)]
 pub enum ConnectionCloseCommit {
     Current {
-        user_id: UserId,
-        connection_id: ConnectionId,
         session_teardown: Option<TransportTeardown>,
         effects: LifecycleEffects,
         transport_plan: RoomTransportPlan,
@@ -311,8 +309,6 @@ impl RoomState {
         source_recipients.remove(user_id);
         let (user, transport_plan) = self.remove_runtime_user(user_id)?;
         Some(ConnectionCloseCommit::Current {
-            user_id: user_id.clone(),
-            connection_id,
             session_teardown,
             effects: LifecycleEffects {
                 close_requests: vec![UserCloseRequest {

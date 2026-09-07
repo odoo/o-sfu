@@ -1,6 +1,5 @@
 use o_sfu_protocol::wire::StreamType;
 use o_sfu_router::{
-    MediaKind,
     rtp::MediaStream,
     test_support::rtp_samples::{sample_client_rtp_capabilities, sample_video_rtp_parameters},
 };
@@ -30,17 +29,14 @@ async fn publish_video_stream(
     );
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(user_id, sample_client_rtp_capabilities(), media_transport)
             .await
     );
     assert!(
         room.test_api()
-            .media()
             .publish_intent(
                 user_id,
                 &source_publish_intent_for_stream_type(stream_type),
-                MediaKind::Video,
                 test_video_rtp_parameters(ssrc),
                 media_transport,
             )
@@ -86,7 +82,6 @@ async fn stats_returns_live_room_data() -> TestResult {
     let (bob_tx, _bob_rx) = test_outbound_sender(&test_state.state);
     let alice_join = room
         .test_api()
-        .lifecycle()
         .join_user(
             UserId::Integer(1),
             None,
@@ -96,7 +91,6 @@ async fn stats_returns_live_room_data() -> TestResult {
         .await;
     let bob_join = room
         .test_api()
-        .lifecycle()
         .join_user(UserId::Integer(2), None, UserPermissions::default(), bob_tx)
         .await;
     assert!(alice_join.is_ok());

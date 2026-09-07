@@ -293,7 +293,7 @@ fn verify_accepts_jose_base64url_token_without_typ_header() {
         key_seed: None,
     };
 
-    let token = sign_token_for_test(&claims, TEST_AUTH_KEY, None, SegmentEncoding::Jose);
+    let token = sign_token_for_test(&claims, TEST_AUTH_KEY, None);
     assert!(token.is_some());
     let Some(token) = token else {
         return;
@@ -311,7 +311,7 @@ fn verify_accepts_jose_base64url_token_with_typ_header() {
         key_seed: None,
     };
 
-    let token = sign_token_for_test(&claims, TEST_AUTH_KEY, Some("JWT"), SegmentEncoding::Jose);
+    let token = sign_token_for_test(&claims, TEST_AUTH_KEY, Some("JWT"));
     assert!(token.is_some());
     let Some(token) = token else {
         return;
@@ -385,16 +385,10 @@ fn verify_rejects_signed_invalid_claims_json_after_signature_verification() {
     assert_eq!(error, Some(AuthenticationError::InvalidJsonPayload));
 }
 
-#[derive(Clone, Copy)]
-enum SegmentEncoding {
-    Jose,
-}
-
 fn sign_token_for_test<T: Serialize>(
     claims: &T,
     key_b64: &str,
     typ: Option<&str>,
-    segment_encoding: SegmentEncoding,
 ) -> Option<String> {
     let key = decode_key(key_b64).ok()?;
     let header = JwtHeader {
@@ -403,11 +397,11 @@ fn sign_token_for_test<T: Serialize>(
     };
     let header_json = serde_json::to_vec(&header).ok()?;
     let claims_json = serde_json::to_vec(claims).ok()?;
-    let header_b64 = encode_segment(&header_json, segment_encoding);
-    let claims_b64 = encode_segment(&claims_json, segment_encoding);
+    let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
+    let claims_b64 = URL_SAFE_NO_PAD.encode(claims_json);
     let signed_data = format!("{header_b64}.{claims_b64}");
     let signature = sign_hs256(signed_data.as_bytes(), &key).ok()?;
-    let signature_b64 = encode_segment(&signature, segment_encoding);
+    let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
     Some(format!("{signed_data}.{signature_b64}"))
 }
 
@@ -434,34 +428,6 @@ fn replace_token_segment(token: &str, segment_index: usize, replacement: &str) -
     let part = parts.get_mut(segment_index)?;
     replacement.clone_into(part);
     Some(parts.join("."))
-}
-
-fn encode_segment(bytes: &[u8], encoding: SegmentEncoding) -> String {
-    match encoding {
-        SegmentEncoding::Jose => URL_SAFE_NO_PAD.encode(bytes),
-    }
-}
-
-#[test]
-fn sign_uses_rfc_header_constants() {
-    let claims = HttpRoomClaims {
-        registered: RegisteredJwtClaims::default(),
-        key: None,
-        key_seed: None,
-    };
-
-    let token = sign_token_for_test(
-        &claims,
-        TEST_AUTH_KEY,
-        Some(TYPE_JWT),
-        SegmentEncoding::Jose,
-    );
-    assert!(token.is_some());
-    let Some(token) = token else {
-        return;
-    };
-    let verified = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY);
-    assert_eq!(verified.ok(), Some(claims));
 }
 
 #[test]

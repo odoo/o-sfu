@@ -95,7 +95,10 @@ pub(crate) async fn ready_room_fake_peers_with_config(
             "publisher should connect",
         )?;
         require_some(
-            publisher.wait_until_connected(Duration::from_secs(5)).await,
+            publisher
+                .rtc()
+                .wait_until_connected(Duration::from_secs(5))
+                .await,
             "publisher should reach ready state",
         )?;
         server.set_packet_loop_delays_ms(placement_delays_for_worker(worker_count, 1));
@@ -105,6 +108,7 @@ pub(crate) async fn ready_room_fake_peers_with_config(
         )?;
         require_some(
             subscriber
+                .rtc()
                 .wait_until_connected(Duration::from_secs(5))
                 .await,
             "subscriber should reach ready state",
@@ -178,7 +182,9 @@ pub(crate) async fn connect_two_isolated_audio_flows(
         &mut publisher_b,
         &mut subscriber_b,
     ] {
-        peer.wait_until_connected(Duration::from_secs(5)).await?;
+        peer.rtc()
+            .wait_until_connected(Duration::from_secs(5))
+            .await?;
     }
 
     Some((publisher_a, subscriber_a, publisher_b, subscriber_b))

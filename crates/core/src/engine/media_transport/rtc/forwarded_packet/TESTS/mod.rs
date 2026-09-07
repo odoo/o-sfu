@@ -338,6 +338,14 @@ fn forwarded_packet_recovers_rid_from_ssrc_binding_when_extension_is_absent() {
     );
     assert_ne!(expected, codec::ProjectedPacket::default());
     assert_eq!(project_codec_packet(&facts.codec), expected);
+    let relay_facts = packet
+        .share_for_relay(&state, facts.src_media)
+        .and_then(|mut relayed| relayed.resolve_facts(&PacketLoopState::default()));
+    assert_eq!(relay_facts.map(|facts| facts.rid), Some(facts.rid));
+    assert_eq!(
+        relay_facts.map(|facts| project_codec_packet(&facts.codec)),
+        Some(expected)
+    );
 }
 
 #[test]

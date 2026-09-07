@@ -1481,7 +1481,20 @@ fn flush_packet_forwards_records_packet_sink_source_key_for_local_packet()
         &harness.buffers,
     );
 
-    assert_eq!(sink.last_packet().0, Some(source_session));
+    assert_eq!(sink.last_packet().0, Some(source_session.clone()));
+    let _removed = harness.state.users.remove(&source_session);
+    flush_only_packet_forwards(
+        &mut harness.state,
+        &harness.metrics,
+        &harness.rtp_metrics,
+        &harness.rtc_metrics,
+        &harness.buffers,
+    );
+    assert_eq!(sink.packets.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        harness.metrics.snapshot().rtp_forwarded_packets_recording(),
+        2
+    );
     Ok(())
 }
 
@@ -1875,7 +1888,10 @@ fn due_relay_observation_expires_in_same_pump() -> Result<(), &'static str> {
             )
             .map_err(|_error| "remote source should register")?;
 
-        let (relay_tx, mut relay_rx) = mpsc::channel(1);
+        let (_command_tx, command_rx) = mpsc::channel(1);
+        let (relay_tx, relay_rx) = mpsc::channel(1);
+        let mut inputs =
+            PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new());
         let observed_at = Instant::now()
             .checked_sub(Duration::from_millis(300))
             .ok_or("test instant should support a short subtraction")?;
@@ -1895,7 +1911,7 @@ fn due_relay_observation_expires_in_same_pump() -> Result<(), &'static str> {
             &snapshot_state,
             &config,
             &mut demux,
-            &mut relay_rx,
+            &mut inputs,
         );
 
         assert!(
@@ -1977,7 +1993,6 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,
-                inputs: &mut inputs,
             },
             first_input,
         );
@@ -1993,7 +2008,7 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
             &snapshot_state,
             &config,
             &mut demux,
-            inputs.relay_rx(),
+            &mut inputs,
         );
 
         assert!(!state.has_dirty_sessions());
@@ -2051,7 +2066,7 @@ fn due_heartbeat_yields_to_ready_control_without_reporting_health() -> Result<()
             &snapshot_state,
             &config,
             &mut demux,
-            inputs.relay_rx(),
+            &mut inputs,
         );
         turn.flush_outputs(&shared_socket.socket).await;
         let input = turn
@@ -2098,7 +2113,7 @@ fn heartbeat_wake_does_not_create_a_timeout_turn() -> Result<(), &'static str> {
             &snapshot_state,
             &config,
             &mut demux,
-            inputs.relay_rx(),
+            &mut inputs,
         );
         turn.flush_outputs(&shared_socket.socket).await;
         let wait = timeout(
@@ -2169,7 +2184,6 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,
-                inputs: &mut inputs,
             },
             input,
         );
@@ -2179,7 +2193,7 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
             &snapshot_state,
             &config,
             &mut demux,
-            inputs.relay_rx(),
+            &mut inputs,
         );
 
         let second_input = timeout(
@@ -2208,20 +2222,71 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
 }
 
 #[tokio::test]
-async fn packet_loop_mailbox_wakes_for_relay_without_control_or_socket_input() {
+async fn packet_loop_mailbox_wake_enters_next_pump_with_bounded_relay_drain() {
     let source_session = test_transport_session_key(26, 0, 27, UserId::Integer(28));
-    let packet = sample_forwarded_packet(source_session, "aud-up", b"payload");
+    let src_media = TransportMediaId::new(29);
     let (_command_tx, command_rx) = mpsc::channel(1);
-    let (relay_tx, relay_rx) = mpsc::channel(1);
+    let packet_count = MAX_RELAY_PACKETS_PER_ITERATION + 2;
+    let (relay_tx, relay_rx) = mpsc::channel(packet_count);
     let mut inputs = PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new());
+    let config = packet_loop_config_for_test();
+    let mut state = PacketLoopState::default();
+    let bitrate_registry = Arc::new(Mutex::new(BitrateRegistry::default()));
+    let snapshot_state = Arc::new(Mutex::new(RtcSnapshotState::default()));
+    let mut demux = super::super::routing_miss::DemuxRecoveryState::new();
+    let mut turn = PacketLoopTurn::new(Instant::now());
 
-    assert!(relay_tx.send(packet).await.is_ok());
+    for _ in 0..packet_count {
+        assert!(
+            relay_tx
+                .send(sample_already_relayed_packet(
+                    source_session.clone(),
+                    src_media,
+                    "aud-up",
+                    b"payload",
+                ))
+                .await
+                .is_ok()
+        );
+    }
 
     assert!(matches!(
         inputs.recv_control_or_relay().await,
         Some(PacketLoopMailboxInput::Relay)
     ));
-    assert!(inputs.take_woken_relay_packet().is_some());
+    turn.pump(
+        &mut state,
+        &bitrate_registry,
+        &snapshot_state,
+        &config,
+        &mut demux,
+        &mut inputs,
+    );
+    assert_eq!(inputs.relay_rx().len(), 1);
+    let snapshot = config.metrics.snapshot();
+    assert_eq!(
+        usize::try_from(snapshot.rtp_payload_bytes_ingress()),
+        Ok((MAX_RELAY_PACKETS_PER_ITERATION + 1) * b"payload".len())
+    );
+    assert_eq!(
+        usize::try_from(snapshot.rtc_relay_drained_packets()),
+        Ok(MAX_RELAY_PACKETS_PER_ITERATION)
+    );
+    assert_eq!(snapshot.rtc_relay_drain_cap_hits(), 1);
+
+    turn.pump(
+        &mut state,
+        &bitrate_registry,
+        &snapshot_state,
+        &config,
+        &mut demux,
+        &mut inputs,
+    );
+    assert!(inputs.relay_rx().is_empty());
+    assert_eq!(
+        usize::try_from(config.metrics.snapshot().rtp_payload_bytes_ingress()),
+        Ok(packet_count * b"payload".len())
+    );
 }
 
 #[test]

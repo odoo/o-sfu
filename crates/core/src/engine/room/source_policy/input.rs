@@ -11,8 +11,8 @@ use crate::{
     engine::{
         ConnectionId, UserId,
         media_transport::{
-            ActiveSpeakerSource, ReceiverBandwidthSnapshot, ReceiverBweTargetUpdate,
-            TransportBitrateSnapshot, TransportMediaId,
+            ActiveSpeakerSource, ReceiverBandwidthSnapshot, TransportBitrateSnapshot,
+            TransportMediaId,
         },
         room::{
             media_graph::ConsumerRouteView,
@@ -26,11 +26,9 @@ const ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT: usize = 5;
 #[derive(Debug)]
 pub(super) struct SourcePolicySnapshot<'a> {
     pub(super) routes: Vec<ConsumerRouteView<'a>>,
-    pub(super) receiver_bwe_targets: BTreeMap<UserId, ReceiverBweTargetUpdate>,
     pub(super) receiver_bandwidth_by_connection: BTreeMap<ConnectionId, Bitrate>,
     pub(super) source_bitrate_by_media: BTreeMap<TransportMediaId, Bitrate>,
-    pub(super) active_speaker_media_ids: BTreeSet<TransportMediaId>,
-    pub(super) admitted_audio_media_ids: BTreeSet<TransportMediaId>,
+    pub(super) limited_audio_media_ids: BTreeSet<TransportMediaId>,
     pub(super) deaf_receiver_connection_ids: BTreeSet<ConnectionId>,
     pub(super) featured_source_user_ids: BTreeSet<UserId>,
     pub(super) active_speaker_rank_by_user: BTreeMap<UserId, usize>,
@@ -51,18 +49,35 @@ impl<'a> SourcePolicySnapshot<'a> {
         let ranked_sources = rank_room_active_speakers(room, active_speaker_sources);
         let media_limits = room.media_limits;
         let tuning = room.video_adaptation_tuning;
-        let active_speakers = active_speaker_media_ids(&ranked_sources);
         let admitted_audio_speakers = admitted_audio_media_ids(
             room,
             &ranked_sources,
             media_limits.max_active_audio_speakers(),
         );
         let deaf_receiver_connection_ids = deaf_receiver_connection_ids(room);
-        let featured_source_user_ids = featured_source_user_ids(room, &ranked_sources);
-        let active_speaker_rank_by_user = active_speaker_rank_by_user(room, &ranked_sources);
-        let desired_featured_user_id = ranked_sources.iter().find_map(|source| {
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        });
+        let mut featured_source_user_ids = BTreeSet::new();
+        let mut active_speaker_rank_by_user = BTreeMap::new();
+        let mut desired_featured_user_id = None;
+        for (index, user_id) in ranked_sources
+            .iter()
+            .filter_map(|source| {
+                room.topology
+                    .active_speaker_detector_owner(source.transport_media_id())
+            })
+            .enumerate()
+        {
+            if index == 0 {
+                desired_featured_user_id = Some(user_id.clone());
+            }
+            // The clear limit counts eligible sources before owner deduplication.
+            if index < ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT {
+                featured_source_user_ids.insert(user_id.clone());
+            }
+            let next_rank = active_speaker_rank_by_user.len();
+            active_speaker_rank_by_user
+                .entry(user_id)
+                .or_insert(next_rank);
+        }
         let featured_user_updates = featured_user_updates(room, desired_featured_user_id.as_ref());
         // Include policy-paused routes so later turns can resume them. Filtering
         // on `delivery_active()` would make a policy pause self-perpetuating.
@@ -78,13 +93,15 @@ impl<'a> SourcePolicySnapshot<'a> {
         );
         Self {
             routes,
-            receiver_bwe_targets: receiver_bwe_targets(room, &audio_reserve_by_connection),
             receiver_bandwidth_by_connection: receiver_bandwidth_by_connection(
                 receiver_bandwidth_snapshot,
             ),
             source_bitrate_by_media: source_bitrate_snapshot.per_media.iter().copied().collect(),
-            active_speaker_media_ids: active_speakers,
-            admitted_audio_media_ids: admitted_audio_speakers,
+            limited_audio_media_ids: ranked_sources
+                .iter()
+                .map(|source| source.transport_media_id())
+                .filter(|media_id| !admitted_audio_speakers.contains(media_id))
+                .collect(),
             deaf_receiver_connection_ids,
             featured_source_user_ids,
             active_speaker_rank_by_user,
@@ -134,27 +151,6 @@ fn audio_reserve_by_connection(
     reserve_by_connection
 }
 
-fn receiver_bwe_targets(
-    room: &RoomState,
-    audio_reserve_by_connection: &BTreeMap<ConnectionId, Bitrate>,
-) -> BTreeMap<UserId, ReceiverBweTargetUpdate> {
-    // Seed every receiver, including one with no selected media. Otherwise a
-    // previous nonzero desired bitrate remains installed in str0m's BWE controller.
-    room.transport_user_entries()
-        .map(|(user_id, connection_id)| {
-            let session = room.transport_user_key(user_id, connection_id);
-            let audio_reserve = audio_reserve_by_connection
-                .get(&connection_id)
-                .copied()
-                .unwrap_or_else(Bitrate::zero);
-            (
-                user_id.clone(),
-                ReceiverBweTargetUpdate::new(session, audio_reserve),
-            )
-        })
-        .collect()
-}
-
 fn receiver_bandwidth_by_connection(
     snapshot: &ReceiverBandwidthSnapshot,
 ) -> BTreeMap<ConnectionId, Bitrate> {
@@ -191,13 +187,6 @@ fn rank_room_active_speakers(
         )
     });
     sources
-}
-
-fn active_speaker_media_ids(sources: &[ActiveSpeakerSource]) -> BTreeSet<TransportMediaId> {
-    sources
-        .iter()
-        .map(|source| source.transport_media_id())
-        .collect()
 }
 
 fn user_for_source<'a>(
@@ -243,41 +232,6 @@ fn deaf_receiver_connection_ids(room: &RoomState) -> BTreeSet<ConnectionId> {
         .filter(|user| user.is_deaf())
         .map(|user| user.connection_id)
         .collect()
-}
-
-fn featured_source_user_ids(room: &RoomState, sources: &[ActiveSpeakerSource]) -> BTreeSet<UserId> {
-    sources
-        .iter()
-        .filter_map(|source| {
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        })
-        .take(ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT)
-        .collect()
-}
-
-fn active_speaker_rank_by_user(
-    room: &RoomState,
-    sources: &[ActiveSpeakerSource],
-) -> BTreeMap<UserId, usize> {
-    let mut ranks = BTreeMap::new();
-    for source in sources {
-        let Some(user_id) =
-            featured_source_owner_for_active_speaker_source(room, source.transport_media_id())
-        else {
-            continue;
-        };
-        let next_rank = ranks.len();
-        ranks.entry(user_id).or_insert(next_rank);
-    }
-    ranks
-}
-
-fn featured_source_owner_for_active_speaker_source(
-    room: &RoomState,
-    transport_media_id: TransportMediaId,
-) -> Option<UserId> {
-    room.topology
-        .active_speaker_detector_owner(transport_media_id)
 }
 
 fn featured_user_updates(

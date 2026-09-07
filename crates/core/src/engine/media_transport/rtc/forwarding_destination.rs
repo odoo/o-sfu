@@ -16,7 +16,7 @@ use super::{
 };
 use crate::engine::{
     media_transport::TransportMediaId,
-    metrics::{RtcRelayEnqueueResult, RtpForwardDestinationKind, RtpRelayDropKind},
+    metrics::{RtcRelayEnqueueResult, RtpForwardDestinationKind},
     packet_sink_registry::RegisteredPacketSink,
 };
 
@@ -33,17 +33,6 @@ pub(super) enum ForwardingDestination {
     PacketSink(PacketSinkDestination),
     /// relay target for another local worker
     Relay(RelayPacketDestination),
-}
-
-/// flush result used for destination metrics and overload accounting
-#[derive(Debug)]
-pub(super) enum ForwardSendOutcome {
-    /// local rtc send path, with payload bytes only when str0m queued a write
-    LocalRtc { payload_bytes: Option<usize> },
-    /// non-local side effect completed or had no stronger delivery signal
-    SideEffect,
-    /// relay enqueue completed with a concrete target outcome
-    RelayEnqueue(RelayEnqueueReport),
 }
 
 /// turn-local handle for one local rtc route destination
@@ -120,38 +109,13 @@ impl ForwardingDestination {
         }
     }
 
-    /// maps the destination to the recorder bucket used by flush metrics
+    /// Exposes destination kinds for route-planner assertions.
+    #[cfg(test)]
     pub(super) const fn metrics_kind(&self) -> RtpForwardDestinationKind {
         match self {
             Self::LocalRtc(_) => RtpForwardDestinationKind::LocalRtc,
             Self::PacketSink(destination) => destination.metrics_kind(),
             Self::Relay(_) => RtpForwardDestinationKind::IntraNodeRelay,
-        }
-    }
-
-    /// maps relay destinations to the overload metric namespace
-    pub(super) const fn relay_drop_kind(&self) -> Option<RtpRelayDropKind> {
-        match self {
-            Self::LocalRtc(_) | Self::PacketSink(_) => None,
-            Self::Relay(_) => Some(RtpRelayDropKind::IntraNodeRelay),
-        }
-    }
-
-    /// performs this destination's side effect during route flushing
-    ///
-    /// local rtc sends enqueue into str0m when the route remains live
-    /// packet sinks and relay destinations collapse their result into
-    /// `ForwardSendOutcome` so the packet loop can continue flushing other
-    /// destinations
-    pub(super) fn send(
-        &self,
-        state: &mut PacketLoopState,
-        packet: &ForwardedPacket,
-    ) -> ForwardSendOutcome {
-        match self {
-            Self::LocalRtc(destination) => destination.send(state, packet),
-            Self::PacketSink(destination) => destination.send(state, packet),
-            Self::Relay(destination) => destination.send(state, packet),
         }
     }
 }
@@ -166,32 +130,26 @@ impl LocalRtcPacketDestination {
         Self { src_media, dst_idx }
     }
 
-    /// writes one packet to the destination session when the route is still live
+    /// Queues one packet and returns its payload length.
     ///
-    /// the compact handle is best-effort within the current flush
-    /// if the route slot or destination session disappeared, the send is a no-op
-    /// because cleanup already made the route non-authoritative
+    /// The compact handle is valid only within the current flush. Returns `None`
+    /// when the route slot, destination session or RTP stream is missing or local
+    /// RTP identity projection rejects the packet.
     ///
-    /// successful writes clone the destination session key only after `str0m`
-    /// queues the packet, so stale local sends do not touch dirty
-    /// session scheduling
-    fn send(&self, state: &mut PacketLoopState, packet: &ForwardedPacket) -> ForwardSendOutcome {
+    /// Successful writes clone the destination session key only after `str0m`
+    /// queues the packet, so stale local sends do not affect dirty scheduling.
+    pub(super) fn send(
+        &self,
+        state: &mut PacketLoopState,
+        packet: &ForwardedPacket,
+    ) -> Option<usize> {
         let (payload_bytes, session_key) = {
-            let Some(route_destination) = state
+            let route_destination = state
                 .routes
                 .local_route(self.src_media)
-                .and_then(|route_entry| route_entry.destinations.get(self.dst_idx))
-            else {
-                return ForwardSendOutcome::LocalRtc {
-                    payload_bytes: None,
-                };
-            };
+                .and_then(|route_entry| route_entry.destinations.get(self.dst_idx))?;
             let session_key = &route_destination.dest_session;
-            let Some(session_state) = state.users.get_mut(session_key) else {
-                return ForwardSendOutcome::LocalRtc {
-                    payload_bytes: None,
-                };
-            };
+            let session_state = state.users.get_mut(session_key)?;
             let sender = LocalPacketDestination::new(
                 route_destination.dest_transport_media_id,
                 route_destination.dest_stream,
@@ -201,35 +159,28 @@ impl LocalRtcPacketDestination {
                 route_destination.repair_enabled,
             );
             let codec_packet = packet.local_codec_packet();
-            let Some(payload_bytes) =
-                sender.send(session_state, &packet.local_send_packet(), codec_packet)
-            else {
-                return ForwardSendOutcome::LocalRtc {
-                    payload_bytes: None,
-                };
-            };
+            let payload_bytes =
+                sender.send(session_state, &packet.local_send_packet(), codec_packet)?;
             session_state
                 .egress_bitrate
                 .record(packet.received_at(), payload_bytes);
             (payload_bytes, session_key.clone())
         };
         state.mark_session_dirty(&session_key);
-        ForwardSendOutcome::LocalRtc {
-            payload_bytes: Some(payload_bytes),
-        }
+        Some(payload_bytes)
     }
 }
 
 impl PacketSinkDestination {
     /// uses the sink-provided metric kind instead of exposing sink internals
-    const fn metrics_kind(&self) -> RtpForwardDestinationKind {
+    pub(super) const fn metrics_kind(&self) -> RtpForwardDestinationKind {
         self.sink.forward_destination_kind()
     }
 
-    /// records the source packet without mutating rtc session state
-    fn send(&self, state: &PacketLoopState, packet: &ForwardedPacket) -> ForwardSendOutcome {
+    /// Records the source packet when its source session remains resolvable.
+    pub(super) fn send(&self, state: &PacketLoopState, packet: &ForwardedPacket) {
         let Some(src_key) = packet.src_key(state) else {
-            return ForwardSendOutcome::SideEffect;
+            return;
         };
         self.sink.record_packet(
             src_key,
@@ -237,19 +188,20 @@ impl PacketSinkDestination {
             packet.received_at(),
             packet.payload(),
         );
-        ForwardSendOutcome::SideEffect
     }
 }
 
 impl RelayPacketDestination {
-    /// enqueues a shared relay packet for another local worker
-    fn send(&self, state: &PacketLoopState, packet: &ForwardedPacket) -> ForwardSendOutcome {
+    /// Attempts relay delivery and reports enqueue status and mailbox depth.
+    ///
+    /// Returns `None` when a reserved send cannot resolve the source session.
+    pub(super) fn send(
+        &self,
+        state: &PacketLoopState,
+        packet: &ForwardedPacket,
+    ) -> Option<RelayEnqueueReport> {
         self.target
             .forward_packet(state, packet, self.transport_media_id)
-            .map_or(
-                ForwardSendOutcome::SideEffect,
-                ForwardSendOutcome::RelayEnqueue,
-            )
     }
 }
 

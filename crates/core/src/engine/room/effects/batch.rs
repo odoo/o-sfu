@@ -106,8 +106,10 @@ impl RoomEffects {
             transport_plan,
             ..
         } = commit;
-        let mut batch = Self::default();
-        batch.transport.extend(transport_plan);
+        let mut batch = Self {
+            transport: transport_plan,
+            ..Self::default()
+        };
         batch.source_policy.request();
         batch.output.push_lifecycle(effects);
         batch
@@ -120,9 +122,8 @@ impl RoomEffects {
                 session_teardown,
                 effects,
                 transport_plan,
-                ..
             } => {
-                batch.transport.extend(transport_plan);
+                batch.transport = transport_plan;
                 batch.output.push_lifecycle(effects);
                 batch.source_policy.request();
                 batch.transport.extend_teardown(session_teardown);
@@ -135,8 +136,10 @@ impl RoomEffects {
     }
 
     pub(in crate::engine::room) fn from_disconnect(commit: DisconnectCommit) -> Self {
-        let mut batch = Self::default();
-        batch.transport.extend(commit.transport_plan);
+        let mut batch = Self {
+            transport: commit.transport_plan,
+            ..Self::default()
+        };
         batch.source_policy.request();
         batch.output.push_lifecycle(commit.effects);
         batch.transport.extend_teardown(commit.session_teardowns);

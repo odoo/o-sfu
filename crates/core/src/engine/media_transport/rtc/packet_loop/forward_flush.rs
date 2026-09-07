@@ -61,7 +61,7 @@ use tracing::debug;
 use super::{
     super::{
         forwarded_packet::{ForwardedPacket, ForwardedPacketSource},
-        forwarding_destination::{ForwardSendOutcome, ForwardingDestination, relay_enqueue_result},
+        forwarding_destination::{ForwardingDestination, relay_enqueue_result},
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayEnqueueOutcome,
         state::PacketLoopState,
@@ -75,8 +75,8 @@ use super::{
 use crate::engine::{
     media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
     metrics::{
-        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtpDecoderRefreshScope, RtpMetricsRecorder,
-        RuntimeMetrics,
+        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtpDecoderRefreshScope,
+        RtpForwardDestinationKind, RtpMetricsRecorder, RtpRelayDropKind, RuntimeMetrics,
     },
 };
 
@@ -396,40 +396,38 @@ pub(in crate::engine::media_transport::rtc) fn flush_packet_forwards(
     packet: &ForwardedPacket,
     forwards: &[ForwardingDestination],
 ) {
+    let payload_len = packet.payload().len();
     for destination in forwards {
-        let destination_kind = destination.metrics_kind();
-        let payload_len = packet.payload().len();
-        match destination.send(state, packet) {
-            ForwardSendOutcome::LocalRtc {
-                payload_bytes: Some(payload_len),
-            } => {
-                rtp_metrics.record_egress(payload_len);
-                rtp_metrics.record_forwarded(destination_kind, payload_len);
+        match destination {
+            ForwardingDestination::LocalRtc(destination) => {
+                if let Some(payload_len) = destination.send(state, packet) {
+                    rtp_metrics.record_egress(payload_len);
+                    rtp_metrics.record_forwarded(RtpForwardDestinationKind::LocalRtc, payload_len);
+                }
             }
-            ForwardSendOutcome::SideEffect
-                if matches!(destination, ForwardingDestination::PacketSink(_)) =>
-            {
-                rtp_metrics.record_forwarded(destination_kind, payload_len);
+            ForwardingDestination::PacketSink(destination) => {
+                destination.send(state, packet);
+                rtp_metrics.record_forwarded(destination.metrics_kind(), payload_len);
             }
-            ForwardSendOutcome::RelayEnqueue(report) => {
+            ForwardingDestination::Relay(destination) => {
+                let Some(report) = destination.send(state, packet) else {
+                    continue;
+                };
                 rtc_recorder.record_rtc_relay_enqueue(relay_enqueue_result(report));
                 rtc_recorder.record_rtc_relay_mailbox_depth(report.mailbox_depth);
                 match report.outcome {
                     RelayEnqueueOutcome::Enqueued => {
-                        rtp_metrics.record_forwarded(destination_kind, payload_len);
+                        rtp_metrics.record_forwarded(
+                            RtpForwardDestinationKind::IntraNodeRelay,
+                            payload_len,
+                        );
                     }
                     RelayEnqueueOutcome::Overloaded => {
-                        if let Some(destination_kind) = destination.relay_drop_kind() {
-                            metrics.record_rtp_relay_overload_drop(destination_kind);
-                        }
+                        metrics.record_rtp_relay_overload_drop(RtpRelayDropKind::IntraNodeRelay);
                     }
                     RelayEnqueueOutcome::Closed => {}
                 }
             }
-            ForwardSendOutcome::SideEffect
-            | ForwardSendOutcome::LocalRtc {
-                payload_bytes: None,
-            } => {}
         }
     }
 }

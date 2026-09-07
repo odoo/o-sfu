@@ -340,16 +340,12 @@ pub(crate) async fn close_peer_and_wait_for_room_cleanup(
     room: &Arc<Room>,
     user_id: &UserId,
 ) -> Option<()> {
-    let connection_id = room
-        .test_api()
-        .inspect()
-        .user_connection_id(user_id)
-        .await?;
+    let connection_id = room.test_api().user_connection_id(user_id).await?;
     peer.websocket.as_mut()?.close(None).await.ok()?;
     peer.websocket = None;
     timeout(Duration::from_secs(1), async {
         loop {
-            if room.test_api().inspect().user_connection_id(user_id).await != Some(connection_id) {
+            if room.test_api().user_connection_id(user_id).await != Some(connection_id) {
                 return;
             }
             sleep(Duration::from_millis(10)).await;

@@ -587,16 +587,7 @@ impl AuthenticatedSession {
                 "failed to send outbound user event"
             );
         }
-        let close = matches!(
-            code,
-            CloseCode::Clean
-                | CloseCode::Leaving
-                | CloseCode::RoomFull
-                | CloseCode::AuthFailed
-                | CloseCode::AuthTimeout
-        )
-        .then_some(code);
-        SessionExit::Loop(LoopExit::OutboundMessageSendFailure, close)
+        SessionExit::Loop(LoopExit::OutboundMessageSendFailure, None)
     }
 }
 

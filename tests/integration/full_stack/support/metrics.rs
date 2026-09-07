@@ -12,7 +12,7 @@ pub(crate) async fn stream_until_audio_bitrate_is_observable(
     clock: &mut FakeClock,
 ) -> Option<IncomingBitRateStatsResponse> {
     for _ in 0..20 {
-        publisher.send_rtp_packets(source, clock, 2).await?;
+        publisher.rtc().send_rtp_packets(source, clock, 2).await?;
         sleep(Duration::from_millis(60)).await;
         let stats = stats(server).await?;
         let room_stats = stats.into_iter().find(|entry| entry.uuid == room)?;

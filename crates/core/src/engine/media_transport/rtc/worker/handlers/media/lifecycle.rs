@@ -19,7 +19,7 @@ use std::{
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
     bwe::Bitrate as Str0mBitrate,
-    media::{Direction, MediaKind, Mid, Rid},
+    media::{Direction, MediaKind, Mid},
     rtp::Ssrc,
 };
 use tracing::{debug, warn};
@@ -123,22 +123,7 @@ pub fn worker_remove_media(
     }
     // Record the MID transition before unregistering the handle and routes. An
     // in-flight offer queues the transition. Otherwise it is staged now.
-    if let Err(error) =
-        stage_last_mid_removal_before_unregistering_handle(state, transport_media_id, &handle)
-    {
-        if !matches!(error, TransportAdapterError::InvalidInput)
-            || !can_unregister_unnegotiated_producer(state, &handle)
-        {
-            return Err(error);
-        }
-        debug!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            ?transport_media_id,
-            mid = ?handle.mid(),
-            "released unnegotiated producer media after removal staging failed"
-        );
-    }
+    stage_last_mid_removal_before_unregistering_handle(state, transport_media_id, &handle)?;
     unregister_media_handle(state, bitrate_registry, transport_media_id)
 }
 
@@ -283,8 +268,11 @@ fn worker_stage_native_media_removal(
         return Ok(());
     }
 
-    let existing_pending_offer = session_state.sdp_negotiation.pending_offer.take();
-    session_state.sdp_negotiation.pending_offer_repair = None;
+    let existing_pending_offer = session_state
+        .sdp_negotiation
+        .pending_offer
+        .take()
+        .map(|pending| pending.token);
     let applied = {
         let mut sdp_api = session_state.rtc.sdp_api();
         if let Some(pending_offer) = existing_pending_offer {
@@ -298,8 +286,7 @@ fn worker_stage_native_media_removal(
         return Err(TransportAdapterError::InvalidInput);
     };
     let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer);
-    negotiation.staged_offer_upload_slots.clear();
+    negotiation.stage_offer(offer, pending_offer, Vec::new());
     negotiation.queued_removal_mids.remove(&mid);
     Ok(())
 }
@@ -341,9 +328,10 @@ pub fn worker_add_recv_media(
             if !has_media {
                 api.declare_media(mid, media_kind);
             }
-            for (ssrc, repair_ssrc, rid) in recv_streams {
-                let stream_rx = api.expect_stream_rx(ssrc, repair_ssrc, mid, rid);
-                stream_rx.suppress_nack(repair_ssrc.is_none());
+            for stream in recv_streams {
+                let stream_rx =
+                    api.expect_stream_rx(stream.ssrc, stream.repair_ssrc, mid, stream.rid);
+                stream_rx.suppress_nack(stream.repair_ssrc.is_none());
                 stream_rx.request_remb(Str0mBitrate::bps(policy.max_bitrate_in.as_bps()));
                 #[cfg(test)]
                 {
@@ -385,8 +373,11 @@ fn worker_stage_native_recv_media(
         return Err(TransportAdapterError::InvalidInput);
     }
 
-    let existing_pending_offer = session_state.sdp_negotiation.pending_offer.take();
-    session_state.sdp_negotiation.pending_offer_repair = None;
+    let existing_pending_offer = session_state
+        .sdp_negotiation
+        .pending_offer
+        .take()
+        .map(|pending| pending.token);
     let mut sdp_api = session_state.rtc.sdp_api();
     if let Some(pending_offer) = existing_pending_offer {
         sdp_api.merge(pending_offer);
@@ -407,24 +398,20 @@ fn worker_stage_native_recv_media(
         return Err(TransportAdapterError::TransportUnavailable);
     };
     let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer);
-    negotiation.staged_offer_upload_slots = vec![upload_slot(
-        mid,
-        media_kind,
-        rtp_parameters,
-        profile,
-        video_bitrate_limits,
-    )];
+    negotiation.stage_offer(
+        offer,
+        pending_offer,
+        vec![upload_slot(
+            mid,
+            media_kind,
+            rtp_parameters,
+            profile,
+            video_bitrate_limits,
+        )],
+    );
     // `accept_answer` can recreate `StreamRx` bindings. Retain SSRC and RID so
     // answer application can restore publisher identity and the bitrate cap.
-    let pending_streams = recv_encoding_identities(rtp_parameters)
-        .into_iter()
-        .map(|(ssrc, repair_ssrc, rid)| PendingRecvStream {
-            ssrc,
-            repair_ssrc,
-            rid,
-        })
-        .collect::<Vec<_>>();
+    let pending_streams = recv_encoding_identities(rtp_parameters).collect::<Vec<_>>();
     if pending_streams.is_empty() {
         negotiation.pending_recv_streams.remove(&mid);
     } else {
@@ -571,8 +558,11 @@ fn worker_stage_native_send_media(
         return Err(TransportAdapterError::InvalidInput);
     }
 
-    let existing_pending_offer = session_state.sdp_negotiation.pending_offer.take();
-    session_state.sdp_negotiation.pending_offer_repair = None;
+    let existing_pending_offer = session_state
+        .sdp_negotiation
+        .pending_offer
+        .take()
+        .map(|pending| pending.token);
     let mut sdp_api = session_state.rtc.sdp_api();
     if let Some(pending_offer) = existing_pending_offer {
         sdp_api.merge(pending_offer);
@@ -582,8 +572,7 @@ fn worker_stage_native_send_media(
         return Err(TransportAdapterError::TransportUnavailable);
     };
     let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer);
-    negotiation.staged_offer_upload_slots.clear();
+    negotiation.stage_offer(offer, pending_offer, Vec::new());
     Ok(mid)
 }
 
@@ -630,19 +619,14 @@ fn transport_mid(rtp_parameters: &RouterRtpParameters) -> Option<Mid> {
 
 fn recv_encoding_identities(
     rtp_parameters: &RouterRtpParameters,
-) -> Vec<(Ssrc, Option<Ssrc>, Option<Rid>)> {
-    rtp_parameters
-        .bindings()
-        .filter_map(|encoding| {
-            encoding.ssrc().map(|ssrc| {
-                (
-                    Ssrc::from(ssrc),
-                    encoding.repair_ssrc().map(Ssrc::from),
-                    encoding.rid().map(Into::into),
-                )
-            })
+) -> impl Iterator<Item = PendingRecvStream> + '_ {
+    rtp_parameters.bindings().filter_map(|encoding| {
+        encoding.ssrc().map(|ssrc| PendingRecvStream {
+            ssrc: Ssrc::from(ssrc),
+            repair_ssrc: encoding.repair_ssrc().map(Ssrc::from),
+            rid: encoding.rid().map(Into::into),
         })
-        .collect()
+    })
 }
 
 fn upload_slot(

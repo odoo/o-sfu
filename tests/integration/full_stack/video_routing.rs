@@ -40,16 +40,21 @@ async fn fake_rtc_vp8_ssrc_switch_rewrites_serialized_descriptor() -> s::TestRes
         &source,
     )
     .await;
-    m::assert_video_subscription_selected_rid(&server, &room, &subscriber, &publisher_id, "hi")
-        .await;
+    m::assert_featured_video_subscription(&server, &room, &subscriber, &publisher_id).await;
 
     let mut clock = s::FakeClock::default();
     let first_input = s::require_some(
-        publisher.send_rtp_packet(&mut source, &mut clock).await,
+        publisher
+            .rtc()
+            .send_rtp_packet(&mut source, &mut clock)
+            .await,
         "first VP8 packet should send",
     )?;
     let first_output = s::require_some(
-        subscriber.read_rtp_packet(s::Duration::from_secs(5)).await,
+        subscriber
+            .rtc()
+            .read_rtp_packet(s::Duration::from_secs(5))
+            .await?,
         "first VP8 packet should arrive",
     )?;
 
@@ -57,18 +62,22 @@ async fn fake_rtc_vp8_ssrc_switch_rewrites_serialized_descriptor() -> s::TestRes
     assert_eq!(vp8_identity(&first_output.payload), Some((1, 1)));
 
     s::require_some(
-        publisher.reset_rtp_ssrc(MediaKind::Video, Some("hi")),
+        publisher.rtc().reset_rtp_ssrc(MediaKind::Video, Some("hi")),
         "VP8 sender SSRC should reset",
     )?;
     let mut restarted_source = s::FakeMediaSource::vp8_camera_high();
     let restarted_input = s::require_some(
         publisher
+            .rtc()
             .send_rtp_packet(&mut restarted_source, &mut clock)
             .await,
         "restarted VP8 packet should send",
     )?;
     let restarted_output = s::require_some(
-        subscriber.read_rtp_packet(s::Duration::from_secs(5)).await,
+        subscriber
+            .rtc()
+            .read_rtp_packet(s::Duration::from_secs(5))
+            .await?,
         "restarted VP8 packet should arrive",
     )?;
 
@@ -111,14 +120,8 @@ async fn fake_rtc_vp8_selected_rid_drops_other_rids_after_activation() -> s::Tes
         &high_source,
     )
     .await;
-    m::assert_video_subscription_selected_rid(
-        &server,
-        &room,
-        &subscriber,
-        &s::UserId::Integer(84),
-        "hi",
-    )
-    .await;
+    m::assert_featured_video_subscription(&server, &room, &subscriber, &s::UserId::Integer(84))
+        .await;
 
     let mut clock = s::FakeClock::default();
     m::assert_synthetic_video_packet_forwarded(
@@ -128,6 +131,16 @@ async fn fake_rtc_vp8_selected_rid_drops_other_rids_after_activation() -> s::Tes
         &mut clock,
     )
     .await;
+    assert!(
+        server
+            .wait_for_video_subscription_selected_rid(
+                &room,
+                subscriber.user_id(),
+                &s::UserId::Integer(84),
+                "hi",
+            )
+            .await
+    );
 
     let mut low_source = s::FakeMediaSource::vp8_camera_with_rid("lo");
     m::assert_packet_dropped(&mut publisher, &mut subscriber, &mut low_source, &mut clock).await;
@@ -195,12 +208,14 @@ async fn fake_rtc_peer_rejects_invalid_synthetic_send_paths_without_panics() -> 
     let mut missing_rid = s::FakeMediaSource::vp8_camera_with_rid("missing");
     assert!(
         publisher
+            .rtc()
             .send_rtp_packet(&mut unsupported_codec, &mut clock)
             .await
             .is_none()
     );
     assert!(
         publisher
+            .rtc()
             .send_rtp_packet(&mut missing_rid, &mut clock)
             .await
             .is_none()
@@ -275,14 +290,7 @@ async fn assert_selected_rid_delivery(
         &source,
     )
     .await;
-    m::assert_video_subscription_selected_rid(
-        &server,
-        &room,
-        &subscriber,
-        &publisher_user_id,
-        "hi",
-    )
-    .await;
+    m::assert_featured_video_subscription(&server, &room, &subscriber, &publisher_user_id).await;
 
     let mut clock = s::FakeClock::default();
     if source.codec() == s::CodecName::Vp8 {

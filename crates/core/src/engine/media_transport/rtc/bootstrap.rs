@@ -195,6 +195,7 @@ pub(super) fn ensure_session_rtc_state_with_stats_interval(
             receiver_bwe_str0m_update_count: 0,
             dtls_started: false,
             packet_loop_dirty: false,
+            next_timeout: None,
             sdp_negotiation: SessionSdpNegotiationState::default(),
             consumer_streams: ConsumerStreamStore::default(),
             #[cfg(test)]

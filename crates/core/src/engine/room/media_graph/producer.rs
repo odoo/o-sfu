@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use o_sfu_rfc::rtp::{Mid, Rid, Ssrc};
 use o_sfu_router::{
-    MediaKind as RouterMediaKind, RouterError,
+    RouterError,
     rtp::{MediaFormat, MediaStream as RouterRtpParameters},
 };
 use tracing::{error, warn};
@@ -26,8 +26,7 @@ use crate::{
         source_model::{
             PublishedSourceDescriptor, PublishedSourceDescriptorParts, PublishedSourceId,
             PublishedSourceOwner, SourceEncodingDescriptor, SourceEncodingDescriptorParts,
-            SourceModelError, SourcePolicy, SourcePublishIntent, UploadLayerPolicyRole,
-            UserStreamId,
+            SourceModelError, SourcePublishIntent, UploadLayerPolicyRole, UserStreamId,
         },
     },
 };
@@ -35,10 +34,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ValidatedPublish {
     pub session_key: TransportSessionKey,
-    pub stream_id: UserStreamId,
-    pub media_kind: RouterMediaKind,
-    pub policy: SourcePolicy,
-    pub presence: Option<UserInfo>,
+    pub intent: SourcePublishIntent,
 }
 
 #[derive(Debug)]
@@ -163,10 +159,7 @@ impl RoomState {
         }
         Some(ValidatedPublish {
             session_key: self.transport_user_key(user_id, publisher_connection_id),
-            stream_id: intent.stream_id().clone(),
-            media_kind: intent.media_kind(),
-            policy: intent.policy(),
-            presence: intent.presence().cloned(),
+            intent: intent.clone(),
         })
     }
 
@@ -180,8 +173,8 @@ impl RoomState {
         self.validate_publish_commit(&publish, transport_media_id)?;
         let owner_user_id = publish.session_key.user_id().clone();
         let owner_connection_id = publish.session_key.connection_id();
-        let stream_id = publish.stream_id.clone();
-        let presence = publish.presence.clone();
+        let stream_id = publish.intent.stream_id().clone();
+        let presence = publish.intent.presence().cloned();
         let source_id = match self.topology.commit_publication(
             publish,
             consumable_rtp_parameters,
@@ -223,7 +216,7 @@ impl RoomState {
             warn!(
                 ?user_id,
                 ?connection_id,
-                stream_id = %publish.stream_id,
+                stream_id = %publish.intent.stream_id(),
                 ?transport_media_id,
                 "cannot commit negotiated publish because the user is missing from room state"
             );
@@ -236,7 +229,7 @@ impl RoomState {
                 ?connection_id,
                 current_connection_id = ?user.connection_id,
                 publish_ready,
-                stream_id = %publish.stream_id,
+                stream_id = %publish.intent.stream_id(),
                 ?transport_media_id,
                 "cannot commit negotiated publish because the user state changed before commit"
             );
@@ -244,13 +237,13 @@ impl RoomState {
         }
         if self
             .topology
-            .source_id_for_owner_stream(user_id, &publish.stream_id)
+            .source_id_for_owner_stream(user_id, publish.intent.stream_id())
             .is_some()
         {
             warn!(
                 ?user_id,
                 ?connection_id,
-                stream_id = %publish.stream_id,
+                stream_id = %publish.intent.stream_id(),
                 ?transport_media_id,
                 "cannot commit negotiated publish because a source already exists for this stream"
             );
@@ -364,9 +357,9 @@ pub(super) fn allocate_source_descriptor(
     PublishedSourceDescriptor::new(PublishedSourceDescriptorParts {
         source_id,
         owner: PublishedSourceOwner::new(publish.session_key.user_id().clone()),
-        stream_id: publish.stream_id.clone(),
-        media_kind: publish.media_kind,
-        policy: publish.policy,
+        stream_id: publish.intent.stream_id().clone(),
+        media_kind: publish.intent.media_kind(),
+        policy: publish.intent.policy(),
         mid: consumable_rtp_parameters.mid().map(Mid::new),
         encodings,
     })

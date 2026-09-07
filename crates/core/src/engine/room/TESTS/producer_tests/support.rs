@@ -83,7 +83,6 @@ pub(super) async fn assert_transport_media_mapping_is_missing(
 ) {
     assert!(
         room.test_api()
-            .inspect()
             .producer_stream_type_for_transport_media_id(transport_media_id)
             .await
             .is_none()
@@ -99,7 +98,6 @@ pub(super) async fn assert_user_has_no_published_source(
     assert!(
         !room
             .test_api()
-            .inspect()
             .has_published_source(user_id, connection_id, stream_type)
             .await
     );
@@ -335,7 +333,6 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
     let subscriber_user_id = UserId::Integer(2);
     let publisher_connection_id = room
         .test_api()
-        .lifecycle()
         .join_user(
             publisher_user_id.clone(),
             None,
@@ -346,7 +343,6 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
         .expect("publisher should join");
     let subscriber_connection_id = room
         .test_api()
-        .lifecycle()
         .join_user(
             subscriber_user_id.clone(),
             None,
@@ -379,7 +375,6 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
 
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(
                 &publisher_user_id,
                 test_client_rtp_capabilities(),
@@ -389,7 +384,6 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
     );
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(
                 &subscriber_user_id,
                 test_client_rtp_capabilities(),
@@ -428,7 +422,6 @@ pub(super) async fn settle_refresh_offer(
         scenario
             .room
             .test_api()
-            .lifecycle()
             .refresh_session(&scenario.subscriber_user_id, &scenario.media_transport)
             .await
     );

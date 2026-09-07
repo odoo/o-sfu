@@ -109,19 +109,28 @@ impl RoomState {
         target_user_id: &UserId,
         intents: &BTreeMap<UserStreamId, SourceSubscriptionIntent>,
     ) -> ReceiverRouteWork {
+        let mut activities = Vec::new();
+        let mut relays = Vec::new();
+        let receiver_deafened = self
+            .user_for_connection(user_id, connection_id)
+            .is_some_and(ActiveUser::is_deaf);
         for (stream_id, intent) in intents {
-            self.topology.merge_subscription_intent(
-                SubscriptionKey::new(user_id, target_user_id, stream_id),
+            let Some(commit) = self.topology.apply_subscription_intent(
+                &SubscriptionKey::new(user_id, target_user_id, stream_id),
+                connection_id,
                 *intent,
-            );
+                receiver_deafened,
+            ) else {
+                continue;
+            };
+            relays.extend(commit.relay_effects);
+            activities.extend(commit.update);
         }
-        let (updates, relays) =
-            self.apply_route_updates(user_id, connection_id, target_user_id, intents);
         let ReceiverRouteWork { setups, .. } = self.plan_missing_receiver_routes(
             ReceiverRouteScope::SourceUser(user_id, connection_id, target_user_id),
         );
         ReceiverRouteWork {
-            activities: updates,
+            activities,
             setups,
             relays,
             ..Default::default()
@@ -227,40 +236,6 @@ impl RoomState {
             None,
             target.source_id,
         )
-    }
-
-    fn apply_route_updates(
-        &mut self,
-        user_id: &UserId,
-        connection_id: ConnectionId,
-        target_user_id: &UserId,
-        intents: &BTreeMap<UserStreamId, SourceSubscriptionIntent>,
-    ) -> (Vec<ReceiverRouteActivity>, Vec<TransportRelayRouteEffect>) {
-        let mut updates = Vec::new();
-        let mut relays = Vec::new();
-        let receiver_deafened = self
-            .user_for_connection(user_id, connection_id)
-            .is_some_and(ActiveUser::is_deaf);
-        for (stream_id, intent) in intents {
-            let Some(active) = intent.active() else {
-                continue;
-            };
-            let Some(commit) = self.topology.set_consumer_activity(
-                user_id,
-                connection_id,
-                target_user_id,
-                stream_id,
-                active,
-                active && receiver_deafened,
-            ) else {
-                continue;
-            };
-            relays.extend(commit.relay_effects);
-            if let Some(update) = commit.update {
-                updates.push(update);
-            }
-        }
-        (updates, relays)
     }
 
     fn missing_receiver_route_targets(

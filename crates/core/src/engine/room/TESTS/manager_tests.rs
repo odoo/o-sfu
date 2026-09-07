@@ -96,7 +96,6 @@ fn spillover_policy(max_local_routers: usize) -> RoomWorkerPolicy {
 async fn assert_home_worker(room: &Arc<TestRoom>, raw_user_id: i64, media_worker: usize) {
     assert_eq!(
         room.test_api()
-            .inspect()
             .home_media_worker_id(&UserId::Integer(raw_user_id))
             .await,
         Some(media_worker)
@@ -104,7 +103,7 @@ async fn assert_home_worker(room: &Arc<TestRoom>, raw_user_id: i64, media_worker
 }
 
 async fn assert_router_count(room: &Arc<TestRoom>, expected: usize) {
-    assert_eq!(room.test_api().inspect().router_count().await, expected);
+    assert_eq!(room.test_api().router_count().await, expected);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -340,7 +339,7 @@ async fn manager_concurrent_overload_joins_revalidate_local_router_cap_at_commit
     for join_task in join_tasks {
         join_task.await.expect("join task should not panic");
         assert!(
-            room.test_api().inspect().router_count().await <= LOCAL_ROUTER_CAP,
+            room.test_api().router_count().await <= LOCAL_ROUTER_CAP,
             "concurrent placement should not exceed the configured local router cap"
         );
     }
@@ -361,7 +360,6 @@ async fn placement_reads_worker_health_after_the_commit_gate() {
     manager_join_user(&manager, &room, 1, &media_transport).await;
     let primary_worker = room
         .test_api()
-        .inspect()
         .home_media_worker_id(&UserId::Integer(1))
         .await
         .expect("first user should have a worker");
@@ -427,13 +425,11 @@ async fn spillover_media_diagnostics_use_connection_worker() {
     let transport_media_id = TransportMediaId::new(99);
     let stream_id = room
         .test_api()
-        .media()
         .publish_negotiated_track(
             &publisher_id,
             NegotiatedPublish {
                 connection_id: publisher_connection_id,
                 stream_type: TestSourceKind::AudioDetector,
-                media_kind: MediaKind::Audio,
                 transport_media_id,
                 consumable_rtp_parameters: test_audio_rtp_parameters(),
             },
@@ -455,7 +451,6 @@ async fn spillover_media_diagnostics_use_connection_worker() {
 
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(&publisher_id, &stream_id, &media_transport)
             .await
     );

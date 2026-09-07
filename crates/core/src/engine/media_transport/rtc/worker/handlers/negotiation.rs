@@ -27,7 +27,7 @@ use super::{
         bitrate::BitrateRegistry,
         bootstrap, codec,
         commands::{ParsedSessionAnswer, RtcSessionOffer},
-        state::PacketLoopState,
+        state::{PacketLoopState, PendingSessionOffer},
     },
     media::remove_consumer_route,
     publication::{answer_producer_projection, refresh_negotiated_producer_parameters},
@@ -98,9 +98,8 @@ pub(super) fn worker_create_initial_session_offer(
             .ok_or(TransportAdapterError::TransportUnavailable)?
     };
 
-    session_state.sdp_negotiation.pending_offer_repair =
-        Some(codec::RepairSummary::from_offer(&offer));
-    session_state.sdp_negotiation.pending_offer = Some(pending_offer);
+    session_state.sdp_negotiation.pending_offer =
+        Some(PendingSessionOffer::new(&offer, pending_offer));
     session_state.sdp_negotiation.staged_offer = None;
     session_state
         .sdp_negotiation
@@ -174,7 +173,8 @@ pub(super) fn worker_apply_session_answer(
     let offered_repair = state
         .users
         .get(session_key)
-        .and_then(|session| session.sdp_negotiation.pending_offer_repair.as_ref())
+        .and_then(|session| session.sdp_negotiation.pending_offer.as_ref())
+        .map(|pending| &pending.repair)
         .ok_or(TransportAdapterError::InvalidInput)?;
     // An answer can only retain repair mappings from the offer. The primary and RTX
     // payload types form one mapping.
@@ -208,10 +208,14 @@ pub(super) fn worker_apply_session_answer(
         let Some(session_state) = state.users.get_mut(session_key) else {
             return Err(TransportAdapterError::TransportUnavailable);
         };
-        let Some(pending_offer) = session_state.sdp_negotiation.pending_offer.take() else {
+        let Some(pending_offer) = session_state
+            .sdp_negotiation
+            .pending_offer
+            .take()
+            .map(|pending| pending.token)
+        else {
             return Err(TransportAdapterError::InvalidInput);
         };
-        session_state.sdp_negotiation.pending_offer_repair = None;
         session_state
             .rtc
             .sdp_api()
@@ -228,7 +232,7 @@ pub(super) fn worker_apply_session_answer(
     };
     let declined_consumers =
         remove_declined_consumer_media(state, session_key, consumer_media_snapshot);
-    let refreshed_by_mid = refresh_negotiated_producer_parameters(
+    let mut refreshed_by_mid = refresh_negotiated_producer_parameters(
         state,
         session_key,
         &producer_mids,
@@ -249,7 +253,7 @@ pub(super) fn worker_apply_session_answer(
         producer_media_snapshot
             .into_iter()
             .filter_map(|(transport_media_id, mid)| {
-                refreshed_by_mid.get(&mid).cloned().map(|parameters| {
+                refreshed_by_mid.remove(&mid).map(|parameters| {
                     let rids = rids_by_mid.get(&mid).map(Vec::as_slice).unwrap_or_default();
                     (
                         transport_media_id,
@@ -437,9 +441,9 @@ fn stage_queued_removal_offer(session_state: &mut super::super::super::state::Rt
     let Some((offer, pending_offer)) = applied else {
         return;
     };
-    let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer);
-    negotiation.staged_offer_upload_slots.clear();
+    session_state
+        .sdp_negotiation
+        .stage_offer(offer, pending_offer, Vec::new());
 }
 
 fn ensure_initial_negotiation_media(

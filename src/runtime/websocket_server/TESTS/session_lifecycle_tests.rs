@@ -183,8 +183,8 @@ async fn shutdown_waits_for_in_flight_mutations_and_retires_sessions_once() -> T
         Some(CloseCode::Away)
     );
     timeout(Duration::from_secs(1), session_drain).await?;
-    assert!(!room.test_api().inspect().has_session(&admitted_id).await);
-    assert!(!room.test_api().inspect().has_session(&joining_id).await);
+    assert!(!room.test_api().has_session(&admitted_id).await);
+    assert!(!room.test_api().has_session(&joining_id).await);
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.active_transport_users(), 0);
     assert_eq!(metrics.ws_user_loop_exits_runtime_shutdown(), 1);
@@ -276,7 +276,7 @@ async fn stale_replaced_socket_close_cleans_only_the_stale_transport_user() -> T
         "stale socket close should clean only the replaced transport user"
     );
     assert!(
-        room.test_api().inspect().has_session(&user_id).await,
+        room.test_api().has_session(&user_id).await,
         "replacement session should stay live after stale socket cleanup"
     );
 
@@ -306,7 +306,7 @@ async fn assert_transport_disconnect(
     websocket: &mut TestWebSocket,
 ) -> TestResult {
     let connection_id = require_some(
-        room.test_api().inspect().user_connection_id(user_id).await,
+        room.test_api().user_connection_id(user_id).await,
         "user connection should exist",
     )?;
     let session_key = room.transport_user_key(user_id, connection_id).await;

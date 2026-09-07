@@ -56,7 +56,8 @@ fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
         .apply_join(user_id, UserPermissions::default(), test_sender())
         .expect("test user should join")
         .receipt
-        .connection_id
+        .transport_session_key
+        .connection_id()
 }
 
 fn join_test_user_on_placement(
@@ -74,7 +75,8 @@ fn join_test_user_on_placement(
         )
         .expect("test user should join on placement")
         .receipt
-        .connection_id
+        .transport_session_key
+        .connection_id()
 }
 
 fn commit_test_publication(
@@ -91,10 +93,7 @@ fn commit_test_publication(
         .commit_publication(
             ValidatedPublish {
                 session_key: state.transport_user_key(user_id, connection_id),
-                stream_id: intent.stream_id().clone(),
-                media_kind: intent.media_kind(),
-                policy: intent.policy(),
-                presence: None,
+                intent,
             },
             consumable_rtp_parameters,
             &[],
@@ -324,12 +323,25 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
     let relay = install_relayed_source(&mut state);
 
     let outcome = state
-        .apply_join(
+        .apply_join_on_placement(
             relay.route.source_session_key().user_id(),
             UserPermissions::default(),
             test_sender(),
+            UserJoinedFanout::Suppress,
+            RouterPlacement {
+                router: RouterId(2),
+                media_worker: relay.target_media_worker_id,
+            },
         )
         .expect("replacement join should succeed");
+    assert_eq!(
+        outcome.receipt.transport_session_key.media_worker_id(),
+        relay.target_media_worker_id
+    );
+    assert_ne!(
+        outcome.receipt.transport_session_key.media_worker_id(),
+        relay.route.source_session_key().media_worker_id()
+    );
     let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
 
     assert!(relays.is_empty());

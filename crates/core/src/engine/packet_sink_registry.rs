@@ -142,17 +142,11 @@ impl RoomPacketSinkRegistry {
     }
 
     fn snapshot(&self) -> PacketSinkRegistrySnapshot {
-        // Read `generation` before and after the locked clone. Retry if a writer
-        // completes between those reads so the map and generation stay paired.
-        loop {
-            let generation = self.generation();
-            let active_rooms = read_unpoisoned(&self.active_rooms).clone();
-            if generation == self.generation() {
-                return PacketSinkRegistrySnapshot {
-                    generation,
-                    active_rooms,
-                };
-            }
+        // Both writers advance the generation before releasing this map's guard.
+        let active_rooms = read_unpoisoned(&self.active_rooms);
+        PacketSinkRegistrySnapshot {
+            generation: self.generation(),
+            active_rooms: active_rooms.clone(),
         }
     }
 

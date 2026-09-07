@@ -30,10 +30,7 @@ mod state;
 mod transition;
 
 #[cfg(any(test, feature = "testing-transport"))]
-pub use TESTS::api::{
-    NegotiatedPublish, RoomManagerTestApi, RoomTestApi, RoomTestInspect, RoomTestLifecycle,
-    RoomTestMedia,
-};
+pub use TESTS::api::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi};
 pub use factory::{RoomAdmissionPolicy, RoomConfig, RoomRuntimePolicy};
 pub(crate) use instance::RoomUserOperation;
 pub use instance::{

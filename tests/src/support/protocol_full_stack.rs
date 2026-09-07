@@ -11,15 +11,13 @@ use o_sfu_protocol::wire::{
     ServerEnvelope, ServerMessage, ServerRequest, ServerResponse, StreamIntentPayload, StreamType,
     SubscribePayload, UserId, UserInfo, WelcomePayload,
 };
-use o_sfu_rfc::rtp::CodecName;
-use o_sfu_router::MediaKind;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::{self, protocol::frame::coding::CloseCode};
 
 use super::{
     TEST_ROOM_KEY, TestServer, TestWebSocket, connect_websocket, decode_protocol_welcome_batch,
-    fake_media::{FakeClock, FakeMediaSource},
-    fake_rtc_peer::{FakeRtcPeer, ReceivedRtpPacket, RtcPeerTrace},
+    fake_media::FakeMediaSource,
+    fake_rtc_peer::FakeRtcPeer,
     protocol_wire::{encode_client_batch, read_protocol_batch, send_server_request_response},
     read_close_code, read_text_message, signed_connect_claims,
 };
@@ -52,8 +50,8 @@ pub fn connect_two_rtc_ready_fake_peers<'a>(
     Box::pin(async move {
         let (mut first, mut second) =
             connect_two_fake_peers(server, room_id, first_user_id, second_user_id).await?;
-        first.wait_until_connected(timeout_window).await?;
-        second.wait_until_connected(timeout_window).await?;
+        first.rtc().wait_until_connected(timeout_window).await?;
+        second.rtc().wait_until_connected(timeout_window).await?;
         Some((first, second))
     })
 }
@@ -271,105 +269,9 @@ impl ProtocolFakePeer {
         }
     }
 
-    pub async fn wait_until_connected(&mut self, timeout_window: Duration) -> Option<()> {
-        self.rtc_peer.wait_until_connected(timeout_window).await
-    }
-
-    pub async fn send_rtp_packets(
-        &mut self,
-        source: &mut FakeMediaSource,
-        clock: &mut FakeClock,
-        frame_count: usize,
-    ) -> Option<()> {
-        self.rtc_peer
-            .send_rtp_packets(source, clock, frame_count)
-            .await
-    }
-
-    pub async fn send_rtp_packet(
-        &mut self,
-        source: &mut FakeMediaSource,
-        clock: &mut FakeClock,
-    ) -> Option<Vec<u8>> {
-        self.rtc_peer.send_rtp_packet(source, clock).await
-    }
-
-    pub async fn read_rtp_packet(&mut self, timeout_window: Duration) -> Option<ReceivedRtpPacket> {
-        self.rtc_peer.read_rtp_packet(timeout_window).await
-    }
-
-    pub async fn pump_rtc(&mut self, timeout_window: Duration) -> Option<()> {
-        self.rtc_peer.pump(timeout_window).await
-    }
-
-    pub fn hold_outbound_rtp(&mut self, payload_type: u8, ssrc: u32) {
-        self.rtc_peer.hold_outbound_rtp(payload_type, ssrc);
-    }
-
-    pub fn clear_outbound_rtp_hold(&mut self) {
-        self.rtc_peer.clear_outbound_rtp_hold();
-    }
-
-    pub fn try_delay_next_outbound_rtp(
-        &mut self,
-        payload_type: u8,
-        ssrc: u32,
-        delay: Duration,
-    ) -> bool {
-        self.rtc_peer
-            .try_delay_next_outbound_rtp(payload_type, ssrc, delay)
-    }
-
-    pub fn has_delayed_outbound_rtp(&self) -> bool {
-        self.rtc_peer.has_delayed_outbound_rtp()
-    }
-
-    pub async fn release_delayed_outbound_rtp(&mut self) -> Option<()> {
-        self.rtc_peer.release_delayed_outbound_rtp().await
-    }
-
-    pub fn drop_next_inbound_rtp(&mut self, payload_type: u8, ssrc: u32) {
-        self.rtc_peer.drop_next_inbound_rtp(payload_type, ssrc);
-    }
-
-    pub fn held_outbound_rtp_count(&self) -> usize {
-        self.rtc_peer.held_outbound_rtp_count()
-    }
-
-    pub fn discard_next_held_outbound_rtp(&mut self) -> bool {
-        self.rtc_peer.discard_next_held_outbound_rtp()
-    }
-
-    pub async fn release_next_held_outbound_rtp(&mut self) -> Option<()> {
-        self.rtc_peer.release_next_held_outbound_rtp().await
-    }
-
-    pub fn start_rtc_trace(&mut self) {
-        self.rtc_peer.start_trace();
-    }
-
-    pub fn take_rtc_trace(&mut self) -> RtcPeerTrace {
-        self.rtc_peer.take_trace()
-    }
-
-    pub fn repair_payload_types(&self, codec_name: &CodecName) -> Option<(u8, u8)> {
-        self.rtc_peer.repair_payload_types(codec_name)
-    }
-
-    pub fn send_stream_ssrc_pair(
-        &mut self,
-        media_kind: MediaKind,
-        rid: Option<&str>,
-    ) -> Option<(u32, u32)> {
-        self.rtc_peer.send_stream_ssrc_pair(media_kind, rid)
-    }
-
-    pub fn receive_repair_ssrc(&mut self, primary_ssrc: u32) -> Option<u32> {
-        self.rtc_peer.receive_repair_ssrc(primary_ssrc)
-    }
-
-    pub fn reset_rtp_ssrc(&mut self, media_kind: MediaKind, rid: Option<&str>) -> Option<()> {
-        self.rtc_peer.reset_rtp_ssrc(media_kind, rid)
+    /// Provides the RTC fixture without processing WebSocket signaling.
+    pub fn rtc(&mut self) -> &mut FakeRtcPeer {
+        &mut self.rtc_peer
     }
 
     pub async fn read_close_code(&mut self) -> Option<CloseCode> {

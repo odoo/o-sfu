@@ -60,8 +60,9 @@ use super::{
 use crate::engine::{
     ConnectionId, MediaWorkerId, UserId,
     media_transport::{
-        RelayRouteActivity, TransportConsumerRoute, TransportMediaId, TransportRelayRouteAction,
-        TransportSessionKey, TransportSourceKey,
+        ConsumerActivity, RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
+        TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
+        TransportSourceKey,
     },
     source_model::{
         PolicyPauseReason, PublishedSourceId, SourceSelector, SourceSubscriptionIntent,
@@ -124,7 +125,7 @@ struct RouteReservationId(u64);
 pub struct ConsumerRouteReservation {
     key: SubscriptionKey,
     source_id: PublishedSourceId,
-    selection: ConsumerSourceSelection,
+    declared_activity: ConsumerActivity,
     id: RouteReservationId,
 }
 
@@ -138,17 +139,10 @@ struct TakenPending {
     relay: Option<RouteRelay>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RelayRouteEffect {
-    pub route: RelayRouteKey,
-    pub action: TransportRelayRouteAction,
-}
-
+/// Captured source placement survives replacement until its relay owners release it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RelayRouteKey {
-    pub source_user: UserId,
-    pub source_connection: ConnectionId,
-    pub source_media: TransportMediaId,
+    pub source: TransportSourceKey,
     pub target_worker: MediaWorkerId,
 }
 
@@ -156,7 +150,7 @@ pub struct RelayRouteKey {
 pub(super) struct RemovedRoutes {
     pub routes: Vec<TransportConsumerRoute>,
     pub consumers: Vec<RoutedConsumerId>,
-    pub relays: Vec<RelayRouteEffect>,
+    pub relays: Vec<TransportRelayRouteEffect>,
 }
 
 impl RemovedRoutes {
@@ -230,7 +224,7 @@ impl RouteGraph {
         connection_id: ConnectionId,
         active: bool,
         policy_pause_reason: Option<PolicyPauseReason>,
-    ) -> Option<Vec<RelayRouteEffect>> {
+    ) -> Option<Vec<TransportRelayRouteEffect>> {
         let relay = {
             let current = self
                 .entries
@@ -272,7 +266,7 @@ impl RouteGraph {
         Some(ConsumerRouteReservation {
             key,
             source_id,
-            selection,
+            declared_activity: ConsumerActivity::from_active(selection.delivery_active()),
             id,
         })
     }
@@ -280,7 +274,7 @@ impl RouteGraph {
     pub(super) fn release_consumer_setup(
         &mut self,
         reservation: ConsumerRouteReservation,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         let Some(TakenPending { relay }) = self.take_pending(&reservation) else {
             return Vec::new();
         };
@@ -295,7 +289,7 @@ impl RouteGraph {
         mid: String,
         selection: ConsumerSourceSelection,
         accept: impl FnOnce() -> Option<RoutedConsumerId>,
-    ) -> Result<(), Vec<RelayRouteEffect>> {
+    ) -> Result<(), Vec<TransportRelayRouteEffect>> {
         // Consume the reservation before router acceptance so every async
         // completion is terminal and cannot reuse its identity after failure.
         let pending = self.take_pending(&reservation);
@@ -450,7 +444,7 @@ impl RouteGraph {
     pub(super) fn reset_receiver_for_replacement(
         &mut self,
         receiver: &UserId,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         let keys = self.by_receiver.get(receiver).cloned().unwrap_or_default();
         let mut relays = Vec::new();
         for key in keys {
@@ -533,7 +527,7 @@ impl RouteGraph {
         target: &ConsumerSetupTarget,
         target_worker: MediaWorkerId,
         active: bool,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         let (previous, relay) = {
             let Some(current) = self.current_mut_for(reservation) else {
                 return Vec::new();
@@ -560,14 +554,9 @@ impl RouteGraph {
         &'a self,
         source: &'a TransportSourceKey,
     ) -> impl Iterator<Item = MediaWorkerId> + 'a {
-        let session = source.session_key();
         self.relays
             .keys()
-            .filter(move |route| {
-                route.source_user == *session.user_id()
-                    && route.source_connection == session.connection_id()
-                    && route.source_media == source.transport_media_id()
-            })
+            .filter(move |route| &route.source == source)
             .map(|route| route.target_worker)
     }
 
@@ -639,7 +628,7 @@ impl RouteGraph {
         key: &SubscriptionKey,
         previous: Option<RouteRelay>,
         relay: &RouteRelay,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         match previous {
             None => self.set_relay_owner(key, relay, true),
             Some(previous) if previous.route == relay.route => {
@@ -658,7 +647,7 @@ impl RouteGraph {
         key: &SubscriptionKey,
         relay: &RouteRelay,
         insert_missing: bool,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         let route = relay.route.clone();
         let owners = match self.relays.entry(route.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
@@ -674,7 +663,7 @@ impl RouteGraph {
         &mut self,
         key: &SubscriptionKey,
         relay: &RouteRelay,
-    ) -> Vec<RelayRouteEffect> {
+    ) -> Vec<TransportRelayRouteEffect> {
         let route = relay.route.clone();
         let Some(owners) = self.relays.get_mut(&route) else {
             return Vec::new();
@@ -692,8 +681,8 @@ impl RouteGraph {
 }
 
 impl ConsumerRouteReservation {
-    pub const fn selection(&self) -> ConsumerSourceSelection {
-        self.selection
+    pub const fn declared_activity(&self) -> ConsumerActivity {
+        self.declared_activity
     }
 }
 
@@ -756,23 +745,26 @@ fn relay_effects_for(
     route: RelayRouteKey,
     before: Option<RelayRouteActivity>,
     after: Option<RelayRouteActivity>,
-) -> Vec<RelayRouteEffect> {
+) -> Vec<TransportRelayRouteEffect> {
     let Some(activity) = after else {
-        return vec![RelayRouteEffect {
-            route,
+        return vec![TransportRelayRouteEffect {
+            source: route.source,
+            target_media_worker_id: route.target_worker,
             action: TransportRelayRouteAction::Release,
         }];
     };
     let mut effects = Vec::new();
     if before.is_none() {
-        effects.push(RelayRouteEffect {
-            route: route.clone(),
+        effects.push(TransportRelayRouteEffect {
+            source: route.source.clone(),
+            target_media_worker_id: route.target_worker,
             action: TransportRelayRouteAction::Install,
         });
     }
     if before.unwrap_or(RelayRouteActivity::Inactive) != activity {
-        effects.push(RelayRouteEffect {
-            route,
+        effects.push(TransportRelayRouteEffect {
+            source: route.source,
+            target_media_worker_id: route.target_worker,
             action: TransportRelayRouteAction::SetActivity(activity),
         });
     }

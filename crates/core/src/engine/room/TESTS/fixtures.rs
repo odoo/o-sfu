@@ -1,14 +1,11 @@
 use std::{cell::Cell, time::Duration};
 pub(super) use std::{sync::Arc, time::Instant};
 
+pub(super) use o_sfu_router::rtp::{MediaCapabilities, MediaStream};
 use o_sfu_router::test_support::rtp_samples::{
     sample_audio_rtp_parameters, sample_client_rtp_capabilities,
     sample_simulcast_video_rtp_parameters, sample_three_layer_simulcast_video_rtp_parameters,
     sample_video_rtp_parameters,
-};
-pub(super) use o_sfu_router::{
-    MediaKind,
-    rtp::{MediaCapabilities, MediaStream},
 };
 
 pub(super) use super::super::{
@@ -90,7 +87,6 @@ pub(super) async fn join_user_with_sender(
     sender: UserOutboundSender,
 ) -> ConnectionId {
     room.test_api()
-        .lifecycle()
         .join_user(user_id, None, UserPermissions::default(), sender)
         .await
         .expect("user should join")
@@ -103,7 +99,6 @@ pub(super) async fn join_user_without_transport_teardown(
     sender: UserOutboundSender,
 ) -> ConnectionId {
     room.test_api()
-        .lifecycle()
         .join_session_without_transport_teardown(
             user_id,
             None,
@@ -120,7 +115,6 @@ pub(super) async fn user_connection_id(
     user_id: &UserId,
 ) -> ConnectionId {
     room.test_api()
-        .inspect()
         .user_connection_id(user_id)
         .await
         .expect("test fixture requires a live user connection")
@@ -134,7 +128,6 @@ pub(super) async fn make_session_ready_with_transport(
     create_transport_session_offer(room, user_id, media_transport).await;
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(user_id, test_client_rtp_capabilities(), media_transport,)
             .await
     );
@@ -225,7 +218,6 @@ impl StagedPublishScenario {
         let stream_id = stream_id_for_source(TestSourceKind::ScalableVideo);
         self.room
             .test_api()
-            .inspect()
             .is_stream_published(&self.user_id, &stream_id)
             .await
     }
@@ -262,40 +254,14 @@ impl StagedPublishScenario {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ReadyRoomFixtureOptions {
-    publish_camera_before_subscriber_ready: bool,
-}
-
-pub(super) struct ReadyRoomFixture {
+struct JoinedRoomFixture {
     room: Arc<super::super::Room>,
     adapter: MediaTransport,
     first_rx: UserOutboundReceiver,
     second_rx: UserOutboundReceiver,
 }
 
-impl ReadyRoomFixtureOptions {
-    const fn two_ready_users() -> Self {
-        Self {
-            publish_camera_before_subscriber_ready: false,
-        }
-    }
-
-    const fn publisher_ready_before_subscriber() -> Self {
-        Self {
-            publish_camera_before_subscriber_ready: true,
-        }
-    }
-}
-
-async fn setup_ready_room_fixture(options: ReadyRoomFixtureOptions) -> ReadyRoomFixture {
-    setup_ready_room_fixture_with_adapter(options, real_adapter()).await
-}
-
-async fn setup_ready_room_fixture_with_adapter(
-    options: ReadyRoomFixtureOptions,
-    adapter: MediaTransport,
-) -> ReadyRoomFixture {
+async fn setup_joined_users_with_ready_publisher(adapter: MediaTransport) -> JoinedRoomFixture {
     let manager = RoomManager::for_test();
     let room = manager
         .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
@@ -308,21 +274,18 @@ async fn setup_ready_room_fixture_with_adapter(
 
     make_session_ready_with_transport(&room, &UserId::Integer(1), &adapter).await;
 
-    if options.publish_camera_before_subscriber_ready {
-        try_publish_camera(&room, &UserId::Integer(1), &adapter).await;
-        create_transport_session_offer(&room, &UserId::Integer(2), &adapter).await;
-    }
-
-    if !options.publish_camera_before_subscriber_ready {
-        make_session_ready_with_transport(&room, &UserId::Integer(2), &adapter).await;
-    }
-
-    ReadyRoomFixture {
+    JoinedRoomFixture {
         room,
         adapter,
         first_rx,
         second_rx,
     }
+}
+
+async fn setup_two_ready_users_with_adapter(adapter: MediaTransport) -> JoinedRoomFixture {
+    let fixture = setup_joined_users_with_ready_publisher(adapter).await;
+    make_session_ready_with_transport(&fixture.room, &UserId::Integer(2), &fixture.adapter).await;
+    fixture
 }
 
 pub(super) async fn setup_two_ready_users() -> (
@@ -331,7 +294,7 @@ pub(super) async fn setup_two_ready_users() -> (
     UserOutboundReceiver,
     UserOutboundReceiver,
 ) {
-    let fixture = setup_ready_room_fixture(ReadyRoomFixtureOptions::two_ready_users()).await;
+    let fixture = setup_two_ready_users_with_adapter(real_adapter()).await;
     (
         fixture.room,
         fixture.adapter,
@@ -349,9 +312,7 @@ pub(super) async fn setup_two_ready_users_with_media_metrics() -> (
 ) {
     let metrics = Arc::new(RuntimeMetrics::default());
     let adapter = real_adapter_with_metrics(Arc::clone(&metrics));
-    let fixture =
-        setup_ready_room_fixture_with_adapter(ReadyRoomFixtureOptions::two_ready_users(), adapter)
-            .await;
+    let fixture = setup_two_ready_users_with_adapter(adapter).await;
     (
         fixture.room,
         fixture.adapter,
@@ -367,9 +328,11 @@ pub(super) async fn setup_pending_consumer_readiness_scenario() -> (
     UserOutboundReceiver,
     UserOutboundReceiver,
 ) {
-    let fixture =
-        setup_ready_room_fixture(ReadyRoomFixtureOptions::publisher_ready_before_subscriber())
-            .await;
+    let fixture = setup_joined_users_with_ready_publisher(real_adapter()).await;
+    try_publish_camera(&fixture.room, &UserId::Integer(1), &fixture.adapter)
+        .await
+        .expect("camera should publish before the subscriber is ready");
+    create_transport_session_offer(&fixture.room, &UserId::Integer(2), &fixture.adapter).await;
     (
         fixture.room,
         fixture.adapter,
@@ -657,7 +620,6 @@ impl SourcePolicyScenario {
         assert!(
             self.room
                 .test_api()
-                .media()
                 .update_subscription(&receiver_user_id, &source_user_id, &intents, &self.adapter)
                 .await
         );
@@ -678,7 +640,6 @@ impl SourcePolicyScenario {
         assert!(
             self.room
                 .test_api()
-                .media()
                 .update_subscription(&receiver_user_id, &source_user_id, &intents, &self.adapter,)
                 .await
         );
@@ -691,11 +652,9 @@ pub(super) async fn try_publish_camera(
     media_transport: &MediaTransport,
 ) -> Option<UserStreamId> {
     room.test_api()
-        .media()
         .publish_track(
             user_id,
             TestSourceKind::ScalableVideo,
-            MediaKind::Video,
             test_video_rtp_parameters(),
             media_transport,
         )
@@ -711,7 +670,6 @@ pub(super) async fn publish_simulcast_camera(
         room,
         user_id,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_simulcast_video_rtp_parameters(),
         media_transport,
     )
@@ -727,7 +685,6 @@ pub(super) async fn publish_three_layer_camera(
         room,
         user_id,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         sample_three_layer_simulcast_video_rtp_parameters(None),
         media_transport,
     )
@@ -743,7 +700,6 @@ pub(super) async fn publish_audio_and_camera(
         room,
         user_id,
         TestSourceKind::AudioDetector,
-        MediaKind::Audio,
         test_audio_rtp_parameters(),
         media_transport,
     )
@@ -755,19 +711,11 @@ pub(super) async fn publish_track(
     room: &Arc<super::super::Room>,
     user_id: &UserId,
     stream_type: TestSourceKind,
-    media_kind: MediaKind,
     rtp_parameters: MediaStream,
     media_transport: &MediaTransport,
 ) -> UserStreamId {
     room.test_api()
-        .media()
-        .publish_track(
-            user_id,
-            stream_type,
-            media_kind,
-            rtp_parameters,
-            media_transport,
-        )
+        .publish_track(user_id, stream_type, rtp_parameters, media_transport)
         .await
         .expect("publication should succeed")
 }
@@ -777,12 +725,11 @@ pub(super) async fn source_media_id(
     user_id: &UserId,
     stream_type: TestSourceKind,
 ) -> TransportMediaId {
-    let Some(connection_id) = room.test_api().inspect().user_connection_id(user_id).await else {
+    let Some(connection_id) = room.test_api().user_connection_id(user_id).await else {
         panic!("user should exist");
     };
     let Some(transport_media_id) = room
         .test_api()
-        .inspect()
         .producer_transport_media_id(user_id, connection_id, stream_type)
         .await
     else {

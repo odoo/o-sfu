@@ -129,8 +129,7 @@ async fn assert_selected_video_relay(
         source,
     )
     .await;
-    m::assert_video_subscription_selected_rid(server, room, subscriber, publisher_user_id, "hi")
-        .await;
+    m::assert_featured_video_subscription(server, room, subscriber, publisher_user_id).await;
     let mut clock = s::FakeClock::default();
     if source.codec() == s::CodecName::Vp8 {
         m::assert_packet_dropped(publisher, subscriber, source, &mut clock).await;

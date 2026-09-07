@@ -288,21 +288,25 @@ impl RtcWorker {
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
+    /// Records synthetic media against the counter installed by publication.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the worker is unavailable or the publication counter is absent.
     pub async fn debug_record_incoming_media(
         &self,
-        session_key: &TransportSessionKey,
         transport_media_id: TransportMediaId,
         payload_bytes: usize,
         now: Instant,
     ) {
-        let _ = self
+        let recorded = self
             .probe_debug_worker(RecordIncomingMediaProbe {
-                session_key: session_key.clone(),
                 transport_media_id,
                 payload_bytes,
                 now,
             })
             .await;
+        assert_eq!(recorded, Some(true), "incoming media counter must exist");
     }
 
     #[cfg(any(test, feature = "testing-transport"))]

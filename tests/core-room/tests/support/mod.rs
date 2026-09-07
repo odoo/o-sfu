@@ -24,8 +24,7 @@ use o_sfu_core::{
         packet_sinks::RoomPacketSinkRegistry,
         room::{
             JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomManager, RoomRuntimePolicy,
-            UserOutboundReceiver, UserOutboundSender,
-            test_support::{TestSourceKind, source_publish_intent_for_source},
+            UserOutboundReceiver, UserOutboundSender, test_support::TestSourceKind,
         },
         session::{UserId, UserPermissions},
         transport::{
@@ -199,7 +198,6 @@ pub async fn join_ready_users(user_ids: &[i64]) -> Result<ReadyRoom> {
             .await
             .map_err(|error| anyhow!("user should join through core: {error:?}"))?;
         room.test_api()
-            .lifecycle()
             .make_session_ready(session.user_id(), &media_transport)
             .await?;
         receivers.insert(raw_user_id, receiver);
@@ -215,13 +213,12 @@ pub async fn join_ready_users(user_ids: &[i64]) -> Result<ReadyRoom> {
 
 pub async fn home_worker(room: &Room, raw_user_id: i64) -> Option<usize> {
     room.test_api()
-        .inspect()
         .home_media_worker_id(&UserId::Integer(raw_user_id))
         .await
 }
 
 pub async fn router_count(room: &Room) -> usize {
-    room.test_api().inspect().router_count().await
+    room.test_api().router_count().await
 }
 
 pub fn test_video_rtp_parameters() -> MediaStream {
@@ -239,16 +236,8 @@ pub async fn publish_track(
     rtp_parameters: MediaStream,
     media_transport: &MediaTransport,
 ) -> Result<UserStreamId> {
-    let intent = source_publish_intent_for_source(stream_type);
     room.test_api()
-        .media()
-        .publish_track(
-            user_id,
-            stream_type,
-            intent.media_kind(),
-            rtp_parameters,
-            media_transport,
-        )
+        .publish_track(user_id, stream_type, rtp_parameters, media_transport)
         .await
         .ok_or_else(|| anyhow!("track should publish"))
 }

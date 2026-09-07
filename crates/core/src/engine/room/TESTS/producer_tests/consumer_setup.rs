@@ -11,7 +11,6 @@ async fn initial_answer_sets_up_pending_consumers_once() {
 
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(&user_id, test_client_rtp_capabilities(), &media_transport)
             .await
     );
@@ -20,15 +19,14 @@ async fn initial_answer_sets_up_pending_consumers_once() {
         &drain_outbound(&mut subscriber_rx),
         TestSourceKind::ScalableVideo,
     );
-    assert_eq!(room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(room.test_api().consumer_count().await, 1);
 
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(&user_id, test_client_rtp_capabilities(), &media_transport)
             .await
     );
-    assert_eq!(room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(room.test_api().consumer_count().await, 1);
     assert!(drain_outbound(&mut subscriber_rx).is_empty());
 }
 
@@ -40,7 +38,6 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
         &scenario.room,
         &scenario.publisher_user_id,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         video_rtp_parameters_with_mid("cam-refresh-retry", 22_222),
         &scenario.media_transport,
     )
@@ -50,7 +47,7 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
         &drain_outbound(&mut scenario.subscriber_rx),
         TestSourceKind::ScalableVideo,
     );
-    assert_eq!(scenario.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(scenario.room.test_api().consumer_count().await, 1);
 
     let first_refresh_offer = scenario
         .media_transport
@@ -62,13 +59,12 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
         &scenario.room,
         &scenario.publisher_user_id,
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         video_rtp_parameters_with_mid("screen-refresh-retry", 33_333),
         &scenario.media_transport,
     )
     .await;
     assert_eq!(
-        scenario.room.test_api().inspect().consumer_count().await,
+        scenario.room.test_api().consumer_count().await,
         1,
         "second consumer must stay pending while the first rtc offer awaits an answer"
     );
@@ -85,7 +81,7 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
         "refresh answer should keyframe only the newly committed active video route"
     );
 
-    assert_eq!(scenario.room.test_api().inspect().consumer_count().await, 2);
+    assert_eq!(scenario.room.test_api().consumer_count().await, 2);
     assert_remote_track_snapshot_for_stream(
         &drain_outbound(&mut scenario.subscriber_rx),
         TestSourceKind::ReadableVideo,
@@ -99,7 +95,7 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
     settle_refresh_offer(&mut scenario, second_refresh_offer).await;
 
     assert_eq!(
-        scenario.room.test_api().inspect().consumer_count().await,
+        scenario.room.test_api().consumer_count().await,
         2,
         "retry pass must not duplicate already-committed consumers"
     );
@@ -117,12 +113,11 @@ async fn stale_refresh_does_not_request_replaced_receiver_keyframes() {
         &scenario.room,
         &scenario.publisher_user_id,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         video_rtp_parameters_with_mid("cam-stale-refresh", 22_222),
         &scenario.media_transport,
     )
     .await;
-    assert_eq!(scenario.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(scenario.room.test_api().consumer_count().await, 1);
 
     let stale_connection_id = scenario.subscriber_session_key.connection_id();
     let (replacement_tx, _replacement_rx) = test_sender();
@@ -208,13 +203,11 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         scenario
             .room
             .test_api()
-            .media()
             .publish_negotiated_track(
                 &scenario.publisher_user_id,
                 NegotiatedPublish {
                     connection_id: publisher_connection_id,
                     stream_type: TestSourceKind::ScalableVideo,
-                    media_kind: MediaKind::Video,
                     transport_media_id,
                     consumable_rtp_parameters: negotiated_parameters,
                 },
@@ -228,5 +221,5 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         &drain_outbound(&mut scenario.subscriber_rx),
         TestSourceKind::ScalableVideo,
     );
-    assert_eq!(scenario.room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(scenario.room.test_api().consumer_count().await, 1);
 }

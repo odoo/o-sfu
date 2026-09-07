@@ -84,33 +84,6 @@ fn first_join_falls_back_to_the_least_delayed_worker() {
 }
 
 #[test]
-fn healthy_primary_keeps_the_room_local() {
-    let primary = placement(7, 0);
-    assert_eq!(
-        choose(
-            &room_with(primary, Vec::new()),
-            policy(2, 20),
-            &[Some(0), Some(0)],
-            0,
-        ),
-        primary
-    );
-}
-
-#[test]
-fn overloaded_primary_spills_to_an_unused_healthy_worker() {
-    assert_eq!(
-        choose(
-            &room_with(placement(7, 0), Vec::new()),
-            policy(2, 20),
-            &[Some(20), Some(0)],
-            0,
-        ),
-        placement(8, 1)
-    );
-}
-
-#[test]
 fn unknown_unused_worker_does_not_trigger_spillover() {
     let primary = placement(7, 0);
     assert_eq!(

@@ -1,6 +1,6 @@
 //! source-policy apply ownership without transport awaits under the room lock
 
-use std::{borrow::Cow, collections::BTreeMap, mem, time::Instant};
+use std::{borrow::Cow, collections::BTreeMap, time::Instant};
 
 use o_sfu_router::MediaKind;
 use o_sfu_telemetry::schema::event as telemetry_event;
@@ -171,7 +171,7 @@ impl SourcePolicyTransaction {
         source_bitrate: &TransportBitrateSnapshot,
         now: Instant,
     ) -> Option<Self> {
-        let mut input = SourcePolicySnapshot::from_state(
+        let input = SourcePolicySnapshot::from_state(
             state,
             active_speakers,
             receiver_bandwidth,
@@ -188,8 +188,7 @@ impl SourcePolicyTransaction {
             planned_at: now,
         };
         audio::append_audio_route_activity(&mut tx, &input);
-        let receiver_bwe_targets = mem::take(&mut input.receiver_bwe_targets);
-        video::append_receiver_video_policy(&mut tx, state, &input, receiver_bwe_targets, now);
+        video::append_receiver_video_policy(&mut tx, state, &input, now);
         tx.featured_users = input.featured_user_updates;
         (!tx.is_empty()).then_some(tx)
     }
@@ -556,9 +555,7 @@ fn reconcile_receiver_video_budget(state: &mut RoomState, plan: &ReceiverVideoBu
             }
             continue;
         }
-        let Some(planned_state) = planned.planned else {
-            continue;
-        };
+        let planned_state = planned.planned;
         let selected_bitrate = if planned_state.matches_selection(route.selection) {
             planned_state.selected_bitrate
         } else if planned.captured.matches_selection(route.selection) {

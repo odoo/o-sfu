@@ -89,10 +89,7 @@ pub mod room {
     #[cfg(any(test, feature = "testing-transport"))]
     pub mod test_support {
         pub use crate::engine::{
-            room::{
-                NegotiatedPublish, RoomManagerTestApi, RoomTestApi, RoomTestInspect,
-                RoomTestLifecycle, RoomTestMedia,
-            },
+            room::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi},
             source_model::test_support::{
                 TestSourceKind, TestSubscriptionStates, source_kind_for_stream_id,
                 source_publish_intent_for_source, stream_id_for_source,

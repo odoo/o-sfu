@@ -5,7 +5,7 @@
 //! transitions deterministic and lets Wasm, native and test hosts share the
 //! same lifecycle rules.
 
-use std::{collections::BTreeMap, mem::replace};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -182,17 +182,11 @@ struct ConnectContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PendingNegotiation {
-    request_id: RequestId,
-    kind: NegotiationKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProtocolPhase {
     Disconnected,
     Connecting,
-    Authenticated(NegotiationSlot),
-    Connected(NegotiationSlot),
+    Authenticated(Option<RequestId>),
+    Connected(Option<RequestId>),
     Recovering,
     Closed,
 }
@@ -213,28 +207,12 @@ impl ProtocolPhase {
         matches!(self, Self::Connecting | Self::Recovering)
     }
 
-    fn apply_lifecycle_state(&mut self, state: ConnectionState) {
-        if self.connection_state() == state {
-            return;
-        }
-        let current = replace(self, Self::Disconnected);
-        *self = match (current, state) {
-            (Self::Authenticated(slot), ConnectionState::Connected) => Self::Connected(slot),
-            (_, ConnectionState::Disconnected) => Self::Disconnected,
-            (_, ConnectionState::Connecting) => Self::Connecting,
-            (_, ConnectionState::Authenticated) => Self::Authenticated(NegotiationSlot::Idle),
-            (_, ConnectionState::Connected) => Self::Connected(NegotiationSlot::Idle),
-            (_, ConnectionState::Recovering) => Self::Recovering,
-            (_, ConnectionState::Closed) => Self::Closed,
-        };
-    }
-
     const fn can_send_client_messages(&self) -> bool {
         matches!(self, Self::Authenticated(_) | Self::Connected(_))
     }
 
     const fn can_enter_connected(&self) -> bool {
-        matches!(self, Self::Authenticated(NegotiationSlot::Idle))
+        matches!(self, Self::Authenticated(None))
     }
 
     fn accept_negotiation(
@@ -243,9 +221,13 @@ impl ProtocolPhase {
         kind: NegotiationKind,
     ) -> Result<(), NegotiationRejection> {
         match (self, kind) {
-            (Self::Authenticated(slot), NegotiationKind::Offer)
-            | (Self::Connected(slot), NegotiationKind::Renegotiate) => {
-                slot.accept(request_id, kind)
+            (Self::Authenticated(pending), NegotiationKind::Offer)
+            | (Self::Connected(pending), NegotiationKind::Renegotiate) => {
+                if pending.is_some() {
+                    return Err(NegotiationRejection::ProtocolError);
+                }
+                *pending = Some(request_id.clone());
+                Ok(())
             }
             (Self::Authenticated(_), NegotiationKind::Renegotiate)
             | (Self::Connected(_), NegotiationKind::Offer) => {
@@ -259,45 +241,20 @@ impl ProtocolPhase {
     }
 
     fn resolve_negotiation(&mut self, request_id: &RequestId, kind: NegotiationKind) -> bool {
-        match self {
-            Self::Authenticated(slot) | Self::Connected(slot) => slot.resolve(request_id, kind),
-            Self::Disconnected | Self::Connecting | Self::Recovering | Self::Closed => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum NegotiationSlot {
-    Idle,
-    WaitingForAnswer(PendingNegotiation),
-}
-
-impl NegotiationSlot {
-    fn accept(
-        &mut self,
-        request_id: &RequestId,
-        kind: NegotiationKind,
-    ) -> Result<(), NegotiationRejection> {
-        match self {
-            Self::Idle => {
-                *self = Self::WaitingForAnswer(PendingNegotiation {
-                    request_id: request_id.clone(),
-                    kind,
-                });
-                Ok(())
-            }
-            Self::WaitingForAnswer(_) => Err(NegotiationRejection::ProtocolError),
-        }
-    }
-
-    fn resolve(&mut self, request_id: &RequestId, kind: NegotiationKind) -> bool {
-        let Self::WaitingForAnswer(pending) = self else {
-            return false;
+        let pending = match (self, kind) {
+            (Self::Authenticated(pending), NegotiationKind::Offer)
+            | (Self::Connected(pending), NegotiationKind::Renegotiate) => pending,
+            (Self::Authenticated(_), NegotiationKind::Renegotiate)
+            | (Self::Connected(_), NegotiationKind::Offer)
+            | (
+                Self::Disconnected | Self::Connecting | Self::Recovering | Self::Closed,
+                NegotiationKind::Offer | NegotiationKind::Renegotiate,
+            ) => return false,
         };
-        if pending.request_id != *request_id || pending.kind != kind {
+        if pending.as_ref() != Some(request_id) {
             return false;
         }
-        *self = Self::Idle;
+        *pending = None;
         true
     }
 }
@@ -491,8 +448,7 @@ impl ProtocolCore {
             peers,
         } = payload;
         self.recovery_delay_ms = INITIAL_RECOVERY_DELAY_MS;
-        self.phase
-            .apply_lifecycle_state(ConnectionState::Authenticated);
+        self.phase = ProtocolPhase::Authenticated(None);
 
         let mut commands = vec![
             Command::SetAvailableFeatures { features },
@@ -520,7 +476,7 @@ impl ProtocolCore {
         if !self.phase.can_enter_connected() {
             return Vec::new();
         }
-        self.phase.apply_lifecycle_state(ConnectionState::Connected);
+        self.phase = ProtocolPhase::Connected(None);
         let mut commands = vec![Command::EmitStateChange {
             state: self.state(),
             cause: None,

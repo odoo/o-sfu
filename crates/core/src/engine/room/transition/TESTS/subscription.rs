@@ -91,20 +91,18 @@ async fn join_negotiated_user_with_sender(
     sender: UserOutboundSender,
     packet_loop_delays_ms: Option<Vec<Option<u64>>>,
 ) -> ConnectionId {
-    let lifecycle = room.test_api().lifecycle();
+    let api = room.test_api();
     let connection_id = if let Some(delays_ms) = packet_loop_delays_ms {
-        lifecycle
-            .join_user_with_packet_loop_delays(
-                user_id.clone(),
-                None,
-                UserPermissions::default(),
-                sender,
-                delays_ms,
-            )
-            .await
+        api.join_user_with_packet_loop_delays(
+            user_id.clone(),
+            None,
+            UserPermissions::default(),
+            sender,
+            delays_ms,
+        )
+        .await
     } else {
-        lifecycle
-            .join_user(user_id.clone(), None, UserPermissions::default(), sender)
+        api.join_user(user_id.clone(), None, UserPermissions::default(), sender)
             .await
     }
     .expect("test user should join");
@@ -341,7 +339,7 @@ async fn commit_scalable_video(
             sample_simulcast_video_rtp_parameters(None),
         )]))
         .await;
-    assert_eq!(room.test_api().inspect().producer_count().await, 1);
+    assert_eq!(room.test_api().producer_count().await, 1);
 }
 
 async fn destination_state(
@@ -405,7 +403,6 @@ async fn stored_receiver_intent_applies_before_publish_and_across_activity() {
 
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(&subscriber_id, &publisher_id, &stream_id)
             .await,
         Some(ConsumerRouteState::Inactive)
@@ -413,13 +410,11 @@ async fn stored_receiver_intent_applies_before_publish_and_across_activity() {
 
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(&publisher_id, &stream_id, &media_transport)
             .await
     );
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(&subscriber_id, &publisher_id, &stream_id)
             .await,
         Some(ConsumerRouteState::Inactive)
@@ -435,7 +430,6 @@ async fn stored_receiver_intent_applies_before_publish_and_across_activity() {
     ));
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(&subscriber_id, &publisher_id, &stream_id)
             .await,
         Some(ConsumerRouteState::Inactive)
@@ -505,7 +499,6 @@ async fn receiver_intent_updates_transport_route_activity() {
     );
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(&subscriber_id, &publisher_id, &stream_id)
             .await,
         Some(ConsumerRouteState::Inactive)
@@ -535,7 +528,6 @@ async fn receiver_intent_updates_transport_route_activity() {
     );
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(&subscriber_id, &publisher_id, &stream_id)
             .await,
         Some(ConsumerRouteState::Active)
@@ -574,7 +566,6 @@ async fn transport_consume_failure_releases_pending_setup_for_retry() {
 
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(
                 &subscriber_id,
                 &publisher_id,
@@ -598,7 +589,7 @@ async fn transport_consume_failure_releases_pending_setup_for_retry() {
             .await,
         Some(())
     );
-    assert_eq!(room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(room.test_api().consumer_count().await, 1);
     assert!(drain_setup_track(&mut subscriber_rx));
     assert!(
         media_transport
@@ -644,7 +635,7 @@ async fn relay_setup_failure_releases_pending_setup_for_retry() {
     )
     .await;
 
-    assert_eq!(room.test_api().inspect().consumer_count().await, 0);
+    assert_eq!(room.test_api().consumer_count().await, 0);
     let release_relays = {
         let mut state = room.state.write().await;
         let mut setups = state
@@ -696,10 +687,9 @@ async fn committed_consumer_reaches_graph_topology_and_transport() {
     )
     .await;
 
-    assert_eq!(room.test_api().inspect().consumer_count().await, 1);
+    assert_eq!(room.test_api().consumer_count().await, 1);
     assert_eq!(
         room.test_api()
-            .inspect()
             .consumer_route_state(
                 &subscriber_id,
                 &publisher_id,

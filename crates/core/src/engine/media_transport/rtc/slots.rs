@@ -29,8 +29,8 @@
 
 use std::{collections::BTreeMap, marker::PhantomData};
 
-use super::{media_registry::RegisteredMediaHandle, state::RtcSessionState};
-use crate::engine::media_transport::{TransportMediaId, TransportSessionKey};
+use super::state::RtcSessionState;
+use crate::engine::media_transport::TransportSessionKey;
 
 /// handle namespace for live `RtcSessionState` entries
 ///
@@ -39,13 +39,6 @@ use crate::engine::media_transport::{TransportMediaId, TransportSessionKey};
 /// the store validates the generation before the packet loop polls a session
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct SessionSlot;
-
-/// handle namespace for registered media entries
-///
-/// media slots keep transport media lookup state worker-local while room and
-/// diagnostics paths continue to name media by [`TransportMediaId`]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(super) struct MediaSlot;
 
 /// handle namespace for downstream RTP rewrite state
 ///
@@ -65,9 +58,6 @@ pub(super) type ConsumerStreamHandle = SlotHandle<ConsumerStreamSlot>;
 /// commands enter through [`TransportSessionKey`]
 /// the packet loop converts that key into [`SessionHandle`] only for queued work
 pub(super) type SessionStore = KeyedSlotStore<TransportSessionKey, RtcSessionState, SessionSlot>;
-
-/// media table keyed by the stable transport media id exposed outside the worker
-pub(super) type MediaStore = KeyedSlotStore<TransportMediaId, RegisteredMediaHandle, MediaSlot>;
 
 /// copy identity for one reusable worker-local slot
 ///
@@ -127,7 +117,7 @@ impl<Tag> Default for SlotHandle<Tag> {
 ///
 /// # Type-Safe Tagging
 ///
-/// The `Tag` marker parameter ([`SessionSlot`], [`MediaSlot`], [`ConsumerStreamSlot`]) ensures
+/// The `Tag` marker parameter ([`SessionSlot`], [`ConsumerStreamSlot`]) ensures
 /// distinct identity-class handle types at compile time with zero memory overhead
 /// (`PhantomData<fn() -> Tag>`). It does not identify a particular store instance, so callers
 /// must use a handle only with the store that created it.
@@ -249,8 +239,8 @@ impl<T, Tag> SlotStore<T, Tag> {
 
 /// public-key index backed by generation slots
 ///
-/// `KeyedSlotStore` bridges public identity at worker boundaries ([`TransportSessionKey`],
-/// [`TransportMediaId`]) with worker-internal generational slots ([`SlotHandle`]).
+/// `KeyedSlotStore` bridges public identity at worker boundaries ([`TransportSessionKey`])
+/// with worker-internal generational slots ([`SlotHandle`]).
 ///
 /// ```text
 /// Public Boundary (O(log N) tree):
@@ -328,12 +318,6 @@ impl<K: Ord + Clone, V, Tag> KeyedSlotStore<K, V, Tag> {
 
     pub(super) fn keys(&self) -> impl Iterator<Item = &K> {
         self.by_key.keys()
-    }
-
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-        self.by_key
-            .iter()
-            .filter_map(|(key, handle)| self.slots.get(*handle).map(|entry| (key, &entry.value)))
     }
 
     /// translate a public key to the handle used by packet-loop queues

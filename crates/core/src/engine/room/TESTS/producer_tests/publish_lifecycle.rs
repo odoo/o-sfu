@@ -17,7 +17,6 @@ async fn publication_activity_pauses_and_resumes_committed_source() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -35,7 +34,6 @@ async fn publication_activity_pauses_and_resumes_committed_source() {
     let source_policy_guard = room.source_policy_turn.lock().await;
     let pause = room
         .test_api()
-        .media()
         .deactivate_publication(&publisher_id, &stream_id, &adapter);
     tokio::pin!(pause);
     assert!(
@@ -129,11 +127,9 @@ async fn duplicate_camera_publish_intent_updates_presence_and_remote_activity() 
 
     assert!(
         room.test_api()
-            .media()
             .publish_intent(
                 &publisher_id,
                 &camera_off_intent,
-                MediaKind::Video,
                 test_video_rtp_parameters(),
                 &adapter,
             )
@@ -145,7 +141,6 @@ async fn duplicate_camera_publish_intent_updates_presence_and_remote_activity() 
 
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(&publisher_id, &camera_stream, &adapter)
             .await
     );
@@ -198,7 +193,6 @@ async fn late_join_receives_remote_track_snapshot_from_route_state() {
         &room,
         &publisher_id,
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -229,7 +223,6 @@ async fn publish_track_emits_remote_track_snapshot_with_committed_mid() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -267,11 +260,9 @@ async fn generic_camera_info_cannot_override_publication_presence() {
 
     assert!(
         room.test_api()
-            .media()
             .publish_intent(
                 &publisher_id,
                 &camera_intent,
-                MediaKind::Video,
                 test_video_rtp_parameters(),
                 &adapter,
             )
@@ -294,12 +285,7 @@ async fn generic_camera_info_cannot_override_publication_presence() {
     .await;
 
     assert!(drain_remote_track_snapshots(&mut rx2).is_empty());
-    let Some((_, info)) = room
-        .test_api()
-        .inspect()
-        .user_info_snapshot(&publisher_id)
-        .await
-    else {
+    let Some((_, info)) = room.test_api().user_info_snapshot(&publisher_id).await else {
         panic!("publisher user should still be present");
     };
     assert_eq!(info.is_camera_on, Some(true));
@@ -313,7 +299,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -322,7 +307,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::AudioDetector,
-        MediaKind::Audio,
         test_audio_rtp_parameters(),
         &adapter,
     )
@@ -339,7 +323,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
 
     let camera_transport_media_id = room
         .test_api()
-        .inspect()
         .producer_transport_media_id(
             &UserId::Integer(1),
             test_connection_id(0),
@@ -348,7 +331,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
         .await;
     let audio_transport_media_id = room
         .test_api()
-        .inspect()
         .producer_transport_media_id(
             &UserId::Integer(1),
             test_connection_id(0),
@@ -359,7 +341,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
     assert!(audio_transport_media_id.is_some());
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(
                 &UserId::Integer(1),
                 &stream_id_for_source(TestSourceKind::ScalableVideo),
@@ -372,7 +353,6 @@ async fn user_replacement_purges_all_published_stream_mappings() {
     let (replacement_tx, _replacement_rx) = test_sender();
     assert!(
         room.test_api()
-            .lifecycle()
             .join_user(
                 UserId::Integer(1),
                 None,
@@ -383,8 +363,8 @@ async fn user_replacement_purges_all_published_stream_mappings() {
             .is_ok()
     );
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 0);
-    assert_eq!(room.test_api().inspect().consumer_count().await, 0);
+    assert_eq!(room.test_api().producer_count().await, 0);
+    assert_eq!(room.test_api().consumer_count().await, 0);
     assert_transport_media_mapping_is_missing(
         &room,
         camera_transport_media_id.expect("camera producer should expose a transport id"),
@@ -419,7 +399,6 @@ async fn screen_deactivation_updates_remote_track_activity() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ReadableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -431,7 +410,6 @@ async fn screen_deactivation_updates_remote_track_activity() {
     let publisher_id = UserId::Integer(1);
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(
                 &publisher_id,
                 &stream_id_for_source(TestSourceKind::ReadableVideo),
@@ -458,7 +436,6 @@ async fn publication_deactivation_updates_transport_route_activity() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -469,7 +446,6 @@ async fn publication_deactivation_updates_transport_route_activity() {
     let publisher_id = UserId::Integer(1);
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(
                 &publisher_id,
                 &stream_id_for_source(TestSourceKind::ScalableVideo),
@@ -479,7 +455,6 @@ async fn publication_deactivation_updates_transport_route_activity() {
     );
     let transport_media_id = room
         .test_api()
-        .inspect()
         .producer_transport_media_id(
             &publisher_id,
             user_connection_id(&room, &publisher_id).await,
@@ -503,7 +478,6 @@ async fn publication_deactivation_updates_presence() {
         &room,
         &UserId::Integer(1),
         TestSourceKind::ScalableVideo,
-        MediaKind::Video,
         test_video_rtp_parameters(),
         &adapter,
     )
@@ -525,7 +499,7 @@ async fn publication_deactivation_updates_presence() {
         DeactivateIntentOutcome::Deactivated
     );
 
-    let Some((_, info)) = room.test_api().inspect().user_info_snapshot(&user_id).await else {
+    let Some((_, info)) = room.test_api().user_info_snapshot(&user_id).await else {
         panic!("publisher user should still be present");
     };
     assert_eq!(info.is_camera_on, Some(false));
@@ -539,7 +513,6 @@ async fn unknown_publication_deactivation_is_a_noop() {
     assert!(
         !room
             .test_api()
-            .media()
             .deactivate_publication(
                 &publisher_id,
                 &stream_id_for_source(TestSourceKind::AudioDetector),

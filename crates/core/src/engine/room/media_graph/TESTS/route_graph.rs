@@ -11,7 +11,7 @@ use o_sfu_router::{
 use super::{
     ConsumerSourceSelection, SubscriptionKey,
     consumer_setup::ConsumerSetupTarget,
-    route_graph::{ConsumerRouteReservation, RelayRouteEffect, RouteGraph},
+    route_graph::{ConsumerRouteReservation, RouteGraph},
 };
 use crate::{
     Bitrate,
@@ -19,7 +19,8 @@ use crate::{
         ConnectionId, MediaWorkerId, RoomInstanceId, UserId, VideoLayoutIntent,
         media_transport::{
             RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
-            TransportRelayRouteAction, TransportSessionKey, TransportSourceKey,
+            TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
+            TransportSourceKey,
         },
         source_model::{
             PolicyPauseReason, PublishedSourceId, ReceiverVideoBudgetDiagnostics, SourceEncodingId,
@@ -110,7 +111,7 @@ fn commit_route(
     route
 }
 
-fn actions(effects: Vec<RelayRouteEffect>) -> Vec<TransportRelayRouteAction> {
+fn actions(effects: Vec<TransportRelayRouteEffect>) -> Vec<TransportRelayRouteAction> {
     effects.into_iter().map(|effect| effect.action).collect()
 }
 

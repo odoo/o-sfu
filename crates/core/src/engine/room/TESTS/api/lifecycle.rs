@@ -2,21 +2,19 @@ use o_sfu_router::{
     rtp::MediaCapabilities, test_support::rtp_samples::sample_client_rtp_capabilities,
 };
 
-use super::super::super::{
-    JoinUserRequest, Room, RoomEffectContext, RoomJoinError, UserOutboundSender,
-    media_graph::CommittedTransportReceipt, placement::JoinAdmissionTurn,
+use super::{
+    super::super::{
+        JoinUserRequest, RoomEffectContext, RoomJoinError, UserOutboundSender,
+        media_graph::CommittedTransportReceipt, placement::JoinAdmissionTurn,
+    },
+    RoomTestApi,
 };
 use crate::engine::{
     ConnectionId, UserId, UserPermissions,
     media_transport::{MediaTransport, TransportAdapterError},
 };
 
-#[derive(Clone, Copy)]
-pub struct RoomTestLifecycle<'a> {
-    pub(super) room: &'a Room,
-}
-
-impl RoomTestLifecycle<'_> {
+impl RoomTestApi<'_> {
     /// # Errors
     ///
     /// returns [`RoomJoinError`] when admission or routing rejects the user
@@ -60,7 +58,7 @@ impl RoomTestLifecycle<'_> {
             RoomEffectContext::state_only(None),
         )
         .await
-        .map(|receipt| receipt.connection_id)
+        .map(|receipt| receipt.transport_session_key.connection_id())
     }
 
     /// # Errors
@@ -90,7 +88,7 @@ impl RoomTestLifecycle<'_> {
             RoomEffectContext::state_only(Some(media_transport)),
         )
         .await
-        .map(|receipt| receipt.connection_id)
+        .map(|receipt| receipt.transport_session_key.connection_id())
     }
 
     async fn admit_session(

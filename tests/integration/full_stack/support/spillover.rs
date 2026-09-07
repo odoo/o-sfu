@@ -175,7 +175,8 @@ async fn connect_large_room_spillover_peer(
     peer_index: usize,
 ) -> Option<ProtocolFakePeer> {
     let mut peer = connect_fake_peer(server, room, user_id.clone(), TEST_ROOM_KEY).await?;
-    peer.wait_until_connected(super::Duration::from_secs(5))
+    peer.rtc()
+        .wait_until_connected(super::Duration::from_secs(5))
         .await?;
     let asserted_peer_count = LARGE_ROOM_LOCAL_ROUTER_CAP * LARGE_ROOM_USERS_PER_WORKER;
     if peer_index < asserted_peer_count {
@@ -198,7 +199,8 @@ async fn connect_peer_on_worker<const N: usize>(
     mut joined_observers: [&mut ProtocolFakePeer; N],
 ) -> Option<ProtocolFakePeer> {
     let mut peer = connect_fake_peer(server, room, user_id.clone(), TEST_ROOM_KEY).await?;
-    peer.wait_until_connected(super::Duration::from_secs(5))
+    peer.rtc()
+        .wait_until_connected(super::Duration::from_secs(5))
         .await?;
     assert_user_media_worker(server, room, user_id, worker_id).await;
     for observer in &mut joined_observers {
@@ -233,6 +235,7 @@ async fn connect_spillover_replacement(
         Some(CloseCode::Library(4108))
     );
     replacement
+        .rtc()
         .wait_until_connected(super::Duration::from_secs(5))
         .await?;
     assert_user_media_worker(server, room, user_id, worker_id).await;
@@ -271,8 +274,9 @@ pub(crate) async fn assert_spillover_release_route_flow(
     .await;
     assert!(
         local_subscriber
+            .rtc()
             .read_rtp_packet(super::Duration::from_secs(2))
-            .await
+            .await?
             .is_some()
     );
 

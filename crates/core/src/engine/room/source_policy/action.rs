@@ -43,7 +43,7 @@ pub(super) struct VideoRouteAllocation {
     pub(super) route: TransportConsumerRoute,
     pub(super) interrupts_upgrade: bool,
     pub(super) captured: VideoRouteAllocationState,
-    pub(super) planned: Option<VideoRouteAllocationState>,
+    pub(super) planned: VideoRouteAllocationState,
 }
 
 #[derive(Debug)]

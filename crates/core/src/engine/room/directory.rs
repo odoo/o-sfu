@@ -28,8 +28,8 @@ fn rfc3339_now() -> String {
 
 /// directory row for one current room instance
 ///
-/// cloned entries carry the same lifecycle gate as the live directory row, so
-/// a manager snapshot can accept work without keeping the directory lock held
+/// Cloned entries share the lifecycle gate. Manager admission holds the directory
+/// read guard until that gate accepts a lease, then releases it before room work.
 #[derive(Debug, Clone)]
 pub(crate) struct RoomDirectoryEntry {
     pub room: Arc<Room>,
@@ -129,11 +129,11 @@ impl RoomLifecycle {
         lock_unpoisoned(&self.state).expires_at.is_some()
     }
 
-    /// accept a new current-room operation
+    /// Accepts a lease unless removal is pending or already claimed.
     ///
-    /// `None` means empty-room removal is pending or already won
-    /// callers must
-    /// still validate that the room pointer is current after acquiring the lease
+    /// Returns `None` when removal is pending or claimed or the lease count
+    /// cannot increase. Directory callers must retain their read guard through
+    /// admission to prove that the entry is current.
     #[must_use]
     pub(crate) fn begin(&self) -> Option<RoomLifecycleLease> {
         let mut state = lock_unpoisoned(&self.state);
@@ -159,19 +159,11 @@ impl RoomLifecycle {
 pub(crate) struct RoomLifecycleLease {
     /// shared lease state for the directory entry that accepted this work
     state: Arc<Mutex<RoomLifecycleState>>,
-    /// guards against double release when `finish`, `cancel` or `Drop` overlap
+    /// Prevents `Drop` from releasing a lease already completed by `finish`.
     finished: bool,
 }
 
 impl RoomLifecycleLease {
-    /// release a lease that was accepted for a stale directory row
-    ///
-    /// this is separate from `Drop` so stale-current validation can be explicit
-    /// at the manager boundary
-    pub(crate) fn cancel(mut self) {
-        let _ = self.release(false, false);
-    }
-
     /// Releases the lease and returns whether this caller claimed directory removal.
     #[must_use]
     pub(crate) fn finish(mut self, remove_if_empty: bool, room_can_be_removed: bool) -> bool {

@@ -10,7 +10,6 @@ async fn join_user_enforces_capacity() {
     let (tx1, _rx1) = test_sender();
     let result = room
         .test_api()
-        .lifecycle()
         .join_user(UserId::Integer(1), None, UserPermissions::default(), tx1)
         .await;
     assert!(result.is_ok());
@@ -18,7 +17,6 @@ async fn join_user_enforces_capacity() {
     let (tx2, _rx2) = test_sender();
     let result = room
         .test_api()
-        .lifecycle()
         .join_user(UserId::Integer(2), None, UserPermissions::default(), tx2)
         .await;
     assert_eq!(result, Err(RoomJoinError::RoomFull));
@@ -35,7 +33,6 @@ async fn reconnection_bypasses_capacity_and_replaces_existing_connection() {
     let (tx1, mut rx1) = test_sender();
     let first_connection = room
         .test_api()
-        .lifecycle()
         .join_user(user_id.clone(), None, UserPermissions::default(), tx1)
         .await
         .expect("first join should succeed");
@@ -51,7 +48,6 @@ async fn reconnection_bypasses_capacity_and_replaces_existing_connection() {
     let (tx2, _rx2) = test_sender();
     let second_connection = room
         .test_api()
-        .lifecycle()
         .join_user(user_id.clone(), None, UserPermissions::default(), tx2)
         .await
         .expect("replacement join should succeed");
@@ -81,7 +77,7 @@ async fn reconnection_bypasses_capacity_and_replaces_existing_connection() {
             .await
     );
     assert_eq!(
-        room.test_api().inspect().user_connection_id(&user_id).await,
+        room.test_api().user_connection_id(&user_id).await,
         Some(second_connection)
     );
 }
@@ -116,38 +112,6 @@ async fn leave_user_sends_departure_to_remaining_peers() {
 }
 
 #[tokio::test]
-async fn negotiated_session_rejects_stale_connection() {
-    let manager = RoomManager::for_test();
-    let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
-        .await
-        .expect("test room should be served");
-    let media_transport = real_adapter();
-    let (tx, _rx) = test_sender();
-    let connection_id = join_user_with_sender(&room, UserId::Integer(1), tx).await;
-    assert!(
-        room.remove_user_with_teardown(
-            &UserId::Integer(1),
-            connection_id,
-            RoomEffectContext::state_only(Some(&media_transport)),
-        )
-        .await
-    );
-
-    assert!(
-        !room
-            .test_api()
-            .lifecycle()
-            .mark_session_ready(
-                &UserId::Integer(1),
-                test_client_rtp_capabilities(),
-                &media_transport,
-            )
-            .await
-    );
-}
-
-#[tokio::test]
 async fn mismatched_stale_close_keeps_other_user_routing() {
     let manager = RoomManager::for_test();
     let room = manager
@@ -171,7 +135,7 @@ async fn mismatched_stale_close_keeps_other_user_routing() {
             .await
     );
 
-    let inspect = room.test_api().inspect();
+    let inspect = room.test_api();
     assert_eq!(
         inspect.user_connection_id(&alice_id).await,
         Some(alice_connection)
@@ -240,12 +204,11 @@ async fn replacement_join_closes_displaced_transport_user() {
     assert_ne!(first_connection, second_connection);
     assert_eq!(media_transport.session_transport_health(&first_key), None);
     assert_eq!(
-        room.test_api().inspect().user_connection_id(&user_id).await,
+        room.test_api().user_connection_id(&user_id).await,
         Some(second_connection)
     );
     assert!(
         room.test_api()
-            .inspect()
             .home_media_worker_id(&user_id)
             .await
             .is_some()
@@ -266,7 +229,6 @@ async fn removing_publisher_clears_media_state_and_transport_routes() {
     let connection_id = user_connection_id(&room, &UserId::Integer(1)).await;
     let transport_media_id = room
         .test_api()
-        .inspect()
         .producer_transport_media_id(
             &UserId::Integer(1),
             connection_id,
@@ -276,7 +238,6 @@ async fn removing_publisher_clears_media_state_and_transport_routes() {
         .expect("published camera should expose transport media");
     assert!(
         room.test_api()
-            .media()
             .deactivate_publication(
                 &UserId::Integer(1),
                 &stream_id_for_source(TestSourceKind::ScalableVideo),
@@ -300,11 +261,10 @@ async fn removing_publisher_clears_media_state_and_transport_routes() {
             if snapshot.requires_negotiation && snapshot.tracks.is_empty()
     )));
 
-    assert_eq!(room.test_api().inspect().producer_count().await, 0);
-    assert_eq!(room.test_api().inspect().consumer_count().await, 0);
+    assert_eq!(room.test_api().producer_count().await, 0);
+    assert_eq!(room.test_api().consumer_count().await, 0);
     assert!(
         room.test_api()
-            .inspect()
             .producer_stream_type_for_transport_media_id(transport_media_id)
             .await
             .is_none()

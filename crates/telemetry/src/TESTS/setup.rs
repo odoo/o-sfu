@@ -237,12 +237,13 @@ fn json_test_config() -> TelemetryConfig {
     }
 }
 
-#[cfg(feature = "otel-tracing")]
 fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
     let resource = telemetry_resource_fields(&json_test_config(), 7);
+    #[cfg(feature = "otel-tracing")]
     let tracer_provider = SdkTracerProvider::builder().build();
+    #[cfg(feature = "otel-tracing")]
     let tracer = tracer_provider.tracer(TRACE_EXPORTER_NAME);
-    Registry::default()
+    let subscriber = Registry::default()
         .with(EnvFilter::new(DEFAULT_ENV_FILTER))
         .with(SpanFieldCaptureLayer)
         .with(
@@ -251,21 +252,8 @@ fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
                 .event_format(RuntimeJsonFormatter::new(resource))
                 .with_ansi(false)
                 .with_writer(writer),
-        )
-        .with(Some(OpenTelemetryLayer::new(tracer)))
-}
-
-#[cfg(not(feature = "otel-tracing"))]
-fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
-    let resource = telemetry_resource_fields(&json_test_config(), 7);
-    Registry::default()
-        .with(EnvFilter::new(DEFAULT_ENV_FILTER))
-        .with(SpanFieldCaptureLayer)
-        .with(
-            fmt_layer()
-                .fmt_fields(JsonFields::new())
-                .event_format(RuntimeJsonFormatter::new(resource))
-                .with_ansi(false)
-                .with_writer(writer),
-        )
+        );
+    #[cfg(feature = "otel-tracing")]
+    let subscriber = subscriber.with(Some(OpenTelemetryLayer::new(tracer)));
+    subscriber
 }

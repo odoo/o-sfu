@@ -103,7 +103,8 @@ fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
         .apply_join(user_id, UserPermissions::default(), test_sender())
         .expect("test user should join")
         .receipt
-        .connection_id
+        .transport_session_key
+        .connection_id()
 }
 
 fn set_test_user_ready(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
@@ -209,10 +210,7 @@ fn commit_test_publication_with_rtp(
         .commit_publication(
             ValidatedPublish {
                 session_key: state.transport_user_key(user_id, connection_id),
-                stream_id: intent.stream_id().clone(),
-                media_kind: intent.media_kind(),
-                policy: intent.policy(),
-                presence: None,
+                intent,
             },
             consumable_rtp_parameters,
             &[],
@@ -472,17 +470,23 @@ fn missing_consumer_setup_applies_video_cap_before_transport() {
         .plan_missing_consumers(&receiver, receiver_connection)
         .expect("receiver should remain current");
     assert_eq!(setups.len(), 2);
-    let selection = |source_id| {
+    let declared_active = |source_id| {
         setups
             .iter()
             .find(|setup| setup.target.source_id == source_id)
             .expect("published source should have a setup")
             .reservation
-            .selection()
+            .declared_activity()
+            .is_active()
     };
-    assert!(selection(readable).delivery_active());
+    assert!(declared_active(readable));
+    assert!(!declared_active(scalable));
     assert_eq!(
-        selection(scalable).policy_pause_reason(),
+        state
+            .topology
+            .source_selection_for_test(&receiver, scalable)
+            .expect("pending route should retain its policy selection")
+            .policy_pause_reason(),
         Some(PolicyPauseReason::VideoDownloadLimit)
     );
 }

@@ -112,12 +112,28 @@ fn packet_loop_state_prefers_latest_session_timeout_deadline() {
     insert_live_session(&mut state, &session_key);
     state.update_session_timeout(&session_key, Some(first_timeout));
     state.update_session_timeout(&session_key, Some(updated_timeout));
+    for _ in 0..512 {
+        state.mark_session_dirty(&session_key);
+        assert_eq!(
+            collect_ready_session_keys(&mut state, now),
+            vec![session_key.clone()]
+        );
+        state.update_session_timeout(&session_key, Some(updated_timeout));
+    }
 
+    assert_eq!(state.timeout_queue.len(), 2);
     assert_eq!(state.next_timeout_deadline(), Some(updated_timeout));
 
     let ready_sessions = collect_ready_session_keys(&mut state, now + Duration::from_millis(15));
     assert_eq!(ready_sessions.len(), 1);
     assert!(ready_sessions.contains(&session_key));
+    assert_eq!(state.next_timeout_deadline(), None);
+
+    state.update_session_timeout(&session_key, Some(updated_timeout));
+    assert_eq!(
+        collect_ready_session_keys(&mut state, now + Duration::from_millis(15)),
+        vec![session_key]
+    );
     assert_eq!(state.next_timeout_deadline(), None);
 }
 
@@ -139,7 +155,7 @@ fn packet_loop_state_deduplicates_repeated_dirty_session_marks_on_drain() {
 }
 
 #[test]
-fn packet_loop_state_clears_all_dirty_duplicates_for_removed_session() {
+fn packet_loop_state_clears_dirty_and_timeout_schedule_for_removed_session() {
     let mut state = PacketLoopState::default();
     let removed_session_key = transport_key_on_worker(1, 0, 35, UserId::Integer(35));
     let retained_session_key = transport_key_on_worker(1, 0, 36, UserId::Integer(36));
@@ -150,11 +166,13 @@ fn packet_loop_state_clears_all_dirty_duplicates_for_removed_session() {
     state.mark_session_dirty(&removed_session_key);
     state.mark_session_dirty(&retained_session_key);
     state.mark_session_dirty(&removed_session_key);
+    state.update_session_timeout(&removed_session_key, Some(now));
     state.clear_session_schedule(&removed_session_key);
 
     let ready_sessions = collect_ready_session_keys(&mut state, now);
 
     assert_eq!(ready_sessions, vec![retained_session_key]);
+    assert_eq!(state.next_timeout_deadline(), None);
 }
 
 #[test]

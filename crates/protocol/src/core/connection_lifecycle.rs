@@ -11,7 +11,7 @@
 
 use super::{
     Command, Commands, ConnectContext, ConnectionState, INITIAL_RECOVERY_DELAY_MS, ProtocolCore,
-    RECOVERY_TIMER_ID, empty_features, next_recovery_delay,
+    ProtocolPhase, RECOVERY_TIMER_ID, empty_features, next_recovery_delay,
 };
 use crate::{shared::RecordingState, signaling::WebSocketCloseCode};
 
@@ -99,8 +99,7 @@ pub(super) fn connect(
     let connect_url = url.clone();
     core.connect_context = Some(ConnectContext { url, jwt, room });
     core.recovery_delay_ms = INITIAL_RECOVERY_DELAY_MS;
-    core.phase
-        .apply_lifecycle_state(ConnectionState::Connecting);
+    core.phase = ProtocolPhase::Connecting;
     core.clear_runtime_state();
     core.clear_sticky_state();
     reset_public_state(&mut commands);
@@ -123,8 +122,7 @@ pub(super) fn disconnect(core: &mut ProtocolCore) -> Commands {
     ) {
         return Vec::new();
     }
-    core.phase
-        .apply_lifecycle_state(ConnectionState::Disconnected);
+    core.phase = ProtocolPhase::Disconnected;
     core.connect_context = None;
     core.recovery_delay_ms = INITIAL_RECOVERY_DELAY_MS;
     let mut commands = vec![Command::CancelTimer {
@@ -174,7 +172,7 @@ pub(super) fn on_ws_close(core: &mut ProtocolCore, close_code: u16) -> Commands 
         | WebSocketCloseCode::RoomFull),
     ) = WebSocketCloseCode::from_u16(close_code)
     {
-        core.phase.apply_lifecycle_state(ConnectionState::Closed);
+        core.phase = ProtocolPhase::Closed;
         core.connect_context = None;
         core.recovery_delay_ms = INITIAL_RECOVERY_DELAY_MS;
         let mut commands = core.teardown_runtime_state();
@@ -191,8 +189,7 @@ pub(super) fn on_ws_close(core: &mut ProtocolCore, close_code: u16) -> Commands 
     }
 
     if core.connect_context.is_none() {
-        core.phase
-            .apply_lifecycle_state(ConnectionState::Disconnected);
+        core.phase = ProtocolPhase::Disconnected;
         let mut commands = core.teardown_runtime_state();
         reset_public_state(&mut commands);
         commands.push(state_change(core.state(), None));
@@ -201,8 +198,7 @@ pub(super) fn on_ws_close(core: &mut ProtocolCore, close_code: u16) -> Commands 
 
     let scheduled_delay_ms = core.recovery_delay_ms;
     core.recovery_delay_ms = next_recovery_delay(scheduled_delay_ms);
-    core.phase
-        .apply_lifecycle_state(ConnectionState::Recovering);
+    core.phase = ProtocolPhase::Recovering;
     let mut commands = core.teardown_runtime_state();
     commands.push(Command::ClosePeerConnection);
     commands.push(state_change(core.state(), None));
@@ -236,8 +232,7 @@ pub(super) fn handle_recovery_timer(core: &mut ProtocolCore) -> Commands {
         return Vec::new();
     };
     let connect_url = connect_context.url.clone();
-    core.phase
-        .apply_lifecycle_state(ConnectionState::Connecting);
+    core.phase = ProtocolPhase::Connecting;
     let mut commands = vec![state_change(core.state(), None)];
     commands.push(Command::Connect { url: connect_url });
     commands

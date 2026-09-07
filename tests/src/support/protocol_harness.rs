@@ -1,9 +1,9 @@
-use std::{future::Future, time::Duration};
+use std::{collections::VecDeque, future::Future, time::Duration};
 
 use futures_util::SinkExt;
 use o_sfu_protocol::wire::{
-    AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, ClientResponse,
-    EnvelopeBatch, RequestId, ServerEnvelope, ServerMessage, ServerRequest, UserId, WelcomePayload,
+    AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, ClientResponse, RequestId,
+    ServerEnvelope, ServerMessage, ServerRequest, UserId, WelcomePayload,
 };
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::{self, protocol::frame::coding::CloseCode};
@@ -20,6 +20,7 @@ use super::{
 pub struct ProtocolWebSocketClient {
     websocket: TestWebSocket,
     rtc_peer: FakeRtcPeer,
+    pending_server_envelopes: VecDeque<ServerEnvelope>,
 }
 
 impl ProtocolWebSocketClient {
@@ -70,6 +71,7 @@ impl ProtocolWebSocketClient {
         Some(Self {
             websocket,
             rtc_peer: FakeRtcPeer::bind(0).await?,
+            pending_server_envelopes: VecDeque::new(),
         })
     }
 
@@ -132,18 +134,14 @@ impl ProtocolWebSocketClient {
     }
 
     pub async fn read_server_message(&mut self) -> Option<ServerMessage> {
-        let batch = self.read_server_batch().await?;
-        let envelope = batch.first()?.clone();
-        match ServerEnvelope::decode(envelope).ok()? {
+        match self.read_server_envelope().await? {
             ServerEnvelope::Message(message) => Some(message),
             ServerEnvelope::Request { .. } | ServerEnvelope::Response { .. } => None,
         }
     }
 
     pub async fn read_server_request(&mut self) -> Option<(RequestId, ServerRequest)> {
-        let batch = self.read_server_batch().await?;
-        let envelope = batch.first()?.clone();
-        match ServerEnvelope::decode(envelope).ok()? {
+        match self.read_server_envelope().await? {
             ServerEnvelope::Request {
                 request_id,
                 request,
@@ -171,8 +169,17 @@ impl ProtocolWebSocketClient {
         }
     }
 
-    async fn read_server_batch(&mut self) -> Option<EnvelopeBatch> {
-        read_protocol_batch(&mut self.websocket).await
+    async fn read_server_envelope(&mut self) -> Option<ServerEnvelope> {
+        if self.pending_server_envelopes.is_empty() {
+            // A rejected batch must not leave a decoded prefix for later reads.
+            self.pending_server_envelopes = read_protocol_batch(&mut self.websocket)
+                .await?
+                .into_iter()
+                .map(ServerEnvelope::decode)
+                .collect::<Result<_, _>>()
+                .ok()?;
+        }
+        self.pending_server_envelopes.pop_front()
     }
 }
 
@@ -223,3 +230,7 @@ pub async fn connect_protocol_pair(
     .await?;
     Some((first, second))
 }
+
+#[cfg(test)]
+#[path = "TESTS/protocol_harness.rs"]
+mod tests;

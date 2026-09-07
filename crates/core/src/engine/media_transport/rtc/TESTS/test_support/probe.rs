@@ -359,7 +359,6 @@ impl DebugProbe for ReceiverBweTargetProbe {
 
 #[cfg(any(test, feature = "testing-transport"))]
 pub struct RecordIncomingMediaProbe {
-    pub session_key: TransportSessionKey,
     pub transport_media_id: TransportMediaId,
     pub payload_bytes: usize,
     pub now: Instant,
@@ -367,26 +366,17 @@ pub struct RecordIncomingMediaProbe {
 
 #[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for RecordIncomingMediaProbe {
-    type Output = ();
+    type Output = bool;
 
     fn inspect(
         self,
         state: &mut PacketLoopState,
-        context: &WorkerCommandContext<'_>,
+        _context: &WorkerCommandContext<'_>,
     ) -> Self::Output {
-        if state
+        // Publication must register the counter before synthetic media reaches it.
+        state
             .record_incoming_bitrate(self.transport_media_id, self.now, self.payload_bytes)
-            .is_none()
-            && let Ok(mut bitrate) = context.bitrate_registry.lock()
-        {
-            let counter = bitrate.register_incoming_media(
-                &self.session_key,
-                self.transport_media_id,
-                self.now,
-            );
-            counter.record(self.now, self.payload_bytes);
-            state.register_incoming_bitrate_counter(self.transport_media_id, counter);
-        }
+            .is_some()
     }
 }
 

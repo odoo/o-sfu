@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 use o_sfu_router::{
-    MediaKind, negotiation::derive_consumable_rtp_parameters,
-    rtp::MediaStream as RouterRtpParameters,
+    negotiation::derive_consumable_rtp_parameters, rtp::MediaStream as RouterRtpParameters,
 };
 use tracing::warn;
 
-use super::super::super::{DeactivateIntentOutcome, Room, transition::StagedPublish};
+use super::{
+    super::super::{DeactivateIntentOutcome, transition::StagedPublish},
+    RoomTestApi,
+};
 use crate::engine::{
     ConnectionId, TestSourceKind, UserId,
     media_transport::{MediaTransport, TransportMediaId},
@@ -20,17 +22,11 @@ use crate::engine::{
 pub struct NegotiatedPublish {
     pub connection_id: ConnectionId,
     pub stream_type: TestSourceKind,
-    pub media_kind: MediaKind,
     pub transport_media_id: TransportMediaId,
     pub consumable_rtp_parameters: RouterRtpParameters,
 }
 
-#[derive(Clone, Copy)]
-pub struct RoomTestMedia<'a> {
-    pub(super) room: &'a Room,
-}
-
-impl RoomTestMedia<'_> {
+impl RoomTestApi<'_> {
     pub async fn publish_negotiated_track(
         self,
         user_id: &UserId,
@@ -55,26 +51,18 @@ impl RoomTestMedia<'_> {
         self,
         user_id: &UserId,
         stream_type: TestSourceKind,
-        media_kind: MediaKind,
         producer_rtp_parameters: RouterRtpParameters,
         media_transport: &MediaTransport,
     ) -> Option<UserStreamId> {
         let intent = source_publish_intent_for_source(stream_type);
-        self.publish_intent(
-            user_id,
-            &intent,
-            media_kind,
-            producer_rtp_parameters,
-            media_transport,
-        )
-        .await
+        self.publish_intent(user_id, &intent, producer_rtp_parameters, media_transport)
+            .await
     }
 
     pub async fn publish_intent(
         self,
         user_id: &UserId,
         intent: &SourcePublishIntent,
-        media_kind: MediaKind,
         producer_rtp_parameters: RouterRtpParameters,
         media_transport: &MediaTransport,
     ) -> Option<UserStreamId> {
@@ -103,7 +91,7 @@ impl RoomTestMedia<'_> {
             .transport_user_key(user_id, publisher_connection_id)
             .await;
         let transport_media_id = match media_transport
-            .publish_media(&session_key, media_kind, &producer_rtp_parameters)
+            .publish_media(&session_key, intent.media_kind(), &producer_rtp_parameters)
             .await
         {
             Ok(id) => id,
@@ -132,13 +120,7 @@ impl RoomTestMedia<'_> {
         stream_id: &UserStreamId,
         media_transport: &MediaTransport,
     ) -> bool {
-        let Some(connection_id) = self
-            .room
-            .test_api()
-            .inspect()
-            .user_connection_id(user_id)
-            .await
-        else {
+        let Some(connection_id) = self.user_connection_id(user_id).await else {
             return false;
         };
         self.room
@@ -155,13 +137,7 @@ impl RoomTestMedia<'_> {
         intents: &BTreeMap<UserStreamId, SourceSubscriptionIntent>,
         media_transport: &MediaTransport,
     ) -> bool {
-        let Some(connection_id) = self
-            .room
-            .test_api()
-            .inspect()
-            .user_connection_id(receiver_id)
-            .await
-        else {
+        let Some(connection_id) = self.user_connection_id(receiver_id).await else {
             return false;
         };
         self.room

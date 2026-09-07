@@ -27,7 +27,7 @@ pub(super) use o_sfu_protocol::wire::{
 };
 pub(super) use o_sfu_rfc::rtp::CodecName;
 pub(super) use o_sfu_telemetry::diagnostics::{
-    DiagnosticsActiveSpeakerReason, DiagnosticsActiveSpeakerState,
+    DiagnosticsActiveSpeakerReason, DiagnosticsActiveSpeakerState, DiagnosticsVideoLayoutRole,
 };
 pub(super) use o_sfu_tests::support::{
     TEST_ROOM_KEY, TestResult, TestServer, create_room,

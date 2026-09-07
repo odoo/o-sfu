@@ -16,9 +16,7 @@ use super::{
     DeclaredConsumerSetup, PendingConsumerRouteView, PendingConsumerSetup, PublishedSource,
     ReceiverRouteActivity, SubscriptionKey, ValidatedPublish,
     producer::{PublicationCommitError, allocate_source_descriptor},
-    route_graph::{
-        CurrentPublication, PendingUpgrade, RelayRouteEffect, RemovedRoutes, RouteGraph,
-    },
+    route_graph::{CurrentPublication, PendingUpgrade, RemovedRoutes, RouteGraph},
     source_index::PublishedSources,
 };
 use crate::engine::{
@@ -80,8 +78,6 @@ pub struct RoomTopology {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedTransportReceipt {
-    /// Room-local connection identity used to reject stale operations.
-    pub connection_id: ConnectionId,
     /// Transport identity resolved from the committed media worker placement.
     pub transport_session_key: TransportSessionKey,
 }
@@ -98,7 +94,7 @@ pub struct SessionPlacementCommit {
 }
 
 #[derive(Debug)]
-pub(super) struct ConsumerActivityCommit {
+pub(in crate::engine::room) struct ConsumerActivityCommit {
     pub(super) update: Option<ReceiverRouteActivity>,
     pub(super) relay_effects: Vec<TransportRelayRouteEffect>,
 }
@@ -160,22 +156,6 @@ impl RoomTopology {
     ///
     /// Use [`Self::committed_transport_user_key`] for stale callbacks or teardown
     /// races where the placement may already be retired.
-    ///
-    /// # Lookup choice
-    ///
-    /// Receiver work may carry a stale connection while relay effects from
-    /// committed graph state use the strict lookup:
-    ///
-    /// ```rust,ignore
-    /// let Some(consumer_session) =
-    ///     topology.committed_transport_user_key(user_id.clone(), connection_id)
-    /// else {
-    ///     return Vec::new();
-    /// };
-    ///
-    /// let source_session =
-    ///     topology.transport_user_key(route.source_user, route.source_connection);
-    /// ```
     ///
     /// # Panics
     ///
@@ -365,7 +345,6 @@ impl RoomTopology {
         if detached {
             self.invalidate_video_allocation();
         }
-        let relays = self.resolve_relay_effects(relays);
         for consumer in consumers {
             if let Some(error) = self.router.remove_consumer(consumer).err() {
                 error!(?consumer, ?error, "failed to remove declined room consumer");
@@ -399,19 +378,6 @@ impl RoomTopology {
         source_id: PublishedSourceId,
     ) -> Option<ConsumerSourceSelection> {
         self.route_graph.selection(key, source_id)
-    }
-
-    /// Ignores empty updates and applies `active` to an attached selection.
-    pub(in crate::engine::room) fn merge_subscription_intent(
-        &mut self,
-        key: SubscriptionKey,
-        intent: SourceSubscriptionIntent,
-    ) {
-        if intent.is_empty() {
-            return;
-        }
-        self.route_graph.merge_intent(key, intent);
-        self.invalidate_video_allocation();
     }
 
     /// Returns merged receiver intent or the default for a missing subscription.
@@ -658,63 +624,6 @@ impl RoomTopology {
             )
     }
 
-    /// # Panics
-    ///
-    /// Panics if `effects` violates the topology invariant that every relay source
-    /// has a committed router placement.
-    fn resolve_relay_effects(
-        &self,
-        effects: impl IntoIterator<Item = RelayRouteEffect>,
-    ) -> Vec<TransportRelayRouteEffect> {
-        effects
-            .into_iter()
-            .map(|effect| {
-                let route = effect.route;
-                TransportRelayRouteEffect {
-                    source: TransportSourceKey::new(
-                        self.transport_user_key(route.source_user, route.source_connection),
-                        route.source_media,
-                    ),
-                    target_media_worker_id: route.target_worker,
-                    action: effect.action,
-                }
-            })
-            .collect()
-    }
-
-    /// Resolves relay effects while retaining a displaced source's transport key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any non-displaced relay source lacks a committed placement.
-    fn resolve_relay_effects_with_displaced(
-        &self,
-        effects: impl IntoIterator<Item = RelayRouteEffect>,
-        user_id: &UserId,
-        session_key: &TransportSessionKey,
-    ) -> Vec<TransportRelayRouteEffect> {
-        effects
-            .into_iter()
-            .map(|effect| {
-                let route = effect.route;
-                let source_session_key = if route.source_user == *user_id
-                    && route.source_connection == session_key.connection_id()
-                {
-                    // Current lookup now resolves the replacement. Use the key
-                    // captured before displacement for this source's cleanup.
-                    session_key.clone()
-                } else {
-                    self.transport_user_key(route.source_user, route.source_connection)
-                };
-                TransportRelayRouteEffect {
-                    source: TransportSourceKey::new(source_session_key, route.source_media),
-                    target_media_worker_id: route.target_worker,
-                    action: effect.action,
-                }
-            })
-            .collect()
-    }
-
     /// Advances the revision only when the exact source connection changes activity.
     ///
     /// Returns `None` when the source is missing, the connection is stale or the
@@ -766,11 +675,6 @@ impl RoomTopology {
     /// expected replacement target is no longer committed. Returns
     /// [`SessionPlacementRejection::Router`] when the router rejects the new
     /// connection or placement.
-    ///
-    /// # Panics
-    ///
-    /// Panics when existing relay state refers to another uncommitted source
-    /// placement.
     pub fn commit_session_placement(
         &mut self,
         user_id: &UserId,
@@ -797,7 +701,6 @@ impl RoomTopology {
         let session_key =
             self.transport_session_key(user_id.clone().into(), connection_id, media_worker);
         let receipt = CommittedTransportReceipt {
-            connection_id,
             transport_session_key: session_key,
         };
         let replacement_transport_plan = previous_session_key.as_ref().map_or_else(
@@ -814,13 +717,8 @@ impl RoomTopology {
                     routes, mut relays, ..
                 } = removed_sources;
                 relays.extend(receiver_relays);
-                let relay_effects = self.resolve_relay_effects_with_displaced(
-                    relays,
-                    user_id,
-                    replaced_session_key,
-                );
                 let teardown = Self::media_teardowns([], routes).chain([close_session]);
-                RoomTransportPlan::from_relays_and_teardown(relay_effects, teardown)
+                RoomTransportPlan::from_relays_and_teardown(relays, teardown)
             },
         );
         if previous_session_key.is_some() {
@@ -833,21 +731,15 @@ impl RoomTopology {
     }
 
     /// Returns the cleanup plan even if router removal fails.
-    ///
-    /// # Panics
-    ///
-    /// Panics when detached relay state refers to an uncommitted source placement.
     pub fn remove_session(&mut self, user_id: &UserId) -> RoomTransportPlan {
         let (sources, mut removed) = self.detach_user_sources(user_id);
         removed.extend(self.route_graph.remove_receiver(user_id));
         self.invalidate_video_allocation();
         let teardown = Self::media_teardowns(sources, removed.routes);
-        // Resolve relay keys before router removal makes source placement unavailable.
-        let relay_effects = self.resolve_relay_effects(removed.relays);
         if let Some(error) = self.router.remove_session(user_id).err() {
             error!(?user_id, ?error, "failed to remove user from room router");
         }
-        RoomTransportPlan::from_relays_and_teardown(relay_effects, teardown)
+        RoomTransportPlan::from_relays_and_teardown(removed.relays, teardown)
     }
 
     /// Selects MID from the transport declaration, negotiated RTP MID then the
@@ -877,7 +769,7 @@ impl RoomTopology {
             mid,
         } = setup;
         let active = selection.delivery_active();
-        let declared_active = reservation.selection().delivery_active();
+        let declared_active = reservation.declared_activity().is_active();
         let committed_mid = mid.unwrap_or_else(|| {
             rtp.mid()
                 .map_or_else(|| consumer.to_string(), ToOwned::to_owned)
@@ -900,7 +792,7 @@ impl RoomTopology {
                 }
             });
         if let Err(relays) = result {
-            return Err((route, self.resolve_relay_effects(relays)));
+            return Err((route, relays));
         }
         self.invalidate_video_allocation();
         Ok(CommittedConsumerSetup {
@@ -935,10 +827,8 @@ impl RoomTopology {
         let relays = if source_worker == target_worker {
             Vec::new()
         } else {
-            let relays =
-                self.route_graph
-                    .reserve_relay(&reservation, &target, target_worker, relay_active);
-            self.resolve_relay_effects(relays)
+            self.route_graph
+                .reserve_relay(&reservation, &target, target_worker, relay_active)
         };
         Some(PendingConsumerSetup {
             target,
@@ -955,40 +845,44 @@ impl RoomTopology {
         &mut self,
         setup: PendingConsumerSetup,
     ) -> Vec<TransportRelayRouteEffect> {
-        let relays = self.route_graph.release_consumer_setup(setup.reservation);
-        self.resolve_relay_effects(relays)
+        self.route_graph.release_consumer_setup(setup.reservation)
     }
 
-    /// Returns `None` when the source is missing, its attachment changed or the
-    /// committed consumer belongs to another receiver connection.
-    pub(super) fn set_consumer_activity(
+    /// Merges sparse intent before projecting activity to an attached route.
+    ///
+    /// Empty updates have no effect. Intent survives absent publications and
+    /// unready receivers. Returns no activity work for layout-only updates,
+    /// missing sources, changed attachments or displaced consumer connections.
+    pub(in crate::engine::room) fn apply_subscription_intent(
         &mut self,
-        user_id: &UserId,
+        key: &SubscriptionKey,
         connection_id: ConnectionId,
-        target_user_id: &UserId,
-        stream_id: &UserStreamId,
-        active: bool,
+        intent: SourceSubscriptionIntent,
         receiver_deafened: bool,
     ) -> Option<ConsumerActivityCommit> {
-        let key = SubscriptionKey::new(user_id, target_user_id, stream_id);
-        let source_id = self.source_id_for_owner_stream(target_user_id, stream_id)?;
+        if intent.is_empty() {
+            return None;
+        }
+        self.route_graph.merge_intent(key.clone(), intent);
+        self.invalidate_video_allocation();
+        let active = intent.active()?;
+        let source_id = self.source_id_for_owner_stream(&key.publisher, &key.stream)?;
         // Deafening pauses audio delivery without replacing explicit receiver intent.
-        let policy_pause_reason = (receiver_deafened
+        let policy_pause_reason = (active
+            && receiver_deafened
             && self
                 .source_descriptor(source_id)
                 .is_some_and(|source| source.media_kind() == MediaKind::Audio))
         .then_some(PolicyPauseReason::ReceiverDeafened);
         let relay_effects = self.route_graph.set_activity(
-            &key,
+            key,
             source_id,
             connection_id,
             active,
             policy_pause_reason,
         )?;
-        self.invalidate_video_allocation();
-        let relay_effects = self.resolve_relay_effects(relay_effects);
         let update = self
-            .committed_consumer_route_for_key(&key)
+            .committed_consumer_route_for_key(key)
             .filter(|route| route.route.consumer_session_key().connection_id() == connection_id)
             .map(|route| {
                 ReceiverRouteActivity::new(route.target(), route.selection.delivery_active())

@@ -51,6 +51,7 @@ async fn fake_rtc_peers_rebootstrap_user_replacement_without_stale_media_routes(
 
     s::require_some(
         replacement
+            .rtc()
             .wait_until_connected(s::Duration::from_secs(5))
             .await,
         "replacement peer should reach ready state",
@@ -178,6 +179,7 @@ async fn fake_rtc_replaced_socket_cannot_finish_a_queued_publish_negotiation() -
 
     s::require_some(
         replacement
+            .rtc()
             .wait_until_connected(s::Duration::from_secs(5))
             .await,
         "replacement peer should reach ready state",

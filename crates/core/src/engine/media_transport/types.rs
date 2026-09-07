@@ -745,10 +745,6 @@ impl ReceiverBweTargetUpdate {
     pub const fn target(&self) -> Bitrate {
         self.target
     }
-
-    pub const fn set_target(&mut self, target: Bitrate) {
-        self.target = target;
-    }
 }
 
 /// server-authored SDP offer plus upload metadata for the client

@@ -52,11 +52,6 @@ pub struct ForwardedPacket {
     /// once this is known it is cached so later media-registry updates or relay
     /// delivery cannot bind the packet to a different source
     src_media: Option<TransportMediaId>,
-    /// resolved RID recovered from the packet header or from the worker SSRC binding
-    ///
-    /// relay clones carry this value so a target worker can apply the same
-    /// route-control RID without owning the source worker registry
-    resolved_source_rid: Option<Rid>,
     /// packet-scoped source observations shared by stats, route planning and egress
     facts: Option<PacketFacts>,
     /// whether source-worker side effects still belong to this packet
@@ -152,7 +147,6 @@ impl ForwardedPacket {
         Self {
             source: ForwardedPacketSource::Local(source_session_handle),
             src_media: None,
-            resolved_source_rid: None,
             facts: None,
             visits_origin_sinks: true,
             was_repair,
@@ -250,14 +244,12 @@ impl ForwardedPacket {
         self.facts.as_ref().map(|facts| &facts.codec)
     }
 
-    fn compute_route_control_rid(&mut self, state: &PacketLoopState) -> Option<Rid> {
+    fn compute_route_control_rid(&self, state: &PacketLoopState) -> Option<Rid> {
         let extensions = self.route_control_extension_values();
-        let extension_rid = extensions.rid.or(extensions.rid_repair);
-        let rid = extension_rid
-            .or(self.resolved_source_rid)
-            .or_else(|| self.route_control_rid_from_ssrc(state));
-        self.resolved_source_rid = rid;
-        rid
+        extensions
+            .rid
+            .or(extensions.rid_repair)
+            .or_else(|| self.route_control_rid_from_ssrc(state))
     }
 
     pub(super) fn route_control_ssrc(&self) -> Ssrc {
@@ -278,8 +270,8 @@ impl ForwardedPacket {
     /// the caller supplies the resolved source media id because relay targets
     /// must not depend on the target worker being able to rediscover source
     /// identity from local producer registries
-    /// cached facts and resolved RID are preserved so the receiving worker can
-    /// reuse source observations
+    /// cached facts preserve the resolved RID so the receiving worker can reuse
+    /// source observations
     pub(super) fn share_for_relay(
         &self,
         state: &PacketLoopState,
@@ -294,7 +286,6 @@ impl ForwardedPacket {
         Some(Self {
             source: ForwardedPacketSource::Relayed(self.source.session_key(state)?.clone()),
             src_media: Some(src_media),
-            resolved_source_rid: self.resolved_source_rid,
             facts: self.facts,
             visits_origin_sinks: false,
             was_repair: self.was_repair,

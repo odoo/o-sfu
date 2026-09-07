@@ -93,6 +93,7 @@ async fn assert_replacement_subscriber_inherits_muted_audio_download(
     assert_departure_message_protocol(publisher, UserId::Integer(83)).await;
     assert!(
         replacement
+            .rtc()
             .wait_until_connected(super::Duration::from_secs(5))
             .await
             .is_some()

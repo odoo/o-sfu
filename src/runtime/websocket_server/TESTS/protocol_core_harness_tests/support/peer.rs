@@ -33,7 +33,7 @@ pub(crate) struct ProtocolHarnessPeer {
     pub(crate) pending_negotiations: VecDeque<PendingHarnessNegotiation>,
     pub(crate) available_features: AvailableFeatures,
     pub(crate) recording_state: RecordingState,
-    rtc_peer_factory: Option<ProtocolHarnessRtcPeerFactory>,
+    rtc_peer_factory: ProtocolHarnessRtcPeerFactory,
     rtc_peer: Option<ProtocolHarnessRtcPeer>,
     pub(crate) state_changes: Vec<BundleStateChange>,
     pub(crate) timers: BTreeMap<u32, u32>,
@@ -60,7 +60,7 @@ impl Default for ProtocolHarnessPeer {
                 video_recording: false,
             },
             recording_state: RecordingState::default(),
-            rtc_peer_factory: Some(rtc_peer_factory),
+            rtc_peer_factory,
             rtc_peer: rtc_peer_factory.build_peer(),
             state_changes: Vec::new(),
             timers: BTreeMap::new(),
@@ -73,13 +73,7 @@ impl Default for ProtocolHarnessPeer {
 
 impl ProtocolHarnessPeer {
     pub(crate) fn with_real_rtc_negotiation(port: u16) -> Option<Self> {
-        let rtc_peer_factory =
-            ProtocolHarnessRtcPeerFactory::new(port, default_protocol_harness_rtc);
-        Some(Self {
-            rtc_peer_factory: Some(rtc_peer_factory),
-            rtc_peer: Some(rtc_peer_factory.build_peer()?),
-            ..Self::default()
-        })
+        Self::with_custom_rtc_negotiation(port, default_protocol_harness_rtc)
     }
 
     pub(crate) fn with_custom_rtc_negotiation(
@@ -88,7 +82,7 @@ impl ProtocolHarnessPeer {
     ) -> Option<Self> {
         let rtc_peer_factory = ProtocolHarnessRtcPeerFactory::new(port, build_rtc);
         Some(Self {
-            rtc_peer_factory: Some(rtc_peer_factory),
+            rtc_peer_factory,
             rtc_peer: Some(rtc_peer_factory.build_peer()?),
             ..Self::default()
         })
@@ -261,10 +255,8 @@ impl ProtocolHarnessPeer {
                     sdp,
                     upload_slots: _,
                 } => {
-                    if kind == NegotiationKind::Offer
-                        && let Some(factory) = self.rtc_peer_factory
-                    {
-                        self.rtc_peer = factory.build_peer();
+                    if kind == NegotiationKind::Offer {
+                        self.rtc_peer = self.rtc_peer_factory.build_peer();
                         let _ = self.rtc_peer.as_ref()?;
                     }
                     self.handle_negotiation_command(request_id, kind, sdp)?

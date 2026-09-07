@@ -194,7 +194,6 @@ async fn metrics_route_completes_during_room_mutations() -> TestResult {
             let (sender, _receiver) = test_outbound_sender(&test_state.state);
             assert!(
                 room.test_api()
-                    .lifecycle()
                     .join_user(user_id.clone(), None, UserPermissions::default(), sender)
                     .await
                     .is_ok()

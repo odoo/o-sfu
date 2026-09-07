@@ -148,7 +148,7 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
         mut subscriber_remote,
         mut subscriber_rx,
     } = Box::pin(build_consumer_answer_fixture()).await;
-    let inspect = room.test_api().inspect();
+    let inspect = room.test_api();
     let transport = media_transport.test_api();
     assert_eq!(transport.source_relay_target_count(&source).await, 1);
     assert_eq!(router_consumer_dependency_count(&room).await, 1);
@@ -194,7 +194,6 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
 
     assert!(
         room.test_api()
-            .lifecycle()
             .refresh_session(&subscriber_user_id, &media_transport)
             .await
     );
@@ -311,7 +310,7 @@ async fn staged_publish_cancellation_creates_one_cleanup_offer() {
             .is_none()
     );
     fixture.assert_staged(video, false).await;
-    assert_eq!(fixture.room.test_api().inspect().producer_count().await, 0);
+    assert_eq!(fixture.room.test_api().producer_count().await, 0);
 }
 
 #[tokio::test]
@@ -320,7 +319,7 @@ async fn committed_publication_pauses_and_resumes_without_an_offer() {
     establish_session(&mut fixture.session, &mut fixture.remote).await;
     let video = TestSourceKind::ScalableVideo;
     publish_source(&mut fixture, video).await;
-    let inspect = fixture.room.test_api().inspect();
+    let inspect = fixture.room.test_api();
     let source_id = inspect
         .source_id_for_owner_stream(&fixture.user_id, video)
         .await
@@ -372,14 +371,7 @@ async fn media_session_close_rolls_back_staged_publish_and_removes_room_session(
     assert!(fixture.session.close().await);
 
     fixture.assert_staged(video, false).await;
-    assert!(
-        !fixture
-            .room
-            .test_api()
-            .inspect()
-            .has_session(&fixture.user_id)
-            .await
-    );
+    assert!(!fixture.room.test_api().has_session(&fixture.user_id).await);
 }
 
 #[tokio::test]
@@ -396,7 +388,7 @@ async fn media_session_close_is_idempotent_after_completed_cleanup() {
     assert!(session.close().await);
     assert!(!session.close().await);
 
-    assert!(!room.test_api().inspect().has_session(&user_id).await);
+    assert!(!room.test_api().has_session(&user_id).await);
 }
 
 #[tokio::test]
@@ -432,7 +424,6 @@ async fn replacement_drains_staged_publish_before_stale_close() {
         fixture
             .room
             .test_api()
-            .inspect()
             .user_connection_id(&fixture.user_id)
             .await,
         Some(replacement.connection_id())
@@ -484,7 +475,7 @@ impl PublisherFixture {
 
     async fn assert_committed(&self, source: TestSourceKind, producer_count: usize) {
         let stream_id = stream_id_for_source(source);
-        let inspect = self.room.test_api().inspect();
+        let inspect = self.room.test_api();
         assert!(inspect.is_stream_published(&self.user_id, &stream_id).await);
         assert_eq!(inspect.producer_count().await, producer_count);
         self.assert_staged(source, false).await;
@@ -595,7 +586,6 @@ async fn build_consumer_answer_fixture() -> ConsumerAnswerFixture {
     let source_media_id = publisher
         .room
         .test_api()
-        .inspect()
         .first_published_transport_media_id()
         .await
         .expect("published source should expose its transport media id");

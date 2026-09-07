@@ -53,9 +53,8 @@ pub(in crate::engine::media_transport::rtc) fn worker_close_session(
     state
         .remote_addr_demux
         .forget_user_remote_candidates(session_key);
-    let removed_media_handles = state.remove_session_media_handles(session_key);
-    for (src_media, _handle) in &removed_media_handles {
-        remove_source_route(state, *src_media);
+    for src_media in state.remove_session_media_handles(session_key) {
+        remove_source_route(state, src_media);
     }
     state.routes.remove_dsts_for_session(session_key);
     let mid_registry = &state.mid_registry;

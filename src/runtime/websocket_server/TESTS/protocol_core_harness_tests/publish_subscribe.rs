@@ -17,11 +17,9 @@ async fn protocol_core_projects_camera_publish_without_presence_as_active() -> T
 
     require_some(
         room.test_api()
-            .media()
             .publish_intent(
                 &UserId::Integer(53),
                 &intent,
-                MediaKind::Video,
                 sample_video_rtp_parameters("cam-0"),
                 &server.media_transport,
             )
@@ -117,7 +115,6 @@ async fn protocol_handshake_uses_answer_derived_client_capabilities_for_user_sta
         loop {
             if let Some(codec_names) = room
                 .test_api()
-                .inspect()
                 .session_client_rtp_codec_names(&UserId::Integer(75))
                 .await
             {

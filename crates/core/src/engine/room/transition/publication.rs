@@ -90,7 +90,7 @@ impl RoomUserOperation<'_> {
             state.staged_publishes.contains(
                 self.user_id,
                 self.connection_id,
-                &validated_descriptor.stream_id,
+                validated_descriptor.intent.stream_id(),
             )
         };
         if is_duplicate {
@@ -101,7 +101,7 @@ impl RoomUserOperation<'_> {
             .media_transport
             .publish_media(
                 &validated_descriptor.session_key,
-                validated_descriptor.media_kind,
+                validated_descriptor.intent.media_kind(),
                 &rtp_parameters,
             )
             .await
@@ -111,8 +111,8 @@ impl RoomUserOperation<'_> {
                 warn!(
                     user_id = ?self.user_id,
                     connection_id = ?self.connection_id,
-                    stream_id = %validated_descriptor.stream_id,
-                    media_kind = ?validated_descriptor.media_kind,
+                    stream_id = %validated_descriptor.intent.stream_id(),
+                    media_kind = ?validated_descriptor.intent.media_kind(),
                     "failed to stage negotiated publish stream"
                 );
                 return Err(error);

@@ -65,10 +65,6 @@ impl Room {
     }
 
     /// Executes context-enabled [`RoomEffects`] before returning the committed receipt
-    ///
-    /// # Panics
-    ///
-    /// Panics when existing relay state refers to an uncommitted source placement.
     pub(super) async fn finalize_admission(
         &self,
         commit: JoinCommit,
@@ -81,7 +77,7 @@ impl Room {
             event = telemetry_event::USER_JOINED,
             room_id = self.uuid(),
             user_id = %session.user_id().path_segment(),
-            connection_id = receipt.connection_id.as_u64(),
+            connection_id = session.connection_id().as_u64(),
             media_worker_id = session.media_worker_id().as_usize(),
             "user joined room"
         );
@@ -89,10 +85,6 @@ impl Room {
     }
 
     /// Returns `true` only when `connection_id` removed the current room user.
-    ///
-    /// # Panics
-    ///
-    /// Panics when detached relay state refers to an uncommitted source placement.
     pub(crate) async fn remove_user(
         &self,
         user_id: &UserId,
@@ -109,10 +101,6 @@ impl Room {
 
     /// Returns `true` only when `connection_id` was current. A stale committed
     /// placement may still be retired before returning `false`.
-    ///
-    /// # Panics
-    ///
-    /// Panics when detached relay state refers to an uncommitted source placement.
     pub async fn remove_user_with_teardown(
         &self,
         user_id: &UserId,
@@ -123,28 +111,24 @@ impl Room {
             let mut state = self.state.write().await;
             state.close_connection(user_id, connection_id)
         };
-        let removed_current_user = matches!(&commit, Some(ConnectionCloseCommit::Current { .. }));
-        let closed = commit.as_ref().and_then(|commit| match commit {
+        let Some(commit) = commit else {
+            return false;
+        };
+        let (removed_current_user, media_worker_id) = match &commit {
             ConnectionCloseCommit::Current {
-                user_id,
-                connection_id,
-                session_teardown,
-                ..
-            } => Some((
-                user_id.clone(),
-                *connection_id,
+                session_teardown, ..
+            } => (
+                true,
                 session_teardown
                     .as_ref()
                     .map(|teardown| teardown.session_key().media_worker_id()),
-            )),
-            ConnectionCloseCommit::StalePlacement { .. } => None,
-        });
-        if let Some(commit) = commit {
-            RoomEffects::from_connection_close(commit)
-                .execute(self, context)
-                .await;
-        }
-        if let Some((user_id, connection_id, media_worker_id)) = closed {
+            ),
+            ConnectionCloseCommit::StalePlacement { .. } => (false, None),
+        };
+        RoomEffects::from_connection_close(commit)
+            .execute(self, context)
+            .await;
+        if removed_current_user {
             info!(
                 event = telemetry_event::USER_CLOSED,
                 room_id = self.uuid(),
@@ -221,8 +205,7 @@ impl Room {
     ///
     /// # Panics
     ///
-    /// Panics if a current room user has no committed router placement or detached
-    /// relay state refers to an uncommitted source placement.
+    /// Panics if a current room user has no committed router placement.
     pub(crate) async fn disconnect_users(
         &self,
         user_ids: &[UserId],
@@ -236,8 +219,7 @@ impl Room {
     ///
     /// # Panics
     ///
-    /// Panics if a current room user has no committed router placement or detached
-    /// relay state refers to an uncommitted source placement.
+    /// Panics if a current room user has no committed router placement.
     pub async fn disconnect_users_with_teardown(
         &self,
         user_ids: &[UserId],

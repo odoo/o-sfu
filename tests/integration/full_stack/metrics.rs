@@ -23,7 +23,9 @@ async fn fake_rtc_peer_room_stats_and_gauges_follow_lifecycle() -> s::TestResult
     assert!(mt::wait_for_room_gauges(&server, expected).await);
     for peer in [&mut publisher, &mut subscriber] {
         s::require_some(
-            peer.wait_until_connected(s::Duration::from_secs(5)).await,
+            peer.rtc()
+                .wait_until_connected(s::Duration::from_secs(5))
+                .await,
             "peer should reach ready state",
         )?;
     }

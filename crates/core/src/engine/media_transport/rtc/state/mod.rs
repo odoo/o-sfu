@@ -47,10 +47,10 @@ use super::{
     codec::RepairSummary,
     demux::RemoteAddrDemux,
     local_send_rewrite::ConsumerStreamStore,
-    media_registry::SessionMediaRegistry,
+    media_registry::{MediaStore, SessionMediaRegistry},
     packet_loop::{RtcUdpSocket, UdpIngress},
     route_table::{RidReadinessScratch, RouteTable},
-    slots::{MediaStore, SessionHandle, SessionStore},
+    slots::{SessionHandle, SessionStore},
 };
 pub use crate::engine::media_transport::TransportSessionHealth;
 use crate::{
@@ -81,37 +81,6 @@ pub(super) struct SharedRtcSocket {
     pub(super) ingress: UdpIngress,
     /// public candidate tuple inserted into local SDP for sessions on this worker
     pub(super) candidate_addr: SocketAddr,
-}
-
-fn pop_due_deadline<T>(
-    heap: &mut BinaryHeap<Reverse<T>>,
-    now: Instant,
-    mut deadline: impl FnMut(&T) -> Instant,
-) -> Option<T>
-where
-    T: Ord,
-{
-    if !matches!(heap.peek(), Some(Reverse(entry)) if deadline(entry) <= now) {
-        return None;
-    }
-    heap.pop().map(|Reverse(entry)| entry)
-}
-
-fn next_live_deadline<T>(
-    heap: &mut BinaryHeap<Reverse<T>>,
-    mut live: impl FnMut(&T) -> bool,
-    mut deadline: impl FnMut(&T) -> Instant,
-) -> Option<Instant>
-where
-    T: Ord,
-{
-    loop {
-        let Reverse(entry) = heap.peek()?;
-        if live(entry) {
-            return Some(deadline(entry));
-        }
-        heap.pop();
-    }
 }
 
 /// worker-local [`str0m::Rtc`] state for one transport session
@@ -157,6 +126,8 @@ pub(super) struct RtcSessionState {
     pub(super) dtls_started: bool,
     /// scheduler bit that prevents duplicate dirty-session wakeups
     pub(super) packet_loop_dirty: bool,
+    /// Current str0m deadline used to reject stale timeout heap entries.
+    pub(super) next_timeout: Option<Instant>,
     /// staged SDP state owned by the worker-local offer and answer paths
     pub(super) sdp_negotiation: SessionSdpNegotiationState,
     /// monotonic RTP identity state keyed by consumer transport media
@@ -256,10 +227,8 @@ impl RtcpIngressBudget {
 pub(super) struct SessionSdpNegotiationState {
     /// initial audio and video MIDs reused across repeated bootstrap offer attempts
     pub(super) bootstrap_mids: Vec<Mid>,
-    /// `str0m` token that must be accepted by the next remote answer
-    pub(super) pending_offer: Option<SdpPendingOffer>,
-    /// repair payload pairs advertised by `pending_offer`, grouped by m-line
-    pub(super) pending_offer_repair: Option<RepairSummary>,
+    /// Pending str0m changes paired with the repair mappings offered for them.
+    pub(super) pending_offer: Option<PendingSessionOffer>,
     /// follow-up local offer prepared by media lifecycle and not yet delivered
     pub(super) staged_offer: Option<Box<SdpOffer>>,
     pub(super) staged_offer_upload_slots: Vec<SessionUploadSlot>,
@@ -281,10 +250,31 @@ pub(super) struct SessionSdpNegotiationState {
 }
 
 impl SessionSdpNegotiationState {
-    pub(super) fn stage_offer(&mut self, offer: SdpOffer, pending_offer: SdpPendingOffer) {
-        self.pending_offer_repair = Some(RepairSummary::from_offer(&offer));
-        self.pending_offer = Some(pending_offer);
+    /// Replaces the undelivered offer and the upload metadata retained through its answer.
+    pub(super) fn stage_offer(
+        &mut self,
+        offer: SdpOffer,
+        pending_offer: SdpPendingOffer,
+        upload_slots: Vec<SessionUploadSlot>,
+    ) {
+        self.pending_offer = Some(PendingSessionOffer::new(&offer, pending_offer));
         self.staged_offer = Some(Box::new(offer));
+        self.staged_offer_upload_slots = upload_slots;
+    }
+}
+
+/// A str0m answer token and the repair mappings from its corresponding local offer.
+pub(super) struct PendingSessionOffer {
+    pub(super) token: SdpPendingOffer,
+    pub(super) repair: RepairSummary,
+}
+
+impl PendingSessionOffer {
+    pub(super) fn new(offer: &SdpOffer, token: SdpPendingOffer) -> Self {
+        Self {
+            token,
+            repair: RepairSummary::from_offer(offer),
+        }
     }
 }
 
@@ -325,9 +315,8 @@ pub(super) struct PacketLoopState {
     pub(super) mid_registry: MediaStore,
     /// sessions that must be polled before the worker waits again
     pub(super) dirty_sessions: Vec<SessionHandle>,
-    /// latest `str0m` timeout deadline per live session handle
-    pub(super) session_timeouts: BTreeMap<SessionHandle, Instant>,
-    /// timeout heap that may contain stale entries invalidated by `session_timeouts`
+    /// Immutable deadline snapshots validated against the current session generation
+    /// and [`RtcSessionState::next_timeout`].
     pub(super) timeout_queue: BinaryHeap<Reverse<(Instant, SessionHandle)>>,
     /// next worker-local media id from the disjoint range assigned at boot
     pub(super) next_media_id: u64,
@@ -344,7 +333,7 @@ impl PacketLoopState {
         let Some(session_handle) = self.users.handle_for_key(session_key) else {
             return;
         };
-        let Some(session_state) = self.users.get_mut(session_key) else {
+        let Some(session_state) = self.users.get_mut_by_handle(session_handle) else {
             return;
         };
         if session_state.packet_loop_dirty {
@@ -364,7 +353,7 @@ impl PacketLoopState {
     /// this method is the session scheduler for the packet loop
     /// it clears dirty bits for live sessions, skips removed sessions and lazily
     /// discards timeout heap entries whose deadline no longer matches
-    /// [`Self::session_timeouts`]
+    /// [`RtcSessionState::next_timeout`]
     ///
     /// stale handles are skipped before replacement sessions can be polled
     ///
@@ -383,18 +372,17 @@ impl PacketLoopState {
                 ready_sessions.push(session_handle);
             }
         }
-        let session_timeouts = &mut self.session_timeouts;
-        let users = &self.users;
-        while let Some((deadline, session_handle)) = pop_due_deadline(
-            &mut self.timeout_queue,
-            now,
-            |(deadline, _session_handle)| *deadline,
-        ) {
-            if session_timeouts.get(&session_handle).copied() == Some(deadline) {
-                session_timeouts.remove(&session_handle);
-                if users.key_for_handle(session_handle).is_some() {
-                    ready_sessions.push(session_handle);
-                }
+        while let Some(&Reverse((deadline, session_handle))) = self.timeout_queue.peek() {
+            if deadline > now {
+                break;
+            }
+            self.timeout_queue.pop();
+            let Some(session_state) = self.users.get_mut_by_handle(session_handle) else {
+                continue;
+            };
+            if session_state.next_timeout == Some(deadline) {
+                session_state.next_timeout = None;
+                ready_sessions.push(session_handle);
             }
         }
         ready_sessions.sort_unstable();
@@ -410,12 +398,15 @@ impl PacketLoopState {
         session_handle: SessionHandle,
         next_timeout: Option<Instant>,
     ) {
-        if self.users.key_for_handle(session_handle).is_none() {
+        let Some(session_state) = self.users.get_mut_by_handle(session_handle) else {
+            return;
+        };
+        // Packet-driven polls can return the same future str0m deadline.
+        if session_state.next_timeout == next_timeout {
             return;
         }
-        self.session_timeouts.remove(&session_handle);
+        session_state.next_timeout = next_timeout;
         if let Some(next_timeout) = next_timeout {
-            self.session_timeouts.insert(session_handle, next_timeout);
             self.timeout_queue
                 .push(Reverse((next_timeout, session_handle)));
         }
@@ -441,32 +432,33 @@ impl PacketLoopState {
     /// callers may invoke this before awaiting because it does not borrow any
     /// session state after returning
     pub(super) fn next_timeout_deadline(&mut self) -> Option<Instant> {
-        let session_timeouts = &self.session_timeouts;
-        let users = &self.users;
-        next_live_deadline(
-            &mut self.timeout_queue,
-            |(deadline, session_key)| {
-                session_timeouts.get(session_key).copied() == Some(*deadline)
-                    && users.key_for_handle(*session_key).is_some()
-            },
-            |(deadline, _session_key)| *deadline,
-        )
+        loop {
+            let &Reverse((deadline, session_handle)) = self.timeout_queue.peek()?;
+            if self
+                .users
+                .get_by_handle(session_handle)
+                .is_some_and(|session| session.next_timeout == Some(deadline))
+            {
+                return Some(deadline);
+            }
+            self.timeout_queue.pop();
+        }
     }
 
     /// remove all explicit scheduler state for a session being torn down
     ///
-    /// stale timeout heap entries can remain because the deadline map no longer
-    /// validates them
+    /// stale timeout heap entries can remain because the session no longer
+    /// validates their deadline
     /// stale handles are also rejected by generation checks before polling
     pub(super) fn clear_session_schedule(&mut self, session_key: &TransportSessionKey) {
         let Some(session_handle) = self.users.handle_for_key(session_key) else {
             return;
         };
         self.dirty_sessions.retain(|dirty| *dirty != session_handle);
-        if let Some(session_state) = self.users.get_mut(session_key) {
+        if let Some(session_state) = self.users.get_mut_by_handle(session_handle) {
             session_state.packet_loop_dirty = false;
+            session_state.next_timeout = None;
         }
-        self.session_timeouts.remove(&session_handle);
     }
 }
 

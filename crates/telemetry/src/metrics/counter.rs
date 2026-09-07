@@ -26,7 +26,8 @@ pub(super) trait MetricBucketLabel: MetricLabel {
 }
 
 pub(super) trait HistogramBucketLabel: MetricBucketLabel {
-    fn from_duration(duration: Duration) -> Self;
+    /// Returns the first inclusive finite bound or `None` above the largest bound.
+    fn from_duration(duration: Duration) -> Option<Self>;
 }
 
 #[repr(align(64))]
@@ -250,13 +251,16 @@ impl<B: HistogramBucketLabel> Histogram<B> {
     /// records one cumulative Prometheus histogram observation
     ///
     /// every bucket at or above the selected bound is incremented so snapshots can
-    /// be rendered directly as `_bucket{le=...}` samples
+    /// be rendered directly as `_bucket{le=...}` samples. Observations above every
+    /// finite bound still contribute to count, sum and the exported `+Inf` bucket.
     pub(super) fn observe(&self, duration: Duration) {
         self.count.increment();
         self.sum_micros
             .add_u64(u64::try_from(duration.as_micros()).unwrap_or(u64::MAX));
-        let bucket_index = B::from_duration(duration).as_index();
-        for counter in self.buckets.iter().skip(bucket_index) {
+        let Some(bucket) = B::from_duration(duration) else {
+            return;
+        };
+        for counter in self.buckets.iter().skip(bucket.as_index()) {
             counter.increment();
         }
     }

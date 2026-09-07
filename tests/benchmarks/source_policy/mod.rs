@@ -74,7 +74,7 @@ use o_sfu_core::{
         },
     },
 };
-use o_sfu_router::{MediaKind, test_support::rtp_samples};
+use o_sfu_router::test_support::rtp_samples;
 use o_sfu_telemetry::{
     DEFAULT_MEDIA_QUALITY_INTERVAL, diagnostics::types::DiagnosticsPolicyPauseReason,
 };
@@ -404,7 +404,6 @@ impl SourcePolicyScenario {
             .map_err(|error| anyhow!("user {raw_user_id} join failed: {error:?}"))?;
         self.room
             .test_api()
-            .lifecycle()
             .make_session_ready(session.user_id(), &self.media_transport)
             .await
             .map_err(|error| anyhow!("user {raw_user_id} readiness failed: {error:?}"))?;
@@ -423,11 +422,9 @@ impl SourcePolicyScenario {
         let published_stream = self
             .room
             .test_api()
-            .media()
             .publish_track(
                 &user(raw_user_id),
                 TestSourceKind::AudioDetector,
-                MediaKind::Audio,
                 rtp_samples::sample_audio_rtp_parameters(ssrc),
                 &self.media_transport,
             )
@@ -446,11 +443,9 @@ impl SourcePolicyScenario {
         let published_stream = self
             .room
             .test_api()
-            .media()
             .publish_track(
                 &user(raw_user_id),
                 TestSourceKind::ScalableVideo,
-                MediaKind::Video,
                 rtp_samples::sample_three_layer_simulcast_video_rtp_parameters(Some(video_mid(
                     participant,
                 ))),

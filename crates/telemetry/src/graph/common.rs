@@ -1,7 +1,4 @@
-use std::collections::HashSet;
-
 use o_sfu_model::UserId;
-use serde_json::Value;
 
 use crate::diagnostics::types::{
     DiagnosticsRoomDetail, DiagnosticsRouteState, DiagnosticsSource, DiagnosticsSubscription,
@@ -58,28 +55,6 @@ pub(super) fn download_main_stat(sub: &DiagnosticsSubscription) -> String {
     match sub.selection.selected_rid.as_deref() {
         Some(rid) if !rid.is_empty() => format!("{stream_id} {rid}"),
         _ => stream_id.to_string(),
-    }
-}
-
-pub(super) fn push_unique_node(
-    nodes: &mut Vec<Value>,
-    seen: &mut HashSet<String>,
-    id: String,
-    node: Value,
-) {
-    if seen.insert(id) {
-        nodes.push(node);
-    }
-}
-
-pub(super) fn push_unique_edge(
-    edges: &mut Vec<Value>,
-    seen: &mut HashSet<String>,
-    id: String,
-    edge: Value,
-) {
-    if seen.insert(id) {
-        edges.push(edge);
     }
 }
 

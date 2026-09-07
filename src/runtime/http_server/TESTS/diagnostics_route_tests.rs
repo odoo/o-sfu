@@ -16,11 +16,8 @@ use std::{
 };
 
 use o_sfu_protocol::wire::StreamType;
-use o_sfu_router::{
-    MediaKind,
-    test_support::rtp_samples::{
-        sample_client_rtp_capabilities, sample_simulcast_video_rtp_parameters,
-    },
+use o_sfu_router::test_support::rtp_samples::{
+    sample_client_rtp_capabilities, sample_simulcast_video_rtp_parameters,
 };
 use o_sfu_telemetry::diagnostics::DiagnosticsTransportHealth;
 use serde_json::Value;
@@ -183,7 +180,6 @@ async fn make_session_ready(
     )?;
     assert!(
         room.test_api()
-            .lifecycle()
             .mark_session_ready(user_id, sample_client_rtp_capabilities(), media_transport)
             .await
     );
@@ -198,11 +194,9 @@ async fn publish_camera(
     make_session_ready(room, user_id, media_transport).await?;
     require_some(
         room.test_api()
-            .media()
             .publish_intent(
                 user_id,
                 &source_publish_intent_for_stream_type(StreamType::Camera),
-                MediaKind::Video,
                 sample_simulcast_video_rtp_parameters(None),
                 media_transport,
             )
@@ -582,7 +576,6 @@ async fn diagnostics_user_detail_tracks_replacement_and_teardown() -> TestResult
     let (replacement_tx, _replacement_rx) = test_outbound_sender(&test_state.state);
     let replacement_connection = require_ok(
         room.test_api()
-            .lifecycle()
             .join_user(
                 user_id.clone(),
                 None,

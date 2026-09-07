@@ -139,11 +139,7 @@ pub(super) async fn create_transport_session_offer(
     user_id: &UserId,
     media_transport: &MediaTransport,
 ) -> Option<()> {
-    let connection_id = room
-        .test_api()
-        .inspect()
-        .user_connection_id(user_id)
-        .await?;
+    let connection_id = room.test_api().user_connection_id(user_id).await?;
     let session_key = room.transport_user_key(user_id, connection_id).await;
     media_transport
         .create_initial_session_offer(room.uuid(), &session_key)

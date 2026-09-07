@@ -572,6 +572,39 @@ fn transport_lifecycle_metrics_track_ice_and_dtls_events() {
 }
 
 #[test]
+fn histograms_preserve_inclusive_bounds_and_overflow() {
+    let metrics = RuntimeMetrics::default();
+    for duration in [Duration::from_secs(5), Duration::from_secs(6)] {
+        metrics.ws_auth_duration.observe(duration);
+        metrics.record_media_quality_rtt(MediaQualitySample::Peer, duration);
+    }
+
+    let snapshot = metrics.snapshot();
+    for (name, labels) in [
+        (MetricName::WsAuthDurationSeconds, &[][..]),
+        (
+            MetricName::MediaQualityRttSeconds,
+            &[("sample", "peer")][..],
+        ),
+    ] {
+        assert_eq!(snapshot.histogram_bucket_value(name, labels, "5"), 1);
+        assert_eq!(snapshot.histogram_count_value(name, labels), 2);
+        assert_eq!(
+            snapshot.histogram_sum_micros_value(name, labels),
+            11_000_000
+        );
+    }
+
+    let rendered = super::render_prometheus_text(&metrics, super::RoomGaugeValues::default());
+    for expected in [
+        "osfu_ws_auth_duration_seconds_bucket{le=\"+Inf\"} 2",
+        "osfu_media_quality_rtt_seconds_bucket{sample=\"peer\",le=\"+Inf\"} 2",
+    ] {
+        assert!(rendered.lines().any(|line| line == expected));
+    }
+}
+
+#[test]
 fn metrics_snapshot_tracks_sampled_media_quality() {
     let metrics = RuntimeMetrics::default();
 

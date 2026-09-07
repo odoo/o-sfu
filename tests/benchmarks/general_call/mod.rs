@@ -40,7 +40,7 @@ use o_sfu_core::{
         },
     },
 };
-use o_sfu_router::{MediaKind, test_support::rtp_samples};
+use o_sfu_router::test_support::rtp_samples;
 use tokio::runtime::{Builder, Runtime};
 
 const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
@@ -337,7 +337,6 @@ impl GeneralCallScenario {
             .map_err(|error| anyhow!("user {raw_user_id} join failed: {error:?}"))?;
         self.room
             .test_api()
-            .lifecycle()
             .make_session_ready(session.user_id(), &self.media_transport)
             .await
             .map_err(|error| anyhow!("user {raw_user_id} readiness failed: {error:?}"))?;
@@ -364,11 +363,9 @@ impl GeneralCallScenario {
         let published_stream = self
             .room
             .test_api()
-            .media()
             .publish_track(
                 &user_id,
                 TestSourceKind::AudioDetector,
-                MediaKind::Audio,
                 rtp_samples::sample_audio_rtp_parameters(ssrc),
                 &self.media_transport,
             )
@@ -401,11 +398,9 @@ impl GeneralCallScenario {
         let published_stream = self
             .room
             .test_api()
-            .media()
             .publish_track(
                 &user_id,
                 TestSourceKind::ScalableVideo,
-                MediaKind::Video,
                 rtp_samples::sample_simulcast_video_rtp_parameters(Some(video_mid(raw_user_id)?)),
                 &self.media_transport,
             )
@@ -432,7 +427,6 @@ impl GeneralCallScenario {
         if self
             .room
             .test_api()
-            .media()
             .deactivate_publication(&user_id, &stream_id, &self.media_transport)
             .await
         {
@@ -571,7 +565,7 @@ impl GeneralCallScenario {
     }
 
     async fn inspect_route_state(&mut self) {
-        let inspect = self.room.test_api().inspect();
+        let inspect = self.room.test_api();
         self.stats.producer_count = inspect.producer_count().await;
         self.stats.consumer_count = inspect.consumer_count().await;
         self.stats.router_count = inspect.router_count().await;
@@ -619,7 +613,6 @@ impl GeneralCallScenario {
             .ok_or_else(|| anyhow!("user {raw_user_id} connection was missing"))?;
         self.room
             .test_api()
-            .inspect()
             .producer_transport_media_id(&user_id, connection_id, source_kind)
             .await
             .ok_or_else(|| anyhow!("user {raw_user_id} {source_kind:?} media id was missing"))
