@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use super::{Bitrate, VideoAdaptationTuning, VideoAdaptationTuningError};
+use super::{Bitrate, RtcPortRange, VideoAdaptationTuning, VideoAdaptationTuningError};
 
 #[test]
 fn video_adaptation_tuning_accepts_valid_knobs() {
@@ -130,5 +130,36 @@ fn video_adaptation_tuning_rejects_unrepresentable_deadlines() {
             Bitrate::zero()
         )
         .is_ok()
+    );
+}
+
+#[test]
+fn rtc_port_range_splits_ports_across_workers() {
+    // zero workers → None
+    assert_eq!(RtcPortRange::new(40_000, 40_000).split_for_workers(0), None,);
+    // more workers than ports → None
+    assert_eq!(RtcPortRange::new(40_000, 40_000).split_for_workers(2), None,);
+    // single worker → full range
+    assert_eq!(
+        RtcPortRange::new(40_000, 40_003).split_for_workers(1),
+        Some(vec![RtcPortRange::new(40_000, 40_003)]),
+    );
+    // workers == ports → one port each
+    assert_eq!(
+        RtcPortRange::new(40_000, 40_002).split_for_workers(3),
+        Some(vec![
+            RtcPortRange::new(40_000, 40_000),
+            RtcPortRange::new(40_001, 40_001),
+            RtcPortRange::new(40_002, 40_002),
+        ]),
+    );
+    // uneven split → earlier workers get the extras
+    assert_eq!(
+        RtcPortRange::new(40_000, 40_004).split_for_workers(3),
+        Some(vec![
+            RtcPortRange::new(40_000, 40_001),
+            RtcPortRange::new(40_002, 40_003),
+            RtcPortRange::new(40_004, 40_004),
+        ]),
     );
 }

@@ -243,19 +243,6 @@ fn load_transport_config_keeps_explicit_single_router_strict() -> Result<()> {
 }
 
 #[test]
-fn rtc_port_range_splits_ports_across_workers() {
-    let ranges = RtcPortRange::new(40_000, 40_004).split_for_workers(3);
-    assert_eq!(
-        ranges,
-        Some(vec![
-            RtcPortRange::new(40_000, 40_001),
-            RtcPortRange::new(40_002, 40_003),
-            RtcPortRange::new(40_004, 40_004),
-        ])
-    );
-}
-
-#[test]
 fn load_transport_config_rejects_invalid_transport_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
