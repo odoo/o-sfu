@@ -14,7 +14,7 @@ use o_sfu_router::{
     rtp::{MediaStream, Mid, Rid, Ssrc},
     test_support::rtp_samples::{
         sample_client_rtp_capabilities, sample_simulcast_video_rtp_parameters,
-        sample_video_rtp_parameters,
+        sample_three_layer_simulcast_video_rtp_parameters, sample_video_rtp_parameters,
     },
 };
 
@@ -676,4 +676,84 @@ fn commit_publish_reservation_registers_all_source_encodings() {
             .map(|encoding| encoding.encoding_id())
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn publication_preserves_negotiated_upload_roles() {
+    let mut upload_encodings = test_upload_encodings();
+    upload_encodings.insert(
+        1,
+        SessionUploadEncoding {
+            rid: "mid".to_owned(),
+            max_bitrate: Some(Bitrate::from_kbps(450)),
+            resolution_scale: Some(2),
+            max_framerate: None,
+        },
+    );
+    for expected in [
+        &[
+            ("lo", 4, UploadLayerPolicyRole::DegradedThumbnail),
+            ("mid", 2, UploadLayerPolicyRole::Thumbnail),
+            ("hi", 1, UploadLayerPolicyRole::Featured),
+        ][..],
+        &[("mid", 2, UploadLayerPolicyRole::Thumbnail)],
+    ] {
+        let mut state = test_state();
+        let user_id = UserId::Integer(1);
+        join_test_user(&mut state, &user_id);
+        let connection_id = set_test_user_ready(&mut state, &user_id);
+        let offered = sample_three_layer_simulcast_video_rtp_parameters(Some("camera-0"));
+        let accepted_rid = |rid: &str| expected.iter().any(|(accepted, _, _)| *accepted == rid);
+        let parameters = MediaStream::new(
+            offered.formats().cloned().collect(),
+            offered.header_extensions().cloned().collect(),
+            offered
+                .bindings()
+                .filter(|binding| binding.rid().is_some_and(accepted_rid))
+                .cloned()
+                .collect(),
+        );
+        let parameters =
+            derive_consumable_rtp_parameters(&parameters, &state.router_rtp_capabilities())
+                .expect("accepted RID publication should negotiate");
+        let publish = state
+            .validate_publish(
+                &user_id,
+                connection_id,
+                &source_publish_intent_for_source(TestSourceKind::ScalableVideo),
+            )
+            .expect("ready publisher should validate");
+        let accepted_upload_encodings = upload_encodings
+            .iter()
+            .filter(|encoding| accepted_rid(&encoding.rid))
+            .cloned()
+            .collect::<Vec<_>>();
+        let media = TransportMediaId::new(101);
+        assert!(
+            state
+                .commit_publish_reservation(publish, parameters, &accepted_upload_encodings, media)
+                .is_some()
+        );
+        let source_id = state
+            .inspect_source_id_for_transport_media_id(media)
+            .unwrap();
+        let source = state.topology.source_descriptor(source_id).unwrap();
+        let metadata = source
+            .selectable_encodings()
+            .map(|encoding| {
+                (
+                    encoding.rid().map(Rid::as_str),
+                    encoding.resolution_scale(),
+                    encoding.policy_role(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            metadata,
+            expected
+                .iter()
+                .map(|(rid, scale, role)| (Some(*rid), Some(*scale), Some(*role)))
+                .collect::<Vec<_>>()
+        );
+    }
 }

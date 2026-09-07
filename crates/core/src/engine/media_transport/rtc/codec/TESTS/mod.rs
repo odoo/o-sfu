@@ -76,6 +76,41 @@ fn publication_profile_follows_first_primary_codec() {
     );
 }
 
+#[test]
+fn publication_profile_preserves_explicit_three_rid_ladder() {
+    let parameters = MediaStream::new(
+        vp8_parameters().formats().cloned().collect(),
+        Vec::new(),
+        vec![
+            StreamBinding::new()
+                .with_rid("small")
+                .with_max_bitrate(120_000),
+            StreamBinding::new()
+                .with_rid("medium")
+                .with_max_bitrate(400_000),
+            StreamBinding::new()
+                .with_rid("large")
+                .with_max_bitrate(800_000),
+        ],
+    );
+    let encodings = publish_upload_encodings(MediaKind::Video, &parameters);
+    assert_eq!(
+        encodings
+            .iter()
+            .map(|encoding| (
+                encoding.rid.as_str(),
+                encoding.max_bitrate,
+                encoding.resolution_scale,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("small", Some(crate::Bitrate::from_kbps(120)), Some(4)),
+            ("medium", Some(crate::Bitrate::from_kbps(400)), Some(2)),
+            ("large", Some(crate::Bitrate::from_kbps(800)), Some(1)),
+        ],
+    );
+}
+
 fn vp8_parameters() -> MediaStream {
     video_parameters([MediaFormat::new(
         RouterMediaKind::Video,

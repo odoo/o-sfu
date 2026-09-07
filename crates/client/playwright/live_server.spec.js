@@ -121,6 +121,12 @@ test("default VP8 camera pauses and resumes without renegotiation", async ({
             },
             {
                 active: true,
+                maxBitrate: 800000,
+                rid: "mid",
+                scaleResolutionDownBy: 2
+            },
+            {
+                active: true,
                 maxBitrate: 4000000,
                 rid: "hi",
                 scaleResolutionDownBy: 1
@@ -133,7 +139,7 @@ test("default VP8 camera pauses and resumes without renegotiation", async ({
     expect(video.vp8PayloadTypes.size).toBeGreaterThan(0);
     expect(video.hasSendRidLo).toBeTruthy();
     expect(video.hasSendRidHi).toBeTruthy();
-    expect(video.hasSendSimulcastLoHi).toBeTruthy();
+    expect(video.hasSendSimulcastLoMidHi).toBeTruthy();
 });
 
 test("browser compatibility upload and download flows survive live-server replacement", async ({
@@ -304,6 +310,12 @@ test("audio and screen streams publish, pause and clean up independently", async
                 maxBitrate: 150000,
                 rid: "lo",
                 scaleResolutionDownBy: 4
+            },
+            {
+                active: true,
+                maxBitrate: 800000,
+                rid: "mid",
+                scaleResolutionDownBy: 2
             },
             {
                 active: true,
@@ -542,6 +554,12 @@ test("H264-only live publish applies RID simulcast and renders when supported", 
                 },
                 {
                     active: true,
+                    maxBitrate: 800000,
+                    rid: "mid",
+                    scaleResolutionDownBy: undefined
+                },
+                {
+                    active: true,
                     maxBitrate: 4000000,
                     rid: "hi",
                     scaleResolutionDownBy: undefined
@@ -555,7 +573,7 @@ test("H264-only live publish applies RID simulcast and renders when supported", 
         expect(video.vp8PayloadTypes.size).toBe(0);
         expect(video.hasSendRidLo).toBeTruthy();
         expect(video.hasSendRidHi).toBeTruthy();
-        expect(video.hasSendSimulcastLoHi).toBeTruthy();
+        expect(video.hasSendSimulcastLoMidHi).toBeTruthy();
     } finally {
         await server.stop();
     }
@@ -804,7 +822,7 @@ function parseVideoCodecAnswer(sdp) {
     const fmtpByPayloadType = new Map();
     const hasSendRidHi = lines.some((line) => /^a=rid:hi send(?: |$)/.test(line));
     const hasSendRidLo = lines.some((line) => /^a=rid:lo send(?: |$)/.test(line));
-    const hasSendSimulcastLoHi = lines.some((line) => /^a=simulcast:send lo[;,]hi$/.test(line));
+    const hasSendSimulcastLoMidHi = lines.some((line) => /^a=simulcast:send lo;mid;hi$/.test(line));
     const rtxAssociations = new Map();
     const rtxPayloadTypes = new Set();
     const videoCodecPayloadTypes = new Set();
@@ -903,7 +921,7 @@ function parseVideoCodecAnswer(sdp) {
         hasRepairedRidExtension,
         hasSendRidHi,
         hasSendRidLo,
-        hasSendSimulcastLoHi,
+        hasSendSimulcastLoMidHi,
         h264PayloadTypes,
         h264Variants,
         rtxAssociations,
@@ -928,12 +946,102 @@ function parseFmtpParameters(formatParams) {
     );
 }
 
+test("middle camera RID delivers half-resolution decoded video", async ({
+    browserName,
+    context
+}) => {
+    test.setTimeout(60_000);
+    const maxVideoBitrate = 4_000_000;
+    const middleBitrate = 800_000;
+    const server = await spawnLiveServer({
+        bindPort: browserName === "firefox" ? 18088 : 18087,
+        rtcMinPort: browserName === "firefox" ? 58392 : 58360,
+        rtcMaxPort: browserName === "firefox" ? 58423 : 58391,
+        maxBitrateOut: middleBitrate,
+        maxVideoBitrate
+    });
+    let diagnostics;
+    let frame;
+    try {
+        const channelUuid = await createChannel({
+            authKey: server.authKey,
+            httpBaseUrl: server.httpBaseUrl
+        });
+        const publisher = await createPeerPage(context);
+        const receiver = await createPeerPage(context);
+        const participant = await createPeerPage(context);
+        for (const [page, sessionId] of [
+            [publisher, 41],
+            [receiver, 42],
+            [participant, 43]
+        ]) {
+            await connectPeer(page, {
+                channelUuid,
+                jwt: createConnectToken(channelUuid, sessionId),
+                url: server.wsUrl
+            });
+            await expect.poll(async () => (await peerSnapshot(page)).state).toBe("connected");
+        }
+        await publishSyntheticCamera(publisher, "middle-camera", {
+            width: 1280,
+            height: 720,
+            frameRate: 30,
+            movingPattern: true
+        });
+        await setStreamDownload(receiver, 41, "camera", true, "pinned");
+        await expect
+            .poll(
+                async () => {
+                    diagnostics = await streamDiagnostics({
+                        consumerSessionId: 42,
+                        httpBaseUrl: server.httpBaseUrl,
+                        producerSessionId: 41,
+                        roomId: channelUuid,
+                        streamType: "camera"
+                    });
+                    const selection = diagnostics.subscription?.selection;
+                    const middle = diagnostics.source?.encodings.find(
+                        (encoding) => encoding.rid === "mid"
+                    );
+                    return (
+                        diagnostics.subscription?.state === "active" &&
+                        selection?.selectedRid === "mid" &&
+                        selection.latestReceiverBandwidthEstimateBps >= middleBitrate &&
+                        selection.latestReceiverBandwidthEstimateBps < maxVideoBitrate &&
+                        Number.isFinite(middle?.lastPacketAgeMs) &&
+                        middle.lastPacketAgeMs < 1_000
+                    );
+                },
+                { intervals: [20, 50, 100], timeout: 25_000 }
+            )
+            .toBeTruthy();
+        // A selected RID can still await its strict gate. Decoded dimensions
+        // prove that forwarding has left the incumbent or bootstrap encoding.
+        await expect
+            .poll(
+                async () => {
+                    frame = await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
+                    return { width: frame.width, height: frame.height };
+                },
+                { intervals: [20, 50, 100], timeout: 15_000 }
+            )
+            .toEqual({ width: 640, height: 360 });
+    } finally {
+        await test.info().attach("middle-camera-diagnostics", {
+            body: JSON.stringify({ diagnostics, frame }),
+            contentType: "application/json"
+        });
+        await server.stop();
+    }
+});
+
 test("startup pressure holds the thumbnail through the soft pause dwell", async ({
     browserName,
     context
 }) => {
     test.setTimeout(60_000);
-    // PR3 must recalibrate this band when the generated upload ladder changes.
+    // At this cap lo and mid both cost 150 kbps. Three camera floors
+    // exceed the 400 kbps probe ceiling throughout the soft pause dwell.
     const maxVideoBitrate = 200_000;
     const server = await spawnLiveServer({
         bindPort: browserName === "firefox" ? 18086 : 18085,
@@ -1034,9 +1142,7 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
         expect(grace.subscription.selection.selectedVideoBudgetBps).toBeGreaterThanOrEqual(
             maxVideoBitrate
         );
-        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeLessThan(
-            maxVideoBitrate + 2 * 150_000
-        );
+        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeLessThan(3 * 150_000);
         await test.info().attach("soft-pause-grace", {
             body: JSON.stringify(grace),
             contentType: "application/json"

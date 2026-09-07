@@ -11,6 +11,7 @@ use super::rid::{self, LayerSpec};
 use crate::{VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
 
 const LOW_LAYER_RESOLUTION_SCALE: u16 = 4;
+const MIDDLE_LAYER_RESOLUTION_SCALE: u16 = 2;
 const HIGH_LAYER_RESOLUTION_SCALE: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,16 +36,20 @@ impl SimulcastProfile {
         parameters: Option<&MediaStream>,
     ) -> Vec<SessionUploadEncoding> {
         self.layers(parameters).map_or_else(Vec::new, |layers| {
+            let layer_count = layers.len();
             layers
                 .into_iter()
                 .enumerate()
                 .map(|(index, layer)| SessionUploadEncoding {
                     rid: layer.rid.to_owned(),
                     max_bitrate: layer.max_bitrate,
+                    // Two-RID publishers retain their existing 4:1 spatial ladder.
                     resolution_scale: Some(if index == 0 {
                         LOW_LAYER_RESOLUTION_SCALE
-                    } else {
+                    } else if index + 1 == layer_count {
                         HIGH_LAYER_RESOLUTION_SCALE
+                    } else {
+                        MIDDLE_LAYER_RESOLUTION_SCALE
                     }),
                     max_framerate: None,
                 })

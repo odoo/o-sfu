@@ -9,6 +9,25 @@ use crate::Bitrate;
 
 const HIGH_MAX_BITRATE: Bitrate = Bitrate::from_kbps(900);
 
+#[test]
+fn default_upload_ladder_respects_video_cap() {
+    for (cap, expected) in [
+        (0, [0, 0, 0]),
+        (100_000, [100_000, 100_000, 100_000]),
+        (150_000, [150_000, 150_000, 150_000]),
+        (500_000, [150_000, 150_000, 500_000]),
+        (1_000_000, [150_000, 200_000, 1_000_000]),
+        (4_000_000, [150_000, 800_000, 4_000_000]),
+    ] {
+        let layers = default_layers(VideoBitrateLimits::new(Bitrate::from_bps(cap)));
+        assert_eq!(layers.map(|layer| layer.rid), ["lo", "mid", "hi"]);
+        assert_eq!(
+            layers.map(|layer| layer.max_bitrate),
+            expected.map(|rate| Some(Bitrate::from_bps(rate))),
+        );
+    }
+}
+
 fn send_rids(
     answer_sdp: &str,
     offered_encodings: &[SessionUploadEncoding],
@@ -304,7 +323,42 @@ fn answer_rejects_invalid_rfc8852_ids() {
 }
 
 #[test]
-fn answer_rejects_extra_simulcast_streams() {
+fn three_rid_answer_accepts_offered_streams_and_subsets() {
+    let mut offered_encodings = default_upload_encodings();
+    offered_encodings.insert(
+        1,
+        SessionUploadEncoding {
+            rid: "mid".to_owned(),
+            max_bitrate: Some(Bitrate::from_kbps(450)),
+            resolution_scale: Some(2),
+            max_framerate: None,
+        },
+    );
+    for accepted in [
+        &[("lo", 150_000), ("mid", 450_000), ("hi", 900_000)][..],
+        &[("lo", 150_000), ("hi", 900_000)],
+        &[("mid", 450_000), ("hi", 900_000)],
+        &[("mid", 450_000)],
+    ] {
+        let rids = accepted.iter().map(|(rid, _)| *rid).collect::<Vec<_>>();
+        let answer = answer(
+            "video_0",
+            &[("lo", None), ("mid", None), ("hi", None)],
+            Some(&rids.join(";")),
+        );
+        let expected = accepted
+            .iter()
+            .map(|(rid, bitrate)| NegotiatedRid {
+                rid: Rid::from(*rid),
+                max_bitrate: Some(Bitrate::from_bps(*bitrate)),
+            })
+            .collect();
+        assert_eq!(send_rids(&answer, &offered_encodings), Ok(expected));
+    }
+}
+
+#[test]
+fn answer_rejects_unoffered_simulcast_stream() {
     let send = format!(
         "lo{separator}mid{separator}hi",
         separator = sdp::simulcast::STREAM_SEPARATOR,
@@ -322,6 +376,14 @@ fn answer_rejects_extra_simulcast_streams() {
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
         Err(SimulcastAnswerError)
+    );
+}
+
+#[test]
+fn answer_rejects_more_than_three_simulcast_streams() {
+    assert_eq!(
+        send_simulcast_stream_count("send lo;mid;hi;extra"),
+        Err(SimulcastAnswerError),
     );
 }
 

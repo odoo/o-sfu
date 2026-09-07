@@ -28,7 +28,7 @@ use crate::{
         source_model::{
             PolicyPauseReason, PublishedSourceDescriptor, PublishedSourceId,
             ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy, SourceEncodingDescriptor,
-            SourceRoomPolicySelector, SourceRoutePriority, SourceSelector, UploadLayerPolicyRole,
+            SourceRoomPolicySelector, SourceRoutePriority, SourceSelector,
         },
     },
 };
@@ -497,28 +497,6 @@ fn highest_allowed_selector(route: &ReceiverVideoRouteInput<'_>) -> Option<Sourc
     ))
 }
 
-fn cheapest_useful_selector(
-    route: &ReceiverVideoRouteInput<'_>,
-) -> Option<(SourceSelector, Bitrate)> {
-    let source_cap = route.source.policy().video_bitrate_cap();
-    route
-        .source
-        .selectable_encodings()
-        .filter(|encoding| {
-            !matches!(
-                encoding.policy_role(),
-                Some(UploadLayerPolicyRole::Featured)
-            )
-        })
-        .chain(route.source.selectable_encodings())
-        .find_map(|encoding| {
-            let bitrate = encoding.max_bitrate()?;
-            source_cap
-                .is_none_or(|source_cap| bitrate <= source_cap)
-                .then_some((SourceSelector::Encoding(encoding.encoding_id()), bitrate))
-        })
-}
-
 /// Separates configured downlink headroom from audio consumption so receivers
 /// reserve audio only for admitted routes they can hear.
 fn effective_video_budget(
@@ -532,30 +510,29 @@ fn effective_video_budget(
     after_overhead.saturating_sub(audio_reserve)
 }
 
-/// next allowed, non-featured layer one step below `current`, with its bitrate
+/// Returns the next cheaper allowed encoding and its bitrate.
 ///
-/// returns `None` when the route is already at its lowest usable layer, letting
-/// the overload pass stop degrading a route before it bottoms out
-fn step_down_selector(
-    route: &ReceiverVideoRouteInput<'_>,
-    current: SourceSelector,
-) -> Option<(SourceSelector, Bitrate)> {
-    let source = route.source;
+/// Routes using featured quality retain an intermediate rung during aggregate fitting.
+/// Their per-route target may still select the floor when the receiver cannot
+/// afford that intermediate quality. Equal bitrate ceilings do not create an
+/// intermediate operating point.
+fn step_down_selector(route: &PlannedReceiverRoute<'_>) -> Option<(SourceSelector, Bitrate)> {
+    let source = route.input.source;
     let source_cap = source.policy().video_bitrate_cap();
-    let current_index = selector_index(source, current);
-    (0..current_index).rev().find_map(|index| {
+    let current_index = selector_index(source, route.selection.selector);
+    let mut cheaper_encodings = (0..current_index).rev().filter_map(|index| {
         let encoding = source.selectable_encoding_by_rank(index)?;
-        if matches!(
-            encoding.policy_role(),
-            Some(UploadLayerPolicyRole::Featured)
-        ) {
-            return None;
-        }
         let bitrate = encoding.max_bitrate()?;
-        source_cap
-            .is_none_or(|cap| bitrate <= cap)
+        (bitrate < route.selected_bitrate && source_cap.is_none_or(|cap| bitrate <= cap))
             .then_some((SourceSelector::Encoding(encoding.encoding_id()), bitrate))
-    })
+    });
+    let (selector, bitrate) = cheaper_encodings.next()?;
+    if route.input.layout_role.uses_featured_quality()
+        && !cheaper_encodings.any(|(_selector, lower_bitrate)| lower_bitrate < bitrate)
+    {
+        return None;
+    }
+    Some((selector, bitrate))
 }
 
 fn scalable_plan(
@@ -719,12 +696,11 @@ fn apply_overload_policy(routes: &mut [PlannedReceiverRoute<'_>], video_budget: 
     if total_bitrate <= video_budget {
         return;
     }
-    // Drop downgradable routes that have no usable layer to fall back to.
+    // Missing-layer pauses stay limited to secondary routes. Widening encoding
+    // downsteps must not bypass the soft-pause dwell for important fixed video.
     let mut missing_ladders = routes
         .iter_mut()
-        .filter(|route| {
-            route_can_downgrade(route) && cheapest_useful_selector(route.input).is_none()
-        })
+        .filter(|route| route_needs_missing_layer_pause(route))
         .map(|route| (video_download_rank(route), route))
         .collect::<Vec<_>>();
     missing_ladders.sort_by_key(|(rank, _route)| Reverse(*rank));
@@ -743,8 +719,7 @@ fn apply_overload_policy(routes: &mut [PlannedReceiverRoute<'_>], video_budget: 
             .iter_mut()
             .filter(|route| route_can_downgrade(route))
             .filter_map(|route| {
-                step_down_selector(route.input, route.selection.selector)
-                    .map(|(selector, bitrate)| (route, selector, bitrate))
+                step_down_selector(route).map(|(selector, bitrate)| (route, selector, bitrate))
             })
             .max_by_key(|(route, _selector, _bitrate)| {
                 (video_download_rank(route), route.selected_bitrate)
@@ -816,13 +791,20 @@ fn admitted_video_bwe_demand(routes: &[PlannedReceiverRoute<'_>]) -> Bitrate {
 }
 
 fn route_can_downgrade(route: &PlannedReceiverRoute<'_>) -> bool {
-    let input = route.input;
     route.selection.policy_pause_reason.is_none()
-        && input.source.policy().adaptation() == SourceAdaptationPolicy::ScalableVideo
-        && matches!(
-            input.layout_role.priority(),
-            SourceRoutePriority::VisibleThumbnail | SourceRoutePriority::HiddenOrOverflow
-        )
+        && route.input.source.policy().adaptation() == SourceAdaptationPolicy::ScalableVideo
+}
+
+fn route_needs_missing_layer_pause(route: &PlannedReceiverRoute<'_>) -> bool {
+    let input = route.input;
+    let source_cap = input.source.policy().video_bitrate_cap();
+    route_can_downgrade(route)
+        && !input.layout_role.uses_featured_quality()
+        && !input.source.selectable_encodings().any(|encoding| {
+            encoding
+                .max_bitrate()
+                .is_some_and(|bitrate| source_cap.is_none_or(|cap| bitrate <= cap))
+        })
 }
 
 fn pause_reason_for_route(route: &PlannedReceiverRoute<'_>) -> PolicyPauseReason {

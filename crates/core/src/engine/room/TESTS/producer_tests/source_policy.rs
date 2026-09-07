@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_router::rtp::MediaStream;
 use o_sfu_telemetry::schema::event as telemetry_event;
 use serde_json::json;
 use tokio::time::{Instant as TokioInstant, advance, pause, resume, timeout};
@@ -1408,6 +1409,203 @@ async fn overload_steps_thumbnail_down_one_layer_and_keeps_it_deliverable() {
     )
     .await;
     drop(capture);
+}
+
+#[tokio::test]
+async fn aggregate_pressure_uses_intermediate_quality_before_pausing_thumbnails() {
+    for layout in [
+        Some(VideoLayoutIntent::Pinned),
+        Some(VideoLayoutIntent::Featured),
+        None,
+    ] {
+        let scenario = SourcePolicyScenario::three_ready_users().await;
+        let publisher = UserId::Integer(1);
+        let receiver = UserId::Integer(2);
+        publish_three_layer_camera(&scenario.room, &publisher, &scenario.adapter).await;
+        publish_simulcast_camera(&scenario.room, &UserId::Integer(3), &scenario.adapter).await;
+        if let Some(layout) = layout {
+            scenario.set_scalable_video_layout(2, 1, layout).await;
+        } else {
+            publish_track(
+                &scenario.room,
+                &publisher,
+                TestSourceKind::AudioDetector,
+                MediaKind::Audio,
+                test_audio_rtp_parameters(),
+                &scenario.adapter,
+            )
+            .await;
+            scenario
+                .mark_active_speaker(scenario.audio_media_id(1).await)
+                .await;
+        }
+        scenario.refresh_policy_until_upgrades_settle().await;
+        let speakers = scenario.adapter.active_speaker_source_snapshot().await;
+        let now = scenario.policy_now.get().max(Instant::now());
+        // Each important route can afford hi alone. Only the aggregate pass can
+        // trade it for mid and keep the thumbnail within this receiver budget.
+        policy_at(
+            &scenario,
+            &speakers,
+            &bandwidth_for(&scenario, 2, 900).await,
+            now,
+        )
+        .await;
+        assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1], "mid").await;
+        assert_scalable_video_rid_for_publishers(&scenario, &receiver, [3], "lo").await;
+        assert_eq!(
+            receiver_selected_video_bitrate(&scenario.room, &scenario.adapter, &receiver).await,
+            Bitrate::from_kbps(600)
+        );
+        assert_eq!(soft_pause_deadline(&scenario, 2).await, None);
+        assert_receiver_bwe_target(
+            &scenario.room,
+            &scenario.adapter,
+            &receiver,
+            Bitrate::from_kbps(1_800),
+        )
+        .await;
+
+        let pressure = bandwidth_for(&scenario, 2, 550).await;
+        policy_at(&scenario, &speakers, &pressure, now).await;
+        assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1], "mid").await;
+        assert_eq!(
+            soft_pause_deadline(&scenario, 2).await,
+            Some(now + Duration::from_millis(750))
+        );
+        policy_at(
+            &scenario,
+            &speakers,
+            &pressure,
+            now + Duration::from_millis(750),
+        )
+        .await;
+        assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1], "mid").await;
+        assert_subscription_policy_pause_reason(
+            &scenario.room,
+            &scenario.adapter,
+            &receiver,
+            &UserId::Integer(3),
+            TestSourceKind::ScalableVideo,
+            Some(DiagnosticsPolicyPauseReason::BudgetPressure),
+        )
+        .await;
+
+        // Floor protection belongs only to aggregate fitting. A receiver that
+        // cannot afford mid still selects lo through its per-route budget.
+        policy_at(
+            &scenario,
+            &speakers,
+            &bandwidth_for(&scenario, 2, 300).await,
+            now + Duration::from_millis(751),
+        )
+        .await;
+        assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1], "lo").await;
+    }
+}
+
+#[tokio::test]
+async fn aggregate_pressure_preserves_pinned_quality_without_an_intermediate_bitrate() {
+    let two_layers = test_simulcast_video_rtp_parameters();
+    let mut bindings = two_layers.bindings().cloned().collect::<Vec<_>>();
+    bindings.insert(1, bindings[0].clone().with_rid("mid").with_ssrc(31_003));
+    let repeated_floor = MediaStream::new(
+        two_layers.formats().cloned().collect(),
+        two_layers.header_extensions().cloned().collect(),
+        bindings,
+    );
+    for parameters in [two_layers, repeated_floor] {
+        let scenario = SourcePolicyScenario::three_ready_users().await;
+        publish_track(
+            &scenario.room,
+            &UserId::Integer(1),
+            TestSourceKind::ScalableVideo,
+            MediaKind::Video,
+            parameters,
+            &scenario.adapter,
+        )
+        .await;
+        publish_simulcast_camera(&scenario.room, &UserId::Integer(3), &scenario.adapter).await;
+        scenario
+            .set_scalable_video_layout(2, 1, VideoLayoutIntent::Pinned)
+            .await;
+        scenario.refresh_policy_until_upgrades_settle().await;
+        let bandwidth = bandwidth_for(&scenario, 2, 900).await;
+        let now = scenario.policy_now.get().max(Instant::now());
+        for elapsed in [0, 750] {
+            policy_at(
+                &scenario,
+                &[],
+                &bandwidth,
+                now + Duration::from_millis(elapsed),
+            )
+            .await;
+            assert_scalable_video_rid_for_publishers(&scenario, &UserId::Integer(2), [1], "hi")
+                .await;
+        }
+        assert_subscription_policy_pause_reason(
+            &scenario.room,
+            &scenario.adapter,
+            &UserId::Integer(2),
+            &UserId::Integer(3),
+            TestSourceKind::ScalableVideo,
+            Some(DiagnosticsPolicyPauseReason::BudgetPressure),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn pinned_video_without_a_ladder_keeps_the_soft_pause_dwell() {
+    let scenario = SourcePolicyScenario::with_ready_users(&[1, 2]).await;
+    let publisher = UserId::Integer(1);
+    let receiver = UserId::Integer(2);
+    publish_track(
+        &scenario.room,
+        &publisher,
+        TestSourceKind::ScalableVideo,
+        MediaKind::Video,
+        test_video_rtp_parameters(),
+        &scenario.adapter,
+    )
+    .await;
+    scenario
+        .set_scalable_video_layout(2, 1, VideoLayoutIntent::Pinned)
+        .await;
+    let source_media =
+        source_media_id(&scenario.room, &publisher, TestSourceKind::ScalableVideo).await;
+    let source_bitrate = TransportBitrateSnapshot {
+        total: Bitrate::from_kbps(500),
+        per_media: vec![(source_media, Bitrate::from_kbps(500))],
+    };
+    let now = scenario.policy_now.get().max(Instant::now());
+    for (budget, elapsed) in [(1_000, 0), (1_000, 750), (0, 751), (0, 1_501)] {
+        let bandwidth = bandwidth_for(&scenario, 2, budget).await;
+        let tx = {
+            let state = scenario.room.state.read().await;
+            SourcePolicyTransaction::plan(
+                &state,
+                &[],
+                &bandwidth,
+                &source_bitrate,
+                now + Duration::from_millis(elapsed),
+            )
+        };
+        if let Some(tx) = tx {
+            tx.execute(&scenario.room, &scenario.adapter).await;
+        }
+        if elapsed >= 750 {
+            assert_subscription_policy_pause_reason(
+                &scenario.room,
+                &scenario.adapter,
+                &receiver,
+                &publisher,
+                TestSourceKind::ScalableVideo,
+                (elapsed == 1_501).then_some(DiagnosticsPolicyPauseReason::BudgetPressure),
+            )
+            .await;
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3203,12 +3401,23 @@ async fn a_rejected_sibling_pause_cannot_extend_upgrade_eligibility() {
     .unwrap();
     let scenario = SourcePolicyScenario::with_ready_users_and_tuning(&[1, 2, 3], tuning).await;
     for publisher in [1, 3] {
-        publish_three_layer_camera(
-            &scenario.room,
-            &UserId::Integer(publisher),
-            &scenario.adapter,
-        )
-        .await;
+        // One legacy ladder keeps aggregate pressure while its pinned route
+        // upgrades. Two intermediate rungs would fit and cancel the pause.
+        if publisher == 1 {
+            publish_simulcast_camera(
+                &scenario.room,
+                &UserId::Integer(publisher),
+                &scenario.adapter,
+            )
+            .await;
+        } else {
+            publish_three_layer_camera(
+                &scenario.room,
+                &UserId::Integer(publisher),
+                &scenario.adapter,
+            )
+            .await;
+        }
         scenario
             .set_scalable_video_layout(2, publisher, VideoLayoutIntent::Pinned)
             .await;

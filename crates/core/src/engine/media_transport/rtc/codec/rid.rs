@@ -16,9 +16,11 @@ use crate::{
 };
 
 pub(super) const DEFAULT_LOW_RID: &str = "lo";
+pub(super) const DEFAULT_MIDDLE_RID: &str = "mid";
 pub(super) const DEFAULT_HIGH_RID: &str = "hi";
 pub(super) const DEFAULT_LOW_MAX_BITRATE: Bitrate = Bitrate::from_kbps(150);
-const MAX_SEND_STREAMS: usize = 2;
+const MIDDLE_BITRATE_DIVISOR: u64 = 5;
+const MAX_SEND_STREAMS: usize = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::engine::media_transport::rtc) struct NegotiatedRid {
@@ -78,12 +80,21 @@ pub(super) struct LayerSpec<'a> {
     pub(super) max_bitrate: Option<Bitrate>,
 }
 
-pub(super) fn default_layers(video_bitrate_limits: VideoBitrateLimits) -> [LayerSpec<'static>; 2] {
+pub(super) fn default_layers(video_bitrate_limits: VideoBitrateLimits) -> [LayerSpec<'static>; 3] {
     let high_max_bitrate = video_bitrate_limits.max_video_bitrate();
+    let low_max_bitrate = DEFAULT_LOW_MAX_BITRATE.min(high_max_bitrate);
     [
         LayerSpec {
             rid: DEFAULT_LOW_RID,
-            max_bitrate: Some(DEFAULT_LOW_MAX_BITRATE.min(high_max_bitrate)),
+            max_bitrate: Some(low_max_bitrate),
+        },
+        LayerSpec {
+            rid: DEFAULT_MIDDLE_RID,
+            max_bitrate: Some(
+                high_max_bitrate
+                    .divided_by(MIDDLE_BITRATE_DIVISOR)
+                    .max(low_max_bitrate),
+            ),
         },
         LayerSpec {
             rid: DEFAULT_HIGH_RID,

@@ -321,7 +321,8 @@ impl SessionBitrateLimits {
 /// Bitrate limit used by generated VP8 and H.264 simulcast upload profiles.
 ///
 /// The high RID uses `max_video_bitrate`. The low RID uses the lower of
-/// `max_video_bitrate` and 150 kbps.
+/// `max_video_bitrate` and 150 kbps. The middle RID uses one fifth of
+/// `max_video_bitrate`, raised to the low RID's limit when necessary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoBitrateLimits {
     max_video_bitrate: Bitrate,

@@ -350,8 +350,9 @@ pub(super) fn allocate_source_descriptor(
                     .or_else(|| upload_profile.and_then(MatchedUploadEncoding::max_bitrate)),
                 resolution_scale: upload_profile.and_then(MatchedUploadEncoding::resolution_scale),
                 max_framerate: upload_profile.and_then(MatchedUploadEncoding::max_framerate),
-                policy_role: upload_profile
-                    .map(|profile| upload_layer_policy_role_for_rank(profile.rank)),
+                policy_role: upload_profile.map(|profile| {
+                    upload_layer_policy_role_for_rank(profile.rank, upload_encodings.len())
+                }),
                 negotiated_format: negotiated_format_for_binding(
                     consumable_rtp_parameters,
                     binding.payload_type(),
@@ -402,11 +403,16 @@ impl MatchedUploadEncoding<'_> {
     }
 }
 
-const fn upload_layer_policy_role_for_rank(rank: usize) -> UploadLayerPolicyRole {
-    if rank == 0 {
-        UploadLayerPolicyRole::Thumbnail
-    } else {
+const fn upload_layer_policy_role_for_rank(
+    rank: usize,
+    layer_count: usize,
+) -> UploadLayerPolicyRole {
+    if layer_count > 1 && rank + 1 == layer_count {
         UploadLayerPolicyRole::Featured
+    } else if rank == 0 && layer_count > 2 {
+        UploadLayerPolicyRole::DegradedThumbnail
+    } else {
+        UploadLayerPolicyRole::Thumbnail
     }
 }
 

@@ -24,7 +24,7 @@ fn profile_accepts_only_the_promoted_chromium_format() {
 }
 
 #[test]
-fn default_policy_advertises_two_rids_without_resolution_hints() {
+fn default_policy_advertises_three_rids_without_resolution_hints() {
     let profile = SimulcastProfile::new(VideoBitrateLimits::default());
     let simulcast = profile.recv_simulcast(None);
 
@@ -38,6 +38,12 @@ fn default_policy_advertises_two_rids_without_resolution_hints() {
                 max_framerate: None,
             },
             SessionUploadEncoding {
+                rid: rid::DEFAULT_MIDDLE_RID.to_owned(),
+                max_bitrate: Some(Bitrate::from_kbps(800)),
+                resolution_scale: None,
+                max_framerate: None,
+            },
+            SessionUploadEncoding {
                 rid: rid::DEFAULT_HIGH_RID.to_owned(),
                 max_bitrate: Some(VideoBitrateLimits::default().max_video_bitrate()),
                 resolution_scale: None,
@@ -45,7 +51,7 @@ fn default_policy_advertises_two_rids_without_resolution_hints() {
             },
         ]
     );
-    assert!(matches!(simulcast, Some(simulcast) if simulcast.recv.len() == 2));
+    assert!(matches!(simulcast, Some(simulcast) if simulcast.recv.len() == 3));
 }
 
 #[test]
@@ -61,6 +67,9 @@ fn publication_policy_preserves_rid_bitrates_without_resolution_hints() {
                 .with_rid(rid::DEFAULT_LOW_RID)
                 .with_max_bitrate(120_000),
             StreamBinding::new()
+                .with_rid(rid::DEFAULT_MIDDLE_RID)
+                .with_max_bitrate(400_000),
+            StreamBinding::new()
                 .with_rid(rid::DEFAULT_HIGH_RID)
                 .with_max_bitrate(800_000),
         ],
@@ -73,6 +82,12 @@ fn publication_policy_preserves_rid_bitrates_without_resolution_hints() {
             SessionUploadEncoding {
                 rid: rid::DEFAULT_LOW_RID.to_owned(),
                 max_bitrate: Some(Bitrate::from_kbps(120)),
+                resolution_scale: None,
+                max_framerate: None,
+            },
+            SessionUploadEncoding {
+                rid: rid::DEFAULT_MIDDLE_RID.to_owned(),
+                max_bitrate: Some(Bitrate::from_kbps(400)),
                 resolution_scale: None,
                 max_framerate: None,
             },

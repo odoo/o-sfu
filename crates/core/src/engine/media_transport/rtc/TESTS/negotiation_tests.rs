@@ -178,7 +178,7 @@ async fn rtc_initial_session_offer_advertises_vp8_simulcast_receive_surface() {
     assert!(
         offer_sdp.contains(&sdp_simulcast_line(
             sdp::simulcast::DIRECTION_RECV,
-            &["lo", "hi"]
+            &["lo", "mid", "hi"]
         )),
         "video offers should advertise VP8 RID simulcast receive metadata"
     );
@@ -206,19 +206,7 @@ async fn rtc_initial_session_offer_advertises_vp8_simulcast_receive_surface() {
             String::from(rfc_rtp::codec_name::H264)
         ]
     );
-    assert_eq!(video_slot.simulcast_encodings.len(), 2);
-    assert_eq!(video_slot.simulcast_encodings[0].rid, "lo");
-    assert_eq!(
-        video_slot.simulcast_encodings[0].max_bitrate,
-        Some(Bitrate::from_kbps(150))
-    );
-    assert_eq!(video_slot.simulcast_encodings[0].resolution_scale, Some(4));
-    assert_eq!(video_slot.simulcast_encodings[1].rid, "hi");
-    assert_eq!(
-        video_slot.simulcast_encodings[1].max_bitrate,
-        Some(Bitrate::from_mbps(4))
-    );
-    assert_eq!(video_slot.simulcast_encodings[1].resolution_scale, Some(1));
+    assert_default_vp8_upload_slot(&upload_slots);
 }
 
 #[tokio::test]
@@ -242,7 +230,7 @@ async fn rtc_initial_session_offer_advertises_h264_simulcast_when_h264_leads() {
     assert!(
         offer_sdp.contains(&sdp_simulcast_line(
             sdp::simulcast::DIRECTION_RECV,
-            &["lo", "hi"]
+            &["lo", "mid", "hi"]
         )),
         "H264-first video offers should claim the promoted RID simulcast matrix"
     );
@@ -260,19 +248,22 @@ async fn rtc_initial_session_offer_advertises_h264_simulcast_when_h264_leads() {
             String::from(rfc_rtp::codec_name::VP8)
         ]
     );
-    assert_eq!(video_slot.simulcast_encodings.len(), 2);
-    assert_eq!(video_slot.simulcast_encodings[0].rid, "lo");
     assert_eq!(
-        video_slot.simulcast_encodings[0].max_bitrate,
-        Some(Bitrate::from_kbps(150))
+        video_slot
+            .simulcast_encodings
+            .iter()
+            .map(|encoding| (
+                encoding.rid.as_str(),
+                encoding.max_bitrate,
+                encoding.resolution_scale,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("lo", Some(Bitrate::from_kbps(150)), None),
+            ("mid", Some(Bitrate::from_kbps(800)), None),
+            ("hi", Some(Bitrate::from_mbps(4)), None),
+        ]
     );
-    assert_eq!(video_slot.simulcast_encodings[0].resolution_scale, None);
-    assert_eq!(video_slot.simulcast_encodings[1].rid, "hi");
-    assert_eq!(
-        video_slot.simulcast_encodings[1].max_bitrate,
-        Some(Bitrate::from_mbps(4))
-    );
-    assert_eq!(video_slot.simulcast_encodings[1].resolution_scale, None);
 }
 
 #[expect(
@@ -368,7 +359,7 @@ async fn rtc_initial_session_offer_reports_configured_codec_preferences() {
     }
     assert!(!offer_sdp.contains(&sdp_simulcast_line(
         sdp::simulcast::DIRECTION_RECV,
-        &["lo", "hi"]
+        &["lo", "mid", "hi"]
     )));
 }
 
@@ -961,66 +952,95 @@ async fn rtc_session_renegotiation_offer_stages_protocol_producer_additions() {
 
 #[tokio::test]
 async fn rtc_protocol_publish_projects_rid_bindings_when_publish_intent_is_empty() {
-    let adapter = RtcWorker::default();
-    let session_key = transport_key(1, 46, UserId::Integer(46));
-
-    let mut remote = complete_initial_offer_answer(&adapter, &session_key, 55_007).await;
-
-    let transport_media_id = adapter
-        .add_recv_media(
-            &session_key,
-            Str0mMediaKind::Video,
-            &RouterRtpParameters::new(vec![], vec![], vec![]),
-        )
-        .await
-        .expect("protocol publish intent should stage a recv-only media line");
-    let (renegotiation_sdp, upload_slots) = adapter
-        .create_session_renegotiation_offer(&session_key)
-        .await
-        .expect("protocol publish should stage a follow-up offer")
-        .into_parts();
-    assert_default_vp8_upload_slot(&upload_slots);
-    assert!(
-        renegotiation_sdp.contains(&sdp_simulcast_line(
-            sdp::simulcast::DIRECTION_RECV,
-            &["lo", "hi"]
-        )),
-        "empty protocol publish intents should emit the server-defined RID ladder"
-    );
-    let negotiated_mid = adapter
-        .debug_resolve_mid(transport_media_id)
-        .await
-        .expect("transport media should expose its negotiated mid");
-    let answer_sdp = remote
-        .sdp_api()
-        .accept_offer(
-            SdpOffer::from_sdp_string(&renegotiation_sdp)
-                .expect("default simulcast offer should parse"),
-        )
-        .expect("remote default simulcast answer should build")
-        .to_sdp_string();
-    let answer_sdp = answer_with_simulcast_send_rids(
-        &answer_sdp,
-        &negotiated_mid,
-        &[("lo", Some(150_000)), ("hi", Some(4_000_000))],
-    );
-
-    adapter
-        .apply_session_answer(&session_key, &answer_sdp)
-        .await
-        .expect("default simulcast answer should apply");
-
-    let negotiated_parameters = adapter
-        .negotiated_producer_parameters(&session_key, transport_media_id)
-        .await
-        .expect("protocol publish should project negotiated RTP parameters");
-    assert_eq!(
-        negotiated_parameters
-            .bindings()
-            .map(|binding| binding.rid())
-            .collect::<Vec<_>>(),
-        vec![Some("lo"), Some("hi")]
-    );
+    let offered = [
+        ("lo", Some(150_000), Some(4)),
+        ("mid", Some(800_000), Some(2)),
+        ("hi", Some(4_000_000), Some(1)),
+    ];
+    for accepted_rids in [
+        &["lo", "mid", "hi"][..],
+        &["lo", "hi"],
+        &["mid", "hi"],
+        &["mid"],
+    ] {
+        let adapter = RtcWorker::default();
+        let session_key = transport_key(1, 46, UserId::Integer(46));
+        let mut remote = complete_initial_offer_answer(&adapter, &session_key, 55_007).await;
+        let transport_media_id = adapter
+            .add_recv_media(
+                &session_key,
+                Str0mMediaKind::Video,
+                &RouterRtpParameters::new(vec![], vec![], vec![]),
+            )
+            .await
+            .expect("protocol publish intent should stage a recv-only media line");
+        let (renegotiation_sdp, upload_slots) = adapter
+            .create_session_renegotiation_offer(&session_key)
+            .await
+            .expect("protocol publish should stage a follow-up offer")
+            .into_parts();
+        assert_default_vp8_upload_slot(&upload_slots);
+        assert!(
+            renegotiation_sdp.contains(&sdp_simulcast_line(
+                sdp::simulcast::DIRECTION_RECV,
+                &["lo", "mid", "hi"]
+            )),
+            "empty protocol publish intents should emit the server-defined RID ladder"
+        );
+        let negotiated_mid = adapter
+            .debug_resolve_mid(transport_media_id)
+            .await
+            .expect("transport media should expose its negotiated mid");
+        let answer_sdp = remote
+            .sdp_api()
+            .accept_offer(
+                SdpOffer::from_sdp_string(&renegotiation_sdp)
+                    .expect("default simulcast offer should parse"),
+            )
+            .expect("remote default simulcast answer should build")
+            .to_sdp_string();
+        let accepted = offered
+            .iter()
+            .filter(|(rid, _, _)| accepted_rids.contains(rid))
+            .copied()
+            .collect::<Vec<_>>();
+        let answer_sdp = answer_with_simulcast_send_rids(
+            &answer_sdp,
+            &negotiated_mid,
+            &accepted
+                .iter()
+                .map(|(rid, bitrate, _scale)| (*rid, *bitrate))
+                .collect::<Vec<_>>(),
+        );
+        let applied = adapter
+            .apply_session_answer(&session_key, &answer_sdp)
+            .await
+            .expect("default simulcast answer should apply");
+        assert_eq!(
+            applied
+                .negotiated_producer_upload_encodings(transport_media_id)
+                .iter()
+                .map(|encoding| (
+                    encoding.rid.as_str(),
+                    encoding.max_bitrate.map(Bitrate::as_bps),
+                    encoding.resolution_scale,
+                ))
+                .collect::<Vec<_>>(),
+            accepted,
+            "answer pruning must preserve the offered RID bitrate and resolution"
+        );
+        let negotiated_parameters = adapter
+            .negotiated_producer_parameters(&session_key, transport_media_id)
+            .await
+            .expect("protocol publish should project negotiated RTP parameters");
+        assert_eq!(
+            negotiated_parameters
+                .bindings()
+                .map(|binding| binding.rid())
+                .collect::<Vec<_>>(),
+            accepted_rids.iter().copied().map(Some).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[tokio::test]
@@ -1666,7 +1686,6 @@ fn assert_default_vp8_upload_slot(upload_slots: &[SessionUploadSlot]) {
             .any(|codec| codec.as_str() == rfc_rtp::codec_name::VP8),
         "empty protocol publish intent should use the server-defined VP8 upload profile"
     );
-    assert_eq!(video_upload_slot.simulcast_encodings.len(), 2);
     assert_eq!(
         video_upload_slot
             .simulcast_encodings
@@ -1679,6 +1698,7 @@ fn assert_default_vp8_upload_slot(upload_slots: &[SessionUploadSlot]) {
             .collect::<Vec<_>>(),
         vec![
             ("lo", Some(Bitrate::from_kbps(150)), Some(4)),
+            ("mid", Some(Bitrate::from_kbps(800)), Some(2)),
             ("hi", Some(Bitrate::from_mbps(4)), Some(1))
         ]
     );

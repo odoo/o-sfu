@@ -257,8 +257,8 @@ impl SourceRoomPolicySelector {
 
 /// overload priority derived from a route's room-policy selector
 ///
-/// lower-priority buckets exhaust their cheaper encodings and pause before
-/// overload handling changes a higher-priority bucket
+/// Each downgrade or pause pass visits lower priorities first. All eligible
+/// encoding downsteps precede whole-route pauses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SourceRoutePriority {
     /// explicit receiver intent
