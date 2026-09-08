@@ -210,12 +210,14 @@ impl Room {
         &self,
         user_ids: &[UserId],
         media_transport: &MediaTransport,
-    ) {
+    ) -> usize {
         self.disconnect_users_with_teardown(user_ids, RoomEffectContext::runtime(media_transport))
-            .await;
+            .await
     }
 
     /// Removes current sessions in one state commit and ignores missing users.
+    ///
+    /// Returns the number of sessions actually torn down.
     ///
     /// # Panics
     ///
@@ -224,7 +226,7 @@ impl Room {
         &self,
         user_ids: &[UserId],
         context: RoomEffectContext<'_>,
-    ) {
+    ) -> usize {
         let commit = {
             let mut state = self.state.write().await;
             state.apply_disconnect_users(user_ids)
@@ -237,7 +239,7 @@ impl Room {
         RoomEffects::from_disconnect(commit)
             .execute(self, context)
             .await;
-        for session in sessions {
+        for session in &sessions {
             info!(
                 event = telemetry_event::USER_DISCONNECTED,
                 room_id = self.uuid(),
@@ -247,6 +249,7 @@ impl Room {
                 "user disconnected"
             );
         }
+        sessions.len()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
