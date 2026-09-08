@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 mod connection_lifecycle;
@@ -355,7 +356,7 @@ impl ProtocolCore {
         };
         self.enqueue_client_message(
             ClientMessage::Auth(AuthPayload {
-                jwt: connect_context.jwt.clone(),
+                jwt: SecretString::from(connect_context.jwt.clone()),
                 channel: connect_context.room.clone(),
             }),
             FlushMode::Immediate,

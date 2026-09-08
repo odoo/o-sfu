@@ -1,12 +1,17 @@
+use std::io;
+
 use super::{Env, MediaCodecFlags, load_media_codec_flags};
 
 #[test]
 fn load_media_codec_flags_applies_per_codec_overrides() {
-    let flags = load_media_codec_flags(&Env::new(|key| match key {
-        "CODEC_OPUS" => Some("false".to_owned()),
-        "CODEC_H264" | "CODEC_AV1" => Some("true".to_owned()),
-        _ => None,
-    }));
+    let flags = load_media_codec_flags(&Env::new(
+        |key| match key {
+            "CODEC_OPUS" => Some("false".to_owned()),
+            "CODEC_H264" | "CODEC_AV1" => Some("true".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ));
     assert_eq!(
         flags.ok(),
         Some(
@@ -20,10 +25,13 @@ fn load_media_codec_flags_applies_per_codec_overrides() {
 
 #[test]
 fn load_media_codec_flags_rejects_invalid_bool() {
-    let error = load_media_codec_flags(&Env::new(|key| match key {
-        "CODEC_VP8" => Some("enabled".to_owned()),
-        _ => None,
-    }))
+    let error = load_media_codec_flags(&Env::new(
+        |key| match key {
+            "CODEC_VP8" => Some("enabled".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 

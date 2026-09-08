@@ -12,13 +12,15 @@ pub(super) use o_sfu_telemetry::diagnostics::{
     DiagnosticsSummaryResponse, DiagnosticsUserDetail, DiagnosticsUserSummary,
     DiagnosticsWorkerSummary,
 };
+use secrecy::{ExposeSecret, SecretString};
 pub(super) use serde::de::DeserializeOwned;
 pub(super) use tower::util::ServiceExt;
 
 pub(super) use super::super::app;
+use crate::runtime::test_support::TestHttpRoomClaims;
 pub(super) use crate::runtime::{
     RuntimeState,
-    auth::{self, HttpDisconnectClaims, HttpRoomClaims, RegisteredJwtClaims},
+    auth::{self, HttpDisconnectClaims, RegisteredJwtClaims},
     http_server::contract::{CreateRoomQuery, NoopResponse, RoomResponse, StatsResponse, route},
     media_transport::MediaTransport,
     room::{Room, RoomConfig, UserOutboundReceiver},
@@ -55,17 +57,18 @@ pub(super) fn signed_room_claims(
     key_seed: Option<&str>,
 ) -> Option<String> {
     auth::sign(
-        &HttpRoomClaims {
+        &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: issuer.map(str::to_owned),
                 ..RegisteredJwtClaims::default()
             },
-            key: key.map(str::to_owned),
-            key_seed: key_seed.map(str::to_owned),
+            key,
+            key_seed,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY),
     )
     .ok()
+    .map(|token| token.expose_secret().to_owned())
 }
 
 pub(super) fn signed_disconnect_claims(
@@ -76,9 +79,10 @@ pub(super) fn signed_disconnect_claims(
             registered: RegisteredJwtClaims::default(),
             user_ids_by_room,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY),
     )
     .ok()
+    .map(|token| token.expose_secret().to_owned())
 }
 
 pub(super) async fn route_response(

@@ -12,9 +12,14 @@ publish.workspace = true
 rust-version = "1.93"
 version.workspace = true
 
+[features]
+default = ["client"]
+client = []
+
 [dependencies]
 o-sfu-model.workspace = true
 o-sfu-rfc.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

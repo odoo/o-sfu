@@ -92,7 +92,7 @@ pub fn spillover_policy(max_local_routers: usize) -> Result<RoomWorkerPolicy> {
 
 pub async fn serve_room(manager: &RoomManager, issuer: &str) -> Result<Arc<Room>> {
     Ok(manager
-        .serve_room(issuer, TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(issuer, TEST_ROOM_KEY.into(), &RoomConfig::default(), None)
         .await?)
 }
 

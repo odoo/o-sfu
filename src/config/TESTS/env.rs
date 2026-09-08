@@ -1,6 +1,8 @@
 use std::{
     cell::Cell,
+    io,
     num::{NonZeroU64, NonZeroUsize},
+    path::Path,
     time::Duration,
 };
 
@@ -12,15 +14,22 @@ fn error<T>(result: anyhow::Result<T>) -> Option<String> {
     result.err().map(|error| error.to_string())
 }
 
+fn no_file(_path: &Path) -> io::Result<String> {
+    Err(io::Error::new(io::ErrorKind::NotFound, "file not found"))
+}
+
 #[test]
 fn env_loads_required_default_optional_check_and_trimmed_values() {
-    let env = Env::new(|key| match key {
-        "REQUIRED_ENV" => Some("value".to_owned()),
-        "COUNT_ENV" => Some("4".to_owned()),
-        "TOKEN_ENV" => Some("  token  ".to_owned()),
-        "DURATION_ENV" => Some("90".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "REQUIRED_ENV" => Some("value".to_owned()),
+            "COUNT_ENV" => Some("4".to_owned()),
+            "TOKEN_ENV" => Some("  token  ".to_owned()),
+            "DURATION_ENV" => Some("90".to_owned()),
+            _ => None,
+        },
+        no_file,
+    );
     assert_eq!(
         env.var("REQUIRED_ENV").required().ok(),
         Some("value".to_owned())
@@ -50,14 +59,17 @@ fn env_loads_required_default_optional_check_and_trimmed_values() {
 
 #[test]
 fn env_reports_parse_and_validation_errors() {
-    let env = Env::new(|key| match key {
-        "FLAG_ENV" => Some("yes".to_owned()),
-        "COUNT_ENV" => Some("abc".to_owned()),
-        "ZERO_ENV" => Some("0".to_owned()),
-        "TOKEN_ENV" => Some("   ".to_owned()),
-        "DURATION_ENV" => Some("-42".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "FLAG_ENV" => Some("yes".to_owned()),
+            "COUNT_ENV" => Some("abc".to_owned()),
+            "ZERO_ENV" => Some("0".to_owned()),
+            "TOKEN_ENV" => Some("   ".to_owned()),
+            "DURATION_ENV" => Some("-42".to_owned()),
+            _ => None,
+        },
+        no_file,
+    );
     assert_eq!(
         error(env.var::<String>("REQUIRED_ENV").required()).as_deref(),
         Some("REQUIRED_ENV env variable is required")
@@ -86,7 +98,7 @@ fn env_reports_parse_and_validation_errors() {
 
 #[test]
 fn env_validates_default_values() {
-    let env = Env::new(|_| None);
+    let env = Env::new(|_| None, no_file);
     assert_eq!(
         error(env.var("MISSING_COUNT").check(positive).default(0usize)).as_deref(),
         Some("MISSING_COUNT must be greater than zero")
@@ -95,7 +107,7 @@ fn env_validates_default_values() {
 
 #[test]
 fn env_checks_capture_values_and_validate_defaults() {
-    let env = Env::new(|key| (key == "COUNT_ENV").then(|| "4".to_owned()));
+    let env = Env::new(|key| (key == "COUNT_ENV").then(|| "4".to_owned()), no_file);
     let limit = 5usize;
     let calls = Cell::new(0);
     let below_limit = |key, value| {
@@ -124,7 +136,7 @@ fn env_checks_capture_values_and_validate_defaults() {
 
 #[test]
 fn env_chained_checks_transform_values_and_short_circuit() {
-    let env = Env::new(|_| Some("4".to_owned()));
+    let env = Env::new(|_| Some("4".to_owned()), no_file);
     let offset = 3usize;
     let reached_later_check = Cell::new(false);
     assert_eq!(
@@ -156,11 +168,14 @@ fn env_chained_checks_transform_values_and_short_circuit() {
 
 #[test]
 fn env_alias() {
-    let env = Env::new(|key| match key {
-        "PRIMARY_ENV" => Some("primary".to_owned()),
-        "SECOND_ALIAS_ENV" => Some("second alias".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "PRIMARY_ENV" => Some("primary".to_owned()),
+            "SECOND_ALIAS_ENV" => Some("second alias".to_owned()),
+            _ => None,
+        },
+        no_file,
+    );
     assert_eq!(
         env.var("MISSING_ENV")
             .alias("FIRST_ALIAS_ENV")
@@ -180,12 +195,15 @@ fn env_alias() {
 
 #[test]
 fn env_alias_errors_keep_the_selected_key_without_falling_back() {
-    let env = Env::new(|key| match key {
-        "PRIMARY_ENV" | "ZERO_ALIAS_ENV" => Some("0".to_owned()),
-        "INVALID_ALIAS_ENV" => Some("invalid".to_owned()),
-        "VALID_ALIAS_ENV" => Some("2".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "PRIMARY_ENV" | "ZERO_ALIAS_ENV" => Some("0".to_owned()),
+            "INVALID_ALIAS_ENV" => Some("invalid".to_owned()),
+            "VALID_ALIAS_ENV" => Some("2".to_owned()),
+            _ => None,
+        },
+        no_file,
+    );
     for (key, expected_key) in [
         ("PRIMARY_ENV", "PRIMARY_ENV"),
         ("MISSING_ENV", "ZERO_ALIAS_ENV"),
@@ -217,12 +235,15 @@ fn env_alias_errors_keep_the_selected_key_without_falling_back() {
 
 #[test]
 fn env_parses_nonzero_values_and_typed_defaults() {
-    let env = Env::new(|key| match key {
-        "COUNT_ENV" => Some("42".to_owned()),
-        "USIZE_MAX_ENV" => Some(usize::MAX.to_string()),
-        "U64_MAX_ENV" => Some(u64::MAX.to_string()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "COUNT_ENV" => Some("42".to_owned()),
+            "USIZE_MAX_ENV" => Some(usize::MAX.to_string()),
+            "U64_MAX_ENV" => Some(u64::MAX.to_string()),
+            _ => None,
+        },
+        no_file,
+    );
     assert_eq!(
         env.var::<NonZeroUsize>("COUNT_ENV")
             .required()
@@ -264,7 +285,7 @@ fn env_parses_nonzero_values_and_typed_defaults() {
 #[test]
 fn env_nonzero_errors_preserve_primitive_and_zero_diagnostics() {
     for raw in ["invalid", "-1", "18446744073709551616"] {
-        let env = Env::new(|_| Some(raw.to_owned()));
+        let env = Env::new(|_| Some(raw.to_owned()), no_file);
         assert_eq!(
             error(env.var::<NonZeroUsize>("COUNT_ENV").required()).as_deref(),
             Some("COUNT_ENV must be a valid usize")
@@ -274,7 +295,7 @@ fn env_nonzero_errors_preserve_primitive_and_zero_diagnostics() {
             Some("COUNT_ENV must be a valid u64")
         );
     }
-    let env = Env::new(|_| Some("0".to_owned()));
+    let env = Env::new(|_| Some("0".to_owned()), no_file);
     assert_eq!(
         error(env.var::<NonZeroUsize>("COUNT_ENV").required()).as_deref(),
         Some("COUNT_ENV must be greater than zero")
@@ -288,7 +309,7 @@ fn env_nonzero_errors_preserve_primitive_and_zero_diagnostics() {
 #[test]
 fn env_parses_bitrates_as_integer_bps_and_uses_typed_defaults() {
     for bps in [0, 42, u64::MAX] {
-        let env = Env::new(|_| Some(bps.to_string()));
+        let env = Env::new(|_| Some(bps.to_string()), no_file);
         assert_eq!(
             env.var::<Bitrate>("BITRATE_ENV")
                 .required()
@@ -297,7 +318,7 @@ fn env_parses_bitrates_as_integer_bps_and_uses_typed_defaults() {
             Some(bps)
         );
     }
-    let env = Env::new(|_| None);
+    let env = Env::new(|_| None, no_file);
     for bps in [0, 42] {
         assert_eq!(
             env.var("BITRATE_ENV")
@@ -312,17 +333,20 @@ fn env_parses_bitrates_as_integer_bps_and_uses_typed_defaults() {
 #[test]
 fn env_bitrate_validation_preserves_numeric_and_positive_diagnostics() {
     for raw in ["invalid", "-1", "18446744073709551616"] {
-        let env = Env::new(|_| Some(raw.to_owned()));
+        let env = Env::new(|_| Some(raw.to_owned()), no_file);
         assert_eq!(
             error(env.var::<Bitrate>("BITRATE_ENV").required()).as_deref(),
             Some("BITRATE_ENV must be a valid u64")
         );
     }
-    let env = Env::new(|key| match key {
-        "BITRATE_ENV" => Some("42".to_owned()),
-        "ZERO_ENV" => Some("0".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "BITRATE_ENV" => Some("42".to_owned()),
+            "ZERO_ENV" => Some("0".to_owned()),
+            _ => None,
+        },
+        no_file,
+    );
     assert_eq!(
         env.var::<Bitrate>("BITRATE_ENV")
             .check(positive)
@@ -337,4 +361,75 @@ fn env_bitrate_validation_preserves_numeric_and_positive_diagnostics() {
             Some(format!("{key} must be greater than zero"))
         );
     }
+}
+
+#[test]
+fn env_can_read_from_file() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("test.password".to_owned()),
+            _ => None,
+        },
+        |path| {
+            if path == Path::new("test.password") {
+                Ok("file value".to_owned())
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "file not found"))
+            }
+        },
+    );
+
+    assert_eq!(
+        env.var("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required()
+            .ok(),
+        Some("file value".to_owned())
+    );
+    assert_eq!(env.var::<String>("FILE_ENV").required().ok(), None);
+}
+
+#[test]
+fn env_trims_whitespace_from_file_contents() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("secret.txt".to_owned()),
+            _ => None,
+        },
+        |_| Ok("  file value\n".to_owned()),
+    );
+
+    assert_eq!(
+        env.var("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required()
+            .ok(),
+        Some("file value".to_owned())
+    );
+}
+
+#[test]
+fn env_reports_unreadable_file_instead_of_treating_it_as_missing() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("/no/such/file".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied")),
+    );
+
+    let message = error(
+        env.var::<String>("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required(),
+    );
+
+    assert!(
+        matches!(
+            message.as_deref(),
+            Some(message)
+                if message.contains("ENV_FROM_FILE") && message.contains("/no/such/file")
+        ),
+        "unreadable file must not be treated as an absent value, got: {message:?}"
+    );
 }
