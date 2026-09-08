@@ -4,8 +4,10 @@ use std::{
     time::Duration,
 };
 
+use secrecy::SecretString;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+pub use crate::runtime::auth::test_support::TestHttpRoomClaims;
 pub(super) use crate::runtime::metrics::test_support::RuntimeMetricsSnapshotTestExt;
 use crate::{
     config::{
@@ -45,7 +47,7 @@ impl RuntimeTestBuilder {
         Self {
             config: Config {
                 auth: AuthConfig {
-                    key: TEST_AUTH_KEY.to_owned(),
+                    key: SecretString::from(TEST_AUTH_KEY),
                     authentication_timeout_ms: DEFAULT_AUTHENTICATION_TIMEOUT_MS,
                     max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
                     max_pre_auth_websocket_sessions_per_origin:

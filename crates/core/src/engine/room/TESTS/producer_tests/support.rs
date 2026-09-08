@@ -324,7 +324,12 @@ pub(super) struct RealRtcRefreshScenario {
 pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario {
     let manager = RoomManager::for_test();
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let (publisher_tx, publisher_rx) = test_sender();

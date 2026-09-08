@@ -321,7 +321,7 @@ impl SourcePolicyScenario {
         let room = manager
             .serve_room(
                 "source-policy-benchmark",
-                TEST_ROOM_KEY,
+                TEST_ROOM_KEY.into(),
                 &RoomConfig::default(),
                 Some("source-policy-benchmark"),
             )
@@ -390,7 +390,7 @@ impl SourcePolicyScenario {
             .manager
             .serve_room(
                 "foreign-speaker-benchmark",
-                TEST_ROOM_KEY,
+                TEST_ROOM_KEY.into(),
                 &RoomConfig::default(),
                 None,
             )

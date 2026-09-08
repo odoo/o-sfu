@@ -4,6 +4,7 @@ use std::{
 };
 
 use o_sfu_core::prelude::Bitrate;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::{
     CodecPreferences, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange,
@@ -27,13 +28,25 @@ pub struct Config {
     pub diagnostics: DiagnosticsConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AuthConfig {
-    pub key: String,
+    pub key: SecretString,
     pub authentication_timeout_ms: u64,
     pub max_pre_auth_websocket_sessions: usize,
     pub max_pre_auth_websocket_sessions_per_origin: usize,
 }
+
+impl PartialEq for AuthConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.key.expose_secret() == other.key.expose_secret()
+            && self.authentication_timeout_ms == other.authentication_timeout_ms
+            && self.max_pre_auth_websocket_sessions == other.max_pre_auth_websocket_sessions
+            && self.max_pre_auth_websocket_sessions_per_origin
+                == other.max_pre_auth_websocket_sessions_per_origin
+    }
+}
+
+impl Eq for AuthConfig {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpConfig {

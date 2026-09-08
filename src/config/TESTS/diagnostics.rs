@@ -1,21 +1,29 @@
+use std::io;
+
 use super::{DiagnosticsConfig, Env};
 
 #[test]
 fn load_diagnostics_config_accepts_trimmed_bearer_token() -> anyhow::Result<()> {
-    let config = DiagnosticsConfig::from_env(&Env::new(|key| match key {
-        "DIAGNOSTICS_AUTH_TOKEN" => Some("  bearer-token  \n".to_owned()),
-        _ => None,
-    }))?;
+    let config = DiagnosticsConfig::from_env(&Env::new(
+        |key| match key {
+            "DIAGNOSTICS_AUTH_TOKEN" => Some("  bearer-token  \n".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))?;
     assert_eq!(config.auth_token.as_deref(), Some("bearer-token"));
     Ok(())
 }
 
 #[test]
 fn load_diagnostics_config_rejects_empty_token() {
-    let error = DiagnosticsConfig::from_env(&Env::new(|key| match key {
-        "DIAGNOSTICS_AUTH_TOKEN" => Some("   ".to_owned()),
-        _ => None,
-    }))
+    let error = DiagnosticsConfig::from_env(&Env::new(
+        |key| match key {
+            "DIAGNOSTICS_AUTH_TOKEN" => Some("   ".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -43,10 +51,13 @@ fn load_diagnostics_config_rejects_invalid_header_value_tokens() {
     ];
 
     for invalid_token in invalid_tokens {
-        let env = Env::new(|key| match key {
-            "DIAGNOSTICS_AUTH_TOKEN" => Some(invalid_token.to_owned()),
-            _ => None,
-        });
+        let env = Env::new(
+            |key| match key {
+                "DIAGNOSTICS_AUTH_TOKEN" => Some(invalid_token.to_owned()),
+                _ => None,
+            },
+            |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+        );
 
         let error = DiagnosticsConfig::from_env(&env)
             .err()
@@ -70,10 +81,13 @@ fn load_diagnostics_config_accepts_valid_tokens() {
         "token\twith_tab",
     ];
     for valid_token in valid_tokens {
-        let env = Env::new(|key| match key {
-            "DIAGNOSTICS_AUTH_TOKEN" => Some(valid_token.to_owned()),
-            _ => None,
-        });
+        let env = Env::new(
+            |key| match key {
+                "DIAGNOSTICS_AUTH_TOKEN" => Some(valid_token.to_owned()),
+                _ => None,
+            },
+            |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+        );
         let config = DiagnosticsConfig::from_env(&env).ok();
         let actual_token = config.as_ref().and_then(|c| c.auth_token.as_deref());
         assert_eq!(actual_token, Some(valid_token));

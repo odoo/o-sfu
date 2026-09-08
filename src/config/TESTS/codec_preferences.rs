@@ -1,14 +1,19 @@
+use std::io;
+
 use o_sfu_core::prelude::{AudioCodecPreference, CodecPreferences, VideoCodecPreference};
 
 use super::{Env, load_codec_preferences};
 
 #[test]
 fn load_codec_preferences_accepts_partial_orders() {
-    let preferences = load_codec_preferences(&Env::new(|key| match key {
-        "CODEC_AUDIO_PREFERENCE" => Some("PCMU,opus".to_owned()),
-        "CODEC_VIDEO_PREFERENCE" => Some("H264,VP9".to_owned()),
-        _ => None,
-    }));
+    let preferences = load_codec_preferences(&Env::new(
+        |key| match key {
+            "CODEC_AUDIO_PREFERENCE" => Some("PCMU,opus".to_owned()),
+            "CODEC_VIDEO_PREFERENCE" => Some("H264,VP9".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ));
     assert_eq!(
         preferences.ok(),
         Some(
@@ -21,10 +26,13 @@ fn load_codec_preferences_accepts_partial_orders() {
 
 #[test]
 fn load_codec_preferences_rejects_unknown_codecs() {
-    let error = load_codec_preferences(&Env::new(|key| match key {
-        "CODEC_VIDEO_PREFERENCE" => Some("VP8,THEORA".to_owned()),
-        _ => None,
-    }))
+    let error = load_codec_preferences(&Env::new(
+        |key| match key {
+            "CODEC_VIDEO_PREFERENCE" => Some("VP8,THEORA".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -36,10 +44,13 @@ fn load_codec_preferences_rejects_unknown_codecs() {
 
 #[test]
 fn load_codec_preferences_rejects_duplicates() {
-    let error = load_codec_preferences(&Env::new(|key| match key {
-        "CODEC_AUDIO_PREFERENCE" => Some("opus,OPUS".to_owned()),
-        _ => None,
-    }))
+    let error = load_codec_preferences(&Env::new(
+        |key| match key {
+            "CODEC_AUDIO_PREFERENCE" => Some("opus,OPUS".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 

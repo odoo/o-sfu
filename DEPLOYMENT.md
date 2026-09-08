@@ -26,6 +26,14 @@ AUTH_KEY=<base64-auth-key>
 ANNOUNCED_IP=<vm-public-ip>
 ```
 
+or use the file option for the `AUTH_KEY` (recommended for extra security).
+The file must be readable by the `o-sfu` process and contain only the base64 key (e.g. Docker secrets):
+
+```env
+AUTH_KEY_FILE=/run/secrets/o_sfu_auth_key
+ANNOUNCED_IP=<vm-public-ip>
+```
+
 on Odoo Discuss settings:
 
 ```text

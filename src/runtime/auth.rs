@@ -4,16 +4,18 @@ use std::{
 };
 
 use base64::{
-    Engine as _,
+    Engine as _, decoded_len_estimate,
     engine::general_purpose::{STANDARD, URL_SAFE},
 };
 use hmac::{Hmac, KeyInit, Mac};
 use o_sfu_protocol::wire::{UserId, UserPermissions};
 use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 pub use o_sfu_rfc::jwt::{NumericDate, RegisteredJwtClaims};
+use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::Sha256;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -51,14 +53,13 @@ pub enum AuthenticationError {
 /// validity rule.
 const MAX_IAT_FUTURE_SKEW: Duration = Duration::from_mins(1);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct HttpRoomClaims {
     #[serde(flatten)]
     pub registered: RegisteredJwtClaims,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    #[serde(rename = "keySeed", skip_serializing_if = "Option::is_none")]
-    pub key_seed: Option<String>,
+    pub key: Option<SecretString>,
+    #[serde(rename = "keySeed")]
+    pub key_seed: Option<SecretString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +110,7 @@ pub(crate) fn duration_since_epoch() -> Duration {
 /// # Errors
 ///
 /// Returns an error when the key cannot be decoded or the claims cannot be serialized.
-pub fn sign<T>(claims: &T, key_b64: &str) -> Result<String, AuthenticationError>
+pub fn sign<T>(claims: &T, key_b64: &SecretString) -> Result<SecretString, AuthenticationError>
 where
     T: Serialize,
 {
@@ -120,14 +121,17 @@ where
     };
     let header_json =
         serde_json::to_vec(&header).map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
-    let claims_json =
-        serde_json::to_vec(claims).map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
+    // `claims` can carry a room key or key seed (`HttpRoomClaims`), so each plaintext copy made
+    // while assembling the token is kept in a `Secret*` wrapper
+    let claims_json: SecretSlice<u8> = serde_json::to_vec(claims)
+        .map_err(|_error| AuthenticationError::InvalidJsonPayload)?
+        .into();
     let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
-    let claims_b64 = URL_SAFE_NO_PAD.encode(claims_json);
-    let signed_data = format!("{header_b64}.{claims_b64}");
-    let signature = sign_hs256(signed_data.as_bytes(), &key)?;
+    let claims_b64: SecretString = URL_SAFE_NO_PAD.encode(claims_json.expose_secret()).into();
+    let signed_data: SecretString = format!("{header_b64}.{}", claims_b64.expose_secret()).into();
+    let signature = sign_hs256(signed_data.expose_secret().as_bytes(), &key)?;
     let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
-    Ok(format!("{signed_data}.{signature_b64}"))
+    Ok(format!("{}.{signature_b64}", signed_data.expose_secret()).into())
 }
 
 /// # Errors
@@ -137,10 +141,11 @@ where
 ///
 /// This verifier decodes JWT header, payload, and signature segments with the JOSE base64url
 /// alphabet without padding, as required by RFC 7515 / RFC 7519.
-pub fn verify<T>(token: &str, key_b64: &str) -> Result<T, AuthenticationError>
+pub fn verify<T>(token: &SecretString, key_b64: &SecretString) -> Result<T, AuthenticationError>
 where
     T: DeserializeOwned,
 {
+    let token = token.expose_secret();
     validate_token_length(token)?;
     let key = decode_key(key_b64)?;
     let (header_b64, claims_b64, signature_b64) = split_token(token)?;
@@ -151,22 +156,23 @@ where
         return Err(AuthenticationError::UnsupportedAlgorithm(header.alg));
     }
     let actual_signature = decode_jwt_segment(signature_b64)?;
-    verify_hs256(
-        format!("{header_b64}.{claims_b64}").as_bytes(),
-        &key,
-        &actual_signature,
-    )?;
-    let claims_bytes = decode_jwt_segment(claims_b64)?;
-    let registered_claims: RegisteredJwtClaims = serde_json::from_slice(&claims_bytes)
-        .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
+    // This avoids copying the token data, and uses the token which is already protected by
+    // `SecretString` to avoid exposing the signed data in memory.
+    let signed_data = &token[..token.len() - signature_b64.len() - 1];
+    verify_hs256(signed_data.as_bytes(), &key, &actual_signature)?;
+    let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
+    let registered_claims: RegisteredJwtClaims =
+        serde_json::from_slice(claims_bytes.expose_secret())
+            .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
     validate_registered_claims(&registered_claims)?;
-    serde_json::from_slice(&claims_bytes).map_err(|_error| AuthenticationError::InvalidJsonPayload)
+    serde_json::from_slice(claims_bytes.expose_secret())
+        .map_err(|_error| AuthenticationError::InvalidJsonPayload)
 }
 
 /// Returns verified claims with proof or the [`AuthenticationError`] from [`verify`].
 pub(super) fn verify_with_proof<T: DeserializeOwned>(
-    token: &str,
-    key_b64: &str,
+    token: &SecretString,
+    key_b64: &SecretString,
 ) -> Result<(T, AuthProof), AuthenticationError> {
     verify(token, key_b64).map(|claims| (claims, AuthProof(())))
 }
@@ -175,14 +181,16 @@ pub(super) fn verify_with_proof<T: DeserializeOwned>(
 ///
 /// callers must verify the same token with the selected room key before using
 /// the decoded claims as authenticated identity or permission data
-pub(crate) fn decode_unverified_claims<T>(token: &str) -> Result<T, AuthenticationError>
+pub(crate) fn decode_unverified_claims<T>(token: &SecretString) -> Result<T, AuthenticationError>
 where
     T: DeserializeOwned,
 {
+    let token = token.expose_secret();
     validate_token_length(token)?;
     let (_header_b64, claims_b64, _signature_b64) = split_token(token)?;
-    let claims_bytes = decode_jwt_segment(claims_b64)?;
-    serde_json::from_slice(&claims_bytes).map_err(|_error| AuthenticationError::InvalidJsonPayload)
+    let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
+    serde_json::from_slice(claims_bytes.expose_secret())
+        .map_err(|_error| AuthenticationError::InvalidJsonPayload)
 }
 
 fn validate_token_length(token: &str) -> Result<(), AuthenticationError> {
@@ -217,16 +225,26 @@ fn validate_registered_claims_at(
     Ok(())
 }
 
-fn sign_hs256(data: &[u8], key: &[u8]) -> Result<Vec<u8>, AuthenticationError> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+fn sign_hs256(data: &[u8], key: &SecretSlice<u8>) -> Result<[u8; 32], AuthenticationError> {
+    let mut mac = {
+        let raw_key = key.expose_secret();
+        HmacSha256::new_from_slice(raw_key)
+            .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?
+    };
     mac.update(data);
-    Ok(mac.finalize().into_bytes().to_vec())
+    Ok(mac.finalize().into_bytes().into())
 }
 
-fn verify_hs256(data: &[u8], key: &[u8], signature: &[u8]) -> Result<(), AuthenticationError> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+fn verify_hs256(
+    data: &[u8],
+    key: &SecretSlice<u8>,
+    signature: &[u8],
+) -> Result<(), AuthenticationError> {
+    let mut mac = {
+        let raw_key = key.expose_secret();
+        HmacSha256::new_from_slice(raw_key)
+            .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?
+    };
     mac.update(data);
     mac.verify_slice(signature)
         .map_err(|_error| AuthenticationError::InvalidSignature)
@@ -245,12 +263,24 @@ fn split_token(token: &str) -> Result<(&str, &str, &str), AuthenticationError> {
     Ok((header, claims, signature))
 }
 
-pub(crate) fn decode_key(input: &str) -> Result<Vec<u8>, AuthenticationError> {
-    let padded = pad_base64(input);
-    URL_SAFE
-        .decode(padded.as_bytes())
-        .or_else(|_error| STANDARD.decode(padded.as_bytes()))
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)
+pub(crate) fn decode_key(input: &SecretString) -> Result<SecretSlice<u8>, AuthenticationError> {
+    let padded: SecretString = pad_base64(input.expose_secret()).into();
+    let padded_bytes = padded.expose_secret().as_bytes();
+    // Using one owned buffer to decode into avoids a double allocation and copy, and the buffer is
+    // zeroized on error to avoid leaving a plaintext copy of the key in memory.
+    let mut buffer = vec![0u8; decoded_len_estimate(padded_bytes.len())];
+    let bytes_written = URL_SAFE
+        .decode_slice(padded_bytes, &mut buffer)
+        .or_else(|_error| STANDARD.decode_slice(padded_bytes, &mut buffer));
+    let bytes_written = match bytes_written {
+        Ok(bytes_written) => bytes_written,
+        Err(_error) => {
+            buffer.zeroize();
+            return Err(AuthenticationError::InvalidBase64Encoding);
+        }
+    };
+    buffer.truncate(bytes_written);
+    Ok(SecretSlice::from(buffer))
 }
 
 fn decode_jwt_segment(input: &str) -> Result<Vec<u8>, AuthenticationError> {
@@ -267,11 +297,67 @@ fn pad_base64(input: &str) -> String {
     format!("{input}{}", "=".repeat(4 - remainder))
 }
 
-pub(crate) fn derive_key_from_seed(key: &str, seed: &str) -> Result<String, AuthenticationError> {
+pub(crate) fn derive_key_from_seed(
+    key: &SecretString,
+    seed: &SecretString,
+) -> Result<SecretString, AuthenticationError> {
     let key_bytes = decode_key(key)?;
     let seed_bytes = decode_key(seed)?;
-    let derived_key = sign_hs256(&seed_bytes, &key_bytes)?;
-    Ok(STANDARD.encode(derived_key))
+    let mut derived_key = sign_hs256(seed_bytes.expose_secret(), &key_bytes)?;
+    let encoded = STANDARD.encode(derived_key);
+    derived_key.zeroize();
+    Ok(SecretString::from(encoded))
+}
+
+/// Plaintext mirror of [`HttpRoomClaims`] for test assertions.
+///
+/// `HttpRoomClaims` deliberately does not implement `Serialize`/`PartialEq`, so production code
+/// cannot accidentally leak or compare secrets insecurely. This test-only mirror lets test code
+/// assert equality of claims without exposing secrets in production code.
+///
+/// Keys are plain `&str` here instead of `SecretString`: this type never touches production
+/// secret handling, so there is nothing for `SecretString`'s redaction, zeroing, or ownership
+/// to protect.
+#[cfg(any(test, feature = "testing"))]
+pub mod test_support {
+    use secrecy::ExposeSecret;
+    use serde::Serialize;
+
+    use super::{HttpRoomClaims, RegisteredJwtClaims};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+    pub struct TestHttpRoomClaims<'a> {
+        #[serde(flatten)]
+        pub registered: RegisteredJwtClaims,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub key: Option<&'a str>,
+        #[serde(rename = "keySeed", skip_serializing_if = "Option::is_none")]
+        pub key_seed: Option<&'a str>,
+    }
+
+    impl<'a> From<&'a HttpRoomClaims> for TestHttpRoomClaims<'a> {
+        fn from(claims: &'a HttpRoomClaims) -> Self {
+            Self {
+                registered: claims.registered.clone(),
+                key: claims.key.as_ref().map(ExposeSecret::expose_secret),
+                key_seed: claims.key_seed.as_ref().map(ExposeSecret::expose_secret),
+            }
+        }
+    }
+
+    impl PartialEq<HttpRoomClaims> for TestHttpRoomClaims<'_> {
+        fn eq(&self, other: &HttpRoomClaims) -> bool {
+            self.registered == other.registered
+                && self.key == other.key.as_ref().map(ExposeSecret::expose_secret)
+                && self.key_seed == other.key_seed.as_ref().map(ExposeSecret::expose_secret)
+        }
+    }
+
+    impl PartialEq<TestHttpRoomClaims<'_>> for HttpRoomClaims {
+        fn eq(&self, other: &TestHttpRoomClaims<'_>) -> bool {
+            other == self
+        }
+    }
 }
 
 #[cfg(test)]

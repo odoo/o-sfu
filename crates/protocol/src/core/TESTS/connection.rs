@@ -63,7 +63,7 @@ fn protocol_core_ws_open_sends_auth_frame_immediately() {
     assert_sent_client_envelopes(
         &commands,
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
-            jwt: String::from("signed-token"),
+            jwt: secrecy::SecretString::from("signed-token"),
             channel: Some(String::from("channel-1")),
         }))],
     );
