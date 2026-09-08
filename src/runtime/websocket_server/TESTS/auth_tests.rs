@@ -383,7 +383,7 @@ async fn websocket_startup_send_timeout_releases_room_membership() {
         return;
     };
     let auth_payload = encode_protocol_auth(AuthPayload {
-        jwt: token,
+        jwt: secrecy::SecretString::from(token),
         channel: Some(room.uuid().to_owned()),
     });
     assert!(auth_payload.is_some());

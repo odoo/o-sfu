@@ -1,6 +1,7 @@
 use std::num::NonZeroU16;
 
 use o_sfu_rfc::webrtc::MediaKind;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 use crate::shared::{
@@ -8,11 +9,51 @@ use crate::shared::{
     UserId, UserInfo,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The client's bearer JWT, carried in the clear (JWTs are only base64url
+/// encoded, not encrypted) as `SecretString` so it auto-redacts from `Debug`
+/// and zeroizes on drop instead of lingering in process memory as a plain
+/// `String`.
+///
+/// Every embedder of [`crate::host::ProtocolCore`] (browser, native, or test
+/// host) plays the client role and needs to serialize this payload to send
+/// its own token, which the `client` feature (on by default) provides.
+/// The one consumer that only ever decodes an `AuthPayload` it received is
+/// the SFU server itself, whose own dependency on this crate disables
+/// default features, so its build never compiles in the capability to
+/// serialize this type at all.
+#[derive(Debug, Clone, Deserialize)]
 pub struct AuthPayload {
-    pub jwt: String,
+    pub jwt: SecretString,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+}
+
+impl PartialEq for AuthPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.jwt.expose_secret() == other.jwt.expose_secret() && self.channel == other.channel
+    }
+}
+
+impl Eq for AuthPayload {}
+
+#[cfg(feature = "client")]
+impl Serialize for AuthPayload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct WireAuthPayload<'a> {
+            jwt: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            channel: Option<&'a str>,
+        }
+        WireAuthPayload {
+            jwt: self.jwt.expose_secret(),
+            channel: self.channel.as_deref(),
+        }
+        .serialize(serializer)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn protocol_client_auth_message_round_trips_to_wire_envelope() -> serde_json::Result<()> {
     let envelope = ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
-        jwt: String::from("jwt-token"),
+        jwt: secrecy::SecretString::from("jwt-token"),
         channel: Some(String::from("channel-1")),
     }))
     .into_envelope()?;

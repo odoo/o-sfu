@@ -12,6 +12,7 @@ use o_sfu_protocol::{
 use o_sfu_tests::miri_support::{
     decode_sent_client_envelopes, empty_welcome_payload, encode_server_batch,
 };
+use secrecy::SecretString;
 
 fn extract_pending_request(commands: &[Command]) -> Option<&PendingRequest> {
     commands.iter().find_map(|command| match command {
@@ -61,7 +62,7 @@ fn recovery_replay_splits_session_and_publication_phases() {
     assert_eq!(
         decode_sent_client_envelopes(&core.on_ws_open()),
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
-            jwt: "signed-token".to_owned(),
+            jwt: SecretString::from("signed-token"),
             channel: None,
         }))]
     );

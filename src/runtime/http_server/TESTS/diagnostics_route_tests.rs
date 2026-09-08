@@ -136,7 +136,7 @@ async fn serve_diagnostics_room(
             .room_manager
             .serve_room(
                 issuer,
-                TEST_ROOM_KEY,
+                TEST_ROOM_KEY.into(),
                 &RoomConfig::default(),
                 Some(remote_address),
             )

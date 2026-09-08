@@ -20,6 +20,7 @@ use o_sfu_protocol::wire::{
     ServerResponse, SessionDescriptionPayload, StreamIntentPayload, StreamType, SubscribePayload,
     UserId, UserInfo, UserPermissions,
 };
+use secrecy::{ExposeSecret, SecretString};
 
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 
@@ -61,18 +62,21 @@ fn jwt_round_trips_with_sign_and_verify() {
     let claims = sample_websocket_claims();
 
     assert_eq!(
-        verify::<WebSocketConnectClaims>("", TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(String::new()),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::InvalidJwtFormat)
     );
 
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY));
     assert_eq!(token.as_ref().map(|_| ()), Ok(()));
     let Some(token) = token.ok() else {
         return;
     };
 
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&token, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(&token, &SecretString::from(TEST_AUTH_KEY)),
         Ok(claims)
     );
 }
@@ -87,7 +91,10 @@ fn malformed_jwt_shapes_return_invalid_format() {
         "header.payload.",
     ] {
         assert_eq!(
-            verify::<WebSocketConnectClaims>(token, TEST_AUTH_KEY),
+            verify::<WebSocketConnectClaims>(
+                &SecretString::from(token),
+                &SecretString::from(TEST_AUTH_KEY)
+            ),
             Err(AuthenticationError::InvalidJwtFormat)
         );
     }
@@ -96,44 +103,61 @@ fn malformed_jwt_shapes_return_invalid_format() {
 #[test]
 fn jwt_segment_failures_are_classified_semantically() {
     let claims = sample_websocket_claims();
-    let valid_token = sign(&claims, TEST_AUTH_KEY);
+    let valid_token = sign(&claims, &SecretString::from(TEST_AUTH_KEY));
     assert_eq!(valid_token.as_ref().map(|_| ()), Ok(()));
     let Some(valid_token) = valid_token.ok() else {
         return;
     };
 
-    let invalid_header_base64 = replace_token_segment(&valid_token, 0, "%%%");
+    let invalid_header_base64 = replace_token_segment(valid_token.expose_secret(), 0, "%%%");
     assert_eq!(invalid_header_base64.as_ref().map(|_| ()), Some(()));
     let Some(invalid_header_base64) = invalid_header_base64 else {
         return;
     };
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&invalid_header_base64, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(invalid_header_base64),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::InvalidBase64Encoding)
     );
 
-    let invalid_header_json = replace_token_segment(&valid_token, 0, &URL_SAFE_NO_PAD.encode(b"{"));
+    let invalid_header_json = replace_token_segment(
+        valid_token.expose_secret(),
+        0,
+        &URL_SAFE_NO_PAD.encode(b"{"),
+    );
     assert_eq!(invalid_header_json.as_ref().map(|_| ()), Some(()));
     let Some(invalid_header_json) = invalid_header_json else {
         return;
     };
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&invalid_header_json, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(invalid_header_json),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::InvalidJsonPayload)
     );
 
-    let invalid_claims_json = replace_token_segment(&valid_token, 1, &URL_SAFE_NO_PAD.encode(b"{"));
+    let invalid_claims_json = replace_token_segment(
+        valid_token.expose_secret(),
+        1,
+        &URL_SAFE_NO_PAD.encode(b"{"),
+    );
     assert_eq!(invalid_claims_json.as_ref().map(|_| ()), Some(()));
     let Some(invalid_claims_json) = invalid_claims_json else {
         return;
     };
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&invalid_claims_json, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(invalid_claims_json),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::InvalidSignature)
     );
 
     let unsupported_algorithm = replace_token_segment(
-        &valid_token,
+        valid_token.expose_secret(),
         0,
         &URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#),
     );
@@ -142,17 +166,23 @@ fn jwt_segment_failures_are_classified_semantically() {
         return;
     };
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&unsupported_algorithm, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(unsupported_algorithm),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::UnsupportedAlgorithm("none".to_owned()))
     );
 
-    let invalid_signature = mutate_signature(&valid_token);
+    let invalid_signature = mutate_signature(valid_token.expose_secret());
     assert_eq!(invalid_signature.as_ref().map(|_| ()), Some(()));
     let Some(invalid_signature) = invalid_signature else {
         return;
     };
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&invalid_signature, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(invalid_signature),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::InvalidSignature)
     );
 }
@@ -162,7 +192,10 @@ fn jwt_rejects_oversized_token_before_parsing() {
     let token = "a".repeat(MAX_JWT_TOKEN_BYTES + 1);
 
     assert_eq!(
-        verify::<WebSocketConnectClaims>(&token, TEST_AUTH_KEY),
+        verify::<WebSocketConnectClaims>(
+            &SecretString::from(token),
+            &SecretString::from(TEST_AUTH_KEY)
+        ),
         Err(AuthenticationError::TokenTooLarge {
             actual: MAX_JWT_TOKEN_BYTES + 1,
             limit: MAX_JWT_TOKEN_BYTES,

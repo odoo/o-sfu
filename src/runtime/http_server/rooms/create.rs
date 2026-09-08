@@ -10,6 +10,7 @@ use axum::{
 };
 use o_sfu_core::server::room::RoomManagerServeError;
 use o_sfu_rfc::jwt::RegisteredJwtClaims;
+use secrecy::{ExposeSecret, SecretString};
 use tracing::Instrument;
 
 use super::super::{
@@ -60,7 +61,7 @@ impl FromRef<RuntimeState> for Services {
 #[derive(Debug, Clone)]
 struct VerifiedRoomRequest {
     issuer: String,
-    room_key: String,
+    room_key: SecretString,
     config: RoomConfig,
     origin: RequestOrigin,
 }
@@ -74,7 +75,7 @@ async fn create(State(services): State<Services>, request: VerifiedRoomRequest) 
             .room_manager
             .serve_room(
                 &request.issuer,
-                &request.room_key,
+                request.room_key,
                 &request.config,
                 Some(request.origin.remote_address.as_str()),
             )
@@ -118,11 +119,12 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
         let Some(token) = room_authorization_token(&parts.headers) else {
             return Err(record_rejection(state, StatusCode::UNAUTHORIZED));
         };
+        let token = SecretString::from(token);
         let HttpRoomClaims {
             registered: RegisteredJwtClaims { iss, .. },
             key,
             key_seed,
-        } = auth::verify::<HttpRoomClaims>(token, &state.config.auth.key)
+        } = auth::verify::<HttpRoomClaims>(&token, &state.config.auth.key)
             .map_err(|_error| record_rejection(state, StatusCode::UNAUTHORIZED))?;
         let Some(issuer) = iss else {
             return Err(record_rejection(state, StatusCode::FORBIDDEN));
@@ -132,10 +134,10 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
                 return Err(record_rejection(state, StatusCode::BAD_REQUEST));
             }
             (Some(key), None) => key,
-            (_, Some(seed)) if seed.is_empty() => {
+            (_, Some(seed)) if seed.expose_secret().is_empty() => {
                 return Err(record_rejection(state, StatusCode::BAD_REQUEST));
             }
-            (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, seed.as_ref())
+            (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, &seed)
                 .map_err(|_error| record_rejection(state, StatusCode::BAD_REQUEST))?,
         };
         Ok(Self {

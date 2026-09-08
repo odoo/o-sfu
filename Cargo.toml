@@ -47,6 +47,7 @@ o-sfu-model = { path = "crates/model" }
 o-sfu-rfc = { path = "crates/rfc" }
 o-sfu-router = { path = "crates/router" }
 o-sfu-telemetry = { path = "crates/telemetry", default-features = false }
+secrecy = "0.10.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 str0m = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
@@ -142,6 +143,7 @@ version.workspace = true
 [features]
 default = ["otel-tracing"]
 otel-tracing = ["o-sfu-telemetry/otel-tracing"]
+testing = []
 testing-transport = ["o-sfu-core/testing-transport"]
 
 [dependencies]
@@ -149,19 +151,21 @@ anyhow.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 futures-util.workspace = true
-hmac = "0.13"
-o-sfu-protocol.workspace = true
+hmac = { version = "0.13", features = ["zeroize"] }
+o-sfu-protocol = { path = "crates/protocol", default-features = false }
 o-sfu-core.workspace = true
 o-sfu-rfc.workspace = true
 o-sfu-router.workspace = true
 o-sfu-telemetry.workspace = true
+secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.11.0"
+sha2 = { version = "0.11.0", features = ["zeroize"] }
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+zeroize = "1.9.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.7"
@@ -171,7 +175,7 @@ workspace = true
 
 [dev-dependencies]
 o-sfu-core = { workspace = true, features = ["testing-transport"] }
-o-sfu-protocol.workspace = true
+o-sfu-protocol = { workspace = true, features = ["client"] }
 o-sfu-telemetry = { workspace = true, features = ["test-support"] }
 o-sfu-router = { workspace = true, features = ["test-support"] }
 str0m.workspace = true

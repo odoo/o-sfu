@@ -1,3 +1,4 @@
+use std::io;
 #[cfg(feature = "otel-tracing")]
 use std::time::Duration;
 
@@ -14,14 +15,17 @@ fn telemetry_resource_resolves_process_fallback_instance_id() {
 #[cfg(feature = "otel-tracing")]
 #[test]
 fn load_telemetry_config_accepts_explicit_settings() {
-    let config = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_LOG_FORMAT" => Some("json".to_owned()),
-        "TELEMETRY_SERVICE_NAME" => Some("custom-o-sfu".to_owned()),
-        "TELEMETRY_DEPLOYMENT_ENVIRONMENT" => Some("staging".to_owned()),
-        "TELEMETRY_SERVICE_INSTANCE_ID" => Some("node-a-1".to_owned()),
-        "TELEMETRY_OTLP_ENDPOINT" => Some("  http://collector:4317  ".to_owned()),
-        _ => None,
-    }));
+    let config = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_LOG_FORMAT" => Some("json".to_owned()),
+            "TELEMETRY_SERVICE_NAME" => Some("custom-o-sfu".to_owned()),
+            "TELEMETRY_DEPLOYMENT_ENVIRONMENT" => Some("staging".to_owned()),
+            "TELEMETRY_SERVICE_INSTANCE_ID" => Some("node-a-1".to_owned()),
+            "TELEMETRY_OTLP_ENDPOINT" => Some("  http://collector:4317  ".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ));
     assert_eq!(
         config.ok(),
         Some(TelemetryConfig {
@@ -42,12 +46,15 @@ fn load_telemetry_config_accepts_explicit_settings() {
 #[cfg(not(feature = "otel-tracing"))]
 #[test]
 fn load_telemetry_config_reports_otlp_feature_error_before_later_errors() {
-    let error = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_OTLP_ENDPOINT" => Some("http://collector:4318".to_owned()),
-        "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("abc".to_owned()),
-        "TELEMETRY_SERVICE_NAME" => Some("   ".to_owned()),
-        _ => None,
-    }))
+    let error = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_OTLP_ENDPOINT" => Some("http://collector:4318".to_owned()),
+            "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("abc".to_owned()),
+            "TELEMETRY_SERVICE_NAME" => Some("   ".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -59,10 +66,13 @@ fn load_telemetry_config_reports_otlp_feature_error_before_later_errors() {
 
 #[test]
 fn load_telemetry_config_rejects_invalid_log_format() {
-    let error = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_LOG_FORMAT" => Some("pretty".to_owned()),
-        _ => None,
-    }))
+    let error = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_LOG_FORMAT" => Some("pretty".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -74,10 +84,13 @@ fn load_telemetry_config_rejects_invalid_log_format() {
 
 #[test]
 fn load_telemetry_config_rejects_empty_service_name() {
-    let error = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_SERVICE_NAME" => Some("   ".to_owned()),
-        _ => None,
-    }))
+    let error = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_SERVICE_NAME" => Some("   ".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -89,12 +102,15 @@ fn load_telemetry_config_rejects_empty_service_name() {
 
 #[test]
 fn load_telemetry_config_trims_resource_fields() -> anyhow::Result<()> {
-    let config = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_SERVICE_NAME" => Some("  o-sfu-custom  ".to_owned()),
-        "TELEMETRY_DEPLOYMENT_ENVIRONMENT" => Some("  staging  ".to_owned()),
-        "TELEMETRY_SERVICE_INSTANCE_ID" => Some("  node-a  ".to_owned()),
-        _ => None,
-    }))?;
+    let config = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_SERVICE_NAME" => Some("  o-sfu-custom  ".to_owned()),
+            "TELEMETRY_DEPLOYMENT_ENVIRONMENT" => Some("  staging  ".to_owned()),
+            "TELEMETRY_SERVICE_INSTANCE_ID" => Some("  node-a  ".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))?;
     assert_eq!(config.resource.service_name, "o-sfu-custom");
     assert_eq!(config.resource.deployment_environment, "staging");
     assert_eq!(
@@ -106,10 +122,13 @@ fn load_telemetry_config_trims_resource_fields() -> anyhow::Result<()> {
 
 #[test]
 fn load_telemetry_config_reports_interval_parse_error() {
-    let error = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("abc".to_owned()),
-        _ => None,
-    }))
+    let error = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("abc".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))
     .err()
     .map(|error| error.to_string());
 
@@ -121,10 +140,13 @@ fn load_telemetry_config_reports_interval_parse_error() {
 
 #[test]
 fn load_telemetry_config_allows_disabling_media_quality_sampling() -> anyhow::Result<()> {
-    let config = load_telemetry_config(&Env::new(|key| match key {
-        "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("0".to_owned()),
-        _ => None,
-    }))?;
+    let config = load_telemetry_config(&Env::new(
+        |key| match key {
+            "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS" => Some("0".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    ))?;
 
     assert_eq!(config.media_quality_interval, None);
     Ok(())

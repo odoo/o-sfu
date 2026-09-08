@@ -50,7 +50,7 @@ pub enum ClientMessage {
 impl ClientMessage {
     pub(crate) fn into_envelope(self) -> Result<Envelope, serde_json::Error> {
         match self {
-            Self::Auth(payload) => encode_message(AUTH, payload),
+            Self::Auth(payload) => encode_auth(payload),
             Self::Publish(payload) => encode_message(PUBLISH, payload),
             Self::Unpublish(payload) => encode_message(UNPUBLISH, payload),
             Self::Subscribe(payload) => encode_message(SUBSCRIBE, payload),
@@ -230,6 +230,22 @@ impl ServerResponse {
             _ => Err(EnvelopeDecodeError::UnknownTag(tag.to_owned())),
         }
     }
+}
+
+#[cfg(feature = "client")]
+fn encode_auth(payload: AuthPayload) -> Result<Envelope, serde_json::Error> {
+    encode_message(AUTH, payload)
+}
+
+#[cfg(not(feature = "client"))]
+#[allow(
+    clippy::unreachable,
+    reason = "defensive guard: this build has no Serialize impl for AuthPayload, so nothing can construct a ClientMessage::Auth to encode"
+)]
+fn encode_auth(_payload: AuthPayload) -> Result<Envelope, serde_json::Error> {
+    unreachable!(
+        "ClientMessage::Auth is only ever encoded by a client-role host (the `client` feature)"
+    )
 }
 
 fn encode_message<T: Serialize>(tag: &str, payload: T) -> Result<Envelope, serde_json::Error> {

@@ -10,6 +10,7 @@ use axum::extract::ws::{Message, WebSocket};
 use o_sfu_protocol::wire::{
     AuthPayload, ClientEnvelope, ClientMessage, UserId, UserPermissions, WebSocketCloseCode,
 };
+use secrecy::SecretString;
 use serde::Deserialize;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
@@ -135,9 +136,9 @@ async fn verify_auth_payload(
     auth_payload: &AuthPayload,
     remote_address: &str,
 ) -> Result<AuthenticatedJoin, WebSocketCloseCode> {
-    let room = resolve_handshake_room(state, auth_payload).await?;
-    let (claims, proof) =
-        authenticate_room_scoped_claims(&auth_payload.jwt, &room, remote_address)?;
+    let token = SecretString::from(auth_payload.jwt.clone());
+    let room = resolve_handshake_room(state, auth_payload, &token).await?;
+    let (claims, proof) = authenticate_room_scoped_claims(&token, &room, remote_address)?;
     Ok(AuthenticatedJoin {
         room,
         claims,
@@ -149,16 +150,15 @@ async fn verify_auth_payload(
 async fn resolve_handshake_room(
     state: &WebSocketServices,
     auth_payload: &AuthPayload,
+    token: &SecretString,
 ) -> Result<Arc<Room>, WebSocketCloseCode> {
     let Some(explicit_room_id) = auth_payload.channel.as_deref() else {
         // The decoded room id is only a lookup hint until room-key verification.
-        let unverified_claims = auth::decode_unverified_claims::<WebSocketConnectClaims>(
-            &auth_payload.jwt,
-        )
-        .map_err(|_error| {
-            debug!("authentication payload did not select a room");
-            WebSocketCloseCode::AuthFailed
-        })?;
+        let unverified_claims = auth::decode_unverified_claims::<WebSocketConnectClaims>(token)
+            .map_err(|_error| {
+                debug!("authentication payload did not select a room");
+                WebSocketCloseCode::AuthFailed
+            })?;
         return resolve_room_by_id(state, &unverified_claims.room_id).await;
     };
     resolve_room_by_id(state, explicit_room_id).await
@@ -182,7 +182,7 @@ async fn resolve_room_by_id(
 }
 
 fn authenticate_room_scoped_claims(
-    token: &str,
+    token: &SecretString,
     room: &Room,
     remote_address: &str,
 ) -> Result<(WebSocketConnectClaims, AuthProof), WebSocketCloseCode> {

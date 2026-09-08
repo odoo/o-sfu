@@ -555,7 +555,7 @@ fn protocol_core_fresh_connect_supersedes_pending_recovery() {
     assert_sent_client_envelopes(
         &auth_commands,
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
-            jwt: String::from("other-token"),
+            jwt: secrecy::SecretString::from("other-token"),
             channel: Some(String::from("other-room")),
         }))],
     );

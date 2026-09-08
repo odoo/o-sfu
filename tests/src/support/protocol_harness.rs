@@ -5,6 +5,7 @@ use o_sfu_protocol::wire::{
     AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, ClientResponse, RequestId,
     ServerEnvelope, ServerMessage, ServerRequest, UserId, WelcomePayload,
 };
+use secrecy::SecretString;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::{self, protocol::frame::coding::CloseCode};
 
@@ -28,7 +29,7 @@ impl ProtocolWebSocketClient {
         Self::authenticate(
             server,
             AuthPayload {
-                jwt: token.to_owned(),
+                jwt: SecretString::from(token),
                 channel: None,
             },
         )
@@ -43,7 +44,7 @@ impl ProtocolWebSocketClient {
         Self::authenticate(
             server,
             AuthPayload {
-                jwt: token.to_owned(),
+                jwt: SecretString::from(token),
                 channel: Some(room_id.to_owned()),
             },
         )
