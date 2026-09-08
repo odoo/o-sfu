@@ -4,10 +4,14 @@ use std::{
     time::Duration,
 };
 
+use o_sfu_rfc::jwt::RegisteredJwtClaims;
+use secrecy::{ExposeSecret, SecretString};
+use serde::Serialize;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 pub(super) use crate::runtime::metrics::test_support::RuntimeMetricsSnapshotTestExt;
 use crate::{
+    auth::HttpRoomClaims,
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,
         DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
@@ -45,7 +49,7 @@ impl RuntimeTestBuilder {
         Self {
             config: Config {
                 auth: AuthConfig {
-                    key: TEST_AUTH_KEY.to_owned(),
+                    key: SecretString::from(TEST_AUTH_KEY.to_owned()),
                     authentication_timeout_ms: DEFAULT_AUTHENTICATION_TIMEOUT_MS,
                     max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
                     max_pre_auth_websocket_sessions_per_origin:
@@ -175,4 +179,105 @@ pub(super) fn test_outbound_sender(
         state.config.user.outbound_queue_capacity,
         Arc::clone(&state.metrics),
     )
+}
+
+// This struct is used for testing serialization of HttpRoomClaims while keeping the initial struct
+// secure. It allows us to serialize the SecretString as a string for testing purposes.
+#[derive(Debug, Serialize)]
+pub struct TestHttpRoomClaims {
+    #[serde(flatten)]
+    pub registered: RegisteredJwtClaims,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_secret_key"
+    )]
+    pub key: Option<SecretString>,
+    #[serde(
+        rename = "keySeed",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_secret_key"
+    )]
+    pub key_seed: Option<SecretString>,
+}
+
+impl From<HttpRoomClaims> for TestHttpRoomClaims {
+    fn from(claims: HttpRoomClaims) -> Self {
+        Self {
+            registered: claims.registered,
+            key: claims.key,
+            key_seed: claims.key_seed,
+        }
+    }
+}
+
+impl From<&Self> for TestHttpRoomClaims {
+    fn from(claims: &Self) -> Self {
+        Self {
+            registered: claims.registered.clone(),
+            key: claims.key.clone(),
+            key_seed: claims.key_seed.clone(),
+        }
+    }
+}
+
+impl From<&HttpRoomClaims> for TestHttpRoomClaims {
+    fn from(claims: &HttpRoomClaims) -> Self {
+        Self {
+            registered: claims.registered.clone(),
+            key: claims.key.clone(),
+            key_seed: claims.key_seed.clone(),
+        }
+    }
+}
+
+fn equal_test_http_room_claims<T, U>(a: &T, b: &U) -> bool
+where
+    T: Into<TestHttpRoomClaims> + Clone,
+    U: Into<TestHttpRoomClaims> + Clone,
+{
+    let a_test: TestHttpRoomClaims = a.clone().into();
+    let b_test: TestHttpRoomClaims = b.clone().into();
+    a_test == b_test
+}
+
+impl PartialEq<HttpRoomClaims> for TestHttpRoomClaims {
+    fn eq(&self, other: &HttpRoomClaims) -> bool {
+        equal_test_http_room_claims(&self, other)
+    }
+}
+
+impl PartialEq<TestHttpRoomClaims> for HttpRoomClaims {
+    fn eq(&self, other: &TestHttpRoomClaims) -> bool {
+        self.registered == other.registered
+            && self.key.as_ref().map(SecretString::expose_secret)
+                == other.key.as_ref().map(SecretString::expose_secret)
+            && self.key_seed.as_ref().map(SecretString::expose_secret)
+                == other.key_seed.as_ref().map(SecretString::expose_secret)
+    }
+}
+
+impl PartialEq<Self> for TestHttpRoomClaims {
+    fn eq(&self, other: &Self) -> bool {
+        self.registered == other.registered
+            && self.key.as_ref().map(SecretString::expose_secret)
+                == other.key.as_ref().map(SecretString::expose_secret)
+            && self.key_seed.as_ref().map(SecretString::expose_secret)
+                == other.key_seed.as_ref().map(SecretString::expose_secret)
+    }
+}
+
+impl Eq for TestHttpRoomClaims {}
+
+#[allow(
+    clippy::ref_option,
+    reason = "specific to testing and required by serde for serialization"
+)]
+fn serialize_secret_key<S>(key: &Option<SecretString>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match key {
+        Some(secret) => serializer.serialize_str(secret.expose_secret()),
+        None => serializer.serialize_none(),
+    }
 }

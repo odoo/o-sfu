@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, ensure};
 use o_sfu_rfc::jwt::HS256_MIN_KEY_BYTES;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::{
     AuthConfig, DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
@@ -11,7 +12,11 @@ use crate::runtime::auth::decode_key;
 impl AuthConfig {
     pub(super) fn from_env(env: &Env<'_>) -> Result<Self> {
         Ok(Self {
-            key: env.var("AUTH_KEY").check(validate_auth_key).required()?,
+            key: env
+                .var("AUTH_KEY")
+                .or_load_from_file("AUTH_KEY_FILE")
+                .check(validate_auth_key)
+                .required()?,
             authentication_timeout_ms: env
                 .var("AUTHENTICATION_TIMEOUT_MS")
                 .check(positive)
@@ -28,9 +33,10 @@ impl AuthConfig {
     }
 }
 
-fn validate_auth_key(key: &'static str, value: String) -> Result<String> {
+fn validate_auth_key(key: &'static str, value: SecretString) -> Result<SecretString> {
     let key_len = decode_key(&value)
         .map_err(|_error| anyhow!("{key} must be valid base64"))?
+        .expose_secret()
         .len();
     ensure!(
         key_len >= HS256_MIN_KEY_BYTES,

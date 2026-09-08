@@ -14,9 +14,7 @@ use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt};
 use o_sfu::{
     Runtime, ServeError,
-    auth::{
-        HttpDisconnectClaims, HttpRoomClaims, RegisteredJwtClaims, WebSocketConnectClaims, sign,
-    },
+    auth::{HttpDisconnectClaims, RegisteredJwtClaims, WebSocketConnectClaims, sign},
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
@@ -40,6 +38,8 @@ use o_sfu_telemetry::diagnostics::{
     DiagnosticsVideoLayoutRole,
 };
 use reqwest::StatusCode;
+use secrecy::{ExposeSecret, SecretString};
+use serde::Serialize;
 use tokio::{
     net::{TcpListener, TcpStream},
     task::yield_now,
@@ -427,7 +427,7 @@ pub async fn spawn_room_server_with_config(
 pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
     Config {
         auth: AuthConfig {
-            key: TEST_AUTH_KEY.to_owned(),
+            key: SecretString::from(TEST_AUTH_KEY.to_owned()),
             authentication_timeout_ms,
             max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
             max_pre_auth_websocket_sessions_per_origin:
@@ -479,23 +479,54 @@ pub fn signed_connect_claims(key: &str, room_id: &str, user_id: UserId) -> Optio
             label: Some("Alice".to_owned()),
             permissions: Some(UserPermissions::default()),
         },
-        key,
+        &SecretString::from(key.to_owned()),
     )
     .ok()
+}
+
+#[derive(Serialize)]
+struct TestHttpRoomClaims {
+    #[serde(flatten)]
+    registered: RegisteredJwtClaims,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_secret_key"
+    )]
+    key: Option<SecretString>,
+    #[serde(
+        rename = "keySeed",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_secret_key"
+    )]
+    key_seed: Option<SecretString>,
+}
+
+#[allow(
+    clippy::ref_option,
+    reason = "specific to testing and required by serde for serialization"
+)]
+fn serialize_secret_key<S>(key: &Option<SecretString>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match key {
+        Some(secret) => serializer.serialize_str(secret.expose_secret()),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[must_use]
 pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
     sign(
-        &HttpRoomClaims {
+        &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: Some(issuer.to_owned()),
                 ..RegisteredJwtClaims::default()
             },
-            key: Some(key.to_owned()),
+            key: Some(SecretString::from(key.to_owned())),
             key_seed: None,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY.to_owned()),
     )
     .ok()
 }
@@ -507,7 +538,7 @@ pub fn signed_disconnect_claims(user_ids_by_room: BTreeMap<String, Vec<UserId>>)
             registered: RegisteredJwtClaims::default(),
             user_ids_by_room,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY.to_owned()),
     )
     .ok()
 }

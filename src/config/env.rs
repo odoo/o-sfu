@@ -1,11 +1,35 @@
 use std::{
+    fmt, io, iter,
     net::{IpAddr, SocketAddr},
+    path::Path,
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, ensure};
+use secrecy::SecretString;
 
 type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
+type ReadFile<'a> = dyn Fn(&Path) -> io::Result<String> + 'a;
+
+#[derive(Clone, Copy)]
+pub(super) enum EnvLoader {
+    EnvValue(&'static str),
+    EnvValueFile(&'static str),
+}
+
+impl EnvLoader {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EnvValue(key) | Self::EnvValueFile(key) => key,
+        }
+    }
+}
+
+impl fmt::Display for EnvLoader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 pub(super) struct EnvValue {
     pub(super) key: &'static str,
@@ -14,19 +38,25 @@ pub(super) struct EnvValue {
 
 pub(super) struct Env<'a> {
     lookup: Box<Lookup<'a>>,
+    read_file: Box<ReadFile<'a>>,
 }
 
 impl<'a> Env<'a> {
-    pub(super) fn new(get_var: impl Fn(&str) -> Option<String> + 'a) -> Self {
+    pub(super) fn new(
+        get_var: impl Fn(&str) -> Option<String> + 'a,
+        read_file: impl Fn(&Path) -> io::Result<String> + 'a,
+    ) -> Self {
         Self {
             lookup: Box::new(get_var),
+            read_file: Box::new(read_file),
         }
     }
 
     pub(super) fn var<T>(&self, key: &'static str) -> Var<'a, '_, T> {
         Var {
             lookup: self.lookup.as_ref(),
-            key,
+            read_file: self.read_file.as_ref(),
+            key: EnvLoader::EnvValue(key),
             checks: Vec::new(),
             aliases: Vec::new(),
         }
@@ -35,9 +65,10 @@ impl<'a> Env<'a> {
 
 pub(super) struct Var<'env, 'lookup, T> {
     lookup: &'lookup Lookup<'env>,
-    key: &'static str,
+    read_file: &'lookup ReadFile<'env>,
+    key: EnvLoader,
     checks: Vec<fn(&'static str, T) -> Result<T>>,
-    aliases: Vec<&'static str>,
+    aliases: Vec<EnvLoader>,
 }
 
 impl<T> Var<'_, '_, T>
@@ -50,39 +81,56 @@ where
     }
 
     pub(super) fn alias(mut self, alias: &'static str) -> Self {
-        self.aliases.push(alias);
+        self.aliases.push(EnvLoader::EnvValue(alias));
+        self
+    }
+
+    pub(super) fn or_load_from_file(mut self, alias: &'static str) -> Self {
+        self.aliases.push(EnvLoader::EnvValueFile(alias));
         self
     }
 
     pub(super) fn required(self) -> Result<T> {
         let value = self
-            .load()
+            .load()?
             .with_context(|| format!("{} env variable is required", self.key))?;
         self.parse(value)
     }
 
     pub(super) fn default(self, default: T) -> Result<T> {
-        let Some(value) = self.load() else {
-            return self.validate(self.key, default);
+        let Some(value) = self.load()? else {
+            return self.validate(self.key.as_str(), default);
         };
         self.parse(value)
     }
 
     pub(super) fn optional(self) -> Result<Option<T>> {
-        self.load().map(|value| self.parse(value)).transpose()
+        self.load()?.map(|value| self.parse(value)).transpose()
     }
 
-    fn load(&self) -> Option<EnvValue> {
-        self.load_key(self.key).or_else(|| {
-            self.aliases
-                .iter()
-                .copied()
-                .find_map(|alias| self.load_key(alias))
+    fn load(&self) -> Result<Option<EnvValue>> {
+        iter::once(self.key)
+            .chain(self.aliases.iter().copied())
+            .find_map(|key| self.candidate(key))
+            .transpose()
+    }
+
+    fn candidate(&self, key: EnvLoader) -> Option<Result<EnvValue>> {
+        let raw_or_path = (self.lookup)(key.as_str())?;
+        Some(match key {
+            EnvLoader::EnvValueFile(_) => (self.read_file)(Path::new(&raw_or_path))
+                .with_context(|| {
+                    format!("{key} points to \"{raw_or_path}\" which could not be read")
+                })
+                .map(|raw| EnvValue {
+                    key: key.as_str(),
+                    raw: raw.trim().to_owned(),
+                }),
+            EnvLoader::EnvValue(_) => Ok(EnvValue {
+                key: key.as_str(),
+                raw: raw_or_path,
+            }),
         })
-    }
-
-    fn load_key(&self, key: &'static str) -> Option<EnvValue> {
-        (self.lookup)(key).map(|raw| EnvValue { key, raw })
     }
 
     fn parse(&self, value: EnvValue) -> Result<T> {
@@ -147,6 +195,12 @@ impl EnvParse for Duration {
             .parse()
             .map_err(|_error| anyhow!("{key} must be a valid duration in seconds"))?;
         Ok(Self::from_secs(seconds))
+    }
+}
+
+impl EnvParse for SecretString {
+    fn parse(value: EnvValue) -> Result<Self> {
+        Ok(Self::from(value.raw))
     }
 }
 

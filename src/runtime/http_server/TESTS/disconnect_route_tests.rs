@@ -25,7 +25,7 @@ async fn disconnect_route_kicks_live_users() -> TestResult {
             .room_manager
             .serve_room(
                 "issuer-disconnect",
-                TEST_ROOM_KEY,
+                TEST_ROOM_KEY.into(),
                 &RoomConfig::default(),
                 None,
             )

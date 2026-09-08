@@ -28,6 +28,8 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "query",
 ] }
+secrecy = { version = "0.10.3", features = ["serde"] }
+serde.workspace = true
 serde_json.workspace = true
 str0m.workspace = true
 str0m-netem = "0.4"

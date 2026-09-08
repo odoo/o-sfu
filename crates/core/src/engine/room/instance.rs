@@ -111,7 +111,7 @@ impl Room {
     }
 
     #[must_use]
-    pub fn key(&self) -> &str {
+    pub fn key(&self) -> &secrecy::SecretString {
         self.definition.key()
     }
 

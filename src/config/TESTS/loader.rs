@@ -4,6 +4,7 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use secrecy::ExposeSecret;
 
 use crate::{
     config::{
@@ -59,10 +60,22 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
     );
 
     let standard = STANDARD.encode([0xff; 32]);
-    assert_eq!(config_from(&[("AUTH_KEY", &standard)])?.auth.key, standard);
+    assert_eq!(
+        config_from(&[("AUTH_KEY", &standard)])?
+            .auth
+            .key
+            .expose_secret(),
+        standard
+    );
 
     let jose = URL_SAFE_NO_PAD.encode([0xff; 32]);
-    assert_eq!(config_from(&[("AUTH_KEY", &jose)])?.auth.key, jose);
+    assert_eq!(
+        config_from(&[("AUTH_KEY", &jose)])?
+            .auth
+            .key
+            .expose_secret(),
+        jose
+    );
 
     let error = config_error_from(&[("AUTH_KEY", "not base64")]);
     assert_eq!(error.as_deref(), Some("AUTH_KEY must be valid base64"));
@@ -74,7 +87,7 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     let config = config_from(&[])?;
     assert_eq!(config.http.bind_address.to_string(), "0.0.0.0:8070");
     assert_eq!(config.http.shutdown_timeout_ms, 10_000);
-    assert_eq!(config.auth.key, TEST_AUTH_KEY);
+    assert_eq!(config.auth.key.expose_secret(), TEST_AUTH_KEY);
     assert_eq!(
         config.auth.authentication_timeout_ms,
         DEFAULT_AUTHENTICATION_TIMEOUT_MS

@@ -184,7 +184,7 @@ async fn room(State(services): State<RoomServices>, request: VerifiedRoomRequest
             .room_manager
             .serve_room(
                 &request.issuer,
-                &request.room_key,
+                request.room_key,
                 &request.config,
                 Some(request.origin.remote_address.as_str()),
             )

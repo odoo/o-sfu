@@ -238,7 +238,7 @@ async fn setup_subscription_room_with_sender(
     ConnectionId,
 ) {
     let room = manager
-        .serve_room(issuer, "room", &RoomConfig::default(), None)
+        .serve_room(issuer, "room".into(), &RoomConfig::default(), None)
         .await
         .expect("test room should be served");
     let media_transport = media_transport();
@@ -372,7 +372,7 @@ async fn stored_receiver_intent_applies_before_publish_and_across_activity() {
     let room = RoomManager::for_test()
         .serve_room(
             "issuer-transition-subscription-intent",
-            "room",
+            "room".into(),
             &RoomConfig::default(),
             None,
         )

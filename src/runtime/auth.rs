@@ -4,16 +4,18 @@ use std::{
 };
 
 use base64::{
-    Engine as _,
+    Engine as _, decoded_len_estimate,
     engine::general_purpose::{STANDARD, URL_SAFE},
 };
 use hmac::{Hmac, KeyInit, Mac};
 use o_sfu_protocol::wire::{UserId, UserPermissions};
 use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 pub use o_sfu_rfc::jwt::{NumericDate, RegisteredJwtClaims};
+use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::Sha256;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -51,14 +53,13 @@ pub enum AuthenticationError {
 /// validity rule.
 const MAX_IAT_FUTURE_SKEW: Duration = Duration::from_mins(1);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct HttpRoomClaims {
     #[serde(flatten)]
     pub registered: RegisteredJwtClaims,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
-    #[serde(rename = "keySeed", skip_serializing_if = "Option::is_none")]
-    pub key_seed: Option<String>,
+    pub key: Option<SecretString>,
+    #[serde(rename = "keySeed")]
+    pub key_seed: Option<SecretString>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +110,7 @@ pub(crate) fn duration_since_epoch() -> Duration {
 /// # Errors
 ///
 /// Returns an error when the key cannot be decoded or the claims cannot be serialized.
-pub fn sign<T>(claims: &T, key_b64: &str) -> Result<String, AuthenticationError>
+pub fn sign<T>(claims: &T, key_b64: &SecretString) -> Result<String, AuthenticationError>
 where
     T: Serialize,
 {
@@ -137,7 +138,7 @@ where
 ///
 /// This verifier decodes JWT header, payload, and signature segments with the JOSE base64url
 /// alphabet without padding, as required by RFC 7515 / RFC 7519.
-pub fn verify<T>(token: &str, key_b64: &str) -> Result<T, AuthenticationError>
+pub fn verify<T>(token: &str, key_b64: &SecretString) -> Result<T, AuthenticationError>
 where
     T: DeserializeOwned,
 {
@@ -166,7 +167,7 @@ where
 /// Returns verified claims with proof or the [`AuthenticationError`] from [`verify`].
 pub(super) fn verify_with_proof<T: DeserializeOwned>(
     token: &str,
-    key_b64: &str,
+    key_b64: &SecretString,
 ) -> Result<(T, AuthProof), AuthenticationError> {
     verify(token, key_b64).map(|claims| (claims, AuthProof(())))
 }
@@ -217,16 +218,26 @@ fn validate_registered_claims_at(
     Ok(())
 }
 
-fn sign_hs256(data: &[u8], key: &[u8]) -> Result<Vec<u8>, AuthenticationError> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+fn sign_hs256(data: &[u8], key: &SecretSlice<u8>) -> Result<[u8; 32], AuthenticationError> {
+    let mut mac = {
+        let raw_key = key.expose_secret();
+        HmacSha256::new_from_slice(raw_key)
+            .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?
+    };
     mac.update(data);
-    Ok(mac.finalize().into_bytes().to_vec())
+    Ok(mac.finalize().into_bytes().into())
 }
 
-fn verify_hs256(data: &[u8], key: &[u8], signature: &[u8]) -> Result<(), AuthenticationError> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+fn verify_hs256(
+    data: &[u8],
+    key: &SecretSlice<u8>,
+    signature: &[u8],
+) -> Result<(), AuthenticationError> {
+    let mut mac = {
+        let raw_key = key.expose_secret();
+        HmacSha256::new_from_slice(raw_key)
+            .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?
+    };
     mac.update(data);
     mac.verify_slice(signature)
         .map_err(|_error| AuthenticationError::InvalidSignature)
@@ -245,12 +256,22 @@ fn split_token(token: &str) -> Result<(&str, &str, &str), AuthenticationError> {
     Ok((header, claims, signature))
 }
 
-pub(crate) fn decode_key(input: &str) -> Result<Vec<u8>, AuthenticationError> {
-    let padded = pad_base64(input);
-    URL_SAFE
-        .decode(padded.as_bytes())
-        .or_else(|_error| STANDARD.decode(padded.as_bytes()))
-        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)
+pub(crate) fn decode_key(input: &SecretString) -> Result<SecretSlice<u8>, AuthenticationError> {
+    let padded: SecretString = pad_base64(input.expose_secret()).into();
+    let padded_bytes = padded.expose_secret().as_bytes();
+    let mut buffer = vec![0u8; decoded_len_estimate(padded_bytes.len())];
+    let bytes_written = URL_SAFE
+        .decode_slice(padded_bytes, &mut buffer)
+        .or_else(|_error| STANDARD.decode_slice(padded_bytes, &mut buffer));
+    let bytes_written = match bytes_written {
+        Ok(bytes_written) => bytes_written,
+        Err(_error) => {
+            buffer.zeroize();
+            return Err(AuthenticationError::InvalidBase64Encoding);
+        }
+    };
+    buffer.truncate(bytes_written);
+    Ok(SecretSlice::from(buffer))
 }
 
 fn decode_jwt_segment(input: &str) -> Result<Vec<u8>, AuthenticationError> {
@@ -267,11 +288,25 @@ fn pad_base64(input: &str) -> String {
     format!("{input}{}", "=".repeat(4 - remainder))
 }
 
-pub(crate) fn derive_key_from_seed(key: &str, seed: &str) -> Result<String, AuthenticationError> {
+pub(crate) fn derive_key_from_seed(
+    key: &SecretString,
+    seed: &SecretString,
+) -> Result<SecretString, AuthenticationError> {
     let key_bytes = decode_key(key)?;
     let seed_bytes = decode_key(seed)?;
-    let derived_key = sign_hs256(&seed_bytes, &key_bytes)?;
-    Ok(STANDARD.encode(derived_key))
+    let mut derived_key_array = sign_hs256(seed_bytes.expose_secret(), &key_bytes)?;
+    let key_box: Box<[u8]> = derived_key_array.into();
+    let derived_key: SecretSlice<u8> = SecretSlice::from(key_box);
+    derived_key_array.zeroize();
+    let mut encoded_slice = [0u8; 44]; // 32 bytes of derived key will be 44 bytes when base64
+    _ = STANDARD
+        .encode_slice(derived_key.expose_secret(), &mut encoded_slice)
+        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+    let boxed_slice: Box<[u8]> = encoded_slice.into();
+    encoded_slice.zeroize();
+    let raw_string = String::from_utf8(boxed_slice.into_vec())
+        .map_err(|_error| AuthenticationError::InvalidBase64Encoding)?;
+    Ok(SecretString::from(raw_string))
 }
 
 #[cfg(test)]

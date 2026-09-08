@@ -13,6 +13,7 @@ use o_sfu::{
     auth::{WebSocketConnectClaims, verify},
     websocket::{decode_auth_payload_text, decode_client_batch},
 };
+use secrecy::SecretString;
 
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 
@@ -25,6 +26,6 @@ fuzz_target!(|data: &[u8]| {
 
         // Tests the JWT verification pipeline, including Base64 decoding of segments,
         // header/claims parsing, and timestamp validation.
-        let _ = verify::<WebSocketConnectClaims>(payload, TEST_AUTH_KEY);
+        let _ = verify::<WebSocketConnectClaims>(payload, &SecretString::from(TEST_AUTH_KEY));
     }
 });

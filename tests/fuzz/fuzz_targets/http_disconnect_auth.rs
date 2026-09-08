@@ -14,6 +14,7 @@ use o_sfu::{
     auth::{HttpDisconnectClaims, HttpRoomClaims, verify},
     http::resolve_request_origin,
 };
+use secrecy::SecretString;
 
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 
@@ -51,8 +52,8 @@ fn insert_header(headers: &mut HeaderMap, name: &'static str, value: Option<&str
 }
 
 fuzz_target!(|input: HttpRouteInput| {
-    let _ = verify::<HttpRoomClaims>(&input.token, TEST_AUTH_KEY);
-    let _ = verify::<HttpDisconnectClaims>(&input.token, TEST_AUTH_KEY);
+    let _ = verify::<HttpRoomClaims>(&input.token, &SecretString::from(TEST_AUTH_KEY));
+    let _ = verify::<HttpDisconnectClaims>(&input.token, &SecretString::from(TEST_AUTH_KEY));
     let mut headers = HeaderMap::new();
     insert_header(&mut headers, header::HOST.as_str(), input.host.as_deref());
     insert_header(
