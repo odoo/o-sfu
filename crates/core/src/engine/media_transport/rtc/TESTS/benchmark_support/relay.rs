@@ -1,9 +1,11 @@
 use tokio::sync::mpsc;
 
 use super::super::{
-    forwarded_packet::ForwardedPacket,
-    relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox},
-    state::PacketLoopState,
+    packet_loop::forwarded_packet::ForwardedPacket,
+    state::{
+        PacketLoopState,
+        relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox},
+    },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
 use crate::engine::{UserId, media_transport::TransportMediaId};

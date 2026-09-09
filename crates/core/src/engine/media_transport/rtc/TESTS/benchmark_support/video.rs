@@ -8,12 +8,10 @@ use tokio::sync::mpsc;
 
 use super::super::{
     commands::{RemoteSourceControl, RtcWorkerCommand},
-    packet_loop::{PacketLoopBuffers, PendingKeyframeRequest, flush_pending_kf_reqs_at},
-    relay_registry::RelayTargetId,
-    route_control::PacketLayerGate,
-    state::PacketLoopState,
+    recovery::{PendingKeyframeRequest, apply_src_decoder_ready, flush_pending_kf_reqs_at},
+    state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
     test_support::{MediaWorkerScenario, test_transport_session_key},
-    worker::apply_src_decoder_ready,
+    worker::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,
@@ -175,7 +173,8 @@ impl KeyframeCoalescingBenchFixture {
         flush_pending_kf_reqs_at(
             &mut self.state,
             &self.rtc_metrics,
-            &mut self.buffers,
+            &mut self.buffers.pending_keyframe_requests,
+            &mut self.buffers.coalesced_keyframe_requests,
             fixed_now(),
         );
         usize::from(self.buffers.pending_keyframe_requests.is_empty())

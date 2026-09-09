@@ -105,26 +105,25 @@ use str0m::{
 use tokio::sync::mpsc;
 
 use super::super::{
-    RtcWorkerConfig, RtpProfile,
-    bitrate::BitrateRegistry,
-    bootstrap, codec,
+    RtcWorkerConfig, RtpProfile, bootstrap, codec,
     commands::WorkerMediaControlBatch,
-    forwarded_packet::ForwardedPacket,
-    media_registry::RegisteredMediaHandle,
-    packet_loop::{
-        BenchmarkTurnInput, PacketLoopConfig, PacketLoopDelaySnapshot, PacketLoopTurn,
-        PendingKeyframeRequest, observe_rtc_event_for_benchmark,
+    control::apply_media_control_batch,
+    packet_loop::{forwarded_packet::ForwardedPacket, observe_rtc_event_for_benchmark},
+    recovery::PendingKeyframeRequest,
+    state::{
+        PacketLoopState, RtcSnapshotState,
+        bitrate::BitrateRegistry,
+        media_registry::RegisteredMediaHandle,
+        relay_registry::{RelayPacketMailbox, RelayTargetId},
+        route_control::PacketLayerGate,
+        slots::SessionHandle,
+        source_route::MediaRouteDestination,
     },
-    relay_registry::{RelayPacketMailbox, RelayTargetId},
-    route_control::PacketLayerGate,
-    slots::SessionHandle,
-    source_route::MediaRouteDestination,
-    state::{PacketLoopState, RtcSnapshotState},
     test_support::{
         BenchmarkPacketStaging, BenchmarkStreamIdentity, restage_packet_for_benchmark,
         sample_local_forwarded_packet_for_benchmark, test_transport_session_key,
     },
-    worker::{apply_media_control_batch, guarded_pkt_gate},
+    worker::{BenchmarkTurnInput, PacketLoopConfig, PacketLoopDelaySnapshot, PacketLoopTurn},
 };
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
@@ -1487,8 +1486,11 @@ impl MeetingFlowBenchFixture {
         let requires_decoder_refresh = consumer_rtp.as_ref().is_some_and(|parameters| {
             codec::requires_decoder_refresh(parameters, dest_payload_type)
         });
-        let (packet_gate, pending_gate) =
-            guarded_pkt_gate(requires_decoder_refresh, src_media, packet_gate);
+        let (packet_gate, pending_gate) = MediaRouteDestination::guarded_packet_gate(
+            requires_decoder_refresh,
+            src_media,
+            packet_gate,
+        );
         let dst_idx = self.state.routes.add_consumer_route(
             src_media,
             MediaRouteDestination {

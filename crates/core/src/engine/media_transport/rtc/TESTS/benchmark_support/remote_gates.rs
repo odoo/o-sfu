@@ -5,10 +5,10 @@ use tokio::sync::mpsc;
 
 use super::super::{
     commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
-    relay_registry::RelayTargetId,
-    route_control::PacketLayerGate,
-    source_route::RemoteSourceRegistration,
-    state::PacketLoopState,
+    state::{
+        PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
+        source_route::RemoteSourceRegistration,
+    },
     test_support::{MediaWorkerScenario, test_transport_session_key},
 };
 use crate::engine::{

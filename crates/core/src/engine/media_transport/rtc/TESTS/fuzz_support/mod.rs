@@ -6,8 +6,7 @@ use std::{
 
 use super::{
     bootstrap,
-    packet_loop::{PacketRouteDatagram, route_pkt_to_session_at},
-    routing_miss::DemuxRecoveryState,
+    packet_loop::{PacketRouteDatagram, route_pkt_to_session_at, routing_miss::DemuxRecoveryState},
     state::PacketLoopState,
 };
 use crate::{

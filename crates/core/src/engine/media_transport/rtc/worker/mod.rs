@@ -1,13 +1,52 @@
-//! Each [`RtcWorker`] creates a private current-thread executor inside a dedicated
-//! OS thread. UDP ingress, relay packets and command APIs therefore mutate RTC
-//! state in the same packet-loop task instead of entering the process-wide
-//! work-stealing runtime.
+//! Thread lifecycle and turn scheduling for one [`RtcWorker`].
 //!
-//! Read-side snapshots remain observational. They may race packet processing or
-//! teardown and cannot authorize room state.
+//! Each worker runs its sessions on a dedicated OS thread. Mailboxes and
+//! completed UDP receives feed one loop that mutates [`PacketLoopState`](super::state::PacketLoopState):
+//!
+//! ```text
+//! RtcWorker senders       shared UDP socket
+//!        |                       |
+//!        v                       v
+//! input mailboxes            UdpIngress
+//!        |                       |
+//!        +----> loop_driver <----+
+//!                    |
+//!             PacketLoopState
+//! ```
+//!
+//! [`lifecycle`] defines startup and shutdown. [`loop_driver`] defines input
+//! priority and packet ordering across [`super::control`], [`super::packet_loop`]
+//! and [`super::recovery`]. [`session_drain`] stages session output at the turn's
+//! timestamp and rolls it back before closing a session that exceeds its budget.
+//!
+//! Read-side snapshots may race processing or teardown and cannot authorize
+//! room state.
 
-mod handlers;
+#[cfg(feature = "internal-benchmarks")]
+pub(crate) use loop_driver::{BenchmarkTurnInput, PacketLoopTurn};
+
+#[cfg(feature = "internal-benchmarks")]
+pub use self::{
+    buffers::PacketLoopBuffers,
+    loop_driver::route_queued_ingress_datagrams_for_benchmark,
+    session_drain::{SessionDrainContext, drain_ready_sessions},
+};
+pub use self::{
+    delay::PacketLoopDelaySnapshot,
+    input::PacketLoopInputReceivers,
+    loop_driver::{PacketLoopConfig, run_packet_loop},
+};
+
+pub(super) mod buffers;
+pub(super) mod delay;
+pub(super) mod input;
 mod lifecycle;
+pub(super) mod loop_driver;
+pub(super) mod session_drain;
+
+#[cfg(test)]
+#[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
+mod TESTS;
 
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/support.rs"]
@@ -19,14 +58,6 @@ use std::{
     thread,
 };
 
-#[cfg(feature = "internal-benchmarks")]
-pub use handlers::apply_media_control_batch;
-#[cfg(feature = "internal-benchmarks")]
-pub(in crate::engine::media_transport::rtc) use handlers::guarded_pkt_gate;
-pub(super) use handlers::{
-    KeyframeRequestMode, KeyframeRequestTarget, SessionCloseDisposition, WorkerCommandContext,
-    apply_src_decoder_ready, handle_worker_command, request_kf_for_target, worker_close_session,
-};
 #[cfg(any(test, feature = "internal-benchmarks"))]
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 #[cfg(any(test, feature = "internal-benchmarks"))]
@@ -39,11 +70,12 @@ use super::commands::ParsedSessionAnswer;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 use super::commands::RtcSessionOffer;
 use super::{
-    bitrate::BitrateRegistry,
     commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
-    packet_loop::PacketLoopDelaySnapshot,
-    relay_registry::{RelayPacketMailbox, RelayTargetId},
-    state::RtcSnapshotState,
+    state::{
+        RtcSnapshotState,
+        bitrate::BitrateRegistry,
+        relay_registry::{RelayPacketMailbox, RelayTargetId},
+    },
 };
 #[cfg(any(test, feature = "internal-benchmarks"))]
 use crate::engine::media_transport::TransportAdapterError;

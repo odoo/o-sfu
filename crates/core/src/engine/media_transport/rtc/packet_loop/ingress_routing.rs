@@ -27,9 +27,9 @@ use str0m::{
 };
 use tracing::{debug, trace, warn};
 
-use super::super::{
+use super::{
+    super::state::{PacketLoopState, RtcSessionState, demux::RemoteAddrDemux, slots::SessionStore},
     routing_miss::{DemuxRecoveryState, PacketLoopRoutingMissKey},
-    state::{PacketLoopState, RtcSessionState},
 };
 use crate::engine::{
     media_transport::TransportSessionKey,
@@ -292,7 +292,8 @@ fn route_cached_pkt(
 
 /// Searches the recovery index selected by the datagram's multiplex class.
 fn indexed_session_for_pkt(
-    state: &mut PacketLoopState,
+    sessions: &SessionStore,
+    remote_addr_demux: &mut RemoteAddrDemux,
     source_addr: SocketAddr,
     candidate_addr: SocketAddr,
     packet: &[u8],
@@ -302,13 +303,10 @@ fn indexed_session_for_pkt(
         return IndexedSessionRecoveryOutcome::Malformed;
     };
     let candidate_session_keys = match &packet_index_probe {
-        PacketIndexProbe::LocalIceUfrag(local_ice_ufrag) => CandidateSessionKeys::Single(
-            state
-                .remote_addr_demux
-                .session_for_local_ufrag(local_ice_ufrag),
-        ),
-        PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => state
-            .remote_addr_demux
+        PacketIndexProbe::LocalIceUfrag(local_ice_ufrag) => {
+            CandidateSessionKeys::Single(remote_addr_demux.session_for_local_ufrag(local_ice_ufrag))
+        }
+        PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => remote_addr_demux
             .candidates_for_src_addr(*remote_candidate_addr)
             .map_or(
                 CandidateSessionKeys::Single(None),
@@ -323,7 +321,7 @@ fn indexed_session_for_pkt(
     let matched_session_key = {
         let mut matched_session_key = None;
         for session_key in candidate_session_keys {
-            let Some(session_state) = state.users.get(session_key) else {
+            let Some(session_state) = sessions.get(session_key) else {
                 stale_session_keys.push(session_key.clone());
                 continue;
             };
@@ -338,12 +336,8 @@ fn indexed_session_for_pkt(
         matched_session_key
     };
     for stale_session_key in &stale_session_keys {
-        state
-            .remote_addr_demux
-            .forget_user_remote_candidates(stale_session_key);
-        state
-            .remote_addr_demux
-            .forget_user_local_ice_ufrag(stale_session_key);
+        remote_addr_demux.forget_user_remote_candidates(stale_session_key);
+        remote_addr_demux.forget_user_local_ice_ufrag(stale_session_key);
     }
     if let Some(matched_session_key) = matched_session_key {
         debug!(
@@ -589,7 +583,8 @@ fn route_pkt_by_recovery(
         return;
     };
     let session_key = match indexed_session_for_pkt(
-        state,
+        &state.users,
+        &mut state.remote_addr_demux,
         route.source_addr,
         route.candidate_addr,
         route.packet,

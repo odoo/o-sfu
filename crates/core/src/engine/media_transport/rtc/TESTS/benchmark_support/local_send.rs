@@ -10,13 +10,17 @@ use str0m::{
 };
 
 use super::super::{
-    bitrate::{BitrateRegistry, MediaBitrateCounter},
     bootstrap,
-    forwarded_packet::ForwardedPacket,
-    forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
-    route_control::PacketLayerGate,
-    source_route::MediaRouteDestination,
-    state::PacketLoopState,
+    packet_loop::{
+        forwarded_packet::ForwardedPacket,
+        forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
+    },
+    state::{
+        PacketLoopState,
+        bitrate::{BitrateRegistry, MediaBitrateCounter},
+        route_control::PacketLayerGate,
+        source_route::MediaRouteDestination,
+    },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
 use crate::{

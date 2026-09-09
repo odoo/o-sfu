@@ -21,11 +21,12 @@ use tracing::{info, warn};
 
 use super::{
     RtpProfile,
-    bitrate::MediaBitrateCounter,
-    local_send_rewrite::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
+    consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     packet_loop::{RtcUdpSocket, UdpIngress},
-    slots::SessionStore,
-    state::{RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket},
+    state::{
+        RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
+        slots::SessionStore,
+    },
 };
 use crate::{
     Bitrate, RtcPortRange, RtcUdpIoBackend,
@@ -198,8 +199,6 @@ pub(super) fn ensure_session_rtc_state_with_stats_interval(
             next_timeout: None,
             sdp_negotiation: SessionSdpNegotiationState::default(),
             consumer_streams: ConsumerStreamStore::default(),
-            #[cfg(test)]
-            last_local_write: None,
         },
     );
     Ok(true)
