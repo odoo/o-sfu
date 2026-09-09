@@ -22,7 +22,7 @@ use {
 };
 #[cfg(any(test, feature = "testing-transport"))]
 use {
-    super::{super::state::PacketLoopState, WorkerCommandContext},
+    super::super::{control::WorkerCommandContext, state::PacketLoopState},
     std::sync::mpsc,
     tokio::{sync::oneshot, task::JoinHandle},
 };

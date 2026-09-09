@@ -16,7 +16,7 @@ use str0m::{
 };
 
 use super::{
-    super::{RtpProfile, state::PacketLoopState, worker::WorkerCommandContext},
+    super::{RtpProfile, control::WorkerCommandContext, state::PacketLoopState},
     fixtures::*,
 };
 use crate::{

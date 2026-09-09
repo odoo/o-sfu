@@ -3,15 +3,17 @@ use std::sync::Arc;
 use str0m::media::Mid;
 
 use super::super::{
-    forwarded_packet::ForwardedPacket,
-    forwarding_destination::ForwardingDestination,
-    forwarding_planner::plan_forwards,
+    packet_loop::{
+        forwarded_packet::ForwardedPacket,
+        forwarding_destination::ForwardingDestination,
+        forwarding_planner::{PacketGateDecision, plan_forwards},
+    },
     state::PacketLoopState,
     test_support::{MediaWorkerScenario, sample_forwarded_packet, test_transport_session_key},
 };
 use crate::engine::{
     UserId,
-    metrics::{RtcMetricsRecorder, RuntimeMetrics},
+    metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RuntimeMetrics},
     packet_sink_registry::PacketSinkRouteCache,
 };
 
@@ -86,13 +88,22 @@ impl FanoutBenchTopology {
     #[inline(never)]
     fn plan_single_turn(&mut self) -> usize {
         for packet in &mut self.pending_packets {
-            plan_forwards(
-                &self.state,
+            let visits_origin = packet.visits_origin_sinks();
+            let Some(facts) = packet.resolve_facts(&self.state) else {
+                continue;
+            };
+            if let Some(decision) = plan_forwards(
+                facts,
+                visits_origin,
+                &self.state.routes,
                 &self.packet_sinks,
-                &self.metrics,
-                packet,
                 &mut self.forwards,
-            );
+            ) {
+                self.metrics.record_rtc_route_control(match decision {
+                    PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
+                    PacketGateDecision::Dropped => RtcRouteControlOutcome::LayerDropped,
+                });
+            }
         }
         self.forwards.len()
     }

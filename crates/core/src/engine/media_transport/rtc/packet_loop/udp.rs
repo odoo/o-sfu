@@ -24,7 +24,7 @@ use tokio_uring::net::UdpSocket as TokioUringUdpSocket;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use super::buffers::RECEIVE_BUFFER_LEN;
+use super::super::worker::buffers::RECEIVE_BUFFER_LEN;
 use crate::RtcUdpIoBackend;
 
 const INGRESS_QUEUE_CAPACITY: usize = 32;
@@ -46,13 +46,13 @@ pub enum RtcUdpSocket {
 /// The backend receive APIs supply only the peer address. `candidate_addr`
 /// preserves the local candidate identity needed by [`str0m::Input::Receive`].
 pub(crate) struct UdpDatagram {
-    pub(super) source_addr: SocketAddr,
-    pub(super) candidate_addr: SocketAddr,
+    pub(in super::super) source_addr: SocketAddr,
+    pub(in super::super) candidate_addr: SocketAddr,
     /// Socket-completion time captured before ingress-queue backpressure.
     ///
     /// str0m uses this clock for jitter and bandwidth timing.
-    pub(super) received_at: Instant,
-    pub(super) packet: Vec<u8>,
+    pub(in super::super) received_at: Instant,
+    pub(in super::super) packet: Vec<u8>,
 }
 
 /// Receive-side datagram pump for one worker socket.
@@ -109,7 +109,7 @@ impl RtcUdpSocket {
     }
 
     /// Sends one datagram to `destination`.
-    pub(super) async fn send_to(
+    pub(in super::super) async fn send_to(
         &self,
         packet: Vec<u8>,
         destination: SocketAddr,
@@ -150,11 +150,11 @@ impl UdpIngress {
         }
     }
 
-    pub(super) fn try_recv(&mut self) -> Option<UdpDatagram> {
+    pub(in super::super) fn try_recv(&mut self) -> Option<UdpDatagram> {
         self.rx.try_recv().ok()
     }
 
-    pub(super) async fn recv(&mut self) -> Option<UdpDatagram> {
+    pub(in super::super) async fn recv(&mut self) -> Option<UdpDatagram> {
         self.rx.recv().await
     }
 
@@ -162,7 +162,7 @@ impl UdpIngress {
     ///
     /// Only buffers retaining [`RECEIVE_BUFFER_LEN`] capacity enter the bounded
     /// pool. A full pool drops the buffer because reuse is opportunistic.
-    pub(super) fn recycle(&self, mut packet: Vec<u8>) {
+    pub(in super::super) fn recycle(&self, mut packet: Vec<u8>) {
         if packet.capacity() < RECEIVE_BUFFER_LEN {
             return;
         }

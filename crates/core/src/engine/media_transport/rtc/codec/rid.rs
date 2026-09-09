@@ -10,10 +10,8 @@ use str0m::{
     media::{Mid, Rid, Simulcast, SimulcastLayer},
 };
 
-use crate::{
-    Bitrate, VideoBitrateLimits,
-    engine::media_transport::{SessionUploadEncoding, rtc::route_control::PacketLayerGate},
-};
+use super::super::state::route_control::PacketLayerGate;
+use crate::{Bitrate, VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
 
 pub(super) const DEFAULT_LOW_RID: &str = "lo";
 pub(super) const DEFAULT_MIDDLE_RID: &str = "mid";

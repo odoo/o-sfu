@@ -1,0 +1,134 @@
+//! Consumer routes coupled to session MID indexes and receiver stream retirement.
+
+use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
+use str0m::media::Mid;
+
+use super::{
+    PacketLoopState, media_registry::RegisteredMediaHandle, slots::ConsumerStreamHandle,
+    source_route::MediaRouteDestination,
+};
+use crate::engine::media_transport::{TransportMediaId, TransportSessionKey, rtc::codec};
+
+/// Consumer stream and negotiated RTP identity committed as one local route.
+#[derive(Clone, Copy)]
+pub struct ConsumerRouteRegistration<'a> {
+    pub consumer_key: &'a TransportSessionKey,
+    pub consumer_stream: ConsumerStreamHandle,
+    pub consumer_mid: Mid,
+    pub src_media: TransportMediaId,
+    pub consumer_rtp: &'a RouterRtpParameters,
+    pub active: bool,
+}
+
+impl PacketLoopState {
+    /// Registers a consumer identity, destination stream and its MID route index together.
+    pub fn register_consumer_route(
+        &mut self,
+        registration: ConsumerRouteRegistration<'_>,
+    ) -> TransportMediaId {
+        let ConsumerRouteRegistration {
+            consumer_key,
+            consumer_stream,
+            consumer_mid,
+            src_media,
+            consumer_rtp,
+            active,
+        } = registration;
+        let consumer_media = self.register_media_handle(RegisteredMediaHandle::Consumer {
+            session_key: consumer_key.clone(),
+            mid: consumer_mid,
+            src_media,
+        });
+        let dest_payload_type = codec::primary_payload_type(consumer_rtp);
+        let repair_enabled = codec::repair_enabled(consumer_rtp);
+        let requires_decoder_refresh =
+            codec::requires_decoder_refresh(consumer_rtp, dest_payload_type);
+        let (packet_gate, pending_gate) = MediaRouteDestination::guarded_packet_gate(
+            requires_decoder_refresh,
+            src_media,
+            codec::initial_consumer_packet_gate(consumer_rtp),
+        );
+        let dst_idx = self.routes.add_consumer_route(
+            src_media,
+            MediaRouteDestination {
+                dest_session: consumer_key.clone(),
+                dest_transport_media_id: consumer_media,
+                dest_stream: consumer_stream,
+                dest_mid: consumer_mid,
+                dest_payload_type,
+                repair_enabled,
+                active,
+                requires_decoder_refresh,
+                delivery_generation: 0,
+                packet_gate,
+                pending_gate,
+            },
+        );
+        self.set_consumer_dst_idx(
+            consumer_key,
+            consumer_mid,
+            consumer_media,
+            src_media,
+            Some(dst_idx),
+        );
+        consumer_media
+    }
+
+    /// Removes a consumer route, repairs displaced MID indexes and retires its stream.
+    pub fn remove_consumer_route(
+        &mut self,
+        consumer_key: &TransportSessionKey,
+        consumer_media: TransportMediaId,
+        src_media: TransportMediaId,
+    ) {
+        let Some(removed) =
+            self.routes
+                .remove_consumer_route(src_media, consumer_key, consumer_media)
+        else {
+            self.routes.prune_unrouted_remote_src(src_media);
+            return;
+        };
+        self.set_consumer_dst_idx(
+            &removed.destination.dest_session,
+            removed.destination.dest_mid,
+            removed.destination.dest_transport_media_id,
+            src_media,
+            None,
+        );
+        if let Some(moved) = &removed.moved {
+            // Route removal uses `swap_remove`. Repair the moved destination's
+            // lookup index before later control or keyframe lookup uses it.
+            self.set_consumer_dst_idx(
+                &moved.session_key,
+                moved.mid,
+                moved.media_id,
+                src_media,
+                Some(moved.dst_idx),
+            );
+        }
+        self.release_destination_stream(&removed.destination);
+    }
+
+    /// Removes every destination and receiver stream retained by one source route.
+    pub fn remove_source_route(&mut self, src_media: TransportMediaId) {
+        let Some(route_entry) = self.routes.take_route(src_media) else {
+            return;
+        };
+        for destination in route_entry.destinations {
+            self.set_consumer_dst_idx(
+                &destination.dest_session,
+                destination.dest_mid,
+                destination.dest_transport_media_id,
+                src_media,
+                None,
+            );
+            self.release_destination_stream(&destination);
+        }
+    }
+
+    fn release_destination_stream(&mut self, destination: &MediaRouteDestination) {
+        if let Some(session_state) = self.users.get_mut(&destination.dest_session) {
+            session_state.release_consumer_stream(destination.dest_stream);
+        }
+    }
+}

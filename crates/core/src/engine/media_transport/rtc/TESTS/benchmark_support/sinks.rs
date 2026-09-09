@@ -9,16 +9,21 @@ use std::{
 use str0m::media::Mid;
 
 use super::super::{
-    forwarding_planner::plan_forwards,
-    media_registry::RegisteredMediaHandle,
-    packet_loop::{PacketLoopBuffers, flush_packet_forwards},
-    state::PacketLoopState,
+    packet_loop::{
+        flush_packet_forwards,
+        forwarding_planner::{PacketGateDecision, plan_forwards},
+    },
+    state::{PacketLoopState, media_registry::RegisteredMediaHandle},
     test_support::{sample_forwarded_packet, test_transport_session_key},
+    worker::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,
     media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::{RtcMetricsRecorder, RtpForwardDestinationKind, RtpMetricsRecorder, RuntimeMetrics},
+    metrics::{
+        RtcMetricsRecorder, RtcRouteControlOutcome, RtpForwardDestinationKind, RtpMetricsRecorder,
+        RuntimeMetrics,
+    },
     packet_sink_registry::{PacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
 
@@ -127,13 +132,22 @@ impl PacketSinkFanoutBenchFixture {
 
     fn plan_and_flush_once(&mut self) {
         for packet in &mut self.buffers.pending_packets {
-            plan_forwards(
-                &self.state,
+            let visits_origin = packet.visits_origin_sinks();
+            let Some(facts) = packet.resolve_facts(&self.state) else {
+                continue;
+            };
+            if let Some(decision) = plan_forwards(
+                facts,
+                visits_origin,
+                &self.state.routes,
                 &self.packet_sinks,
-                &self.route_metrics,
-                packet,
                 &mut self.buffers.forwards,
-            );
+            ) {
+                self.route_metrics.record_rtc_route_control(match decision {
+                    PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
+                    PacketGateDecision::Dropped => RtcRouteControlOutcome::LayerDropped,
+                });
+            }
             flush_packet_forwards(
                 &mut self.state,
                 &self.metrics,

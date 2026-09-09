@@ -6,8 +6,11 @@ use str0m::{
 };
 
 use super::super::{
-    bootstrap, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
-    slots::ConsumerStreamHandle, source_route::MediaRouteDestination, state::PacketLoopState,
+    bootstrap,
+    state::{
+        PacketLoopState, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
+        slots::ConsumerStreamHandle, source_route::MediaRouteDestination,
+    },
 };
 use crate::{
     Bitrate,

@@ -12,19 +12,17 @@ use str0m::{
 use tokio::sync::mpsc;
 
 use super::{
-    collect_ready_session_keys, route_graph::MediaWorkerScenario, test_transport_session_key,
+    super::{
+        commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
+        state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
+    },
+    collect_ready_session_keys,
+    route_graph::MediaWorkerScenario,
+    test_transport_session_key,
 };
 use crate::engine::{
     UserId,
-    media_transport::{
-        TransportMediaId, TransportSessionKey, TransportSourceKey,
-        rtc::{
-            commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
-            relay_registry::RelayTargetId,
-            route_control::PacketLayerGate,
-            state::PacketLoopState,
-        },
-    },
+    media_transport::{TransportMediaId, TransportSessionKey, TransportSourceKey},
     metrics::RtcMetricsRecorder,
 };
 

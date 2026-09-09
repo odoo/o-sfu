@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use super::super::route_table::RouteTable;
+use super::super::state::route_table::RouteTable;
 use crate::engine::media_transport::TransportMediaId;
 
 const ACTIVE_SPEAKER_SOURCE_COUNT: usize = 128;

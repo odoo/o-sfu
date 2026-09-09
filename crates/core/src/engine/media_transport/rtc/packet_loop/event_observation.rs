@@ -35,7 +35,7 @@ use crate::{
 /// Connection transitions are debug-level because they describe lifecycle.
 /// Other events are trace-level to avoid turning the media path into a logging
 /// hot spot during normal calls.
-pub(super) fn log_rtc_event(session_key: &TransportSessionKey, event: &Event) {
+pub(in super::super) fn log_rtc_event(session_key: &TransportSessionKey, event: &Event) {
     match event {
         Event::IceConnectionStateChange(state) => {
             debug!(
@@ -63,19 +63,19 @@ pub(super) fn log_rtc_event(session_key: &TransportSessionKey, event: &Event) {
     }
 }
 
-pub(super) struct RtcEventContext<'a> {
-    pub(super) snapshot_state: &'a Arc<Mutex<RtcSnapshotState>>,
-    pub(super) metrics: &'a RuntimeMetrics,
-    pub(super) rtc_metrics: &'a RtcMetricsRecorder,
-    pub(super) nack_totals: &'a mut RtcNackTotals,
-    pub(super) source_policy_signal: &'a SourcePolicySignal,
-    pub(super) room_id: &'a str,
-    pub(super) session_key: &'a TransportSessionKey,
-    pub(super) event: &'a Event,
+pub(in super::super) struct RtcEventContext<'a> {
+    pub(in super::super) snapshot_state: &'a Arc<Mutex<RtcSnapshotState>>,
+    pub(in super::super) metrics: &'a RuntimeMetrics,
+    pub(in super::super) rtc_metrics: &'a RtcMetricsRecorder,
+    pub(in super::super) nack_totals: &'a mut RtcNackTotals,
+    pub(in super::super) source_policy_signal: &'a SourcePolicySignal,
+    pub(in super::super) room_id: &'a str,
+    pub(in super::super) session_key: &'a TransportSessionKey,
+    pub(in super::super) event: &'a Event,
 }
 
 /// Projects one `str0m` event into metrics, snapshots and diagnostics.
-pub(super) fn observe_rtc_event(context: RtcEventContext<'_>) {
+pub(in super::super) fn observe_rtc_event(context: RtcEventContext<'_>) {
     let RtcEventContext {
         snapshot_state,
         metrics,

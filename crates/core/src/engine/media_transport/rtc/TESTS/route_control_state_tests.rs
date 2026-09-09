@@ -2,23 +2,25 @@ use std::time::{Duration, Instant};
 
 use str0m::media::{KeyframeRequestKind, Mid, Rid};
 
+use super::super::{
+    state::{
+        keyframe_tracker::{
+            KEYFRAME_REQUEST_RETRY_ATTEMPTS, KeyframeRequestDecision, KeyframeRequestOrigin,
+            KeyframeRequestTracker,
+        },
+        relay_registry::{RelayPacketMailbox, RelayTargetId},
+        route_control::PacketLayerGate,
+        route_table::{RidReadinessScratch, RouteTable},
+        slots::ConsumerStreamHandle,
+        source_route::MediaRouteDestination,
+    },
+    test_support::test_transport_session_key,
+};
 use crate::engine::{
     UserId,
     media_transport::{
         ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,
         TransportMediaId,
-        rtc::{
-            keyframe_tracker::{
-                KEYFRAME_REQUEST_RETRY_ATTEMPTS, KeyframeRequestDecision, KeyframeRequestOrigin,
-                KeyframeRequestTracker,
-            },
-            relay_registry::{RelayPacketMailbox, RelayTargetId},
-            route_control::PacketLayerGate,
-            route_table::{RidReadinessScratch, RouteTable},
-            slots::ConsumerStreamHandle,
-            source_route::MediaRouteDestination,
-            test_support::test_transport_session_key,
-        },
     },
 };
 

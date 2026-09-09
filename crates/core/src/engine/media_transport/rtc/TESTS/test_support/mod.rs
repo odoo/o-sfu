@@ -32,33 +32,35 @@ pub(super) use probe::{
 };
 #[cfg(test)]
 pub(super) use route_graph::prepare_source_session_with_rid;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-pub(super) use {
-    super::forwarded_packet::test_support::sample_forwarded_packet_without_mid,
-    packets::serialize_stun_message,
-    route_graph::{MediaWorkerScenario, prepare_source_session},
-};
-#[cfg(feature = "internal-benchmarks")]
-pub(super) use {
-    super::forwarded_packet::test_support::{
-        BenchmarkPacketStaging, BenchmarkStreamIdentity, reset_packet_resolution,
-        restage_packet_for_benchmark, sample_forwarded_packet_with_rid_and_audio_activity,
-        sample_local_forwarded_packet_for_benchmark,
-    },
-    packets::sample_rtp_packet_with_len,
-};
 #[cfg(test)]
 pub(super) use {
-    super::forwarded_packet::test_support::{
+    self::packets::sample_rtp_packet,
+    super::packet_loop::forwarded_packet::test_support::{
         sample_already_relayed_audio_packet_at, sample_already_relayed_packet,
         sample_forwarded_packet_with_audio_activity, sample_forwarded_packet_with_rid,
         sample_local_forwarded_packet, sample_local_repaired_packet,
     },
-    packets::sample_rtp_packet,
+};
+#[cfg(feature = "internal-benchmarks")]
+pub(super) use {
+    self::packets::sample_rtp_packet_with_len,
+    super::packet_loop::forwarded_packet::test_support::{
+        BenchmarkPacketStaging, BenchmarkStreamIdentity, reset_packet_resolution,
+        restage_packet_for_benchmark, sample_forwarded_packet_with_rid_and_audio_activity,
+        sample_local_forwarded_packet_for_benchmark,
+    },
+};
+#[cfg(any(test, feature = "internal-benchmarks"))]
+pub(super) use {
+    self::{
+        packets::serialize_stun_message,
+        route_graph::{MediaWorkerScenario, prepare_source_session},
+    },
+    super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet_without_mid,
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-pub use super::forwarded_packet::test_support::sample_forwarded_packet;
+pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 use crate::engine::{
     ConnectionId, MediaWorkerId, RoomInstanceId, UserId, media_transport::TransportSessionKey,

@@ -4,9 +4,9 @@ use str0m::media::Mid;
 
 use super::super::{
     commands::WorkerMediaControlBatch,
-    route_control::PacketLayerGate,
+    control::apply_media_control_batch,
+    state::route_control::PacketLayerGate,
     test_support::{MediaWorkerScenario, prepare_source_session, test_transport_session_key},
-    worker::apply_media_control_batch,
 };
 use crate::{
     Bitrate,
