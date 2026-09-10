@@ -1,11 +1,9 @@
 use crate::engine::media_transport::{
-    SourceActivityUpdate, TransportAdapterError, TransportConsumerRoute, TransportResult,
-    TransportSourceKey,
+    SourceActivityUpdate, TransportAdapterError, TransportSourceKey,
     rtc::{
         recovery::invalidate_source_repair,
         state::{
             PacketLoopState,
-            media_registry::RegisteredMediaHandle,
             relay_registry::{RelayPacketMailbox, RelayTargetId},
             route_control::PacketLayerGate,
         },
@@ -112,103 +110,4 @@ pub(super) fn worker_set_remote_source_activity(
         invalidate_source_repair(state, src_media);
     }
     Ok(())
-}
-
-pub(super) fn worker_set_consumer_active(
-    state: &mut PacketLoopState,
-    route: &TransportConsumerRoute,
-    active: bool,
-) -> Result<(), TransportAdapterError> {
-    update_consumer_route(state, route, ConsumerRouteMutation::Active(active)).map(|_| ())
-}
-
-pub(super) fn worker_set_consumer_pkt_gates(
-    state: &mut PacketLoopState,
-    source: &TransportSourceKey,
-    updates: Vec<(usize, TransportConsumerRoute, PacketLayerGate)>,
-) -> Vec<TransportResult<()>> {
-    let src_media = source.transport_media_id();
-    let mut changed = false;
-    let mut results = Vec::with_capacity(updates.len());
-    for (_, route, packet_gate) in updates {
-        if route.source() != source {
-            results.push(Err(TransportAdapterError::InvalidInput));
-            continue;
-        }
-        let result = update_consumer_route(
-            state,
-            &route,
-            ConsumerRouteMutation::PacketGate(packet_gate),
-        );
-        results.push(
-            result
-                .inspect(|route_changed| changed |= *route_changed)
-                .map(|_| ()),
-        );
-    }
-    if changed {
-        state.routes.refresh_src_pkt_gate(src_media);
-    }
-    results
-}
-
-#[derive(Clone, Copy)]
-enum ConsumerRouteMutation {
-    Active(bool),
-    PacketGate(PacketLayerGate),
-}
-
-fn update_consumer_route(
-    state: &mut PacketLoopState,
-    route: &TransportConsumerRoute,
-    mutation: ConsumerRouteMutation,
-) -> Result<bool, TransportAdapterError> {
-    let consumer_key = route.consumer_session_key();
-    let consumer_media = route.consumer_transport_media_id();
-    let src_media = route.source_transport_media_id();
-    state.ensure_existing_route_src(consumer_key, route.source())?;
-    let RegisteredMediaHandle::Consumer {
-        session_key,
-        mid,
-        src_media: consumer_src_media,
-        ..
-    } = state
-        .media_handle(consumer_media)
-        .ok_or(TransportAdapterError::TransportUnavailable)?
-    else {
-        return Err(TransportAdapterError::InvalidInput);
-    };
-    if session_key != consumer_key || *consumer_src_media != src_media {
-        return Err(TransportAdapterError::InvalidInput);
-    }
-    let dst_idx = state
-        .consumer_dst_idx(consumer_key, *mid, consumer_media, src_media)
-        .ok_or(TransportAdapterError::TransportUnavailable)?;
-    let update = match mutation {
-        ConsumerRouteMutation::Active(active) => state.routes.set_consumer_active(
-            src_media,
-            dst_idx,
-            consumer_key,
-            consumer_media,
-            active,
-        ),
-        ConsumerRouteMutation::PacketGate(packet_gate) => state.routes.set_consumer_pkt_gate(
-            src_media,
-            dst_idx,
-            consumer_key,
-            consumer_media,
-            packet_gate,
-        ),
-    }?;
-    if update.repair_delivery_changed {
-        let (routes, users) = (&state.routes, &mut state.users);
-        if let Some(destination) = routes
-            .local_route(src_media)
-            .and_then(|route| route.destinations.get(dst_idx))
-            && let Some(session_state) = users.get_mut(consumer_key)
-        {
-            session_state.invalidate_rtx_stream(destination.dest_stream);
-        }
-    }
-    Ok(update.route_changed)
 }
