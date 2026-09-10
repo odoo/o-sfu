@@ -13,8 +13,7 @@ use crate::engine::{
         test_support::{ForwardedPacket, sample_forwarded_packet, test_transport_session_key},
     },
     metrics::RtpForwardDestinationKind,
-    packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
-    recording::MediaPacketSink,
+    packet_sink_registry::{PacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
 
 struct CountingSink {
@@ -29,7 +28,7 @@ impl CountingSink {
     }
 }
 
-impl MediaPacketSink for CountingSink {
+impl PacketSink for CountingSink {
     fn record_packet(
         &self,
         _session_key: &TransportSessionKey,
@@ -46,7 +45,7 @@ fn register_recording_sink<T>(
     room_instance_id: RoomInstanceId,
     sink: Arc<T>,
 ) where
-    T: MediaPacketSink + 'static,
+    T: PacketSink + 'static,
 {
     registry.register_room(room_instance_id, sink, RtpForwardDestinationKind::Recording);
 }

@@ -15,6 +15,11 @@ use super::{
     sync::{read_unpoisoned, write_unpoisoned},
 };
 
+#[cfg(test)]
+#[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
+#[path = "packet_sink_registry/TESTS/mod.rs"]
+mod TESTS;
+
 /// Observes origin-side RTP payloads routed to a room packet sink.
 ///
 /// Packet gates do not filter this source-side stream. Relayed packets are not
