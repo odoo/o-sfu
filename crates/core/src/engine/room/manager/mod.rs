@@ -432,16 +432,14 @@ impl RoomManager {
         let directory = self.directory.read().await;
         let entry = directory.entry(room_id)?;
         let lease = entry.lifecycle.begin()?;
+        let room = Arc::clone(&entry.room);
         drop(directory);
-        Some(CurrentRoomMutation {
-            room: entry.room,
-            lease,
-        })
+        Some(CurrentRoomMutation { room, lease })
     }
 
     async fn entry(&self, room_id: &str) -> Option<RoomDirectoryEntry> {
         let directory = self.directory.read().await;
-        directory.entry(room_id)
+        directory.entry(room_id).cloned()
     }
 
     async fn directory_entries(&self) -> Vec<RoomDirectoryEntry> {
