@@ -55,24 +55,17 @@ fn protocol_core_ws_open_sends_auth_frame_immediately() {
         "signed-token",
         Some(String::from("channel-1")),
     );
-
     let commands = core.on_ws_open();
-
     assert!(matches!(
         commands.as_slice(),
         [Command::SendWebSocket { .. }]
     ));
-    let batch = decode_sent_batch(&commands);
-    assert_eq!(batch.len(), 1);
-    let Some(envelope) = batch.into_iter().next() else {
-        return;
-    };
-    assert_eq!(
-        ClientEnvelope::decode(envelope),
-        Ok(ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
+    assert_sent_client_envelopes(
+        &commands,
+        vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
             jwt: String::from("signed-token"),
             channel: Some(String::from("channel-1")),
-        })))
+        }))],
     );
 }
 
