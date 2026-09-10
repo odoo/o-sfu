@@ -441,13 +441,11 @@ export async function latestBroadcastUpdate(page, senderId) {
     return page.evaluate((expectedSenderId) => {
         const harness = globalThis.__liveHarness;
         return (
-            harness.updates
-                .filter(
-                    (update) =>
-                        update.name === "broadcast" &&
-                        String(update.payload.senderId) === String(expectedSenderId)
-                )
-                .at(-1) ?? null
+            harness.updates.findLast(
+                (update) =>
+                    update.name === "broadcast" &&
+                    String(update.payload.senderId) === String(expectedSenderId)
+            ) ?? null
         );
     }, senderId);
 }
@@ -457,9 +455,9 @@ export async function latestInfoUpdate(page, sessionId) {
         const harness = globalThis.__liveHarness;
         const targetKey = String(targetSessionId);
         return (
-            harness.updates
-                .filter((update) => update.name === "info_change" && update.payload[targetKey])
-                .at(-1) ?? null
+            harness.updates.findLast(
+                (update) => update.name === "info_change" && update.payload[targetKey]
+            ) ?? null
         );
     }, sessionId);
 }
@@ -469,14 +467,12 @@ export async function latestTrackUpdate(page, targetSessionId, targetType) {
         ({ sessionId: nextSessionId, type: nextType }) => {
             const harness = globalThis.__liveHarness;
             return (
-                harness.updates
-                    .filter(
-                        (update) =>
-                            update.name === "track" &&
-                            update.payload.sessionId === nextSessionId &&
-                            update.payload.type === nextType
-                    )
-                    .at(-1) ?? null
+                harness.updates.findLast(
+                    (update) =>
+                        update.name === "track" &&
+                        update.payload.sessionId === nextSessionId &&
+                        update.payload.type === nextType
+                ) ?? null
             );
         },
         { sessionId: targetSessionId, type: targetType }
