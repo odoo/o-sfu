@@ -221,8 +221,8 @@ impl RoomDirectory {
     }
 
     #[must_use]
-    pub(crate) fn entry(&self, uuid: &str) -> Option<RoomDirectoryEntry> {
-        self.by_uuid.get(uuid).cloned()
+    pub(crate) fn entry(&self, uuid: &str) -> Option<&RoomDirectoryEntry> {
+        self.by_uuid.get(uuid)
     }
 
     #[must_use]
