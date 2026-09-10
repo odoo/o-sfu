@@ -256,7 +256,7 @@ enum ConsumerRouteFinish {
 }
 
 impl ConsumerRouteFinish {
-    #[allow(
+    #[expect(
         clippy::cognitive_complexity,
         reason = "closed route completion policy is clearer than one use finish helpers"
     )]
