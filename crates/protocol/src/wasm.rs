@@ -113,8 +113,8 @@ impl WasmProtocolCore {
     /// Returns a string-valued [`JsValue`] if `message_json` cannot decode as
     /// [`JsonPayload`] or command serialization fails.
     pub fn broadcast(&mut self, message_json: &str) -> Result<JsValue, JsValue> {
-        let message: JsonPayload =
-            serde_json::from_str(message_json).map_err(|error| js_error(error.to_string()))?;
+        let message: JsonPayload = serde_json::from_str(message_json)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
         commands_to_js(self.inner.broadcast(message))
     }
 
@@ -166,17 +166,13 @@ impl WasmProtocolCore {
 }
 
 fn commands_to_js(commands: Vec<Command>) -> Result<JsValue, JsValue> {
-    to_js(&commands)
-}
-
-fn to_js<T: Serialize + ?Sized>(value: &T) -> Result<JsValue, JsValue> {
-    value
+    commands
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true))
-        .map_err(|error| js_error(error.to_string()))
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 fn from_js<T: DeserializeOwned>(value: JsValue) -> Result<T, JsValue> {
-    serde_wasm_bindgen::from_value(value).map_err(|error| js_error(error.to_string()))
+    serde_wasm_bindgen::from_value(value).map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 fn from_optional_js<T>(value: Option<JsValue>) -> Result<T, JsValue>
@@ -191,8 +187,4 @@ where
     } else {
         from_js(value)
     }
-}
-
-fn js_error(message: impl Into<String>) -> JsValue {
-    JsValue::from_str(&message.into())
 }
