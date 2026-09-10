@@ -24,8 +24,6 @@ use crate::engine::{
     },
 };
 
-type RelayRegistrationWorkers<'a> = Option<(&'a RtcWorker, &'a RtcWorker)>;
-
 impl MediaTransport {
     /// Selects the worker that owns a transport session.
     ///
@@ -34,25 +32,6 @@ impl MediaTransport {
     /// infer topology from user identity.
     pub(super) fn worker_for_user(&self, session_key: &TransportSessionKey) -> Option<&RtcWorker> {
         self.worker_for_index(session_key.media_worker_id().as_usize())
-    }
-
-    /// Returns the source and consumer workers needed for cross-worker relay.
-    ///
-    /// `None` means both sessions are on the same worker and local routing is
-    /// enough. A returned pair means the source worker must activate relay
-    /// forwarding toward the consumer worker before the consumer route can be
-    /// fully installed.
-    pub(super) fn relay_registration_workers(
-        &self,
-        consumer_session_key: &TransportSessionKey,
-        source_session_key: &TransportSessionKey,
-    ) -> Result<RelayRegistrationWorkers<'_>, TransportAdapterError> {
-        let consumer_worker = self.require_worker_for_user(consumer_session_key)?;
-        let source_worker = self.require_worker_for_user(source_session_key)?;
-        if ptr::eq(consumer_worker, source_worker) {
-            return Ok(None);
-        }
-        Ok(Some((source_worker, consumer_worker)))
     }
 
     /// Returns the latest bitrate estimates for the requested sessions.
