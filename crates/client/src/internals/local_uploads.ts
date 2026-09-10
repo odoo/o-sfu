@@ -1,6 +1,7 @@
+import type { NegotiationUploadSlot } from "../protocol_contract.js";
 import { STREAM_TYPES, type StreamType } from "../public_api.js";
 import { STREAM_KIND, type ClientPeerConnection, type MediaTrack } from "./browser_types.js";
-import { applyUploadPublicationPolicy, type SimulcastEncodingOffer } from "./publication_policy.js";
+import { applyUploadPublicationPolicy } from "./publication_policy.js";
 import { remoteDescriptionAcceptsUploadMid } from "./sdp_media_direction.js";
 
 type UploadTransition = {
@@ -9,11 +10,7 @@ type UploadTransition = {
     boundMid?: string;
 };
 
-export type UploadSlot = {
-    kind: "audio" | "video";
-    mid: string;
-    simulcastEncodings?: readonly SimulcastEncodingOffer[];
-};
+export type UploadSlot = Pick<NegotiationUploadSlot, "kind" | "mid" | "simulcastEncodings">;
 
 export class LocalUploads {
     private _attachableTypes = new Set<StreamType>();

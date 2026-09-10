@@ -1,4 +1,4 @@
-import { configureDefaultWasmProtocolCoreProvider } from "../src/runtime_contract.js";
+import { configureDefaultWasmProtocolCoreProvider } from "../src/protocol_contract.js";
 import { ProtocolCoreWasm, initSync } from "../generated/o_sfu_protocol.js";
 import wasmModule from "../generated/o_sfu_protocol_bg.wasm";
 

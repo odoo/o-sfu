@@ -1,19 +1,13 @@
+import type { NegotiationUploadEncoding } from "../protocol_contract.js";
 import type { StreamType } from "../public_api.js";
 import type { PeerConnectionTransceiver } from "./browser_types.js";
-
-export type SimulcastEncodingOffer = {
-    maxFramerate?: number;
-    maxBitrate?: number;
-    rid: string;
-    resolutionScale?: number;
-};
 
 const MIN_SIMULCAST_ENCODINGS = 2;
 
 export async function applyUploadPublicationPolicy(
     streamType: StreamType,
     transceiver: PeerConnectionTransceiver,
-    simulcastEncodings: readonly SimulcastEncodingOffer[]
+    simulcastEncodings: readonly NegotiationUploadEncoding[]
 ): Promise<void> {
     if (streamType === "audio") {
         return;
@@ -46,7 +40,7 @@ export async function applyUploadPublicationPolicy(
 
 function buildSenderEncodingParameters(
     previousEncoding: RTCRtpEncodingParameters,
-    encoding: SimulcastEncodingOffer
+    encoding: NegotiationUploadEncoding
 ): RTCRtpEncodingParameters {
     const parameters: RTCRtpEncodingParameters = {
         ...previousEncoding,
@@ -65,7 +59,7 @@ function buildSenderEncodingParameters(
     return parameters;
 }
 
-function isValidSimulcastEncodingOffer(encoding: SimulcastEncodingOffer): boolean {
+function isValidSimulcastEncodingOffer(encoding: NegotiationUploadEncoding): boolean {
     return (
         typeof encoding.rid === "string" &&
         encoding.rid.length > 0 &&

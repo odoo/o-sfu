@@ -1,5 +1,5 @@
 import type { StreamType } from "../public_api.js";
-import type { ProtocolCoreProvider } from "../runtime_contract.js";
+import type { ProtocolCoreProvider } from "../protocol_contract.js";
 
 export type MediaTrack = MediaStreamTrack;
 
