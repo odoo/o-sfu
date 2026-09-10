@@ -329,7 +329,7 @@ impl PacketLoopState {
             })
     }
 
-    pub(in super::super) fn session_has_other_media_mid(
+    pub(in super::super) fn mid_is_shared(
         &self,
         session_key: &TransportSessionKey,
         mid: Mid,

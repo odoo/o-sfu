@@ -121,13 +121,12 @@ fn stage_last_mid_removal_before_unregistering_handle(
     transport_media_id: TransportMediaId,
     handle: &RegisteredMediaHandle,
 ) -> Result<(), TransportAdapterError> {
-    let has_other_mid =
-        state.session_has_other_media_mid(handle.session_key(), handle.mid(), transport_media_id);
+    let mid_is_shared = state.mid_is_shared(handle.session_key(), handle.mid(), transport_media_id);
     let session_state = state
         .users
         .get_mut(handle.session_key())
         .ok_or(TransportAdapterError::InvalidInput)?;
-    if has_other_mid {
+    if mid_is_shared {
         // Several handles may share one m-section. Disabling it while a sibling
         // remains would invalidate that sibling's negotiated media.
         return Ok(());

@@ -24,7 +24,7 @@ impl PacketLoopState {
         };
         let session_key = registered.session_key().clone();
         let mid = registered.mid();
-        let keep_mid = self.session_has_other_media_mid(&session_key, mid, transport_media_id);
+        let keep_mid = self.mid_is_shared(&session_key, mid, transport_media_id);
         if matches!(registered, RegisteredMediaHandle::Producer { .. }) {
             let ssrcs = self
                 .routes
