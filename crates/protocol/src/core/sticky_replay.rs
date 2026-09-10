@@ -72,29 +72,24 @@ impl StickyReplayState {
     }
 
     pub(super) fn replay_session_batch(&self) -> Option<EnvelopeBatch> {
-        let mut replay_batch = Vec::new();
-
-        for (user_id, states) in &self.desired_subscriptions {
-            let Some(envelope) =
+        let mut replay_batch: EnvelopeBatch = self
+            .desired_subscriptions
+            .iter()
+            .filter_map(|(user_id, states)| {
                 ClientEnvelope::Message(ClientMessage::Subscribe(SubscribePayload {
                     user_id: user_id.clone(),
                     states: states.clone(),
                 }))
                 .into_envelope()
                 .ok()
-            else {
-                continue;
-            };
-            replay_batch.push(envelope);
-        }
-
+            })
+            .collect();
         if let Some(info) = self.desired_info.clone() {
             let envelope = ClientEnvelope::Message(ClientMessage::Info(info))
                 .into_envelope()
                 .ok()?;
             replay_batch.push(envelope);
         }
-
         if replay_batch.is_empty() {
             None
         } else {
