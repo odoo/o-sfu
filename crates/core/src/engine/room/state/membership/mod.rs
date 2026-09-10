@@ -322,7 +322,7 @@ impl RoomState {
         connection_id: ConnectionId,
         info: &UserInfo,
     ) -> Option<PresenceCommit> {
-        let Some(current_user) = self.users.get(user_id) else {
+        let Some(current_user) = self.users.get_mut(user_id) else {
             warn!(
                 ?user_id,
                 connection_id = ?connection_id,
@@ -341,10 +341,7 @@ impl RoomState {
             );
             return None;
         }
-        {
-            let user = self.user_mut_for_connection(user_id, connection_id)?;
-            user.apply_info_update(info);
-        }
+        current_user.apply_info_update(info);
         let snapshot = BTreeMap::from([self.user_info_snapshot(user_id)?]);
         debug!(
             ?user_id,
