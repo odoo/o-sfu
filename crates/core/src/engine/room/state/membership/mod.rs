@@ -9,8 +9,8 @@ use tracing::{debug, error, warn};
 
 use super::{
     super::{
-        BroadcastPayload, BroadcastPayloadError, RoomEventMessage, RoomJoinError,
-        RoomUserPermissions, RouterPlacement, UserCloseReason,
+        BroadcastPayload, BroadcastPayloadError, RoomEventMessage, RoomJoinError, RouterPlacement,
+        UserCloseReason,
         effects::transport::RoomTransportPlan,
         media_graph::{
             CommittedTransportReceipt, SessionPlacementCommit, SessionPlacementRejection,
@@ -154,13 +154,11 @@ impl RoomState {
     fn install_joined_session(
         &mut self,
         user_id: &UserId,
-        permissions: RoomUserPermissions,
         sender: OutboundSender,
         connection_id: ConnectionId,
     ) -> Option<OutboundSender> {
         if let Some(user) = self.users.get_mut(user_id) {
             let old_sender = mem::replace(&mut user.sender, sender);
-            user.permissions = permissions;
             user.reset_presentation();
             user.parsed_client_rtp_capabilities = None;
             user.connection_id = connection_id;
@@ -171,7 +169,6 @@ impl RoomState {
             user_id.clone(),
             ActiveUser {
                 user_id: Arc::new(user_id.clone()),
-                permissions,
                 info: UserInfo::default(),
                 server_featured: None,
                 parsed_client_rtp_capabilities: None,
@@ -187,12 +184,10 @@ impl RoomState {
     pub fn apply_join(
         &mut self,
         user_id: &UserId,
-        permissions: impl Into<RoomUserPermissions>,
         sender: OutboundSender,
     ) -> Result<JoinCommit, RoomJoinError> {
         self.apply_join_on_placement(
             user_id,
-            permissions,
             sender,
             UserJoinedFanout::Suppress,
             self.fallback_join_placement(),
@@ -202,12 +197,10 @@ impl RoomState {
     pub fn apply_join_on_placement(
         &mut self,
         user_id: &UserId,
-        permissions: impl Into<RoomUserPermissions>,
         sender: OutboundSender,
         joined_fanout: UserJoinedFanout,
         home_placement: RouterPlacement,
     ) -> Result<JoinCommit, RoomJoinError> {
-        let permissions = permissions.into();
         let previous_connection = self.users.get(user_id).map(|user| user.connection_id);
         let is_new = previous_connection.is_none();
         if is_new && self.users.len() >= self.admission_policy.max_sessions {
@@ -232,8 +225,7 @@ impl RoomState {
             );
         }
 
-        let previous_sender =
-            self.install_joined_session(user_id, permissions, sender, connection_id);
+        let previous_sender = self.install_joined_session(user_id, sender, connection_id);
         let had_previous_sender = previous_sender.is_some();
 
         let mut effects = LifecycleEffects::default();

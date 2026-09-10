@@ -22,7 +22,7 @@ use crate::engine::{
     media_transport::MediaTransport, room::state::JoinCommit,
 };
 
-/// Room-state marker that collapses every authenticated [`UserPermissions`] value.
+/// Compatibility marker that collapses every authenticated [`UserPermissions`] value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RoomUserPermissions;
 
@@ -43,7 +43,7 @@ pub struct JoinUserRequest {
     pub user_id: UserId,
     /// Ignored by room admission.
     pub label: Option<String>,
-    /// Collapsed to [`RoomUserPermissions`] during admission.
+    /// Ignored by room admission.
     pub permissions: UserPermissions,
     pub sender: UserOutboundSender,
 }
