@@ -67,13 +67,11 @@ pub struct RoomTopology {
 ///
 /// Membership keeps the receipt while
 /// [`RoomEffects`](crate::engine::room::effects::batch::RoomEffects) consumes the
-/// join commit:
+/// join effects:
 ///
 /// ```rust,ignore
-/// let commit = admission.commit(self, joined_fanout).await?;
-/// let receipt = commit.receipt.clone();
-///
-/// RoomEffects::from_join(commit).execute(self, context).await;
+/// let JoinCommit { receipt, effects, transport_plan } = admission.commit(self, joined_fanout).await?;
+/// RoomEffects::from_join(effects, transport_plan).execute(self, context).await;
 /// Ok(receipt)
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]

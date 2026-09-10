@@ -9,7 +9,8 @@ use crate::engine::{
         },
         source_policy::SourcePolicyTurn,
         state::{
-            ConnectionCloseCommit, DisconnectCommit, JoinCommit, PresenceCommit, UserJoinedFanout,
+            ConnectionCloseCommit, DisconnectCommit, LifecycleEffects, PresenceCommit,
+            UserJoinedFanout,
         },
     },
 };
@@ -100,12 +101,10 @@ pub struct RoomEffects {
 }
 
 impl RoomEffects {
-    pub(in crate::engine::room) fn from_join(commit: JoinCommit) -> Self {
-        let JoinCommit {
-            effects,
-            transport_plan,
-            ..
-        } = commit;
+    pub(in crate::engine::room) fn from_join(
+        effects: LifecycleEffects,
+        transport_plan: RoomTransportPlan,
+    ) -> Self {
         let mut batch = Self {
             transport: transport_plan,
             ..Self::default()
