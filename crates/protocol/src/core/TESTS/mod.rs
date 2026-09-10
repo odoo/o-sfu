@@ -47,35 +47,33 @@ pub(super) fn sample_welcome_payload() -> WelcomePayload {
     }
 }
 
-pub(super) fn decode_sent_batch(commands: &[Command]) -> EnvelopeBatch {
-    let Some(Command::SendWebSocket { frame }) = commands
-        .iter()
-        .find(|command| matches!(command, Command::SendWebSocket { .. }))
-    else {
-        return Vec::new();
+fn decode_sent_client_envelopes(commands: &[Command]) -> Result<Vec<ClientEnvelope>, String> {
+    let mut frames = commands.iter().filter_map(|command| match command {
+        Command::SendWebSocket { frame } => Some(frame),
+        _ => None,
+    });
+    let (Some(frame), None) = (frames.next(), frames.next()) else {
+        return Err(format!("expected one WebSocket frame, got {commands:?}"));
     };
-    serde_json::from_str(frame).unwrap_or_default()
-}
-
-pub(super) fn decode_sent_client_envelopes(commands: &[Command]) -> Vec<ClientEnvelope> {
-    decode_sent_batch(commands)
+    let batch: EnvelopeBatch =
+        serde_json::from_str(frame).map_err(|error| format!("invalid sent batch: {error}"))?;
+    batch
         .into_iter()
-        .filter_map(|envelope| ClientEnvelope::decode(envelope).ok())
+        .map(|envelope| {
+            ClientEnvelope::decode(envelope)
+                .map_err(|error| format!("invalid sent client envelope: {error:?}"))
+        })
         .collect()
 }
 
 pub(super) fn assert_sent_client_envelopes(commands: &[Command], expected: Vec<ClientEnvelope>) {
-    let decoded = decode_sent_batch(commands)
-        .into_iter()
-        .map(ClientEnvelope::decode)
-        .collect::<Result<Vec<_>, _>>();
-    assert_eq!(decoded, Ok(expected));
+    assert_eq!(decode_sent_client_envelopes(commands), Ok(expected));
 }
 
-pub(super) fn encode_server_batch(envelope: ServerEnvelope) -> String {
-    let Ok(envelope) = envelope.into_envelope() else {
-        return String::new();
-    };
-    serde_json::to_string(&vec![envelope]).unwrap_or_default()
+pub(super) fn encode_server_batch(envelope: ServerEnvelope) -> Result<String, String> {
+    let envelope = envelope
+        .into_envelope()
+        .map_err(|error| error.to_string())?;
+    serde_json::to_string(&[envelope]).map_err(|error| error.to_string())
 }
 use serde_json::json;
