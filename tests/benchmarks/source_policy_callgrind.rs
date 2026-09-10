@@ -43,9 +43,21 @@ fn policy_turns(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
     black_box(fixture)
 }
 
+fn validate_mixed_speakers(fixture: SourcePolicyFixture) {
+    fixture.assert_every_turn_planned();
+    fixture.assert_speaker_selection();
+}
+
+#[library_benchmark(config = callgrind_config(2.0), teardown = validate_mixed_speakers)]
+#[bench::mixed_speakers(SourcePolicyFixture::mixed_speakers())]
+fn speaker_policy_turns(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
+    black_box(fixture.run_policy_turns());
+    black_box(fixture)
+}
+
 library_benchmark_group!(
     name = source_policy_callgrind;
-    benchmarks = policy_turns
+    benchmarks = policy_turns, speaker_policy_turns
 );
 
 main!(library_benchmark_groups = source_policy_callgrind);

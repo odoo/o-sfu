@@ -24,7 +24,7 @@ mod worker;
 pub use active_speaker::ActiveSpeakerBenchFixture;
 pub use consumer_gates::ConsumerGateBatchBenchFixture;
 pub use drain::{RelayDrainBenchFixture, SessionDrainBenchFixture};
-pub use fanout::{FanoutBenchTopology, ROUTE_PLANNING_TURNS};
+pub use fanout::{FanoutBenchTopology, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture};
 pub use ingress::{
     INGRESS_COMPLETED_BURST_DATAGRAMS, INGRESS_DEMUX_ATTEMPTS, IngressBurstBenchFixture,
     IngressRoutingBenchFixture,

@@ -173,20 +173,26 @@ fn rank_room_active_speakers(
     room: &RoomState,
     sources: &[ActiveSpeakerSource],
 ) -> Vec<ActiveSpeakerSource> {
-    let mut sources = sources.to_vec();
-    sources.retain(|source| {
-        room.topology
-            .source_for_transport_media(source.transport_media_id())
-            .is_some_and(|source| source.active)
-    });
-    sources.sort_unstable_by_key(|source| {
+    // Reserve the snapshot bound to keep filtering to at most one allocation.
+    let mut ranked = Vec::with_capacity(sources.len());
+    ranked.extend(
+        sources
+            .iter()
+            .filter(|source| {
+                room.topology
+                    .source_for_transport_media(source.transport_media_id())
+                    .is_some_and(|source| source.active)
+            })
+            .copied(),
+    );
+    ranked.sort_unstable_by_key(|source| {
         (
             Reverse(source.observed_at()),
             Reverse(source.last_audio_level_dbov().unwrap_or(i8::MIN)),
             source.transport_media_id().as_u64(),
         )
     });
-    sources
+    ranked
 }
 
 fn user_for_source<'a>(

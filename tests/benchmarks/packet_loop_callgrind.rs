@@ -32,9 +32,10 @@ use o_sfu_core::server::transport::benchmark_support::{
     ActiveSpeakerBenchFixture, ConsumerGateBatchBenchFixture, FanoutBenchTopology,
     IncomingObservationBenchFixture, IngressBurstBenchFixture, IngressRoutingBenchFixture,
     KeyframeCoalescingBenchFixture, LocalRewriteBenchFixture, LocalSendBenchFixture,
-    PacketSinkFanoutBenchFixture, RelayDrainBenchFixture, RelayPressureBenchFixture,
-    RemoteGateRetryBenchFixture, RidReadinessBenchFixture, SchedulerBenchFixture,
-    SessionDrainBenchFixture, WorkerPacketCommandMixBenchFixture, routing_miss_packet_fingerprint,
+    PacketSinkFanoutBenchFixture, RelayDrainBenchFixture, RelayFanoutBenchFixture,
+    RelayPressureBenchFixture, RemoteGateRetryBenchFixture, RidReadinessBenchFixture,
+    SchedulerBenchFixture, SessionDrainBenchFixture, WorkerPacketCommandMixBenchFixture,
+    routing_miss_packet_fingerprint,
 };
 
 #[path = "callgrind_config.rs"]
@@ -89,6 +90,17 @@ fn fingerprint_packet(packet_len: usize) -> Vec<u8> {
 #[bench::fanout_64(args = (64usize), setup = fanout_topology)]
 fn route_plan_1024(mut topology: FanoutBenchTopology) -> usize {
     black_box(topology.plan_route_turns())
+}
+
+fn validate_relay_gates(mut fixture: RelayFanoutBenchFixture) {
+    fixture.assert_gate_selection();
+}
+
+#[library_benchmark(config = callgrind_config(0.5), teardown = validate_relay_gates)]
+#[bench::mixed_gates(RelayFanoutBenchFixture::mixed_gates())]
+fn relay_route_plan_1024(mut fixture: RelayFanoutBenchFixture) -> RelayFanoutBenchFixture {
+    black_box(fixture.plan_route_turns());
+    black_box(fixture)
 }
 
 // measures packet observation over a MID/RID packet followed by an SSRC-only
@@ -310,6 +322,7 @@ library_benchmark_group!(
     name = packet_loop_callgrind;
     benchmarks =
         route_plan_1024,
+        relay_route_plan_1024,
         incoming_observation_512,
         relay_mailbox_256,
         ingress_demux_256,

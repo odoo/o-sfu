@@ -138,15 +138,16 @@ fn populate_relay_forwards(
     packet_rid: Option<Rid>,
     forwards: &mut Vec<ForwardingDestination>,
 ) {
-    for relay_target in relay_targets {
-        if !relay_target_gate_permits(routes, src_media, relay_target.target_id, packet_rid) {
-            continue;
-        }
-        forwards.push(ForwardingDestination::from_relay_target(
-            src_media,
-            relay_target.target.clone(),
-        ));
-    }
+    forwards.extend(
+        relay_targets
+            .iter()
+            .filter(|target| {
+                relay_target_gate_permits(routes, src_media, target.target_id, packet_rid)
+            })
+            .map(|target| {
+                ForwardingDestination::from_relay_target(src_media, target.target.clone())
+            }),
+    );
 }
 
 /// Adds local RTC destinations for active routes whose consumer gate permits
