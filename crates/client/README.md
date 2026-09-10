@@ -86,7 +86,7 @@ RTCPeerConnection track event              Server Tracks snapshot
                     projectTrackSlot()
                   waits for track and binding
                                 |
-                    effectiveBinding()
+                    effectiveActive()
        states = subscriptionStates.get(binding.sessionId)
    active = binding.active && (states?.[binding.type] ?? true)
                                 |
