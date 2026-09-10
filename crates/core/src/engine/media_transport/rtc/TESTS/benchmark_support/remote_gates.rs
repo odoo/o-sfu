@@ -4,18 +4,16 @@ use str0m::media::Mid;
 use tokio::sync::mpsc;
 
 use super::super::{
-    commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
+    commands::RtcWorkerCommand,
     state::{
         PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
         source_route::RemoteSourceRegistration,
     },
-    test_support::{MediaWorkerScenario, test_transport_session_key},
+    test_support::{
+        MediaWorkerScenario, register_saturated_remote_source, test_transport_session_key,
+    },
 };
-use crate::engine::{
-    UserId,
-    media_transport::{TransportMediaId, TransportSourceKey},
-    metrics::{RtcMetricsRecorder, RuntimeMetrics},
-};
+use crate::engine::{UserId, media_transport::TransportMediaId, metrics::RuntimeMetrics};
 
 pub const REMOTE_GATE_RETRY_TURNS: usize = 8;
 
@@ -74,10 +72,10 @@ impl RemoteGateRetryBenchFixture {
 
         let mut control_rxs = Vec::with_capacity(source_count);
         for (source_session, src_media, target_id) in registrations {
-            let source = TransportSourceKey::new(source_session, src_media);
             control_rxs.push(register_saturated_remote_source(
                 &mut state,
-                &source,
+                src_media,
+                &source_session,
                 target_id,
                 Arc::clone(&rtc_metrics),
             ));
@@ -114,39 +112,5 @@ impl RemoteGateRetryBenchFixture {
                     .is_some_and(RemoteSourceRegistration::has_pending_gate)
             })
             .count()
-    }
-}
-
-fn register_saturated_remote_source(
-    state: &mut PacketLoopState,
-    source: &TransportSourceKey,
-    target_id: RelayTargetId,
-    rtc_metrics: Arc<RtcMetricsRecorder>,
-) -> mpsc::Receiver<RtcWorkerCommand> {
-    let (control_tx, control_rx) = mpsc::channel(1);
-    let _ = control_tx.try_send(remote_packet_gate_command(
-        source.clone(),
-        target_id,
-        PacketLayerGate::Open,
-    ));
-    let _ = state.routes.register_remote_source(
-        source,
-        RemoteSourceControl::new(control_tx, target_id, rtc_metrics),
-    );
-    control_rx
-}
-
-fn remote_packet_gate_command(
-    source: TransportSourceKey,
-    target_id: RelayTargetId,
-    packet_gate: PacketLayerGate,
-) -> RtcWorkerCommand {
-    RtcWorkerCommand::RouteControl {
-        request: RouteControlRequest::SetRemoteSourcePacketGate {
-            source,
-            target_id,
-            packet_gate,
-        },
-        response: None,
     }
 }

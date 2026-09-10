@@ -1,10 +1,4 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 use str0m::media::Mid;
 
@@ -36,19 +30,9 @@ use crate::engine::{
     },
 };
 
-struct CountingSink {
-    packets: AtomicUsize,
-}
+struct PlannerSink;
 
-impl CountingSink {
-    fn new() -> Self {
-        Self {
-            packets: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl MediaPacketSink for CountingSink {
+impl MediaPacketSink for PlannerSink {
     fn record_packet(
         &self,
         _session_key: &TransportSessionKey,
@@ -56,7 +40,6 @@ impl MediaPacketSink for CountingSink {
         _received_at: Instant,
         _payload: &[u8],
     ) {
-        self.packets.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -155,14 +138,13 @@ fn plan_forwards_keeps_recording_and_local_rtc_destinations_together() {
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let sink = Arc::new(CountingSink::new());
     let mut scenario = MediaWorkerScenario::new(&mut state);
     let src_media = scenario.source(producer_session.clone(), Mid::from("aud-up"));
     let consumer_media =
         scenario.destination(src_media, consumer_session.clone(), Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     let forwards = plan_forwards(
@@ -289,7 +271,6 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (first_relay_mailbox, _first_relay_rx) = RelayPacketMailbox::channel_for_test();
     let (second_relay_mailbox, _second_relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut scenario = MediaWorkerScenario::new(&mut state);
@@ -297,7 +278,7 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
     scenario.destination(src_media, consumer_session, Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -394,14 +375,13 @@ fn plan_forwards_keeps_relay_packets_out_of_recording_and_second_hop_relay_sinks
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let src_media = TransportMediaId::new(51);
     let mut scenario = MediaWorkerScenario::new(&mut state);
     scenario.destination(src_media, consumer_session, Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -608,7 +588,6 @@ fn plan_forwards_gates_only_the_selected_source_media() {
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut scenario = MediaWorkerScenario::new(&mut state);
     let gated_src_media = scenario.source(gated_producer_session.clone(), Mid::from("cam-up"));
@@ -628,7 +607,7 @@ fn plan_forwards_gates_only_the_selected_source_media() {
         .set_local_pkt_gate(gated_src_media, Some(PacketLayerGate::Rid("hi".into())));
     packet_sink_registry.register_room(
         gated_producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -693,7 +672,7 @@ fn plan_forwards_omits_gate_metrics_without_routed_destinations() {
 
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::new(CountingSink::new()),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     populate_forward_routes(
