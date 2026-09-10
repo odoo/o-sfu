@@ -50,7 +50,7 @@ const MAX_OUTBOUND_BATCH_LEN: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Command {
-    /// Serialize and send a JSON frame over the WebSocket.
+    /// Send the already serialized JSON frame unchanged over the WebSocket.
     SendWebSocket {
         frame: String,
     },
