@@ -159,7 +159,7 @@ fn missing_transmit_stream_does_not_mutate_consumer_state() {
     let payload = b"payload";
     let mut state = PacketLoopState::default();
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer,
             SocketAddr::from(([127, 0, 0, 1], 47_200)),

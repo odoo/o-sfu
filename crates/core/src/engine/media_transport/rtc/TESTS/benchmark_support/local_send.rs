@@ -67,7 +67,7 @@ impl LocalSendBenchFixture {
         let src_media = TransportMediaId::new(76);
         let dst_media = TransportMediaId::new(77);
         let mut state = PacketLoopState::default();
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer,
             SocketAddr::from(([127, 0, 0, 1], 47_100)),

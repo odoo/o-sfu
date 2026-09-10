@@ -214,7 +214,7 @@ fn drain_ready_sessions(state: &mut PacketLoopState) -> Vec<TransportSessionKey>
     reason = "test setup helpers should fail loudly when a required RTC fixture cannot be built"
 )]
 fn create_rtc_session(state: &mut PacketLoopState, session: &TransportSessionKey, port: u16) {
-    let created = bootstrap::ensure_session_rtc_state(
+    let created = bootstrap::test_support::ensure_session_rtc_state(
         &mut state.users,
         session,
         SocketAddr::from(([127, 0, 0, 1], port)),
@@ -1965,7 +1965,7 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
         let mut shared_socket = test_socket()?;
         let (dirty_response, dirty_result) = oneshot::channel();
         let (queued_response, _queued_result) = oneshot::channel();
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session,
             shared_socket.candidate_addr,

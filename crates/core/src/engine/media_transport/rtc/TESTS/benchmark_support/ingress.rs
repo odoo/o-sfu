@@ -71,7 +71,7 @@ impl IngressRoutingBenchFixture {
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
 
-        let bootstrap_succeeded = bootstrap::ensure_session_rtc_state(
+        let bootstrap_succeeded = bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session_key,
             candidate_addr,

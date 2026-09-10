@@ -39,7 +39,7 @@ pub fn prepare_source_session_with_rid(
 ) -> TransportMediaId {
     let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 47_000));
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             src_key,
             candidate_addr,

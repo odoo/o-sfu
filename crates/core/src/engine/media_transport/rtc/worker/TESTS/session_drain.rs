@@ -27,7 +27,7 @@ use crate::{
             ReceiverBweTargetUpdate, SourcePolicySignal, TransportMediaId,
             rtc::{
                 RtcWorkerConfig,
-                bootstrap::ensure_session_rtc_state,
+                bootstrap::test_support::ensure_session_rtc_state,
                 codec::RtpProfile,
                 commands::{RtcWorkerCommand, WorkerMediaControlBatch},
                 consumer_egress::test_support::RTX_CACHE_LIFETIME,
