@@ -15,39 +15,6 @@ use super::{
 };
 use crate::{shared::RecordingState, signaling::WebSocketCloseCode};
 
-/// host-visible reason attached to a terminal lifecycle state change
-///
-/// values are derived from terminal websocket close codes and rendered as
-/// compatibility labels by production command translation
-#[derive(Clone, Copy)]
-enum LifecycleCloseCause {
-    /// authentication was rejected by the server
-    AuthFailed,
-    /// the server removed the user from the room
-    Kicked,
-    /// the room refused the connection because capacity was exhausted
-    RoomFull,
-}
-
-/// maps terminal websocket close codes to host-visible lifecycle causes
-fn terminal_close_cause(close_code: WebSocketCloseCode) -> Option<LifecycleCloseCause> {
-    match close_code {
-        WebSocketCloseCode::AuthFailed => Some(LifecycleCloseCause::AuthFailed),
-        WebSocketCloseCode::Kicked => Some(LifecycleCloseCause::Kicked),
-        WebSocketCloseCode::RoomFull => Some(LifecycleCloseCause::RoomFull),
-        _ => None,
-    }
-}
-
-/// returns the compatibility label exposed through `EmitStateChange`
-fn lifecycle_close_cause_label(cause: LifecycleCloseCause) -> &'static str {
-    match cause {
-        LifecycleCloseCause::AuthFailed => "auth_failed",
-        LifecycleCloseCause::Kicked => "kicked",
-        LifecycleCloseCause::RoomFull => "full",
-    }
-}
-
 impl ProtocolCore {
     /// Starts a fresh connection attempt when the current state permits one.
     ///
@@ -226,9 +193,19 @@ fn reset_public_state(commands: &mut Commands) {
     ]);
 }
 
-fn state_change(state: ConnectionState, cause: Option<LifecycleCloseCause>) -> Command {
+fn state_change(state: ConnectionState, cause: Option<&'static str>) -> Command {
     Command::EmitStateChange {
         state,
-        cause: cause.map(lifecycle_close_cause_label).map(str::to_owned),
+        cause: cause.map(str::to_owned),
+    }
+}
+
+/// Returns the compatibility cause label for a terminal WebSocket close code.
+fn terminal_close_cause(close_code: WebSocketCloseCode) -> Option<&'static str> {
+    match close_code {
+        WebSocketCloseCode::AuthFailed => Some("auth_failed"),
+        WebSocketCloseCode::Kicked => Some("kicked"),
+        WebSocketCloseCode::RoomFull => Some("full"),
+        _ => None,
     }
 }
