@@ -28,10 +28,9 @@ use crate::{
         StreamType, UserId, UserInfo,
     },
     signaling::{
-        AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, Envelope,
-        MAX_ENVELOPE_BATCH_LEN, NegotiationUploadSlot, PeerSnapshot, RecordingOptions, RequestId,
-        ServerEnvelope, StreamIntentPayload, SubscribePayload, TrackBinding, WebSocketCloseCode,
-        WelcomePayload, decode_envelope_batch,
+        AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, MAX_ENVELOPE_BATCH_LEN,
+        NegotiationUploadSlot, PeerSnapshot, RequestId, ServerEnvelope, StreamIntentPayload,
+        SubscribePayload, TrackBinding, WebSocketCloseCode, WelcomePayload, decode_envelope_batch,
     },
     wire::ServerMessage,
 };
@@ -343,25 +342,6 @@ impl ProtocolCore {
         self.phase.connection_state()
     }
 
-    /// Starts a fresh connection attempt when the current state permits one.
-    ///
-    /// Accepts [`ConnectionState::Disconnected`], [`ConnectionState::Closed`] and
-    /// [`ConnectionState::Recovering`]. Calls from [`ConnectionState::Connecting`],
-    /// [`ConnectionState::Authenticated`] and [`ConnectionState::Connected`] return
-    /// no commands without replacing the saved admission context.
-    ///
-    /// This is stricter than a reconnect path: it clears sticky
-    /// replay and runtime state so a caller switching rooms or credentials cannot
-    /// accidentally leak the previous user intent into the new connection.
-    pub fn connect(
-        &mut self,
-        url: impl Into<String>,
-        jwt: impl Into<String>,
-        room: Option<String>,
-    ) -> Vec<Command> {
-        connection_lifecycle::connect(self, url.into(), jwt.into(), room)
-    }
-
     /// Authenticates a newly opened socket with the stored connect context.
     ///
     /// Recovery reuses the same JWT and optional room that [`ProtocolCore::connect`] captured,
@@ -510,7 +490,7 @@ impl ProtocolCore {
     pub fn subscribe(&mut self, user_id: UserId, states: DownloadStates) -> Vec<Command> {
         self.sticky_replay
             .remember_subscription_states(&user_id, &states);
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(
@@ -526,7 +506,7 @@ impl ProtocolCore {
     /// state back to server defaults.
     pub fn update_info(&mut self, info: UserInfo) -> Vec<Command> {
         self.sticky_replay.remember_info(&info);
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(ClientMessage::Info(info), FlushMode::Batched)
@@ -538,42 +518,13 @@ impl ProtocolCore {
     /// authenticated, the message is dropped instead of being replayed later out
     /// of its original conversational context.
     pub fn broadcast(&mut self, message: JsonPayload) -> Vec<Command> {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(
             ClientMessage::Broadcast(ClientBroadcastPayload { message }),
             FlushMode::Batched,
         )
-    }
-
-    pub fn start_recording(&mut self, options: RecordingOptions) -> Vec<Command> {
-        request_flow::start_recording(self, options)
-    }
-    pub fn stop_recording(&mut self) -> Vec<Command> {
-        request_flow::stop_recording(self)
-    }
-
-    /// Replies to the currently pending negotiation request.
-    ///
-    /// The host must echo the exact `request_id` and `kind` from
-    /// [`Command::ApplyNegotiation`]; mismatches are ignored so a stale or
-    /// reordered SDP answer cannot accidentally resolve the wrong negotiation.
-    pub fn submit_negotiation_answer(
-        &mut self,
-        request_id: &RequestId,
-        kind: NegotiationKind,
-        sdp: impl Into<String>,
-    ) -> Vec<Command> {
-        request_flow::submit_negotiation_answer(self, request_id, kind, sdp)
-    }
-
-    pub fn disconnect(&mut self) -> Vec<Command> {
-        connection_lifecycle::disconnect(self)
-    }
-
-    pub fn on_ws_close(&mut self, code: u16) -> Vec<Command> {
-        connection_lifecycle::on_ws_close(self, code)
     }
 
     /// Dispatches all timer callbacks through one entry point.
@@ -586,7 +537,7 @@ impl ProtocolCore {
             return connection_lifecycle::handle_recovery_timer(self);
         }
         if timer_id == BATCH_FLUSH_TIMER_ID {
-            return self.flush_pending_batch(false);
+            return self.outbound_batch.flush(false);
         }
         if let Some(commands) = RequestTimeoutId::try_from_raw(timer_id)
             .and_then(|timeout_id| self.request_tracker.resolve_timeout(timeout_id))
@@ -596,19 +547,11 @@ impl ProtocolCore {
         Vec::new()
     }
 
-    fn enqueue_envelope(&mut self, envelope: Envelope, mode: FlushMode) -> Commands {
-        self.outbound_batch.enqueue(envelope, mode)
-    }
-
     fn enqueue_client_message(&mut self, message: ClientMessage, mode: FlushMode) -> Commands {
         let Some(envelope) = ClientEnvelope::Message(message).into_envelope().ok() else {
             return Vec::new();
         };
-        self.enqueue_envelope(envelope, mode)
-    }
-
-    fn flush_pending_batch(&mut self, cancel_timer: bool) -> Commands {
-        self.outbound_batch.flush(cancel_timer)
+        self.outbound_batch.enqueue(envelope, mode)
     }
 
     fn clear_runtime_state(&mut self) {
@@ -636,29 +579,23 @@ impl ProtocolCore {
         commands
     }
 
-    fn clear_sticky_state(&mut self) {
-        self.sticky_replay.clear();
-    }
-
     /// Flushes room-level intent immediately after the server snapshot is known.
     fn replay_session_state(&mut self) -> Commands {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         let Some(replay_batch) = self.sticky_replay.replay_session_batch() else {
             return Vec::new();
         };
-
         self.outbound_batch.extend(replay_batch);
-        self.flush_pending_batch(true)
+        self.outbound_batch.flush(true)
     }
 
     /// Flushes publish intent after the recovered media transport is ready.
     fn replay_publication_state(&mut self) -> Commands {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
-
         let mut replay_batch = Vec::new();
         for stream_type in self.sticky_replay.active_publications() {
             let Some(envelope) =
@@ -675,13 +612,8 @@ impl ProtocolCore {
         if replay_batch.is_empty() {
             return Vec::new();
         }
-
         self.outbound_batch.extend(replay_batch);
-        self.flush_pending_batch(true)
-    }
-
-    fn can_send_client_messages(&self) -> bool {
-        self.phase.can_send_client_messages()
+        self.outbound_batch.flush(true)
     }
 }
 
