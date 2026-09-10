@@ -80,17 +80,11 @@ export async function createPeerPage(context) {
             }
             media?.track?.stop();
             delete harness.localMedia[streamType];
-            if (streamType === "camera") {
-                harness.localTrack = null;
-                harness.localTrackTicker = null;
-            }
         };
         globalThis.__liveHarness = {
             client: null,
             errors: [],
             localMedia: {},
-            localTrack: null,
-            localTrackTicker: null,
             negotiationNeededByPeer: new WeakMap(),
             stateChanges: [],
             updates: []
@@ -301,10 +295,6 @@ export async function publishSyntheticVideo(
                 ticker,
                 track
             };
-            if (streamType === "camera") {
-                harness.localTrack = track;
-                harness.localTrackTicker = ticker;
-            }
             harness.client.updateUpload(streamType, track);
             return {
                 fillPixel,
@@ -527,9 +517,7 @@ export async function localSenderEncodings(page, streamType) {
     return page.evaluate((targetStreamType) => {
         const harness = globalThis.__liveHarness;
         const peerConnection = harness.client?._runtime?._peerSession?._activePeer;
-        const localTrack =
-            harness.localMedia?.[targetStreamType]?.track ??
-            (targetStreamType === "camera" ? harness.localTrack : null);
+        const localTrack = harness.localMedia?.[targetStreamType]?.track;
         if (!peerConnection || !localTrack) {
             return [];
         }
