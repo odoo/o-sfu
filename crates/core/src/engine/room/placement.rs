@@ -178,7 +178,6 @@ impl<A: FnOnce() -> RouterId> JoinAdmissionTurn<'_, A> {
         );
         state.apply_join_on_placement(
             &self.request.user_id,
-            self.request.permissions,
             self.request.sender,
             joined_fanout,
             placement,

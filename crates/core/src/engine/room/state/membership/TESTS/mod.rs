@@ -18,7 +18,7 @@ use super::*;
 use crate::{
     RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserPermissions,
+        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind,
         media_transport::{TransportConsumerRoute, TransportMediaId, TransportTeardown},
         metrics::RuntimeMetrics,
         room::{
@@ -53,7 +53,7 @@ fn test_sender() -> UserOutboundSender {
 
 fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
     state
-        .apply_join(user_id, UserPermissions::default(), test_sender())
+        .apply_join(user_id, test_sender())
         .expect("test user should join")
         .receipt
         .transport_session_key
@@ -68,7 +68,6 @@ fn join_test_user_on_placement(
     state
         .apply_join_on_placement(
             user_id,
-            UserPermissions::default(),
             test_sender(),
             UserJoinedFanout::Suppress,
             placement,
@@ -325,7 +324,6 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
     let outcome = state
         .apply_join_on_placement(
             relay.route.source_session_key().user_id(),
-            UserPermissions::default(),
             test_sender(),
             UserJoinedFanout::Suppress,
             RouterPlacement {
