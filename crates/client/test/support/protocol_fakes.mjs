@@ -275,3 +275,9 @@ export const createManualTimers = () => {
         }
     };
 };
+
+export function sentPublishCount(socket) {
+    return socket.sent
+        .flatMap((_, index) => decodeSentFrame(socket, index))
+        .filter((envelope) => envelope.t === "publish").length;
+}
