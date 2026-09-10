@@ -274,11 +274,13 @@ impl RoomDirectory {
             .is_some_and(|entry| Arc::ptr_eq(&entry.room, room))
     }
 
-    pub(crate) fn remove_if_current(&mut self, uuid: &str, room: &Arc<Room>) {
+    pub(crate) fn remove_if_current(&mut self, uuid: &str, room: &Arc<Room>) -> bool {
         if self.contains_current(uuid, room) {
             self.by_uuid.remove(uuid);
             self.uuid_by_issuer.remove(room.issuer());
             self.uuid_by_instance.remove(&room.instance_id());
+            return true;
         }
+        false
     }
 }

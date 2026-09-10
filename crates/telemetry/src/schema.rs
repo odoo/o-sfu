@@ -13,9 +13,11 @@ pub mod event {
     pub const ROOM_CREATED: &str = "room.created";
     pub const ROOM_RESERVATION_EXPIRED: &str = "room.reservation.expired";
     pub const ROOM_RESERVATION_CONFLICT: &str = "room.reservation_conflict";
+    pub const ROOM_DESTROYED: &str = "room.destroyed";
     pub const USER_JOINED: &str = "user.joined";
     pub const USER_CLOSED: &str = "user.closed";
     pub const USER_DISCONNECTED: &str = "user.disconnected";
+    pub const USERS_BULK_DISCONNECTED: &str = "users.bulk_disconnected";
     pub const WS_CONNECTION_CLOSED: &str = "ws.closed";
     pub const WS_HANDSHAKE_REJECTED: &str = "ws.handshake_rejected";
     pub const WS_JOIN_FAILED: &str = "ws.join_failed";

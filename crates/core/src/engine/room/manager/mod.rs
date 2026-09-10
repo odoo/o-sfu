@@ -353,15 +353,23 @@ impl RoomManager {
         user_ids: &[UserId],
         media_transport: &MediaTransport,
     ) {
-        let _ = self
+        let result = self
             .run_current_room_mutation(
                 room_id,
-                |room| async move {
-                    room.disconnect_users(user_ids, media_transport).await;
-                },
+                |room| async move { room.disconnect_users(user_ids, media_transport).await },
                 true,
             )
             .await;
+        let (disconnected_session_count, outcome) =
+            result.map_or((0, "room_missing"), |count| (count, "success"));
+        info!(
+            event = telemetry_event::USERS_BULK_DISCONNECTED,
+            disconnected_session_count,
+            outcome,
+            requested_user_count = user_ids.len(),
+            room_id,
+            "bulk disconnect handled"
+        );
     }
 
     /// Claims and removes expired reservations with no active room mutations.
@@ -416,11 +424,17 @@ impl RoomManager {
         // Read emptiness after this mutation. A later accepted mutation can
         // supply the final removal proof. Dropping the final lease supplies no
         // proof and cancels the pending claim.
-        if lease.finish(remove_if_empty, room.is_empty().await) {
-            self.directory
+        if lease.finish(remove_if_empty, room.is_empty().await)
+            && self
+                .directory
                 .write()
                 .await
-                .remove_if_current(room_id, &room);
+                .remove_if_current(room_id, &room)
+        {
+            info!(
+                event = telemetry_event::ROOM_DESTROYED,
+                room_id, "room destroyed"
+            );
         }
     }
 
