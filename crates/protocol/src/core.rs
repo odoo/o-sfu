@@ -272,11 +272,11 @@ pub(super) enum NegotiationRejection {
 pub struct ProtocolCore {
     /// Lifecycle and server-driven negotiation state.
     phase: ProtocolPhase,
-    /// Current server-maintained mapping from SDP mid to stream binding metadata.
+    /// Users retained by SDP MID for peer departure and teardown cleanup.
     ///
-    /// The map is replaced by track snapshots and trimmed when peers leave. It
-    /// is runtime state only and is cleared on disconnect or socket loss.
-    track_bindings: BTreeMap<String, TrackBinding>,
+    /// Track snapshots replace the map and the last binding for a MID wins.
+    /// Peer departures remove their entries. Disconnect and socket loss clear it.
+    track_users_by_mid: BTreeMap<String, UserId>,
     /// Latest client intent that must be replayed after a recovered socket is
     /// authenticated.
     ///
@@ -328,7 +328,7 @@ impl ProtocolCore {
     pub fn new() -> Self {
         Self {
             phase: ProtocolPhase::Disconnected,
-            track_bindings: BTreeMap::new(),
+            track_users_by_mid: BTreeMap::new(),
             sticky_replay: StickyReplayState::new(),
             connect_context: None,
             recovery_delay_ms: INITIAL_RECOVERY_DELAY_MS,
@@ -555,7 +555,7 @@ impl ProtocolCore {
     }
 
     fn clear_runtime_state(&mut self) {
-        self.track_bindings.clear();
+        self.track_users_by_mid.clear();
         self.outbound_batch.clear();
         self.request_tracker.clear();
     }
@@ -568,8 +568,8 @@ impl ProtocolCore {
     fn teardown_runtime_state(&mut self) -> Commands {
         let mut commands = self.outbound_batch.discard_pending();
         commands.extend(self.request_tracker.fail_all());
-        if !self.track_bindings.is_empty() {
-            self.track_bindings.clear();
+        if !self.track_users_by_mid.is_empty() {
+            self.track_users_by_mid.clear();
             commands.push(Command::EmitEvent {
                 event: ProtocolEvent::TrackSnapshot {
                     bindings: Vec::new(),
