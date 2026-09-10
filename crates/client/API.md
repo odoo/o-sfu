@@ -409,6 +409,10 @@ interface SfuStats {
 `uploadStats` and `downloadStats` are compatibility names for the peer
 connection stats report. The method returns an empty object before negotiation.
 
+If peer connection or sender stats collection fails, the promise rejects with
+the browser error. The rejection does not emit `handledError` or add an entry
+to `sfu.errors`.
+
 ## Recording
 
 Recording capabilities are exposed through `availableFeatures`:

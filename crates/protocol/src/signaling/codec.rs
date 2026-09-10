@@ -34,8 +34,8 @@ impl ClientEnvelope {
     ///
     /// # Errors
     ///
-    /// returns an error when the typed payload cannot be serialized into the
-    /// JSON envelope payload
+    /// Returns [`serde_json::Error`] when the typed payload cannot be serialized
+    /// into the JSON envelope payload.
     pub fn into_envelope(self) -> Result<Envelope, serde_json::Error> {
         match self {
             Self::Message(message) => message.into_envelope(),
@@ -54,8 +54,10 @@ impl ClientEnvelope {
     ///
     /// # Errors
     ///
-    /// returns an error when the tag is unknown or the payload does not match
-    /// the declared message shape
+    /// Returns [`EnvelopeDecodeError::UnknownTag`] when the tag is unknown for
+    /// its route, [`EnvelopeDecodeError::InvalidPayload`] when a required payload
+    /// is missing or malformed and [`EnvelopeDecodeError::UnexpectedPayload`]
+    /// when a payload is supplied for `stoprecording`.
     pub fn decode(envelope: Envelope) -> Result<Self, EnvelopeDecodeError> {
         let (tag, payload, route) = envelope.into_parts();
         match route {
@@ -83,8 +85,8 @@ impl ServerEnvelope {
     ///
     /// # Errors
     ///
-    /// returns an error when the typed payload cannot be serialized into the
-    /// JSON envelope payload
+    /// Returns [`serde_json::Error`] when the typed payload cannot be serialized
+    /// into the JSON envelope payload.
     pub fn into_envelope(self) -> Result<Envelope, serde_json::Error> {
         match self {
             Self::Message(message) => message.into_envelope(),
@@ -103,8 +105,9 @@ impl ServerEnvelope {
     ///
     /// # Errors
     ///
-    /// returns an error when the tag is unknown or the payload does not match
-    /// the declared message shape
+    /// Returns [`EnvelopeDecodeError::UnknownTag`] when the tag is unknown for
+    /// its route or [`EnvelopeDecodeError::InvalidPayload`] when a required
+    /// payload is missing or malformed.
     pub fn decode(envelope: Envelope) -> Result<Self, EnvelopeDecodeError> {
         let (tag, payload, route) = envelope.into_parts();
         match route {

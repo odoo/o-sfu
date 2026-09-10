@@ -34,8 +34,9 @@ const CLIENT_LOG_SOURCE = "sfu_client";
  * Browser facade for one O-SFU call session.
  *
  * The client emits `stateChange`, `update`, `handledError` and `log` events.
- * Runtime failures are reported through `handledError` and retained in
- * {@link errors}. A handled failure can still end the session.
+ * Failures caught during session processing emit `handledError` and are
+ * retained in {@link errors}. A handled failure can still end the session.
+ * {@link getStats} rejects directly when browser stats collection fails.
  */
 export class SfuClient extends EventTarget {
     /** Runtime errors captured since the latest {@link connect} or {@link disconnect} call. */
@@ -166,6 +167,10 @@ export class SfuClient extends EventTarget {
     /**
      * Returns peer-connection and local-sender WebRTC stats when available.
      * Returns an empty object before negotiation.
+     *
+     * Rejects with the browser error if peer-connection or sender stats
+     * collection fails. The rejection does not emit `handledError` or add
+     * an entry to {@link errors}.
      */
     getStats(): Promise<SfuStats> {
         return this._runtime.getStats();
