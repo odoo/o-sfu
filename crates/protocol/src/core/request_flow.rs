@@ -9,19 +9,11 @@ use crate::signaling::{
 
 impl ProtocolCore {
     pub fn start_recording(&mut self, options: RecordingOptions) -> Vec<Command> {
-        begin_request(
-            self,
-            ClientRequest::StartRecording(options),
-            PendingRequestKind::StartRecording,
-        )
+        begin_request(self, ClientRequest::StartRecording(options))
     }
 
     pub fn stop_recording(&mut self) -> Vec<Command> {
-        begin_request(
-            self,
-            ClientRequest::StopRecording,
-            PendingRequestKind::StopRecording,
-        )
+        begin_request(self, ClientRequest::StopRecording)
     }
 
     /// Replies to the currently pending negotiation request.
@@ -113,14 +105,14 @@ fn handle_negotiation_request(
     }]
 }
 
-fn begin_request(
-    core: &mut ProtocolCore,
-    request: ClientRequest,
-    kind: PendingRequestKind,
-) -> Commands {
+fn begin_request(core: &mut ProtocolCore, request: ClientRequest) -> Commands {
     if !core.phase.can_send_client_messages() {
         return Vec::new();
     }
+    let kind = match &request {
+        ClientRequest::StartRecording(_) => PendingRequestKind::StartRecording,
+        ClientRequest::StopRecording => PendingRequestKind::StopRecording,
+    };
     let Some(request_start) = core.request_tracker.try_begin(kind) else {
         return Vec::new();
     };
