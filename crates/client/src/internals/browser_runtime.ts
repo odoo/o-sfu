@@ -17,12 +17,12 @@ import {
     type StreamType
 } from "../public_api.js";
 import {
+    COMMAND_KIND,
     createProtocolCore,
+    REMOTE_MEDIA_UPDATE,
     type HostCommand,
     type ProtocolCoreBindings
-} from "../runtime_contract.js";
-import { REMOTE_MEDIA_UPDATE } from "../protocol_host_commands.js";
-import { COMMAND_KIND } from "../protocol_contract.js";
+} from "../protocol_contract.js";
 import {
     EMPTY_FEATURES,
     type ClientPeerConnection,

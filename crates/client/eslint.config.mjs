@@ -79,14 +79,9 @@ export default defineConfig([
                 {
                     paths: [
                         {
-                            name: "./runtime_contract.js",
+                            name: "./protocol_contract.js",
                             message:
                                 "SfuClient must use BrowserRuntime intents instead of protocol bindings"
-                        },
-                        {
-                            name: "../runtime_contract.js",
-                            message:
-                                "PeerSession must return browser negotiation results instead of calling protocol bindings"
                         },
                         {
                             allowImportNames: ["NegotiationKind"],
