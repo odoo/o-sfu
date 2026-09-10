@@ -56,6 +56,66 @@ fn protocol_core_emits_replacement_track_snapshots() -> Result<(), String> {
 }
 
 #[test]
+fn protocol_core_duplicate_mids_preserve_snapshot_and_last_peer_cleanup() -> Result<(), String> {
+    let mut core = ProtocolCore::new();
+    let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
+    let _ = core.accept_welcome(sample_welcome_payload());
+    let bindings = vec![
+        TrackBinding {
+            mid: String::from("0"),
+            user_id: 1_i64.into(),
+            stream_type: StreamType::Audio,
+            active: true,
+        },
+        TrackBinding {
+            mid: String::from("0"),
+            user_id: 2_i64.into(),
+            stream_type: StreamType::Camera,
+            active: false,
+        },
+    ];
+    let tracks = encode_server_batch(ServerEnvelope::Message(ServerMessage::Tracks(
+        bindings.clone(),
+    )))?;
+    assert_eq!(
+        core.on_ws_message(&tracks),
+        vec![Command::EmitEvent {
+            event: ProtocolEvent::TrackSnapshot { bindings },
+        }]
+    );
+    for (departing_peer, expected_cleanup_snapshots) in [(1_i64, 1), (2, 0)] {
+        let mut core = core.clone();
+        let peer_left = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerLeft(
+            PeerLeftPayload {
+                user_id: departing_peer.into(),
+            },
+        )))?;
+        assert_eq!(
+            core.on_ws_message(&peer_left),
+            vec![Command::EmitEvent {
+                event: ProtocolEvent::PeerLeft {
+                    user_id: departing_peer.into(),
+                },
+            }]
+        );
+        let commands = core.disconnect();
+        let cleanup_snapshots = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::EmitEvent {
+                    event: ProtocolEvent::TrackSnapshot { bindings },
+                } => Some(bindings),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cleanup_snapshots.len(), expected_cleanup_snapshots);
+        assert!(cleanup_snapshots.iter().all(|bindings| bindings.is_empty()));
+        assert!(core.disconnect().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_core_peer_left_preserves_other_track_cleanup() -> Result<(), String> {
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
