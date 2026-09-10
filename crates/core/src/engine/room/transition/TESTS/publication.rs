@@ -72,7 +72,7 @@ async fn staged_room() -> (Arc<Room>, MediaTransport, UserId, ConnectionId) {
     let room = manager
         .serve_room(
             "issuer-transition-publication",
-            "room",
+            "room".into(),
             &RoomConfig::default(),
             None,
         )

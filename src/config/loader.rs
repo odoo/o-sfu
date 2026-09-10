@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, fs};
 
 use anyhow::Result;
 
@@ -22,7 +22,7 @@ impl Config {
     }
 
     fn from_var_lookup(get_var: impl Fn(&str) -> Option<String>) -> Result<Self> {
-        let env = Env::new(get_var);
+        let env = Env::new(get_var, |path| fs::read_to_string(path));
         let http = HttpConfig::from_env(&env)?;
         let auth = AuthConfig::from_env(&env)?;
         let user = UserConfig::from_env(&env)?;

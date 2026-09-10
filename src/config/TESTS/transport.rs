@@ -1,4 +1,5 @@
 use std::{
+    io,
     net::{IpAddr, Ipv4Addr},
     time::Duration,
 };
@@ -11,7 +12,9 @@ use super::{
 };
 
 fn load_transport_config(get_var: impl Fn(&str) -> Option<String>) -> Result<TransportConfig> {
-    let env = Env::new(get_var);
+    let env = Env::new(get_var, |_| {
+        Err(io::Error::new(io::ErrorKind::NotFound, "file not found"))
+    });
     TransportConfig::from_env(&env)
 }
 

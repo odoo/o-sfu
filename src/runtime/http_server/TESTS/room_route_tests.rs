@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::ConnectInfo;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::fixtures::*;
 
@@ -248,10 +249,14 @@ async fn room_route_supports_key_seed_claim() -> TestResult {
         "room should remain registered after route creation",
     )?;
     let expected_key = require_some(
-        auth::derive_key_from_seed(TEST_AUTH_KEY, "c2VlZC1rZXk=").ok(),
+        auth::derive_key_from_seed(
+            &SecretString::from(TEST_AUTH_KEY.to_owned()),
+            &SecretString::from("c2VlZC1rZXk=".to_owned()),
+        )
+        .ok(),
         "failed to derive expected key from seed",
     )?;
-    assert_eq!(room.key(), expected_key);
+    assert_eq!(room.key().expose_secret(), expected_key.expose_secret());
     Ok(())
 }
 
@@ -272,10 +277,14 @@ async fn room_route_key_seed_claim_takes_precedence_over_key_claim() -> TestResu
         "room should remain registered after route creation",
     )?;
     let expected_key = require_some(
-        auth::derive_key_from_seed(TEST_AUTH_KEY, "c2VlZC1rZXk=").ok(),
+        auth::derive_key_from_seed(
+            &SecretString::from(TEST_AUTH_KEY.to_owned()),
+            &SecretString::from("c2VlZC1rZXk=".to_owned()),
+        )
+        .ok(),
         "failed to derive expected key from seed",
     )?;
-    assert_eq!(room.key(), expected_key);
+    assert_eq!(room.key().expose_secret(), expected_key.expose_secret());
     Ok(())
 }
 

@@ -186,7 +186,12 @@ async fn metrics_route_completes_during_room_mutations() -> TestResult {
             let room = require_ok(
                 test_state
                     .room_manager
-                    .serve_room("metrics", TEST_ROOM_KEY, &RoomConfig::default(), None)
+                    .serve_room(
+                        "metrics",
+                        TEST_ROOM_KEY.into(),
+                        &RoomConfig::default(),
+                        None,
+                    )
                     .await,
                 "test room should be served",
             )?;

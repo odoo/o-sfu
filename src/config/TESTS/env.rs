@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use super::{Env, non_empty, positive};
 
@@ -8,13 +8,16 @@ fn error<T>(result: anyhow::Result<T>) -> Option<String> {
 
 #[test]
 fn env_loads_required_default_optional_check_and_trimmed_values() {
-    let env = Env::new(|key| match key {
-        "REQUIRED_ENV" => Some("value".to_owned()),
-        "COUNT_ENV" => Some("4".to_owned()),
-        "TOKEN_ENV" => Some("  token  ".to_owned()),
-        "DURATION_ENV" => Some("90".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "REQUIRED_ENV" => Some("value".to_owned()),
+            "COUNT_ENV" => Some("4".to_owned()),
+            "TOKEN_ENV" => Some("  token  ".to_owned()),
+            "DURATION_ENV" => Some("90".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    );
 
     assert_eq!(
         env.var("REQUIRED_ENV").required().ok(),
@@ -45,14 +48,17 @@ fn env_loads_required_default_optional_check_and_trimmed_values() {
 
 #[test]
 fn env_reports_parse_and_validation_errors() {
-    let env = Env::new(|key| match key {
-        "FLAG_ENV" => Some("yes".to_owned()),
-        "COUNT_ENV" => Some("abc".to_owned()),
-        "ZERO_ENV" => Some("0".to_owned()),
-        "TOKEN_ENV" => Some("   ".to_owned()),
-        "DURATION_ENV" => Some("-42".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "FLAG_ENV" => Some("yes".to_owned()),
+            "COUNT_ENV" => Some("abc".to_owned()),
+            "ZERO_ENV" => Some("0".to_owned()),
+            "TOKEN_ENV" => Some("   ".to_owned()),
+            "DURATION_ENV" => Some("-42".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    );
 
     assert_eq!(
         error(env.var::<String>("REQUIRED_ENV").required()).as_deref(),
@@ -82,7 +88,10 @@ fn env_reports_parse_and_validation_errors() {
 
 #[test]
 fn env_validates_default_values() {
-    let env = Env::new(|_| None);
+    let env = Env::new(
+        |_| None,
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    );
 
     assert_eq!(
         error(env.var("MISSING_COUNT").check(positive).default(0usize)).as_deref(),
@@ -102,10 +111,13 @@ fn env_runs_chained_checks_in_order() {
         Ok(value)
     }
 
-    let env = Env::new(|key| match key {
-        "COUNT_ENV" => Some("11".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "COUNT_ENV" => Some("11".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    );
 
     assert_eq!(
         error(
@@ -121,11 +133,14 @@ fn env_runs_chained_checks_in_order() {
 
 #[test]
 fn env_alias() {
-    let env = Env::new(|key| match key {
-        "PRIMARY_ENV" => Some("primary".to_owned()),
-        "SECOND_ALIAS_ENV" => Some("second alias".to_owned()),
-        _ => None,
-    });
+    let env = Env::new(
+        |key| match key {
+            "PRIMARY_ENV" => Some("primary".to_owned()),
+            "SECOND_ALIAS_ENV" => Some("second alias".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::NotFound, "file not found")),
+    );
 
     assert_eq!(
         env.var("MISSING_ENV")
@@ -141,5 +156,76 @@ fn env_alias() {
             .required()
             .ok(),
         Some("primary".to_owned())
+    );
+}
+
+#[test]
+fn env_can_read_from_file() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("test.password".to_owned()),
+            _ => None,
+        },
+        |path| {
+            if path == "test.password" {
+                Ok("file value".to_owned())
+            } else {
+                Err(io::Error::new(io::ErrorKind::NotFound, "file not found"))
+            }
+        },
+    );
+
+    assert_eq!(
+        env.var("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required()
+            .ok(),
+        Some("file value".to_owned())
+    );
+    assert_eq!(env.var::<String>("FILE_ENV").required().ok(), None);
+}
+
+#[test]
+fn env_trims_whitespace_from_file_contents() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("secret.txt".to_owned()),
+            _ => None,
+        },
+        |_| Ok("  file value\n".to_owned()),
+    );
+
+    assert_eq!(
+        env.var("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required()
+            .ok(),
+        Some("file value".to_owned())
+    );
+}
+
+#[test]
+fn env_reports_unreadable_file_instead_of_treating_it_as_missing() {
+    let env = Env::new(
+        |key| match key {
+            "ENV_FROM_FILE" => Some("/no/such/file".to_owned()),
+            _ => None,
+        },
+        |_| Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied")),
+    );
+
+    let message = error(
+        env.var::<String>("FILE_ENV")
+            .or_load_from_file("ENV_FROM_FILE")
+            .required(),
+    );
+
+    assert!(
+        matches!(
+            message.as_deref(),
+            Some(message)
+                if message.contains("ENV_FROM_FILE") && message.contains("/no/such/file")
+        ),
+        "unreadable file must not be treated as an absent value, got: {message:?}"
     );
 }

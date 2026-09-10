@@ -72,13 +72,13 @@ async fn room_manager_is_idempotent_by_issuer_key_and_config() -> Result<()> {
     let manager = RoomManager::for_test();
     let config = RoomConfig::default();
     let first = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &config, None)
+        .serve_room("issuer-a", TEST_ROOM_KEY.into(), &config, None)
         .await?;
     let second = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &config, None)
+        .serve_room("issuer-a", TEST_ROOM_KEY.into(), &config, None)
         .await?;
     let third = manager
-        .serve_room("issuer-b", TEST_ROOM_KEY, &config, None)
+        .serve_room("issuer-b", TEST_ROOM_KEY.into(), &config, None)
         .await?;
     assert_eq!(
         first.uuid(),

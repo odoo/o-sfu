@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, time::Duration};
 use base64::Engine as _;
 use o_sfu_protocol::wire::{UserId, UserPermissions};
 use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtAudience, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
+use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde_json::json;
 
@@ -11,12 +12,13 @@ use super::{
     RegisteredJwtClaims, WebSocketConnectClaims, decode_key, derive_key_from_seed,
     duration_since_epoch, sign, sign_hs256, validate_registered_claims_at, verify,
 };
+use crate::runtime::test_support::TestHttpRoomClaims;
 
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 
 #[test]
-fn jwt_claims_round_trip() -> serde_json::Result<()> {
-    let room_claims = HttpRoomClaims {
+fn jwt_claims_round_trip_room() -> serde_json::Result<()> {
+    let room_claims_test: TestHttpRoomClaims = HttpRoomClaims {
         registered: RegisteredJwtClaims {
             iss: Some("https://odoo.example.com".to_owned()),
             aud: Some(JwtAudience::Multiple(vec![
@@ -26,21 +28,35 @@ fn jwt_claims_round_trip() -> serde_json::Result<()> {
             exp: Some(1_744_000_000_u64.into()),
             ..RegisteredJwtClaims::default()
         },
-        key: Some("Y2hhbm5lbC1rZXk=".to_owned()),
+        key: Some(SecretString::from(String::from("Y2hhbm5lbC1rZXk="))),
         key_seed: None,
-    };
+    }
+    .into();
     let expected_room_claims = json!({
         "iss": "https://odoo.example.com",
         "aud": ["urn:odoo:sfu", "urn:odoo:recording"],
         "exp": 1_744_000_000,
         "key": "Y2hhbm5lbC1rZXk="
     });
-    assert_eq!(serde_json::to_value(&room_claims)?, expected_room_claims);
     assert_eq!(
-        serde_json::from_value::<HttpRoomClaims>(expected_room_claims)?,
-        room_claims
+        serde_json::to_value(&room_claims_test)?,
+        expected_room_claims
     );
+    let room_claims_from_json: TestHttpRoomClaims =
+        serde_json::from_value::<HttpRoomClaims>(json!({
+            "iss": "https://odoo.example.com",
+            "aud": ["urn:odoo:sfu", "urn:odoo:recording"],
+            "exp": 1_744_000_000,
+            "key": "Y2hhbm5lbC1rZXk="
+        }))?
+        .into();
+    assert_eq!(room_claims_from_json, room_claims_test);
 
+    Ok(())
+}
+
+#[test]
+fn jwt_claims_round_trip_disconnect() -> serde_json::Result<()> {
     let disconnect_claims = HttpDisconnectClaims {
         registered: RegisteredJwtClaims::default(),
         user_ids_by_room: BTreeMap::from([(
@@ -70,6 +86,11 @@ fn jwt_claims_round_trip() -> serde_json::Result<()> {
         disconnect_claims
     );
 
+    Ok(())
+}
+
+#[test]
+fn jwt_claims_round_trip_websocket() -> serde_json::Result<()> {
     let websocket_claims = WebSocketConnectClaims {
         registered: RegisteredJwtClaims::default(),
         room_id: "31dcc5dc-4d26-453e-9bca-ab1f5d268303".to_owned(),
@@ -118,20 +139,20 @@ fn jwt_claims_round_trip() -> serde_json::Result<()> {
 
 #[test]
 fn sign_and_verify_round_trip() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             iss: Some("https://odoo.example.com".to_owned()),
             ..RegisteredJwtClaims::default()
         },
-        key: Some("Y2hhbm5lbC1rZXk=".to_owned()),
+        key: Some(SecretString::from(String::from("Y2hhbm5lbC1rZXk="))),
         key_seed: None,
     };
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
     };
-    let verified = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY);
+    let verified = verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(verified.is_ok());
     let Some(verified) = verified.ok() else {
         return;
@@ -141,20 +162,28 @@ fn sign_and_verify_round_trip() {
 
 #[test]
 fn sign_and_verify_round_trip_with_uuid_like_channel_key() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             iss: Some("https://odoo.example.com".to_owned()),
             ..RegisteredJwtClaims::default()
         },
-        key: Some("123e4567-e89b-12d3-a456-426614174000".to_owned()),
+        key: Some(SecretString::from(
+            "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+        )),
         key_seed: None,
     };
-    let token = sign(&claims, "123e4567-e89b-12d3-a456-426614174000");
+    let token = sign(
+        &claims,
+        &SecretString::from("123e4567-e89b-12d3-a456-426614174000".to_owned()),
+    );
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
     };
-    let verified = verify::<HttpRoomClaims>(&token, "123e4567-e89b-12d3-a456-426614174000");
+    let verified = verify::<HttpRoomClaims>(
+        &token,
+        &SecretString::from("123e4567-e89b-12d3-a456-426614174000".to_owned()),
+    );
     assert!(verified.is_ok());
     let Some(verified) = verified.ok() else {
         return;
@@ -164,9 +193,13 @@ fn sign_and_verify_round_trip_with_uuid_like_channel_key() {
 
 #[test]
 fn decode_key_matches_legacy_uuid_like_channel_key_bytes() {
-    let decoded = decode_key("123e4567-e89b-12d3-a456-426614174000");
+    let decoded = decode_key(&SecretString::from(
+        "123e4567-e89b-12d3-a456-426614174000".to_owned(),
+    ));
     assert_eq!(
-        decoded.ok(),
+        decoded
+            .ok()
+            .map(|secret_box| secret_box.expose_secret().to_vec()),
         Some(vec![
             0xd7, 0x6d, 0xde, 0xe3, 0x9e, 0xbb, 0xf9, 0xef, 0x3d, 0x6f, 0xed, 0x76, 0x77, 0x7f,
             0x9a, 0xe3, 0x9e, 0xbe, 0xe3, 0x6e, 0xba, 0xd7, 0x8d, 0x7b, 0xe3, 0x4d, 0x34,
@@ -177,7 +210,7 @@ fn decode_key_matches_legacy_uuid_like_channel_key_bytes() {
 #[test]
 fn verify_rejects_expired_token() {
     let now = duration_since_epoch().as_secs();
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             exp: Some(now.saturating_sub(1).into()),
             ..RegisteredJwtClaims::default()
@@ -185,12 +218,13 @@ fn verify_rejects_expired_token() {
         key: None,
         key_seed: None,
     };
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
     };
-    let error = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY).err();
+    let error =
+        verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned())).err();
     assert!(error.is_some());
     let Some(error) = error else {
         return;
@@ -201,7 +235,7 @@ fn verify_rejects_expired_token() {
 #[test]
 fn verify_rejects_token_when_exp_matches_current_second() {
     let now = duration_since_epoch().as_secs();
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             exp: Some(now.into()),
             ..RegisteredJwtClaims::default()
@@ -209,12 +243,13 @@ fn verify_rejects_token_when_exp_matches_current_second() {
         key: None,
         key_seed: None,
     };
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
     };
-    let error = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY).err();
+    let error =
+        verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned())).err();
     assert_eq!(error, Some(AuthenticationError::TokenExpired));
 }
 
@@ -256,7 +291,8 @@ fn verify_handles_fractional_expiration() {
         assert!(token.is_some());
         if let Some(token) = token {
             assert_eq!(
-                verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY).err(),
+                verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned()))
+                    .err(),
                 expected
             );
         }
@@ -265,13 +301,13 @@ fn verify_handles_fractional_expiration() {
 
 #[test]
 fn sign_emits_jose_base64url_segments() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims::default(),
-        key: Some("Y2hhbm5lbC1rZXk=".to_owned()),
+        key: Some(SecretString::from("Y2hhbm5lbC1rZXk=".to_owned())),
         key_seed: None,
     };
 
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
@@ -287,9 +323,9 @@ fn sign_emits_jose_base64url_segments() {
 
 #[test]
 fn verify_accepts_jose_base64url_token_without_typ_header() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims::default(),
-        key: Some("Y2hhbm5lbC1rZXk=".to_owned()),
+        key: Some(SecretString::from("Y2hhbm5lbC1rZXk=".to_owned())),
         key_seed: None,
     };
 
@@ -299,15 +335,19 @@ fn verify_accepts_jose_base64url_token_without_typ_header() {
         return;
     };
 
-    let verified = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY);
-    assert_eq!(verified.ok(), Some(claims));
+    let verified = verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned()));
+    assert!(verified.is_ok());
+    let Some(verified) = verified.ok() else {
+        return;
+    };
+    assert_eq!(verified, claims);
 }
 
 #[test]
 fn verify_accepts_jose_base64url_token_with_typ_header() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims::default(),
-        key: Some("Y2hhbm5lbC1rZXk=".to_owned()),
+        key: Some(SecretString::from("Y2hhbm5lbC1rZXk=".to_owned())),
         key_seed: None,
     };
 
@@ -317,8 +357,12 @@ fn verify_accepts_jose_base64url_token_with_typ_header() {
         return;
     };
 
-    let verified = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY);
-    assert_eq!(verified.ok(), Some(claims));
+    let verified = verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned()));
+    assert!(verified.is_ok());
+    let Some(verified) = verified.ok() else {
+        return;
+    };
+    assert_eq!(verified, claims);
 }
 
 #[test]
@@ -332,7 +376,8 @@ fn verify_rejects_generated_invalid_token_shapes() {
         "header.claims.",
         "a.b.c.d",
     ] {
-        let error = verify::<HttpRoomClaims>(token, TEST_AUTH_KEY).err();
+        let error =
+            verify::<HttpRoomClaims>(token, &SecretString::from(TEST_AUTH_KEY.to_owned())).err();
         assert_eq!(error, Some(AuthenticationError::InvalidJwtFormat));
     }
 }
@@ -341,7 +386,8 @@ fn verify_rejects_generated_invalid_token_shapes() {
 fn verify_rejects_oversized_token_before_jwt_parsing() {
     let token = "a".repeat(MAX_JWT_TOKEN_BYTES + 1);
 
-    let error = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY).err();
+    let error =
+        verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned())).err();
     assert_eq!(
         error,
         Some(AuthenticationError::TokenTooLarge {
@@ -353,12 +399,12 @@ fn verify_rejects_oversized_token_before_jwt_parsing() {
 
 #[test]
 fn verify_does_not_parse_claims_before_signature_verification() {
-    let claims = HttpRoomClaims {
+    let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims::default(),
         key: None,
         key_seed: None,
     };
-    let token = sign(&claims, TEST_AUTH_KEY);
+    let token = sign(&claims, &SecretString::from(TEST_AUTH_KEY.to_owned()));
     assert!(token.is_ok());
     let Some(token) = token.ok() else {
         return;
@@ -369,7 +415,11 @@ fn verify_does_not_parse_claims_before_signature_verification() {
         return;
     };
 
-    let error = verify::<HttpRoomClaims>(&invalid_claims_json, TEST_AUTH_KEY).err();
+    let error = verify::<HttpRoomClaims>(
+        &invalid_claims_json,
+        &SecretString::from(TEST_AUTH_KEY.to_owned()),
+    )
+    .err();
     assert_eq!(error, Some(AuthenticationError::InvalidSignature));
 }
 
@@ -381,7 +431,8 @@ fn verify_rejects_signed_invalid_claims_json_after_signature_verification() {
         return;
     };
 
-    let error = verify::<HttpRoomClaims>(&token, TEST_AUTH_KEY).err();
+    let error =
+        verify::<HttpRoomClaims>(&token, &SecretString::from(TEST_AUTH_KEY.to_owned())).err();
     assert_eq!(error, Some(AuthenticationError::InvalidJsonPayload));
 }
 
@@ -390,7 +441,7 @@ fn sign_token_for_test<T: Serialize>(
     key_b64: &str,
     typ: Option<&str>,
 ) -> Option<String> {
-    let key = decode_key(key_b64).ok()?;
+    let key = decode_key(&SecretString::from(key_b64.to_owned())).ok()?;
     let header = JwtHeader {
         alg: ALGORITHM_HS256.to_owned(),
         typ: typ.map(str::to_owned),
@@ -406,7 +457,7 @@ fn sign_token_for_test<T: Serialize>(
 }
 
 fn sign_raw_claims_token_for_test(claims_json: &[u8], key_b64: &str) -> Option<String> {
-    let key = decode_key(key_b64).ok()?;
+    let key = decode_key(&SecretString::from(key_b64.to_owned())).ok()?;
     let header = JwtHeader {
         alg: ALGORITHM_HS256.to_owned(),
         typ: Some(TYPE_JWT.to_owned()),
@@ -434,14 +485,28 @@ fn replace_token_segment(token: &str, segment_index: usize, replacement: &str) -
 fn derive_key_from_seed_produces_deterministic_key() {
     let key_b64 = TEST_AUTH_KEY;
     let seed = "Y2hhbm5lbC1rZXk=";
-    let derived_key = derive_key_from_seed(key_b64, seed).ok();
+    let derived_key = derive_key_from_seed(
+        &SecretString::from(key_b64.to_owned()),
+        &SecretString::from(seed.to_owned()),
+    )
+    .ok();
     assert!(derived_key.is_some());
     let Some(derived_key) = derived_key else {
         return;
     };
-    assert_ne!(derived_key, key_b64);
-    let derived_key_again = derive_key_from_seed(key_b64, seed).ok();
-    assert_eq!(derived_key_again, Some(derived_key));
+    assert_ne!(derived_key.expose_secret(), key_b64);
+    let derived_key_again = derive_key_from_seed(
+        &SecretString::from(key_b64.to_owned()),
+        &SecretString::from(seed.to_owned()),
+    )
+    .ok();
+    assert!(derived_key_again.is_some());
+    if let Some(derived_key_again) = derived_key_again {
+        assert_eq!(
+            derived_key_again.expose_secret(),
+            derived_key.expose_secret()
+        );
+    }
 }
 
 #[test]
@@ -449,20 +514,38 @@ fn derive_key_from_seed_works_with_unpadded_seed() {
     let key_b64 = TEST_AUTH_KEY;
     let seed = "Y2hhbm5lbC1rZXk=";
     let seed_unpadded = seed.trim_end_matches('=');
-    let derived_key = derive_key_from_seed(key_b64, seed_unpadded).ok();
+    let derived_key = derive_key_from_seed(
+        &SecretString::from(key_b64.to_owned()),
+        &SecretString::from(seed_unpadded.to_owned()),
+    )
+    .ok();
     assert!(derived_key.is_some());
     let Some(derived_key) = derived_key else {
         return;
     };
-    let derived_key_padded = derive_key_from_seed(key_b64, seed).ok();
-    assert_eq!(derived_key_padded, Some(derived_key));
+    let derived_key_padded = derive_key_from_seed(
+        &SecretString::from(key_b64.to_owned()),
+        &SecretString::from(seed.to_owned()),
+    )
+    .ok();
+    assert!(derived_key_padded.is_some());
+    if let Some(derived_key_padded) = derived_key_padded {
+        assert_eq!(
+            derived_key_padded.expose_secret(),
+            derived_key.expose_secret()
+        );
+    }
 }
 
 #[test]
 fn derive_key_from_seed_rejects_invalid_base64() {
     let key_b64 = TEST_AUTH_KEY;
     let invalid_seed = "invalid-base64!";
-    let derived_key = derive_key_from_seed(key_b64, invalid_seed).err();
+    let derived_key = derive_key_from_seed(
+        &SecretString::from(key_b64.to_owned()),
+        &SecretString::from(invalid_seed.to_owned()),
+    )
+    .err();
     assert_eq!(
         derived_key,
         Some(AuthenticationError::InvalidBase64Encoding)

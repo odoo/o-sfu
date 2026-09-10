@@ -200,7 +200,7 @@ impl GeneralCallScenario {
         let room = manager
             .serve_room(
                 "general-call-benchmark",
-                TEST_ROOM_KEY,
+                TEST_ROOM_KEY.into(),
                 &RoomConfig::default(),
                 Some("general-call-benchmark"),
             )

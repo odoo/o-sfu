@@ -484,23 +484,21 @@ impl PublisherFixture {
 
 async fn build_publisher_fixture(port: u16) -> PublisherFixture {
     let manager = Arc::new(RoomManager::for_test());
-    build_publisher_fixture_with(
-        port,
-        manager,
-        build_real_rtc_media_transport(),
-        "issuer-sfu-core",
-    )
-    .await
+    build_publisher_fixture_with(port, manager, build_real_rtc_media_transport()).await
 }
 
 async fn build_publisher_fixture_with(
     port: u16,
     manager: Arc<RoomManager>,
     media_transport: MediaTransport,
-    issuer: &str,
 ) -> PublisherFixture {
     let room = manager
-        .serve_room(issuer, TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-sfu-core",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let core = SfuCore::new(media_transport.clone(), Arc::clone(&manager));
@@ -536,13 +534,7 @@ async fn build_consumer_answer_fixture() -> ConsumerAnswerFixture {
     media_transport
         .test_api()
         .set_packet_loop_delays_ms(vec![Some(0); 4]);
-    let mut publisher = build_publisher_fixture_with(
-        55_230,
-        manager,
-        media_transport,
-        "issuer-sfu-core-consumer-answer",
-    )
-    .await;
+    let mut publisher = build_publisher_fixture_with(55_230, manager, media_transport).await;
     establish_session(&mut publisher.session, &mut publisher.remote).await;
     let publisher_session_key = publisher
         .room

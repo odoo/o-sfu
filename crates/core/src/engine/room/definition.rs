@@ -12,6 +12,7 @@
 //! room topology. Mutable committed routing directories live in `RoomState`
 //! rather than in this immutable definition.
 
+use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
 use super::{RoomConfig, RoomRuntimeContext, RoomRuntimePolicy};
@@ -32,11 +33,11 @@ const fn persistent_recording_backend_available() -> bool {
 struct RoomIdentity {
     uuid: String,
     issuer: String,
-    key: String,
+    key: SecretString,
 }
 
 impl RoomIdentity {
-    fn new(issuer: String, key: String) -> Self {
+    fn new(issuer: String, key: SecretString) -> Self {
         Self {
             uuid: Uuid::new_v4().to_string(),
             issuer,
@@ -64,7 +65,7 @@ impl RoomDefinition {
         runtime_context: &RoomRuntimeContext,
         runtime_policy: &RoomRuntimePolicy,
         issuer: String,
-        key: String,
+        key: SecretString,
         config: RoomConfig,
     ) -> Self {
         Self {
@@ -77,8 +78,8 @@ impl RoomDefinition {
     }
 
     #[must_use]
-    pub(crate) fn matches_reservation(&self, key: &str, config: &RoomConfig) -> bool {
-        self.identity.key == key && self.config == *config
+    pub(crate) fn matches_reservation(&self, key: &SecretString, config: &RoomConfig) -> bool {
+        self.identity.key.expose_secret() == key.expose_secret() && self.config == *config
     }
 
     #[must_use]
@@ -92,7 +93,7 @@ impl RoomDefinition {
     }
 
     #[must_use]
-    pub(crate) fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &SecretString {
         &self.identity.key
     }
 

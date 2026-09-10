@@ -16,6 +16,7 @@ pub(super) use o_sfu_protocol::wire::{
     ServerEnvelope, ServerMessage, ServerRequest, SessionDescriptionPayload, StreamType, UserId,
     UserPermissions, WelcomePayload,
 };
+use secrecy::SecretString;
 use str0m::{Candidate, Rtc, change::SdpOffer};
 pub(super) use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -316,7 +317,7 @@ pub(super) fn signed_connect_claims_with_permissions(
             label: Some("Alice".to_owned()),
             permissions,
         },
-        key,
+        &SecretString::from(key),
     )
     .ok()
 }
@@ -345,7 +346,7 @@ pub(super) fn signed_legacy_channel_scoped_connect_claims(
             label: Some("Alice".to_owned()),
             permissions,
         },
-        key,
+        &SecretString::from(key),
     )
     .ok()
 }
@@ -357,7 +358,7 @@ pub(super) async fn create_room(
 ) -> Option<Arc<Room>> {
     server
         .room_manager
-        .serve_room(issuer, TEST_ROOM_KEY, &config, None)
+        .serve_room(issuer, TEST_ROOM_KEY.into(), &config, None)
         .await
         .ok()
 }

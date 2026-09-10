@@ -264,7 +264,12 @@ struct JoinedRoomFixture {
 async fn setup_joined_users_with_ready_publisher(adapter: MediaTransport) -> JoinedRoomFixture {
     let manager = RoomManager::for_test();
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let (first_tx, first_rx) = test_sender();
@@ -354,7 +359,12 @@ pub(super) async fn setup_ready_users_with_transport_and_media_limits(
 ) -> (Arc<super::super::Room>, MediaTransport) {
     let manager = RoomManager::for_test_with_media_limits(media_limits);
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let adapter = real_adapter();
@@ -373,7 +383,12 @@ pub(super) async fn setup_ready_users_with_transport_and_tuning(
 ) -> (Arc<super::super::Room>, MediaTransport) {
     let manager = RoomManager::for_test_with_video_adaptation_tuning(tuning);
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let adapter = real_adapter();
@@ -395,7 +410,12 @@ pub(super) async fn setup_ready_users_with_transport_receivers(
 ) {
     let manager = RoomManager::for_test();
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let adapter = real_adapter();

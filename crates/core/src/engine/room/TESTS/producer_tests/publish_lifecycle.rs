@@ -178,7 +178,12 @@ async fn duplicate_camera_publish_intent_updates_presence_and_remote_activity() 
 async fn late_join_receives_remote_track_snapshot_from_route_state() {
     let manager = RoomManager::for_test();
     let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served");
     let adapter = real_adapter();

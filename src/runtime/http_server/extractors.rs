@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 pub use o_sfu_rfc::jwt::RegisteredJwtClaims;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::runtime::{
     MediaTransport, RuntimeMetrics, RuntimeState,
@@ -38,7 +39,7 @@ pub(super) struct MetricsServices {
 #[derive(Debug, Clone)]
 pub(super) struct VerifiedRoomRequest {
     pub(super) issuer: String,
-    pub(super) room_key: String,
+    pub(super) room_key: SecretString,
     pub(super) config: RoomConfig,
     pub(super) origin: RequestOrigin,
 }
@@ -124,10 +125,10 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
                 return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
             }
             (Some(key), None) => key,
-            (_, Some(seed)) if seed.is_empty() => {
+            (_, Some(seed)) if seed.expose_secret().is_empty() => {
                 return Err(record_room_rejection(state, StatusCode::BAD_REQUEST));
             }
-            (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, seed.as_ref())
+            (_, Some(seed)) => derive_key_from_seed(&state.config.auth.key, &seed)
                 .map_err(|_error| record_room_rejection(state, StatusCode::BAD_REQUEST))?,
         };
         Ok(Self {
