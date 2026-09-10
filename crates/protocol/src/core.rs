@@ -590,19 +590,15 @@ impl ProtocolCore {
         if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
-        let mut replay_batch = Vec::new();
-        for stream_type in self.sticky_replay.active_publications() {
-            let Some(envelope) =
-                ClientEnvelope::Message(ClientMessage::Publish(StreamIntentPayload {
-                    stream_type,
-                }))
-                .into_envelope()
-                .ok()
-            else {
-                continue;
-            };
-            replay_batch.push(envelope);
-        }
+        let replay_batch: Vec<_> = self
+            .sticky_replay
+            .active_publications()
+            .filter_map(|stream_type| {
+                ClientEnvelope::Message(ClientMessage::Publish(StreamIntentPayload { stream_type }))
+                    .into_envelope()
+                    .ok()
+            })
+            .collect();
         if replay_batch.is_empty() {
             return Vec::new();
         }
