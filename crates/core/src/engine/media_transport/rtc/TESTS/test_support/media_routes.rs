@@ -3,7 +3,7 @@
     reason = "rtc media route test support fails loudly when mandatory fixture setup is impossible"
 )]
 
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use str0m::{
     media::{KeyframeRequestKind, Mid, Rid},
@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use super::{
     super::{
-        commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
+        commands::{RouteControlRequest, RtcWorkerCommand},
         state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
     },
     collect_ready_session_keys,
@@ -22,8 +22,7 @@ use super::{
 };
 use crate::engine::{
     UserId,
-    media_transport::{TransportMediaId, TransportSessionKey, TransportSourceKey},
-    metrics::RtcMetricsRecorder,
+    media_transport::{TransportMediaId, TransportSessionKey},
 };
 
 pub fn drain_ready_sessions(state: &mut PacketLoopState) -> Vec<TransportSessionKey> {
@@ -71,64 +70,6 @@ pub fn install_video_route_with_gate(
 ) -> TransportMediaId {
     let mut scenario = MediaWorkerScenario::new(state);
     scenario.destination_with_gate(src_media, dst_key.clone(), dst_mid, packet_gate)
-}
-
-pub fn install_video_route_with_pending_gate(
-    state: &mut PacketLoopState,
-    src_media: TransportMediaId,
-    dst_key: &TransportSessionKey,
-    dst_mid: Mid,
-    packet_gate: PacketLayerGate,
-) -> TransportMediaId {
-    let mut scenario = MediaWorkerScenario::new(state);
-    scenario.destination_with_pending_gate(src_media, dst_key.clone(), dst_mid, packet_gate)
-}
-
-pub fn saturated_remote_control(
-    source: &TransportSourceKey,
-    target_id: RelayTargetId,
-) -> (
-    mpsc::Sender<RtcWorkerCommand>,
-    mpsc::Receiver<RtcWorkerCommand>,
-) {
-    let (control_tx, control_rx) = mpsc::channel(1);
-    assert!(
-        control_tx
-            .try_send(RtcWorkerCommand::RouteControl {
-                request: RouteControlRequest::SetRemoteSourcePacketGate {
-                    source: source.clone(),
-                    target_id,
-                    packet_gate: PacketLayerGate::Open,
-                },
-                response: None,
-            })
-            .is_ok()
-    );
-    (control_tx, control_rx)
-}
-
-pub fn register_remote_source_control(
-    state: &mut PacketLoopState,
-    source: &TransportSourceKey,
-    control_tx: mpsc::Sender<RtcWorkerCommand>,
-    target_id: RelayTargetId,
-    rtc_metrics: Arc<RtcMetricsRecorder>,
-) {
-    let control = RemoteSourceControl::new(control_tx, target_id, rtc_metrics);
-    assert!(state.routes.register_remote_source(source, control).is_ok());
-}
-
-pub fn register_saturated_remote_source(
-    state: &mut PacketLoopState,
-    src_media: TransportMediaId,
-    src_key: &TransportSessionKey,
-    target_id: RelayTargetId,
-    rtc_metrics: Arc<RtcMetricsRecorder>,
-) -> mpsc::Receiver<RtcWorkerCommand> {
-    let source = TransportSourceKey::new(src_key.clone(), src_media);
-    let (control_tx, control_rx) = saturated_remote_control(&source, target_id);
-    register_remote_source_control(state, &source, control_tx, target_id, rtc_metrics);
-    control_rx
 }
 
 pub fn assert_remote_keyframe_command(

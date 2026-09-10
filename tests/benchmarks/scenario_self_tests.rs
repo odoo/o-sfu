@@ -5,14 +5,16 @@
 //! these tests run the scenarios outside Valgrind so the normal test job fails
 //! when a scenario stops reaching the paths it exists to measure
 //!
-//! both scenarios live in this one target on purpose. a missing target fails the
+//! these scenarios live in this one target on purpose. a missing target fails the
 //! gate, while a name filter that matches nothing exits zero, which would turn
 //! the gate into the silent no-op it exists to prevent
 
 #[path = "source_policy/mod.rs"]
 mod source_policy;
 
-use o_sfu_core::server::transport::benchmark_support::MeetingFlowBenchFixture;
+use o_sfu_core::server::transport::benchmark_support::{
+    MeetingFlowBenchFixture, RemoteGateRetryBenchFixture,
+};
 use source_policy::SourcePolicyFixture;
 
 /// the room's video budget solver must keep reacting to receiver bandwidth
@@ -35,4 +37,15 @@ fn meeting_scenario_exercises_the_whole_packet_loop() {
     let total_work = fixture.run_meeting();
     assert!(total_work > 0, "meeting scenario produced no work");
     fixture.assert_packet_loop_coverage();
+}
+
+/// saturated control mailboxes must leave every source's packet gate pending
+#[test]
+fn remote_gate_retry_scenario_keeps_saturated_sources_pending() {
+    for (mut fixture, source_count) in [
+        (RemoteGateRetryBenchFixture::sources_64(), 64),
+        (RemoteGateRetryBenchFixture::sources_256(), 256),
+    ] {
+        assert_eq!(fixture.retry_under_pressure(), source_count);
+    }
 }

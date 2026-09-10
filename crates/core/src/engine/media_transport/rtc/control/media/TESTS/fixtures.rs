@@ -26,8 +26,7 @@ use crate::{
                 },
                 test_support::{
                     add_source_rid_stream, assert_consumer_packet_gate, drain_ready_sessions,
-                    install_video_route_with_gate, install_video_route_with_pending_gate,
-                    prepare_source_session, prepare_source_session_with_rid,
+                    install_video_route_with_gate, prepare_source_session_with_rid,
                     test_consumer_session_key, test_consumer_session_key_on_worker,
                     test_source_session_key,
                 },
@@ -71,58 +70,37 @@ pub(super) struct LocalVideoRoute {
 
 impl LocalVideoRoute {
     pub fn new(seed: u64, ssrc: u32) -> Self {
-        Self::build(seed, ssrc, None, PacketLayerGate::Open, false)
+        Self::build(seed, ssrc, None, PacketLayerGate::Open)
     }
 
     pub fn with_rid(seed: u64, ssrc: u32, rid: Rid) -> Self {
-        Self::build(seed, ssrc, Some(rid), PacketLayerGate::Open, false)
+        Self::build(seed, ssrc, Some(rid), PacketLayerGate::Open)
     }
 
     pub fn with_rid_gate(seed: u64, ssrc: u32, rid: Rid, packet_gate: PacketLayerGate) -> Self {
-        Self::build(seed, ssrc, Some(rid), packet_gate, false)
+        Self::build(seed, ssrc, Some(rid), packet_gate)
     }
 
-    fn build(
-        seed: u64,
-        ssrc: u32,
-        rid: Option<Rid>,
-        packet_gate: PacketLayerGate,
-        pending_gate: bool,
-    ) -> Self {
+    fn build(seed: u64, ssrc: u32, rid: Option<Rid>, packet_gate: PacketLayerGate) -> Self {
         let source_session = test_source_session_key(seed);
         let consumer_session = test_consumer_session_key(seed);
         let mut state = PacketLoopState::default();
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
-        let src_media = match rid {
-            Some(rid) => prepare_source_session_with_rid(
-                &mut state,
-                &source_session,
-                Mid::from(SOURCE_MID),
-                ssrc,
-                Some(rid),
-            ),
-            None => {
-                prepare_source_session(&mut state, &source_session, Mid::from(SOURCE_MID), ssrc)
-            }
-        };
-        let consumer_media = if pending_gate {
-            install_video_route_with_pending_gate(
-                &mut state,
-                src_media,
-                &consumer_session,
-                Mid::from(CONSUMER_MID),
-                packet_gate,
-            )
-        } else {
-            install_video_route_with_gate(
-                &mut state,
-                src_media,
-                &consumer_session,
-                Mid::from(CONSUMER_MID),
-                packet_gate,
-            )
-        };
+        let src_media = prepare_source_session_with_rid(
+            &mut state,
+            &source_session,
+            Mid::from(SOURCE_MID),
+            ssrc,
+            rid,
+        );
+        let consumer_media = install_video_route_with_gate(
+            &mut state,
+            src_media,
+            &consumer_session,
+            Mid::from(CONSUMER_MID),
+            packet_gate,
+        );
         Self {
             state,
             metrics,
