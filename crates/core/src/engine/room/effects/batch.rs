@@ -2,7 +2,7 @@ use super::{output::RoomOutputPlan, transport::RoomTransportPlan};
 use crate::engine::{
     media_transport::MediaTransport,
     room::{
-        Room,
+        Room, SourcePolicyGuard,
         media_graph::{
             ConsumerSetupOrigin, ProducerActivityCommit, PublishCommit, ReceiverRouteCommit,
             ReceiverRouteWork,
@@ -61,7 +61,7 @@ impl<'a> RoomEffectContext<'a> {
 ///   - return commit data
 ///             |
 ///             v  drop RoomState write lock
-/// RoomEffects::from_*(commit) -> execute_inner
+/// RoomEffects::from_*(commit) -> execute
 ///             |
 ///             v  step 1: transport execution
 ///   +-----------------------------------------------------------+
@@ -90,7 +90,7 @@ impl<'a> RoomEffectContext<'a> {
 /// The diagram shows the normal batch order. Only an active `ProducerActivityCommit` from
 /// `from_publication_activity` runs its pre-policy user-info output and source policy before transport.
 /// Callers of `from_publish` and `from_publication_activity` use
-/// `execute_with_source_policy_guard` while holding `source_policy_turn`.
+/// `execute_with_source_policy_guard` with the guard held since their state commit.
 #[derive(Debug, Default)]
 #[must_use = "room effect batches must be executed after the state transition commits"]
 pub struct RoomEffects {
@@ -213,33 +213,33 @@ impl RoomEffects {
     /// preserves the room-wide side-effect order across transport and policy work
     pub async fn execute(self, room: &Room, context: RoomEffectContext<'_>) {
         if self.policy_before_transport {
-            let _guard = room.source_policy_turn.lock().await;
-            self.execute_inner(room, context, true).await;
-        } else {
-            self.execute_inner(room, context, false).await;
+            let guard = room.lock_source_policy().await;
+            self.execute_with_source_policy_guard(&guard, context).await;
+            return;
         }
+        let mut output = self.output;
+        self.transport
+            .execute(room, context.route_transport())
+            .await;
+        output.emit_before_policy();
+        self.source_policy
+            .execute(room, context.media_transport(), None)
+            .await;
+        output.emit_after_policy();
     }
 
     pub(in crate::engine::room) async fn execute_with_source_policy_guard(
         self,
-        room: &Room,
+        guard: &SourcePolicyGuard<'_>,
         context: RoomEffectContext<'_>,
     ) {
-        self.execute_inner(room, context, true).await;
-    }
-
-    async fn execute_inner(
-        self,
-        room: &Room,
-        context: RoomEffectContext<'_>,
-        source_policy_guarded: bool,
-    ) {
+        let room = guard.room();
         let mut output = self.output;
         let mut source_policy = self.source_policy;
         if self.policy_before_transport {
             output.emit_user_info_before_policy();
             source_policy
-                .execute_guarded(room, context.media_transport(), None)
+                .execute_guarded(guard, context.media_transport(), None)
                 .await;
             source_policy = SourcePolicyTurn::default();
         }
@@ -247,15 +247,9 @@ impl RoomEffects {
             .execute(room, context.route_transport())
             .await;
         output.emit_before_policy();
-        if source_policy_guarded {
-            source_policy
-                .execute_guarded(room, context.media_transport(), None)
-                .await;
-        } else {
-            source_policy
-                .execute(room, context.media_transport(), None)
-                .await;
-        }
+        source_policy
+            .execute_guarded(guard, context.media_transport(), None)
+            .await;
         output.emit_after_policy();
     }
 }

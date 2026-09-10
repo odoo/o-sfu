@@ -192,16 +192,6 @@ impl StagedPublishScenario {
             .await
     }
 
-    pub(super) async fn commit(&self) {
-        let applied_answer = AppliedSessionAnswer::from_negotiated_producers([(
-            self.staged_media_id(TestSourceKind::ScalableVideo).await,
-            test_simulcast_video_rtp_parameters(),
-        )]);
-        self.operation()
-            .commit_staged_publishes(&applied_answer)
-            .await;
-    }
-
     pub(super) async fn close_user(&self) {
         self.room
             .remove_user(&self.user_id, self.connection_id, &self.adapter)

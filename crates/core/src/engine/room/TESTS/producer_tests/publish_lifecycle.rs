@@ -31,7 +31,7 @@ async fn publication_activity_pauses_and_resumes_committed_source() {
     let publisher_id = UserId::Integer(1);
     let stream_id = stream_id_for_source(TestSourceKind::ScalableVideo);
     let connection_id = user_connection_id(&room, &publisher_id).await;
-    let source_policy_guard = room.source_policy_turn.lock().await;
+    let source_policy_guard = room.lock_source_policy().await;
     let pause = room
         .test_api()
         .deactivate_publication(&publisher_id, &stream_id, &adapter);
