@@ -3,7 +3,7 @@
 
 #### Guidelines
 <!-- You must check all -->
-- [ ] I read [CONTRIBUTING.md](/.github/CONTRIBUTING.md) and [coding_guidelines.md](/.github/coding_guidelines.md)
+- [ ] I read [CONTRIBUTING.md](https://github.com/odoo/o-sfu/blob/master/.github/CONTRIBUTING.md) and [coding_guidelines.md](https://github.com/odoo/o-sfu/blob/master/.github/coding_guidelines.md)
 - [ ] I will not use AI to fabricate answers to comments in this PR
 
 #### AI
