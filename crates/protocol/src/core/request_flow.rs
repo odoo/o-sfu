@@ -7,51 +7,55 @@ use crate::signaling::{
     ServerResponse, SessionDescriptionPayload,
 };
 
-pub(super) fn start_recording(core: &mut ProtocolCore, options: RecordingOptions) -> Commands {
-    begin_request(
-        core,
-        ClientRequest::StartRecording(options),
-        PendingRequestKind::StartRecording,
-    )
-}
-
-pub(super) fn stop_recording(core: &mut ProtocolCore) -> Commands {
-    begin_request(
-        core,
-        ClientRequest::StopRecording,
-        PendingRequestKind::StopRecording,
-    )
-}
-
-pub(super) fn submit_negotiation_answer(
-    core: &mut ProtocolCore,
-    request_id: &RequestId,
-    kind: NegotiationKind,
-    sdp: impl Into<String>,
-) -> Commands {
-    if !core.can_send_client_messages() || !core.phase.resolve_negotiation(request_id, kind) {
-        return Vec::new();
+impl ProtocolCore {
+    pub fn start_recording(&mut self, options: RecordingOptions) -> Vec<Command> {
+        begin_request(
+            self,
+            ClientRequest::StartRecording(options),
+            PendingRequestKind::StartRecording,
+        )
     }
-    let sdp = sdp.into();
-    let response = match kind {
-        NegotiationKind::Offer => ClientResponse::Offer(SessionDescriptionPayload {
-            sdp,
-            upload_slots: Vec::new(),
-        }),
-        NegotiationKind::Renegotiate => ClientResponse::Renegotiate(SessionDescriptionPayload {
-            sdp,
-            upload_slots: Vec::new(),
-        }),
-    };
-    let Some(envelope) = ClientEnvelope::Response {
-        response_to: request_id.clone(),
-        response,
+
+    pub fn stop_recording(&mut self) -> Vec<Command> {
+        begin_request(
+            self,
+            ClientRequest::StopRecording,
+            PendingRequestKind::StopRecording,
+        )
     }
-    .into_envelope()
-    .ok() else {
-        return Vec::new();
-    };
-    core.enqueue_envelope(envelope, FlushMode::Immediate)
+
+    /// Replies to the currently pending negotiation request.
+    ///
+    /// The host must echo the exact `request_id` and `kind` from
+    /// [`Command::ApplyNegotiation`]. Mismatches are ignored so a stale or
+    /// reordered SDP answer cannot accidentally resolve the wrong negotiation.
+    pub fn submit_negotiation_answer(
+        &mut self,
+        request_id: &RequestId,
+        kind: NegotiationKind,
+        sdp: impl Into<String>,
+    ) -> Vec<Command> {
+        if !self.phase.resolve_negotiation(request_id, kind) {
+            return Vec::new();
+        }
+        let payload = SessionDescriptionPayload {
+            sdp: sdp.into(),
+            upload_slots: Vec::new(),
+        };
+        let response = match kind {
+            NegotiationKind::Offer => ClientResponse::Offer(payload),
+            NegotiationKind::Renegotiate => ClientResponse::Renegotiate(payload),
+        };
+        let Some(envelope) = ClientEnvelope::Response {
+            response_to: request_id.clone(),
+            response,
+        }
+        .into_envelope()
+        .ok() else {
+            return Vec::new();
+        };
+        self.outbound_batch.enqueue(envelope, FlushMode::Immediate)
+    }
 }
 
 pub(super) fn handle_server_request(
@@ -114,7 +118,7 @@ fn begin_request(
     request: ClientRequest,
     kind: PendingRequestKind,
 ) -> Commands {
-    if !core.can_send_client_messages() {
+    if !core.phase.can_send_client_messages() {
         return Vec::new();
     }
     let Some(request_start) = core.request_tracker.try_begin(kind) else {
@@ -134,10 +138,9 @@ fn begin_request(
     .ok() else {
         return Vec::new();
     };
-
     let mut commands = vec![Command::BeginPendingRequest {
         request: pending_request,
     }];
-    commands.extend(core.enqueue_envelope(envelope, FlushMode::Batched));
+    commands.extend(core.outbound_batch.enqueue(envelope, FlushMode::Batched));
     commands
 }
