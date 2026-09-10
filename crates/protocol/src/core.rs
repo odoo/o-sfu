@@ -627,11 +627,7 @@ fn close_for_protocol_error() -> Commands {
 /// The sequence is modest so short-lived outages recover quickly,
 /// but repeated failures still spread out retries and avoid hot-loop reconnects.
 fn next_recovery_delay(current_delay_ms: u32) -> u32 {
-    current_delay_ms
-        .saturating_mul(3)
-        .checked_div(2)
-        .unwrap_or(MAX_RECOVERY_DELAY_MS)
-        .min(MAX_RECOVERY_DELAY_MS)
+    (current_delay_ms.saturating_mul(3) / 2).min(MAX_RECOVERY_DELAY_MS)
 }
 
 #[cfg(test)]
