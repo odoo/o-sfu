@@ -97,13 +97,15 @@ pub fn apply_media_control_batch(
             }
             Ok(())
         })),
-        ConsumerGates { source, updates } => Applied(routes::worker_set_consumer_pkt_gates(
-            state, &source, updates,
-        )),
+        ConsumerGates { source, updates } => {
+            let updates = updates
+                .into_iter()
+                .map(|(_, route, packet_gate)| (route, packet_gate));
+            Applied(state.set_consumer_packet_gates(&source, updates))
+        }
         ConsumerFollowUp(updates) => Consumers(map_updates(updates, |control| {
             if let Some(activity) = control.activity
-                && let Err(error) =
-                    routes::worker_set_consumer_active(state, &control.route, activity.is_active())
+                && let Err(error) = state.set_consumer_active(&control.route, activity.is_active())
             {
                 return ConsumerRouteControlOutcome(Some(ConsumerRouteControlFailure::Activity(
                     error,

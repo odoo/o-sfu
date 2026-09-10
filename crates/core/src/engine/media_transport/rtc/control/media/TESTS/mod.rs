@@ -238,18 +238,47 @@ fn consumer_inactive_invalidates_repair_cache() -> Result<(), &'static str> {
 }
 
 #[test]
-fn consumer_gate_reanchor_invalidates_repair_cache() -> Result<(), &'static str> {
+fn consumer_gate_batch_isolates_failures_and_invalidates_repair() -> Result<(), &'static str> {
     let mut route = LocalVideoRoute::new(94, 94_000);
     let stream = arm_route_repair(&mut route, Instant::now())?;
     let consumer_route = route.consumer_route();
-
-    set_consumer_packet_gate_at(
-        &mut route.state,
-        &consumer_route,
-        PacketLayerGate::Block,
-        Instant::now(),
+    let missing = TransportConsumerRoute::new(
+        consumer_route.consumer_session_key().clone(),
+        TransportMediaId::new(u64::MAX),
+        consumer_route.source().clone(),
     );
-
+    let wrong_source = TransportConsumerRoute::new(
+        consumer_route.consumer_session_key().clone(),
+        consumer_route.consumer_transport_media_id(),
+        TransportSourceKey::new(
+            route.source_session.clone(),
+            TransportMediaId::new(u64::MAX),
+        ),
+    );
+    let WorkerMediaControlBatchOutcome::Applied(results) = apply_media_control_batch(
+        &mut route.state,
+        &route.rtc_metrics,
+        Bitrate::from_mbps(10),
+        Instant::now(),
+        WorkerMediaControlBatch::ConsumerGates {
+            source: consumer_route.source().clone(),
+            updates: vec![
+                (0, missing, PacketLayerGate::Block),
+                (1, wrong_source, PacketLayerGate::Block),
+                (2, consumer_route, PacketLayerGate::Block),
+            ],
+        },
+    ) else {
+        panic!("consumer gate batch should return applied results");
+    };
+    assert_eq!(
+        results,
+        vec![
+            Err(TransportAdapterError::TransportUnavailable),
+            Err(TransportAdapterError::InvalidInput),
+            Ok(()),
+        ]
+    );
     assert!(!route_repair_is_armed(&mut route, stream));
     Ok(())
 }

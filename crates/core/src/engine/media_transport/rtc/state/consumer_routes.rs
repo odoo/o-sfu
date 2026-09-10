@@ -1,13 +1,16 @@
-//! Consumer routes coupled to session MID indexes and receiver stream retirement.
+//! Consumer routes coupled to session MID indexes and receiver repair state.
 
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::media::Mid;
 
 use super::{
-    PacketLoopState, media_registry::RegisteredMediaHandle, slots::ConsumerStreamHandle,
-    source_route::MediaRouteDestination,
+    PacketLoopState, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
+    slots::ConsumerStreamHandle, source_route::MediaRouteDestination,
 };
-use crate::engine::media_transport::{TransportMediaId, TransportSessionKey, rtc::codec};
+use crate::engine::media_transport::{
+    TransportAdapterError, TransportConsumerRoute, TransportMediaId, TransportResult,
+    TransportSessionKey, TransportSourceKey, rtc::codec,
+};
 
 /// Consumer stream and negotiated RTP identity committed as one local route.
 #[derive(Clone, Copy)]
@@ -74,6 +77,59 @@ impl PacketLoopState {
         consumer_media
     }
 
+    /// Applies consumer activity and invalidates repair state before returning.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::InvalidInput`] for mismatched source or
+    /// consumer ownership or an incompatible media handle.
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when source registration,
+    /// consumer media or its indexed destination is missing or stale.
+    pub fn set_consumer_active(
+        &mut self,
+        route: &TransportConsumerRoute,
+        active: bool,
+    ) -> TransportResult<()> {
+        self.update_consumer_route(route, ConsumerRouteMutation::Active(active))
+            .map(|_| ())
+    }
+
+    /// Applies ordered consumer gates with repair invalidation and one source-gate refresh.
+    ///
+    /// Successful entries remain applied when another entry fails. Results retain
+    /// input order. The aggregate gate is refreshed once if any route changed.
+    ///
+    /// # Errors
+    ///
+    /// Each entry can return the errors from [`Self::set_consumer_active`].
+    /// A route for another source returns [`TransportAdapterError::InvalidInput`].
+    pub fn set_consumer_packet_gates(
+        &mut self,
+        source: &TransportSourceKey,
+        updates: impl ExactSizeIterator<Item = (TransportConsumerRoute, PacketLayerGate)>,
+    ) -> Vec<TransportResult<()>> {
+        let src_media = source.transport_media_id();
+        let mut changed = false;
+        let mut results = Vec::with_capacity(updates.len());
+        for (route, packet_gate) in updates {
+            if route.source() != source {
+                results.push(Err(TransportAdapterError::InvalidInput));
+                continue;
+            }
+            let result =
+                self.update_consumer_route(&route, ConsumerRouteMutation::PacketGate(packet_gate));
+            results.push(
+                result
+                    .inspect(|route_changed| changed |= *route_changed)
+                    .map(|_| ()),
+            );
+        }
+        if changed {
+            self.routes.refresh_src_pkt_gate(src_media);
+        }
+        results
+    }
+
     /// Removes a consumer route, repairs displaced MID indexes and retires its stream.
     pub fn remove_consumer_route(
         &mut self,
@@ -126,9 +182,70 @@ impl PacketLoopState {
         }
     }
 
+    fn update_consumer_route(
+        &mut self,
+        route: &TransportConsumerRoute,
+        mutation: ConsumerRouteMutation,
+    ) -> TransportResult<bool> {
+        let consumer_key = route.consumer_session_key();
+        let consumer_media = route.consumer_transport_media_id();
+        let src_media = route.source_transport_media_id();
+        self.ensure_existing_route_src(consumer_key, route.source())?;
+        let RegisteredMediaHandle::Consumer {
+            session_key,
+            mid,
+            src_media: consumer_src_media,
+            ..
+        } = self
+            .media_handle(consumer_media)
+            .ok_or(TransportAdapterError::TransportUnavailable)?
+        else {
+            return Err(TransportAdapterError::InvalidInput);
+        };
+        if session_key != consumer_key || *consumer_src_media != src_media {
+            return Err(TransportAdapterError::InvalidInput);
+        }
+        let dst_idx = self
+            .consumer_dst_idx(consumer_key, *mid, consumer_media, src_media)
+            .ok_or(TransportAdapterError::TransportUnavailable)?;
+        let update = match mutation {
+            ConsumerRouteMutation::Active(active) => self.routes.set_consumer_active(
+                src_media,
+                dst_idx,
+                consumer_key,
+                consumer_media,
+                active,
+            ),
+            ConsumerRouteMutation::PacketGate(packet_gate) => self.routes.set_consumer_pkt_gate(
+                src_media,
+                dst_idx,
+                consumer_key,
+                consumer_media,
+                packet_gate,
+            ),
+        }?;
+        if update.repair_delivery_changed {
+            let (routes, users) = (&self.routes, &mut self.users);
+            if let Some(destination) = routes
+                .local_route(src_media)
+                .and_then(|route| route.destinations.get(dst_idx))
+                && let Some(session_state) = users.get_mut(consumer_key)
+            {
+                session_state.invalidate_rtx_stream(destination.dest_stream);
+            }
+        }
+        Ok(update.route_changed)
+    }
+
     fn release_destination_stream(&mut self, destination: &MediaRouteDestination) {
         if let Some(session_state) = self.users.get_mut(&destination.dest_session) {
             session_state.release_consumer_stream(destination.dest_stream);
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum ConsumerRouteMutation {
+    Active(bool),
+    PacketGate(PacketLayerGate),
 }
