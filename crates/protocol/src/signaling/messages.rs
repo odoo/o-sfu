@@ -27,10 +27,13 @@ const TRACKS: &str = "tracks";
 const UNPUBLISH: &str = "unpublish";
 const WELCOME: &str = "welcome";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeDecodeError {
+    #[error("unknown envelope tag: {0}")]
     UnknownTag(String),
+    #[error("invalid payload for envelope tag: {0}")]
     InvalidPayload(String),
+    #[error("unexpected payload for envelope tag: {0}")]
     UnexpectedPayload(String),
 }
 

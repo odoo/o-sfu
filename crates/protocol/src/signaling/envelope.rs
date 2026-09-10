@@ -5,10 +5,13 @@ pub type EnvelopeBatch = Vec<Envelope>;
 
 pub const MAX_ENVELOPE_BATCH_LEN: usize = 64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EnvelopeBatchDecodeError {
+    #[error("invalid JSON envelope batch")]
     InvalidJson,
+    #[error("envelope batch contains {actual} entries, exceeding the limit of {limit}")]
     BatchTooLarge { actual: usize, limit: usize },
+    #[error("invalid envelope routing metadata")]
     InvalidRoutingMetadata,
 }
 
