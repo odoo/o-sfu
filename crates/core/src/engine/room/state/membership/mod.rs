@@ -93,13 +93,13 @@ pub struct DisconnectCommit {
 }
 
 impl RoomState {
-    pub fn fanout_all(&self, message: &RoomEventMessage) -> MessageFanout {
+    pub fn fanout_all(&self, message: RoomEventMessage) -> MessageFanout {
         fanout_all(self.users.values().map(|user| user.sender.clone()), message)
     }
 
     pub fn fanout_all_except(
         &self,
-        message: &RoomEventMessage,
+        message: RoomEventMessage,
         excluded_user_id: &UserId,
     ) -> MessageFanout {
         fanout_all(
@@ -238,7 +238,7 @@ impl RoomState {
             .extend(self.remote_track_snapshots_for_users(source_recipients, true));
         effects.push_fanout(had_previous_sender.then(|| {
             self.fanout_all_except(
-                &RoomEventMessage::UserDeparted {
+                RoomEventMessage::UserDeparted {
                     user_id: user_id.clone(),
                 },
                 user_id,
@@ -248,7 +248,7 @@ impl RoomState {
             self.user_info_snapshot(user_id)
                 .map(|(joined_user_id, info)| {
                     self.fanout_all_except(
-                        &RoomEventMessage::UserJoined {
+                        RoomEventMessage::UserJoined {
                             user_id: joined_user_id,
                             info,
                         },
@@ -307,7 +307,7 @@ impl RoomState {
                     sender: user.sender,
                     reason: UserCloseReason::RemovedByRuntime,
                 }],
-                fanouts: vec![self.fanout_all(&RoomEventMessage::UserDeparted {
+                fanouts: vec![self.fanout_all(RoomEventMessage::UserDeparted {
                     user_id: user_id.clone(),
                 })],
                 track_snapshots: self.remote_track_snapshots_for_users(source_recipients, true),
@@ -354,7 +354,7 @@ impl RoomState {
             "applied user presence update and staged user info fanout"
         );
         Some(PresenceCommit {
-            fanout: self.fanout_all(&RoomEventMessage::UserInfoChanged(snapshot)),
+            fanout: self.fanout_all(RoomEventMessage::UserInfoChanged(snapshot)),
         })
     }
 
@@ -401,7 +401,7 @@ impl RoomState {
                 sender: user.sender,
                 reason: UserCloseReason::RemovedByRuntime,
             });
-            fanouts.push(self.fanout_all(&RoomEventMessage::UserDeparted {
+            fanouts.push(self.fanout_all(RoomEventMessage::UserDeparted {
                 user_id: user_id.clone(),
             }));
         }
@@ -438,7 +438,7 @@ impl RoomState {
         }
         let message = BroadcastPayload::try_new(message)?;
         Ok(Some(self.fanout_all_except(
-            &RoomEventMessage::Broadcast {
+            RoomEventMessage::Broadcast {
                 sender_id: user_id.clone(),
                 message,
             },

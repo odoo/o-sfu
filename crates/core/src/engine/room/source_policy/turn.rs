@@ -615,5 +615,5 @@ fn commit_featured_user_updates(
         .into_iter()
         .filter_map(|user_id| state.user_info_snapshot(&user_id))
         .collect();
-    Some(state.fanout_all(&RoomEventMessage::UserInfoChanged(snapshot)))
+    Some(state.fanout_all(RoomEventMessage::UserInfoChanged(snapshot)))
 }

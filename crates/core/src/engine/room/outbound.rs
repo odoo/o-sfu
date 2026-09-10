@@ -592,10 +592,10 @@ impl MessageFanout {
 
 pub(super) fn fanout_all(
     recipients: impl IntoIterator<Item = OutboundSender>,
-    message: &RoomEventMessage,
+    message: RoomEventMessage,
 ) -> MessageFanout {
     MessageFanout {
         recipients: recipients.into_iter().collect(),
-        message: message.clone(),
+        message,
     }
 }

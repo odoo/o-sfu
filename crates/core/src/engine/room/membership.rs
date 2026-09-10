@@ -70,8 +70,14 @@ impl Room {
         commit: JoinCommit,
         context: RoomEffectContext<'_>,
     ) -> CommittedTransportReceipt {
-        let receipt = commit.receipt.clone();
-        RoomEffects::from_join(commit).execute(self, context).await;
+        let JoinCommit {
+            receipt,
+            effects,
+            transport_plan,
+        } = commit;
+        RoomEffects::from_join(effects, transport_plan)
+            .execute(self, context)
+            .await;
         let session = &receipt.transport_session_key;
         info!(
             event = telemetry_event::USER_JOINED,
