@@ -347,10 +347,7 @@ impl ProtocolCore {
     /// Recovery reuses the same JWT and optional room that [`ProtocolCore::connect`] captured,
     /// which keeps every socket attempt tied to one explicit admission context.
     pub fn on_ws_open(&mut self) -> Vec<Command> {
-        if !matches!(
-            self.phase.connection_state(),
-            ConnectionState::Connecting | ConnectionState::Recovering
-        ) {
+        if !self.phase.is_awaiting_welcome() {
             return Vec::new();
         }
         let Some(connect_context) = self.connect_context.as_ref() else {
@@ -416,10 +413,7 @@ impl ProtocolCore {
     }
 
     fn accept_welcome(&mut self, payload: WelcomePayload) -> Commands {
-        if !matches!(
-            self.phase.connection_state(),
-            ConnectionState::Connecting | ConnectionState::Recovering
-        ) {
+        if !self.phase.is_awaiting_welcome() {
             return Vec::new();
         }
         let WelcomePayload {
