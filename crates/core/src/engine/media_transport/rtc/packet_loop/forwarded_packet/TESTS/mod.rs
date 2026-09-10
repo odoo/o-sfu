@@ -19,7 +19,7 @@ use crate::{
     engine::{
         UserId,
         media_transport::rtc::{
-            bootstrap::ensure_session_rtc_state,
+            bootstrap::test_support::ensure_session_rtc_state,
             state::{bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle},
             test_support::test_transport_session_key,
         },

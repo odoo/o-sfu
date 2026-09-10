@@ -2,7 +2,7 @@ use str0m::media::Rid;
 
 use super::{
     super::{
-        bootstrap::ensure_session_rtc_state,
+        bootstrap::test_support::ensure_session_rtc_state,
         state::{
             PacketLoopState,
             bitrate::{BitrateRegistry, IncomingBitrateObservation},

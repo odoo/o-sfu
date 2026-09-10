@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::super::{
-    bootstrap::ensure_session_rtc_state,
+    bootstrap::test_support::ensure_session_rtc_state,
     state::{PacketLoopState, slots::SessionHandle},
     test_support::test_transport_session_key,
 };

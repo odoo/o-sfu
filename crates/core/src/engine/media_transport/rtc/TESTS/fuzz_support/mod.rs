@@ -68,7 +68,7 @@ impl IngressDemuxFuzzFixture {
             UserId::Integer(63),
         );
         let mut state = PacketLoopState::default();
-        let _ = bootstrap::ensure_session_rtc_state(
+        let _ = bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session_key,
             candidate_addr,

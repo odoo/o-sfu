@@ -16,7 +16,7 @@ use std::{
 use tokio::sync::mpsc;
 
 use super::super::{
-    bootstrap::ensure_session_rtc_state,
+    bootstrap::test_support::ensure_session_rtc_state,
     packet_loop::{drain_relay_packets, forwarded_packet::ForwardedPacket},
     state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
     test_support::{sample_forwarded_packet, test_transport_session_key},

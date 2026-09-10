@@ -1190,7 +1190,7 @@ impl MeetingFlowBenchFixture {
                 [127, 0, 0, 1],
                 FIRST_CANDIDATE_PORT.saturating_add(u16::try_from(participant).unwrap_or(0)),
             ));
-            bootstrap::ensure_session_rtc_state(
+            bootstrap::test_support::ensure_session_rtc_state(
                 &mut self.state.users,
                 &session_key,
                 candidate_addr,

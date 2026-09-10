@@ -502,7 +502,7 @@ fn ensure_session_ready_for_offer(
     room_id: Arc<str>,
     session_key: &TransportSessionKey,
 ) -> Result<(), TransportAdapterError> {
-    let created_session = bootstrap::ensure_session_rtc_state_with_stats_interval(
+    let created_session = bootstrap::ensure_session_rtc_state(
         &mut state.users,
         room_id,
         session_key,

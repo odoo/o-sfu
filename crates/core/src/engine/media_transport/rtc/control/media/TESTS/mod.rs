@@ -119,7 +119,7 @@ fn arm_destination_repair(
         })
         .cloned()
         .ok_or("local route should have one destination")?;
-    bootstrap::ensure_session_rtc_state(
+    bootstrap::test_support::ensure_session_rtc_state(
         &mut state.users,
         &destination.dest_session,
         SocketAddr::from(([127, 0, 0, 1], 47_900)),
@@ -730,7 +730,7 @@ fn source_only_activity_respects_revision_and_media_kind() {
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
         assert!(
-            bootstrap::ensure_session_rtc_state(
+            bootstrap::test_support::ensure_session_rtc_state(
                 &mut state.users,
                 &source_session,
                 SocketAddr::from(([127, 0, 0, 1], 47_001)),
@@ -1808,7 +1808,7 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
     let mut state = PacketLoopState::default();
     let src_media = prepare_source_session(&mut state, &source_session, source_mid, 71_001);
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer_session,
             SocketAddr::from(([127, 0, 0, 1], 47_101)),
@@ -1903,7 +1903,7 @@ fn add_send_media_declares_a_destination_local_primary_and_repair_pair() {
     let mut state = PacketLoopState::default();
     let src_media = prepare_source_session(&mut state, &source_session, source_mid, 71_201);
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer_session,
             SocketAddr::from(([127, 0, 0, 1], 47_103)),
@@ -2000,7 +2000,7 @@ fn add_send_media_blocks_initial_video_until_a_decoder_refresh() {
         .routes
         .observe_producer_packet(src_media, Some(selected_rid), false, observed_at);
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer_session,
             SocketAddr::from(([127, 0, 0, 1], 47_102)),
