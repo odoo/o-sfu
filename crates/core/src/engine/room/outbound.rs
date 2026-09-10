@@ -444,16 +444,14 @@ impl UserOutboundSender {
         let byte_capacity = self.limits.byte_capacity();
         let mut queued = self.queued_bytes.load(Ordering::Acquire);
         loop {
-            let Some(next) = queued.checked_add(bytes) else {
+            let Some(next) = queued
+                .checked_add(bytes)
+                .filter(|next| *next <= byte_capacity)
+            else {
                 let overflow =
                     self.mark_overflow(UserOutboundOverflowKind::QueuedBytes, queued, bytes);
                 return Err(UserOutboundSendError::Full(overflow));
             };
-            if next > byte_capacity {
-                let overflow =
-                    self.mark_overflow(UserOutboundOverflowKind::QueuedBytes, queued, bytes);
-                return Err(UserOutboundSendError::Full(overflow));
-            }
             match self.queued_bytes.compare_exchange_weak(
                 queued,
                 next,

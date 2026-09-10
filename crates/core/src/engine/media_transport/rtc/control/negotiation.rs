@@ -7,7 +7,7 @@
 //! invalidates.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, btree_map::Entry},
     mem,
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -315,9 +315,9 @@ fn offer_encodings_by_mid(
         })
         .collect::<BTreeMap<_, _>>();
     for mid in producer_mids {
-        if encodings.contains_key(mid) {
+        let Entry::Vacant(entry) = encodings.entry(*mid) else {
             continue;
-        }
+        };
         let Some(rtp_parameters) = session_state
             .sdp_negotiation
             .negotiated_producer_parameters
@@ -332,7 +332,7 @@ fn offer_encodings_by_mid(
         if simulcast_encodings.is_empty() {
             continue;
         }
-        encodings.insert(*mid, simulcast_encodings);
+        entry.insert(simulcast_encodings);
     }
     Ok(encodings)
 }
@@ -364,15 +364,17 @@ fn upload_encodings_for_mid(
 }
 
 fn answer_remote_candidate_addrs(answer: &SdpAnswer) -> Vec<SocketAddr> {
-    let mut addrs = answer
+    answer
         .session
         .ice_candidates()
         .map(str0m::Candidate::addr)
-        .collect::<Vec<_>>();
-    for media_line in &answer.media_lines {
-        addrs.extend(media_line.ice_candidates().map(str0m::Candidate::addr));
-    }
-    addrs
+        .chain(
+            answer
+                .media_lines
+                .iter()
+                .flat_map(|media_line| media_line.ice_candidates().map(str0m::Candidate::addr)),
+        )
+        .collect()
 }
 
 fn apply_pending_recv_streams(
