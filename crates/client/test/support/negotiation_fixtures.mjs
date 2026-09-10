@@ -48,3 +48,30 @@ export const videoUploadSlot = (
     mid,
     simulcastEncodings
 });
+
+export function buildNegotiationFrame(tag, requestId, payloadOrUploadMid) {
+    const payload =
+        typeof payloadOrUploadMid === "string"
+            ? {
+                  sdp: sdp(audioMedia("0"), videoMedia(payloadOrUploadMid)),
+                  uploadSlots: [videoUploadSlot(payloadOrUploadMid)]
+              }
+            : payloadOrUploadMid;
+    return JSON.stringify([
+        {
+            t: tag,
+            q: requestId,
+            p: payload
+        }
+    ]);
+}
+
+export function buildVideoRenegotiationFrame(
+    requestId,
+    { codecs, mid = "2", payloadType = 96, rtpmap = null, simulcastEncodings } = {}
+) {
+    return buildNegotiationFrame("renegotiate", requestId, {
+        sdp: sdp(videoMedia(mid, { payloadType, rtpmap })),
+        uploadSlots: [videoUploadSlot(mid, { codecs, simulcastEncodings })]
+    });
+}
