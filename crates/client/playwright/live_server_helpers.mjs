@@ -496,7 +496,7 @@ export async function cameraSubscriptionRid({
     if (!subscription || subscription.state !== "active") {
         return null;
     }
-    return cameraSubscriptionSelectedRid(room, subscription);
+    return subscription.selection?.selectedRid ?? null;
 }
 
 export async function cameraPublicationActive({
@@ -827,35 +827,6 @@ function cameraSubscription(room, consumerSessionId, producerSessionId) {
                 userIdsMatch(subscription.producerUserId, producerSessionId) &&
                 subscription.streamId === "camera"
         );
-}
-
-function cameraSubscriptionSelectedRid(room, subscription) {
-    if (subscription.selection?.selectedRid) {
-        return subscription.selection.selectedRid;
-    }
-    const policyRole = policyRoleForLayoutRole(subscription.layoutRole);
-    if (!policyRole) {
-        return null;
-    }
-    return (
-        room.sources
-            .find((source) => source.sourceId === subscription.sourceId)
-            ?.encodings.find((encoding) => encoding.policyRole === policyRole)?.rid ?? null
-    );
-}
-
-function policyRoleForLayoutRole(layoutRole) {
-    switch (layoutRole) {
-        case "active_speaker":
-        case "featured":
-        case "pinned":
-        case "readable_detail":
-            return "featured";
-        case "visible_thumbnail":
-            return "thumbnail";
-        default:
-            return null;
-    }
 }
 
 function userIdsMatch(actual, expected) {
