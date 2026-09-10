@@ -6,32 +6,13 @@ use crate::engine::room::{
 
 #[derive(Debug, Default)]
 pub(super) struct RoomOutputPlan {
-    track_snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
-    user_info_before_policy: Vec<MessageFanout>,
-    user_info: Vec<MessageFanout>,
-    lifecycle: Vec<LifecycleEffects>,
+    pub(super) track_snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
+    pub(super) user_info_before_policy: Option<MessageFanout>,
+    pub(super) user_info: Option<MessageFanout>,
+    pub(super) lifecycle: LifecycleEffects,
 }
 
 impl RoomOutputPlan {
-    pub(super) fn push_track_snapshots(
-        &mut self,
-        snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
-    ) {
-        self.track_snapshots.extend(snapshots);
-    }
-
-    pub(super) fn push_user_info(&mut self, fanout: MessageFanout) {
-        self.user_info.push(fanout);
-    }
-
-    pub(super) fn push_user_info_before_policy(&mut self, fanout: MessageFanout) {
-        self.user_info_before_policy.push(fanout);
-    }
-
-    pub(super) fn push_lifecycle(&mut self, effects: LifecycleEffects) {
-        self.lifecycle.push(effects);
-    }
-
     pub(super) fn emit_before_policy(&mut self) {
         for (recipient, snapshot) in self.track_snapshots.drain(..) {
             let _ = recipient.send_remote_tracks(snapshot);
@@ -40,27 +21,25 @@ impl RoomOutputPlan {
     }
 
     pub(super) fn emit_user_info_before_policy(&mut self) {
-        for fanout in self.user_info_before_policy.drain(..) {
+        if let Some(fanout) = self.user_info_before_policy.take() {
             fanout.emit();
         }
     }
 
     pub(super) fn emit_after_policy(self) {
-        for fanout in self.user_info {
+        if let Some(fanout) = self.user_info {
             fanout.emit();
         }
-        for effects in self.lifecycle {
-            for close_request in effects.close_requests {
-                let _ = close_request
-                    .sender
-                    .send(UserOutbound::Close(close_request.reason));
-            }
-            for (recipient, snapshot) in effects.track_snapshots {
-                let _ = recipient.send_remote_tracks(snapshot);
-            }
-            for fanout in effects.fanouts {
-                fanout.emit();
-            }
+        for close_request in self.lifecycle.close_requests {
+            let _ = close_request
+                .sender
+                .send(UserOutbound::Close(close_request.reason));
+        }
+        for (recipient, snapshot) in self.lifecycle.track_snapshots {
+            let _ = recipient.send_remote_tracks(snapshot);
+        }
+        for fanout in self.lifecycle.fanouts {
+            fanout.emit();
         }
     }
 }

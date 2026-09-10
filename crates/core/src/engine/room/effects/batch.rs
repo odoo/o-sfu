@@ -111,7 +111,7 @@ impl RoomEffects {
             ..Self::default()
         };
         batch.source_policy.request();
-        batch.output.push_lifecycle(effects);
+        batch.output.lifecycle = effects;
         batch
     }
 
@@ -124,7 +124,7 @@ impl RoomEffects {
                 transport_plan,
             } => {
                 batch.transport = transport_plan;
-                batch.output.push_lifecycle(effects);
+                batch.output.lifecycle = effects;
                 batch.source_policy.request();
                 batch.transport.extend_teardown(session_teardown);
             }
@@ -141,14 +141,14 @@ impl RoomEffects {
             ..Self::default()
         };
         batch.source_policy.request();
-        batch.output.push_lifecycle(commit.effects);
+        batch.output.lifecycle = commit.effects;
         batch.transport.extend_teardown(commit.session_teardowns);
         batch
     }
 
     pub(in crate::engine::room) fn from_presence(commit: PresenceCommit) -> Self {
         let mut batch = Self::default();
-        batch.output.push_user_info(commit.fanout);
+        batch.output.user_info = Some(commit.fanout);
         batch.source_policy.request();
         batch
     }
@@ -158,7 +158,7 @@ impl RoomEffects {
         batch
             .transport
             .push_receiver_work(commit.receiver_route_work, ConsumerSetupOrigin::Publish);
-        batch.push_presence_before_policy(commit.presence);
+        batch.output.user_info_before_policy = commit.presence.map(|presence| presence.fanout);
         batch.source_policy.request();
         batch
     }
@@ -182,8 +182,8 @@ impl RoomEffects {
             .transport
             .extend_remote_source_activity(remote_activity_effects);
         batch.transport.push_producer(source, stream_id, update);
-        batch.output.push_track_snapshots(track_snapshots);
-        batch.push_presence_before_policy(presence);
+        batch.output.track_snapshots = track_snapshots;
+        batch.output.user_info_before_policy = presence.map(|presence| presence.fanout);
         batch.source_policy.request();
         batch
     }
@@ -200,16 +200,9 @@ impl RoomEffects {
             track_snapshots,
         } = commit;
         let mut batch = Self::from_receiver_route(work, ConsumerSetupOrigin::Readiness);
-        batch.output.push_track_snapshots(track_snapshots);
+        batch.output.track_snapshots = track_snapshots;
         batch.source_policy.request();
         batch
-    }
-
-    fn push_presence_before_policy(&mut self, presence: Option<PresenceCommit>) {
-        if let Some(presence) = presence {
-            self.output.push_user_info_before_policy(presence.fanout);
-            self.source_policy.request();
-        }
     }
 
     fn from_receiver_route(work: ReceiverRouteWork, origin: ConsumerSetupOrigin) -> Self {
