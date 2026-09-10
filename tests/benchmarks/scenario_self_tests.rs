@@ -13,7 +13,8 @@
 mod source_policy;
 
 use o_sfu_core::server::transport::benchmark_support::{
-    MeetingFlowBenchFixture, RemoteGateRetryBenchFixture,
+    MeetingFlowBenchFixture, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture,
+    RemoteGateRetryBenchFixture,
 };
 use source_policy::SourcePolicyFixture;
 
@@ -24,6 +25,21 @@ fn source_policy_scenario_reacts_to_receiver_bandwidth() {
     let _ = fixture.run_policy_turns();
     fixture.assert_every_turn_planned();
     fixture.assert_budget_pressure_observed();
+}
+
+#[test]
+fn source_policy_scenario_filters_foreign_and_inactive_speakers() {
+    let mut fixture = SourcePolicyFixture::mixed_speakers();
+    let _ = fixture.run_policy_turns();
+    fixture.assert_every_turn_planned();
+    fixture.assert_speaker_selection();
+}
+
+#[test]
+fn relay_planning_scenario_applies_target_gates() {
+    let mut fixture = RelayFanoutBenchFixture::mixed_gates();
+    assert_eq!(fixture.plan_route_turns(), ROUTE_PLANNING_TURNS * 2);
+    fixture.assert_gate_selection();
 }
 
 /// the meeting scenario must keep exercising the branches it was built for

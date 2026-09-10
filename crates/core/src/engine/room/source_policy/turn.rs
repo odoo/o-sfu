@@ -110,16 +110,24 @@ impl SourcePolicyTurn {
     }
 }
 
+/// Runs policy with injected bandwidth and optional prebuilt speaker observations.
 #[cfg(feature = "internal-benchmarks")]
 pub async fn run_source_policy_turn_for_benchmark(
     room: &Room,
     media_transport: &MediaTransport,
     bandwidth: &ReceiverBandwidthSnapshot,
+    active_speakers: Option<&[ActiveSpeakerSource]>,
     now: Instant,
 ) -> bool {
     let guard = room.lock_source_policy().await;
     SourcePolicyTurn::packet_selection()
-        .execute_observed(&guard, Some(media_transport), None, Some(bandwidth), now)
+        .execute_observed(
+            &guard,
+            Some(media_transport),
+            active_speakers,
+            Some(bandwidth),
+            now,
+        )
         .await
 }
 
