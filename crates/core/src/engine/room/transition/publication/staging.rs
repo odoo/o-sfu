@@ -10,10 +10,11 @@ use tracing::{info, warn};
 use crate::engine::{
     ConnectionId, UserId,
     media_transport::{
-        AppliedSessionAnswer, SessionUploadEncoding, TransportMediaId, TransportTeardown,
+        AppliedSessionAnswer, MediaTransport, SessionUploadEncoding, TransportMediaId,
+        TransportTeardown,
     },
     room::{
-        RoomUserOperation,
+        SourcePolicyGuard,
         effects::batch::{RoomEffectContext, RoomEffects},
         media_graph::ValidatedPublish,
     },
@@ -139,7 +140,8 @@ impl StagedPublish {
 
     pub(super) async fn commit_answer_guarded(
         self,
-        operation: RoomUserOperation<'_>,
+        guard: &SourcePolicyGuard<'_>,
+        media_transport: &MediaTransport,
         applied_answer: &AppliedSessionAnswer,
     ) -> Option<UserStreamId> {
         let media = self.media;
@@ -150,7 +152,7 @@ impl StagedPublish {
             let user = self.descriptor.session_key.user_id().clone();
             let connection = self.descriptor.session_key.connection_id();
             let stream_id = self.descriptor.intent.stream_id().clone();
-            self.release_reserved_media(operation).await;
+            self.release_reserved_media(media_transport).await;
             warn!(
                 user_id = ?user,
                 connection_id = ?connection,
@@ -161,16 +163,18 @@ impl StagedPublish {
             return None;
         };
         let encodings = applied_answer.negotiated_producer_upload_encodings(media);
-        self.commit_rtp_guarded(operation, rtp, encodings).await
+        self.commit_rtp_guarded(guard, media_transport, rtp, encodings)
+            .await
     }
 
     pub(super) async fn commit_rtp_guarded(
         self,
-        operation: RoomUserOperation<'_>,
+        guard: &SourcePolicyGuard<'_>,
+        media_transport: &MediaTransport,
         rtp: RouterRtpParameters,
         upload_encodings: &[SessionUploadEncoding],
     ) -> Option<UserStreamId> {
-        let room = operation.room;
+        let room = guard.room();
         let user = self.descriptor.session_key.user_id().clone();
         let connection = self.descriptor.session_key.connection_id();
         let stream_id = self.descriptor.intent.stream_id().clone();
@@ -181,7 +185,7 @@ impl StagedPublish {
             state.commit_publish_reservation(self.descriptor.clone(), rtp, upload_encodings, media)
         };
         let Some(commit) = committed else {
-            self.release_reserved_media(operation).await;
+            self.release_reserved_media(media_transport).await;
             warn!(
                 user_id = ?user,
                 connection_id = ?connection,
@@ -194,9 +198,8 @@ impl StagedPublish {
         // Room topology now owns the transport media. Disarm only after
         // acceptance so rejected commits still take the explicit teardown path.
         self.commit_reservation();
-        let context = RoomEffectContext::runtime(operation.media_transport);
         RoomEffects::from_publish(commit)
-            .execute_with_source_policy_guard(room, context)
+            .execute_with_source_policy_guard(guard, RoomEffectContext::runtime(media_transport))
             .await;
         info!(
             event = telemetry_event::PUBLISH_COMMITTED,
@@ -210,9 +213,8 @@ impl StagedPublish {
         Some(stream_id)
     }
 
-    pub(super) async fn release_reserved_media(self, operation: RoomUserOperation<'_>) {
-        operation
-            .media_transport
+    pub(super) async fn release_reserved_media(self, media_transport: &MediaTransport) {
+        media_transport
             .teardown([self.release_into_teardown()])
             .await;
     }

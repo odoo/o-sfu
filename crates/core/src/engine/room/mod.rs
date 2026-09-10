@@ -33,6 +33,7 @@ mod transition;
 pub use TESTS::api::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi};
 pub use factory::{RoomAdmissionPolicy, RoomConfig, RoomRuntimePolicy};
 pub(crate) use instance::RoomUserOperation;
+use instance::SourcePolicyGuard;
 pub use instance::{
     Room, RoomJoinError, RoomManagerJoinError, RoomManagerServeError, RoomMediaCounts,
 };

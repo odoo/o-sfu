@@ -24,14 +24,14 @@ use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use tracing::warn;
 
 use super::super::{
-    Room, RoomUserOperation,
+    Room, RoomUserOperation, SourcePolicyGuard,
     effects::batch::{RoomEffectContext, RoomEffects},
     media_graph::{ProducerActivityCommit, PublishIntentPlan, ValidatedPublish},
 };
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::{ConnectionId, UserId};
 use crate::engine::{
-    media_transport::{AppliedSessionAnswer, TransportAdapterError},
+    media_transport::{AppliedSessionAnswer, MediaTransport, TransportAdapterError},
     source_model::{SourceDeactivateIntent, SourcePublishIntent, UserStreamId},
 };
 
@@ -133,7 +133,7 @@ impl RoomUserOperation<'_> {
             }
         };
         if let Some(duplicate) = duplicate {
-            duplicate.release_reserved_media(self).await;
+            duplicate.release_reserved_media(self.media_transport).await;
             return Ok(PublishStageOutcome::DuplicateAfterReservation);
         }
         Ok(PublishStageOutcome::Staged)
@@ -153,16 +153,18 @@ impl RoomUserOperation<'_> {
         if has_staged_publish {
             return Ok(PublishIntentOutcome::Noop);
         }
-        let source_policy_guard = self.room.source_policy_turn.lock().await;
+        let source_policy_guard = self.room.lock_source_policy().await;
         let plan = {
-            let mut state = self.room.state.write().await;
+            let mut state = source_policy_guard.room().state.write().await;
             state.apply_publish_intent(self.user_id, self.connection_id, intent, can_stage)
         };
         match plan {
             PublishIntentPlan::Activate(commit) => {
                 // Prevent another source-policy turn from interleaving with this
                 // activity commit and its ordered policy and transport effects.
-                self.execute_publication_activity(commit).await;
+                execute_publication_activity(&source_policy_guard, self.media_transport, commit)
+                    .await;
+                drop(source_policy_guard);
                 Ok(PublishIntentOutcome::Activated)
             }
             PublishIntentPlan::Noop => {
@@ -193,7 +195,7 @@ impl RoomUserOperation<'_> {
         }) else {
             return false;
         };
-        staged.release_reserved_media(self).await;
+        staged.release_reserved_media(self.media_transport).await;
         true
     }
 
@@ -206,9 +208,9 @@ impl RoomUserOperation<'_> {
         }
         // Keep publication activity and its policy effects in one serialized
         // turn so policy cannot observe the state change without its transport work.
-        let _source_policy_guard = self.room.source_policy_turn.lock().await;
+        let source_policy_guard = self.room.lock_source_policy().await;
         let commit = {
-            let mut state = self.room.state.write().await;
+            let mut state = source_policy_guard.room().state.write().await;
             state.apply_publication_activity(
                 self.user_id,
                 self.connection_id,
@@ -220,7 +222,8 @@ impl RoomUserOperation<'_> {
         let Ok(commit) = commit else {
             return DeactivateIntentOutcome::Noop;
         };
-        self.execute_publication_activity(commit).await;
+        execute_publication_activity(&source_policy_guard, self.media_transport, commit).await;
+        drop(source_policy_guard);
         DeactivateIntentOutcome::Deactivated
     }
 
@@ -229,26 +232,30 @@ impl RoomUserOperation<'_> {
         // Hold one source-policy turn across the answer batch. Policy must not
         // observe a committed prefix while later answer-proven publishes remain
         // outside the room graph.
-        let _source_policy_guard = self.room.source_policy_turn.lock().await;
+        let source_policy_guard = self.room.lock_source_policy().await;
         let staged = {
-            let mut state = self.room.state.write().await;
+            let mut state = source_policy_guard.room().state.write().await;
             state
                 .staged_publishes
                 .take_for_connection(self.user_id, self.connection_id)
         };
         for publish in staged {
-            publish.commit_answer_guarded(self, applied_answer).await;
+            publish
+                .commit_answer_guarded(&source_policy_guard, self.media_transport, applied_answer)
+                .await;
         }
+        drop(source_policy_guard);
     }
+}
 
-    async fn execute_publication_activity(self, commit: ProducerActivityCommit) {
-        RoomEffects::from_publication_activity(commit)
-            .execute_with_source_policy_guard(
-                self.room,
-                RoomEffectContext::runtime(self.media_transport),
-            )
-            .await;
-    }
+async fn execute_publication_activity(
+    guard: &SourcePolicyGuard<'_>,
+    media_transport: &MediaTransport,
+    commit: ProducerActivityCommit,
+) {
+    RoomEffects::from_publication_activity(commit)
+        .execute_with_source_policy_guard(guard, RoomEffectContext::runtime(media_transport))
+        .await;
 }
 
 impl Room {
