@@ -23,7 +23,7 @@ pub mod metrics {
 /// recording integrations register packet sinks through the packet-sink
 /// registry while transport code only depends on this narrow sink contract
 pub mod recording {
-    pub use crate::engine::recording::MediaPacketSink;
+    pub use crate::engine::packet_sink_registry::PacketSink as MediaPacketSink;
 }
 
 /// room packet-sink registry shared by transport workers

@@ -6,8 +6,11 @@ use str0m::{
 };
 
 use super::super::{
-    bootstrap, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
-    slots::ConsumerStreamHandle, source_route::MediaRouteDestination, state::PacketLoopState,
+    bootstrap,
+    state::{
+        PacketLoopState, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
+        slots::ConsumerStreamHandle, source_route::MediaRouteDestination,
+    },
 };
 use crate::{
     Bitrate,
@@ -36,7 +39,7 @@ pub fn prepare_source_session_with_rid(
 ) -> TransportMediaId {
     let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 47_000));
     assert!(
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             src_key,
             candidate_addr,

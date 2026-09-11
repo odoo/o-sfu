@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-use tokio::sync::{Mutex as AsyncMutex, RwLock};
+use tokio::sync::{Mutex as AsyncMutex, MutexGuard, RwLock};
 
 use super::{definition::RoomDefinition, factory::RoomInit, state::RoomState};
 use crate::{
@@ -51,12 +51,29 @@ pub(crate) struct RoomUserOperation<'a> {
     pub media_transport: &'a MediaTransport,
 }
 
+/// Holds publication and source-policy ordering for one room.
+///
+/// Guarded effects derive their room from this guard so another room's lock
+/// cannot authorize them. Keep the guard across each state commit and its
+/// effects, including every publication resolved by one answer.
+#[must_use = "dropping this guard releases source-policy ordering"]
+pub(super) struct SourcePolicyGuard<'a> {
+    room: &'a Room,
+    _lock: MutexGuard<'a, ()>,
+}
+
+impl SourcePolicyGuard<'_> {
+    pub const fn room(&self) -> &Room {
+        self.room
+    }
+}
+
 pub struct Room {
     pub(super) definition: RoomDefinition,
     pub(super) metrics: Arc<RuntimeMetrics>,
     /// Serializes publication commits and activity changes with source-policy
     /// turns so their transport effects cannot overtake each other.
-    pub(super) source_policy_turn: AsyncMutex<()>,
+    source_policy_turn: AsyncMutex<()>,
     pub(super) state: RwLock<RoomState>,
 }
 
@@ -97,6 +114,17 @@ impl Room {
             user_id,
             connection_id,
             media_transport,
+        }
+    }
+
+    /// Serializes publication commits and effects with source-policy turns.
+    ///
+    /// Call guarded operations while this guard is held. Acquiring another
+    /// source-policy guard for this room before releasing it would deadlock.
+    pub(super) async fn lock_source_policy(&self) -> SourcePolicyGuard<'_> {
+        SourcePolicyGuard {
+            room: self,
+            _lock: self.source_policy_turn.lock().await,
         }
     }
 

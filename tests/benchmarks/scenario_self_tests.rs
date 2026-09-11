@@ -5,14 +5,17 @@
 //! these tests run the scenarios outside Valgrind so the normal test job fails
 //! when a scenario stops reaching the paths it exists to measure
 //!
-//! both scenarios live in this one target on purpose. a missing target fails the
+//! these scenarios live in this one target on purpose. a missing target fails the
 //! gate, while a name filter that matches nothing exits zero, which would turn
 //! the gate into the silent no-op it exists to prevent
 
 #[path = "source_policy/mod.rs"]
 mod source_policy;
 
-use o_sfu_core::server::transport::benchmark_support::MeetingFlowBenchFixture;
+use o_sfu_core::server::transport::benchmark_support::{
+    MeetingFlowBenchFixture, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture,
+    RemoteGateRetryBenchFixture,
+};
 use source_policy::SourcePolicyFixture;
 
 /// the room's video budget solver must keep reacting to receiver bandwidth
@@ -22,6 +25,21 @@ fn source_policy_scenario_reacts_to_receiver_bandwidth() {
     let _ = fixture.run_policy_turns();
     fixture.assert_every_turn_planned();
     fixture.assert_budget_pressure_observed();
+}
+
+#[test]
+fn source_policy_scenario_filters_foreign_and_inactive_speakers() {
+    let mut fixture = SourcePolicyFixture::mixed_speakers();
+    let _ = fixture.run_policy_turns();
+    fixture.assert_every_turn_planned();
+    fixture.assert_speaker_selection();
+}
+
+#[test]
+fn relay_planning_scenario_applies_target_gates() {
+    let mut fixture = RelayFanoutBenchFixture::mixed_gates();
+    assert_eq!(fixture.plan_route_turns(), ROUTE_PLANNING_TURNS * 2);
+    fixture.assert_gate_selection();
 }
 
 /// the meeting scenario must keep exercising the branches it was built for
@@ -35,4 +53,15 @@ fn meeting_scenario_exercises_the_whole_packet_loop() {
     let total_work = fixture.run_meeting();
     assert!(total_work > 0, "meeting scenario produced no work");
     fixture.assert_packet_loop_coverage();
+}
+
+/// saturated control mailboxes must leave every source's packet gate pending
+#[test]
+fn remote_gate_retry_scenario_keeps_saturated_sources_pending() {
+    for (mut fixture, source_count) in [
+        (RemoteGateRetryBenchFixture::sources_64(), 64),
+        (RemoteGateRetryBenchFixture::sources_256(), 256),
+    ] {
+        assert_eq!(fixture.retry_under_pressure(), source_count);
+    }
 }

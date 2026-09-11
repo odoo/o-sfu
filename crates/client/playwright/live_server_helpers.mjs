@@ -80,17 +80,11 @@ export async function createPeerPage(context) {
             }
             media?.track?.stop();
             delete harness.localMedia[streamType];
-            if (streamType === "camera") {
-                harness.localTrack = null;
-                harness.localTrackTicker = null;
-            }
         };
         globalThis.__liveHarness = {
             client: null,
             errors: [],
             localMedia: {},
-            localTrack: null,
-            localTrackTicker: null,
             negotiationNeededByPeer: new WeakMap(),
             stateChanges: [],
             updates: []
@@ -301,10 +295,6 @@ export async function publishSyntheticVideo(
                 ticker,
                 track
             };
-            if (streamType === "camera") {
-                harness.localTrack = track;
-                harness.localTrackTicker = ticker;
-            }
             harness.client.updateUpload(streamType, track);
             return {
                 fillPixel,
@@ -441,13 +431,11 @@ export async function latestBroadcastUpdate(page, senderId) {
     return page.evaluate((expectedSenderId) => {
         const harness = globalThis.__liveHarness;
         return (
-            harness.updates
-                .filter(
-                    (update) =>
-                        update.name === "broadcast" &&
-                        String(update.payload.senderId) === String(expectedSenderId)
-                )
-                .at(-1) ?? null
+            harness.updates.findLast(
+                (update) =>
+                    update.name === "broadcast" &&
+                    String(update.payload.senderId) === String(expectedSenderId)
+            ) ?? null
         );
     }, senderId);
 }
@@ -457,9 +445,9 @@ export async function latestInfoUpdate(page, sessionId) {
         const harness = globalThis.__liveHarness;
         const targetKey = String(targetSessionId);
         return (
-            harness.updates
-                .filter((update) => update.name === "info_change" && update.payload[targetKey])
-                .at(-1) ?? null
+            harness.updates.findLast(
+                (update) => update.name === "info_change" && update.payload[targetKey]
+            ) ?? null
         );
     }, sessionId);
 }
@@ -469,14 +457,12 @@ export async function latestTrackUpdate(page, targetSessionId, targetType) {
         ({ sessionId: nextSessionId, type: nextType }) => {
             const harness = globalThis.__liveHarness;
             return (
-                harness.updates
-                    .filter(
-                        (update) =>
-                            update.name === "track" &&
-                            update.payload.sessionId === nextSessionId &&
-                            update.payload.type === nextType
-                    )
-                    .at(-1) ?? null
+                harness.updates.findLast(
+                    (update) =>
+                        update.name === "track" &&
+                        update.payload.sessionId === nextSessionId &&
+                        update.payload.type === nextType
+                ) ?? null
             );
         },
         { sessionId: targetSessionId, type: targetType }
@@ -496,7 +482,7 @@ export async function cameraSubscriptionRid({
     if (!subscription || subscription.state !== "active") {
         return null;
     }
-    return cameraSubscriptionSelectedRid(room, subscription);
+    return subscription.selection?.selectedRid ?? null;
 }
 
 export async function cameraPublicationActive({
@@ -531,9 +517,7 @@ export async function localSenderEncodings(page, streamType) {
     return page.evaluate((targetStreamType) => {
         const harness = globalThis.__liveHarness;
         const peerConnection = harness.client?._runtime?._peerSession?._activePeer;
-        const localTrack =
-            harness.localMedia?.[targetStreamType]?.track ??
-            (targetStreamType === "camera" ? harness.localTrack : null);
+        const localTrack = harness.localMedia?.[targetStreamType]?.track;
         if (!peerConnection || !localTrack) {
             return [];
         }
@@ -827,35 +811,6 @@ function cameraSubscription(room, consumerSessionId, producerSessionId) {
                 userIdsMatch(subscription.producerUserId, producerSessionId) &&
                 subscription.streamId === "camera"
         );
-}
-
-function cameraSubscriptionSelectedRid(room, subscription) {
-    if (subscription.selection?.selectedRid) {
-        return subscription.selection.selectedRid;
-    }
-    const policyRole = policyRoleForLayoutRole(subscription.layoutRole);
-    if (!policyRole) {
-        return null;
-    }
-    return (
-        room.sources
-            .find((source) => source.sourceId === subscription.sourceId)
-            ?.encodings.find((encoding) => encoding.policyRole === policyRole)?.rid ?? null
-    );
-}
-
-function policyRoleForLayoutRole(layoutRole) {
-    switch (layoutRole) {
-        case "active_speaker":
-        case "featured":
-        case "pinned":
-        case "readable_detail":
-            return "featured";
-        case "visible_thumbnail":
-            return "thumbnail";
-        default:
-            return null;
-    }
 }
 
 function userIdsMatch(actual, expected) {

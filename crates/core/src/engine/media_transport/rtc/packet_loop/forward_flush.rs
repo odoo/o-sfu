@@ -60,17 +60,18 @@ use tracing::debug;
 
 use super::{
     super::{
-        forwarded_packet::{ForwardedPacket, ForwardedPacketSource},
-        forwarding_destination::{ForwardingDestination, relay_enqueue_result},
-        media_registry::RegisteredMediaHandle,
-        relay_registry::RelayEnqueueOutcome,
-        state::PacketLoopState,
-        worker::{
+        recovery::{
             KeyframeRequestMode, KeyframeRequestTarget, apply_src_decoder_ready,
             request_kf_for_target,
         },
+        state::{
+            PacketLoopState, media_registry::RegisteredMediaHandle,
+            relay_registry::RelayEnqueueOutcome,
+        },
+        worker::buffers::PacketLoopBuffers,
     },
-    buffers::PacketLoopBuffers,
+    forwarded_packet::{ForwardedPacket, ForwardedPacketSource, PacketFacts},
+    forwarding_destination::{ForwardingDestination, relay_enqueue_result},
 };
 use crate::engine::{
     media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
@@ -81,7 +82,7 @@ use crate::engine::{
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-pub(super) fn record_incoming_stats(
+pub(in super::super) fn record_incoming_stats(
     state: &mut PacketLoopState,
     source_policy_signal: &SourcePolicySignal,
     control: &RtcMetricsRecorder,
@@ -90,7 +91,7 @@ pub(super) fn record_incoming_stats(
 ) {
     let mut pending_packets = take(&mut buffers.pending_packets);
     for packet in &mut pending_packets {
-        record_incoming_packet(state, control, rtp, buffers, packet);
+        let _ = record_incoming_packet(state, control, rtp, buffers, packet);
     }
     buffers.pending_packets = pending_packets;
     // Finish after every applicable RID-readiness observation in the batch. Gate
@@ -136,18 +137,18 @@ fn learn_producer_packet_binding(
 /// Records source identity, activity, decoder readiness and bitrate for one
 /// incoming packet.
 ///
-/// Packets without a resolvable source are ignored. `buffers` stages policy
-/// wakeups and broad recovery while RID recovery may be requested immediately.
-pub(super) fn record_incoming_packet(
+/// Borrows cached facts for planning or returns `None` when source resolution fails.
+/// `buffers` stages policy wakeups and broad recovery while RID recovery may be
+/// requested immediately.
+pub(in super::super) fn record_incoming_packet<'a>(
     state: &mut PacketLoopState,
     control: &RtcMetricsRecorder,
     rtp: &RtpMetricsRecorder,
     buffers: &mut PacketLoopBuffers,
-    packet: &mut ForwardedPacket,
-) {
-    let Some(facts) = packet.resolve_facts(state) else {
-        return;
-    };
+    packet: &'a mut ForwardedPacket,
+) -> Option<&'a PacketFacts> {
+    let _ = packet.resolve_facts(state);
+    let facts = packet.cached_facts()?;
     let payload_len = packet.payload().len();
     let transport_media_id = facts.src_media;
     let decoder_refresh = facts.codec.decoder_refresh();
@@ -223,7 +224,7 @@ pub(super) fn record_incoming_packet(
     if bitrate_observation.ingress_started() {
         cold_path();
         let Some(src_key) = packet.src_key(state) else {
-            return;
+            return Some(facts);
         };
         debug!(
             user_id = ?src_key.user_id(),
@@ -242,11 +243,12 @@ pub(super) fn record_incoming_packet(
         );
     }
     rtp.record_ingress(payload_len);
+    Some(facts)
 }
 
 /// Flushes deferred keyframe recovery and source-policy wakeups for one
 /// observed packet batch.
-pub(super) fn finish_incoming_stats(
+pub(in super::super) fn finish_incoming_stats(
     state: &mut PacketLoopState,
     source_policy_signal: &SourcePolicySignal,
     control: &RtcMetricsRecorder,
@@ -388,7 +390,7 @@ pub fn drain_relay_packets(
 /// Stale local routes and failed relay enqueues are isolated to their
 /// destination. Local RTC destinations enqueue into str0m and mark the session
 /// dirty.
-pub(in crate::engine::media_transport::rtc) fn flush_packet_forwards(
+pub(in super::super) fn flush_packet_forwards(
     state: &mut PacketLoopState,
     metrics: &RuntimeMetrics,
     rtp_metrics: &RtpMetricsRecorder,

@@ -3,18 +3,18 @@
 #[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
 mod TESTS;
-mod catalog;
 mod codec;
 mod envelope;
-mod wire_catalog;
+mod messages;
+mod payloads;
 
-pub use catalog::{
+pub use o_sfu_model::{PeerSnapshot, RecordingOptions, WebSocketCloseCode};
+pub use payloads::{
     AuthPayload, ClientBroadcastPayload, NegotiationUploadEncoding, NegotiationUploadSlot,
     PeerInfoPayload, PeerLeftPayload, RecordingActionResult, ServerBroadcastPayload,
     SessionDescriptionPayload, SourceDescriptor, SourceEncodingDescriptor, StreamIntentPayload,
     SubscribePayload, TrackBinding, UploadLayerPolicyRole, WelcomePayload,
 };
-pub use o_sfu_model::{PeerSnapshot, RecordingOptions, WebSocketCloseCode};
 
 pub use self::{
     codec::{ClientEnvelope, ServerEnvelope},
@@ -22,7 +22,7 @@ pub use self::{
         Envelope, EnvelopeBatch, EnvelopeBatchDecodeError, MAX_ENVELOPE_BATCH_LEN, RequestId,
         decode_envelope_batch,
     },
-    wire_catalog::{
+    messages::{
         ClientMessage, ClientRequest, ClientResponse, EnvelopeDecodeError, ServerMessage,
         ServerRequest, ServerResponse,
     },

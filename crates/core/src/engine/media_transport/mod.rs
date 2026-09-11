@@ -29,9 +29,9 @@ pub mod test_support;
 mod types;
 mod workers;
 
-use std::sync::Arc;
 #[cfg(any(test, feature = "testing-transport"))]
 use std::sync::atomic::AtomicUsize;
+use std::{ptr, sync::Arc};
 
 pub use build::MediaTransportBuildError;
 pub use config::{MediaTransportConfig, MediaTransportDeps};
@@ -329,15 +329,11 @@ impl MediaTransport {
     ) -> Result<TransportMediaId, TransportAdapterError> {
         let result = async {
             Self::ensure_same_room(consumer_session_key, source_session_key)?;
-            let relay_route =
-                self.relay_registration_workers(consumer_session_key, source_session_key)?;
-            let remote_source_control =
-                relay_route
-                    .as_ref()
-                    .map(|(source_worker, consumer_worker)| {
-                        source_worker.remote_source_control(consumer_worker)
-                    });
-            self.require_worker_for_user(consumer_session_key)?
+            let consumer_worker = self.require_worker_for_user(consumer_session_key)?;
+            let source_worker = self.require_worker_for_user(source_session_key)?;
+            let remote_source_control = (!ptr::eq(consumer_worker, source_worker))
+                .then(|| source_worker.remote_source_control(consumer_worker));
+            consumer_worker
                 .request_worker(|response| RtcWorkerCommand::AddSendMedia {
                     consumer_key: consumer_session_key.clone(),
                     media_kind: signaling_to_str0m_media_kind(media_kind),

@@ -1,11 +1,15 @@
 use str0m::media::Rid;
 
-use super::fixtures::*;
-use crate::engine::media_transport::rtc::{
-    bitrate::{BitrateRegistry, IncomingBitrateObservation},
-    bootstrap::ensure_session_rtc_state,
-    state::PacketLoopState,
-    test_support::collect_ready_session_keys,
+use super::{
+    super::{
+        bootstrap::test_support::ensure_session_rtc_state,
+        state::{
+            PacketLoopState,
+            bitrate::{BitrateRegistry, IncomingBitrateObservation},
+        },
+        test_support::collect_ready_session_keys,
+    },
+    fixtures::*,
 };
 
 fn insert_live_session(state: &mut PacketLoopState, session_key: &TransportSessionKey) {
@@ -173,6 +177,70 @@ fn packet_loop_state_clears_dirty_and_timeout_schedule_for_removed_session() {
 
     assert_eq!(ready_sessions, vec![retained_session_key]);
     assert_eq!(state.next_timeout_deadline(), None);
+}
+
+#[test]
+fn closing_session_repairs_surviving_consumer_feedback_indexes() {
+    use std::sync::Mutex;
+
+    use super::super::{
+        control::{SessionCloseDisposition, worker_close_session},
+        state::{
+            RtcSnapshotState, media_registry::ConsumerKeyframeTarget,
+            route_control::PacketLayerGate,
+        },
+        test_support::MediaWorkerScenario,
+    };
+    use crate::engine::metrics::RuntimeMetrics;
+
+    let mut state = PacketLoopState::default();
+    let source = TransportMediaId::new(80);
+    let removed = transport_key(1, 39, UserId::Integer(39));
+    let first = transport_key(1, 40, UserId::Integer(40));
+    let second = transport_key(1, 41, UserId::Integer(41));
+    let mid = Mid::from("cam-down");
+    insert_live_session(&mut state, &removed);
+    let mut scenario = MediaWorkerScenario::new(&mut state);
+    scenario.destination(source, removed.clone(), mid);
+    for (session, rid) in [(&first, "lo"), (&second, "hi")] {
+        scenario.destination_with_gate(
+            source,
+            session.clone(),
+            mid,
+            PacketLayerGate::Rid(rid.into()),
+        );
+    }
+
+    worker_close_session(
+        &mut state,
+        &Arc::new(Mutex::new(BitrateRegistry::default())),
+        &Arc::new(Mutex::new(RtcSnapshotState::default())),
+        &removed,
+        SessionCloseDisposition::OwnerClose,
+        &RuntimeMetrics::default(),
+    );
+
+    assert_eq!(state.active_consumer_kf_target(&removed, mid, None), None);
+    for (session, rid) in [(&first, "lo"), (&second, "hi")] {
+        assert_eq!(
+            state.active_consumer_kf_target(session, mid, None),
+            Some(ConsumerKeyframeTarget {
+                src_media: source,
+                rid: Some(rid.into()),
+            }),
+        );
+    }
+    assert_eq!(
+        state
+            .routes
+            .local_route(source)
+            .expect("surviving consumers keep the source route")
+            .destinations
+            .iter()
+            .map(|destination| &destination.dest_session)
+            .collect::<Vec<_>>(),
+        vec![&first, &second],
+    );
 }
 
 #[test]

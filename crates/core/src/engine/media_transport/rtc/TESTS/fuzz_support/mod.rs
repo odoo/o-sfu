@@ -6,8 +6,7 @@ use std::{
 
 use super::{
     bootstrap,
-    packet_loop::{PacketRouteDatagram, route_pkt_to_session_at},
-    routing_miss::DemuxRecoveryState,
+    packet_loop::{PacketRouteDatagram, route_pkt_to_session_at, routing_miss::DemuxRecoveryState},
     state::PacketLoopState,
 };
 use crate::{
@@ -69,7 +68,7 @@ impl IngressDemuxFuzzFixture {
             UserId::Integer(63),
         );
         let mut state = PacketLoopState::default();
-        let _ = bootstrap::ensure_session_rtc_state(
+        let _ = bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session_key,
             candidate_addr,

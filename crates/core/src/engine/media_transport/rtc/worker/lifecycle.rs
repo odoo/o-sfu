@@ -26,15 +26,15 @@ use tracing::{info, warn};
 
 use super::{
     super::{
-        RtcWorkerConfig, RtpProfile,
-        bitrate::BitrateRegistry,
-        bootstrap,
+        RtcWorkerConfig, RtpProfile, bootstrap,
         commands::{RtcWorkerCommand, RtcWorkerResponse},
-        packet_loop::{self, PacketLoopConfig},
-        relay_registry::{RELAY_MAILBOX_CAPACITY, RelayPacketMailbox, sender_backlog_depth},
-        state::{RtcSnapshotState, TransportSessionHealth},
+        state::{
+            RtcSnapshotState, TransportSessionHealth,
+            bitrate::BitrateRegistry,
+            relay_registry::{RELAY_MAILBOX_CAPACITY, RelayPacketMailbox, sender_backlog_depth},
+        },
     },
-    RtcWorker, RtcWorkerHandle,
+    PacketLoopConfig, RtcWorker, RtcWorkerHandle,
 };
 use crate::{
     Bitrate, MediaWorkerId, RtcPortRange, RtcUdpIoBackend,
@@ -52,7 +52,7 @@ struct PacketLoopStartup {
     config: PacketLoopConfig,
     bitrate_registry: Arc<Mutex<BitrateRegistry>>,
     snapshot_state: Arc<Mutex<RtcSnapshotState>>,
-    inputs: packet_loop::PacketLoopInputReceivers,
+    inputs: super::PacketLoopInputReceivers,
 }
 
 impl PacketLoopStartup {
@@ -77,7 +77,7 @@ impl PacketLoopStartup {
             // disappears. Returning releases the socket and packet-loop inputs.
             return;
         }
-        packet_loop::run_packet_loop(
+        super::run_packet_loop(
             self.config,
             shared_socket,
             self.bitrate_registry,
@@ -210,7 +210,7 @@ impl RtcWorker {
         // loop, while authoritative state stays owned by the worker task
         let bitrate_registry = Arc::new(Mutex::new(BitrateRegistry::default()));
         let snapshot_state = Arc::new(Mutex::new(RtcSnapshotState::default()));
-        let packet_loop_delay = Arc::new(packet_loop::PacketLoopDelaySnapshot::new(Instant::now()));
+        let packet_loop_delay = Arc::new(super::PacketLoopDelaySnapshot::new(Instant::now()));
         let shutdown = CancellationToken::new();
         let handle = RtcWorkerHandle {
             command_tx,
@@ -222,7 +222,7 @@ impl RtcWorker {
             packet_loop_delay: Arc::clone(&packet_loop_delay),
         };
         let packet_loop_inputs =
-            packet_loop::PacketLoopInputReceivers::new(command_rx, relay_rx, shutdown.clone());
+            super::PacketLoopInputReceivers::new(command_rx, relay_rx, shutdown.clone());
         #[cfg(any(test, feature = "testing-transport"))]
         let packet_loop_inputs = debug_channels.install(packet_loop_inputs);
         let metrics = &deps.metrics;

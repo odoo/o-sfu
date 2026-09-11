@@ -10,13 +10,13 @@ use super::super::{
     bootstrap,
     packet_loop::{
         PacketRouteDatagram, UdpIngressBenchHarness, route_pkt_to_session_at,
-        route_queued_ingress_datagrams_for_benchmark,
+        routing_miss::DemuxRecoveryState,
     },
-    routing_miss::DemuxRecoveryState,
     state::PacketLoopState,
     test_support::{
         sample_rtp_packet_with_len, serialize_stun_message, test_transport_session_key,
     },
+    worker::route_queued_ingress_datagrams_for_benchmark,
 };
 use crate::{
     Bitrate,
@@ -71,7 +71,7 @@ impl IngressRoutingBenchFixture {
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
 
-        let bootstrap_succeeded = bootstrap::ensure_session_rtc_state(
+        let bootstrap_succeeded = bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session_key,
             candidate_addr,

@@ -10,13 +10,17 @@ use str0m::{
 };
 
 use super::super::{
-    bitrate::{BitrateRegistry, MediaBitrateCounter},
     bootstrap,
-    forwarded_packet::ForwardedPacket,
-    forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
-    route_control::PacketLayerGate,
-    source_route::MediaRouteDestination,
-    state::PacketLoopState,
+    packet_loop::{
+        forwarded_packet::ForwardedPacket,
+        forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
+    },
+    state::{
+        PacketLoopState,
+        bitrate::{BitrateRegistry, MediaBitrateCounter},
+        route_control::PacketLayerGate,
+        source_route::MediaRouteDestination,
+    },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
 use crate::{
@@ -63,7 +67,7 @@ impl LocalSendBenchFixture {
         let src_media = TransportMediaId::new(76);
         let dst_media = TransportMediaId::new(77);
         let mut state = PacketLoopState::default();
-        bootstrap::ensure_session_rtc_state(
+        bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &consumer,
             SocketAddr::from(([127, 0, 0, 1], 47_100)),

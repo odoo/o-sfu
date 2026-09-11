@@ -182,6 +182,53 @@ async fn room_and_user_lifecycle_events_preserve_contract_fields() {
             &[],
         );
     }
+    assert_exact(
+        telemetry_event::ROOM_DESTROYED,
+        &[("room_id", Value::from(room.uuid()))],
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn users_bulk_disconnected_event_preserves_contract_fields() {
+    let _guard = capture().await;
+    let manager = RoomManager::for_test();
+    let media_transport = real_adapter();
+    let room = manager
+        .serve_room(
+            "issuer-bulk-disconnect",
+            TEST_ROOM_KEY,
+            &RoomConfig::default(),
+            Some("203.0.113.1"),
+        )
+        .await
+        .expect("test room should be served");
+    manager_join_user(&manager, &room, 1, &media_transport).await;
+    // success case: user is in a live room; this also empties and destroys the room
+    manager
+        .disconnect_users(room.uuid(), &[UserId::Integer(1)], &media_transport)
+        .await;
+    assert_exact(
+        telemetry_event::USERS_BULK_DISCONNECTED,
+        &[
+            ("room_id", Value::from(room.uuid())),
+            ("requested_user_count", Value::from(1u64)),
+            ("disconnected_session_count", Value::from(1u64)),
+            ("outcome", Value::from("success")),
+        ],
+    );
+    // room_missing case: the same room was destroyed by the previous call
+    manager
+        .disconnect_users(room.uuid(), &[UserId::Integer(1)], &media_transport)
+        .await;
+    assert_exact(
+        telemetry_event::USERS_BULK_DISCONNECTED,
+        &[
+            ("room_id", Value::from(room.uuid())),
+            ("requested_user_count", Value::from(1u64)),
+            ("disconnected_session_count", Value::from(0u64)),
+            ("outcome", Value::from("room_missing")),
+        ],
+    );
 }
 
 #[tokio::test]

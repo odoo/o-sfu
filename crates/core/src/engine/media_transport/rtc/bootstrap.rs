@@ -21,18 +21,20 @@ use tracing::{info, warn};
 
 use super::{
     RtpProfile,
-    bitrate::MediaBitrateCounter,
-    local_send_rewrite::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
+    consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     packet_loop::{RtcUdpSocket, UdpIngress},
-    slots::SessionStore,
-    state::{RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket},
+    state::{
+        RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
+        slots::SessionStore,
+    },
 };
 use crate::{
     Bitrate, RtcPortRange, RtcUdpIoBackend,
     engine::media_transport::{TransportAdapterError, TransportSessionKey},
 };
 #[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
-use crate::{CodecPreferences, MediaCodecFlags};
+#[path = "TESTS/bootstrap.rs"]
+pub(super) mod test_support;
 
 /// bind the shared worker UDP socket and return the advertised candidate tuple
 ///
@@ -126,26 +128,7 @@ fn bind_ip_for_announced_ip(announced_ip: IpAddr) -> IpAddr {
 ///
 /// returns `TransportUnavailable` if the local candidate cannot be represented
 /// by str0m or cannot be attached to the newly created rtc state
-#[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
 pub(super) fn ensure_session_rtc_state(
-    users: &mut SessionStore,
-    session_key: &TransportSessionKey,
-    candidate_addr: SocketAddr,
-    max_bitrate_out: Bitrate,
-) -> Result<bool, TransportAdapterError> {
-    let profile = RtpProfile::compile(MediaCodecFlags::default(), CodecPreferences::default())?;
-    ensure_session_rtc_state_with_stats_interval(
-        users,
-        Arc::from("test-room"),
-        session_key,
-        candidate_addr,
-        max_bitrate_out,
-        &profile,
-        None,
-    )
-}
-
-pub(super) fn ensure_session_rtc_state_with_stats_interval(
     users: &mut SessionStore,
     room_id: Arc<str>,
     session_key: &TransportSessionKey,
@@ -198,8 +181,6 @@ pub(super) fn ensure_session_rtc_state_with_stats_interval(
             next_timeout: None,
             sdp_negotiation: SessionSdpNegotiationState::default(),
             consumer_streams: ConsumerStreamStore::default(),
-            #[cfg(test)]
-            last_local_write: None,
         },
     );
     Ok(true)

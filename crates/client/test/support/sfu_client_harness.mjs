@@ -1,6 +1,14 @@
+import assert from "node:assert/strict";
+
 import { SfuClient } from "../../dist/sfu_client.js";
 import { FakePeerConnection, FakeWebSocket } from "./browser_fakes.mjs";
-import { FakeProtocolCore, tick } from "./protocol_fakes.mjs";
+import {
+    FakeProtocolCore,
+    buildWelcomeFrame,
+    createManualTimers,
+    tick
+} from "./protocol_fakes.mjs";
+import { createProtocolCore } from "./real_protocol_core.mjs";
 
 const createTrack = ({ enabled = true, id, kind, muted = false }) => ({
     enabled,
@@ -88,3 +96,42 @@ export const createSfuClientHarness = ({
         updates
     };
 };
+
+export function createRecoveryHarness(options = {}) {
+    const timers = createManualTimers();
+    return {
+        ...createSfuClientHarness({
+            clearTimer: timers.clearTimer,
+            createProtocolCore,
+            setTimer: timers.setTimer,
+            ...options
+        }),
+        timers
+    };
+}
+
+export async function connectRealWithWelcome(harness) {
+    await harness.connect("ws://example.test/ws", "jwt-token", { channelUUID: "channel-a" });
+    await harness.open();
+    await harness.emitMessage(buildWelcomeFrame());
+}
+
+export async function authenticateRecovery({ emitMessage, open, sockets, timers }) {
+    timers.fireByDelay(1000);
+    await tick();
+
+    assert.equal(sockets.length, 2);
+    await open(1);
+    await emitMessage(buildWelcomeFrame(), 1);
+}
+
+export async function emitOfferWithBinding({ core, emitMessage }, binding = {}) {
+    core.trackBindings.set("0", {
+        active: true,
+        mid: "0",
+        sessionId: 42,
+        type: "camera",
+        ...binding
+    });
+    await emitMessage("offer");
+}

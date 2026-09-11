@@ -11,15 +11,15 @@ use str0m::{
 };
 
 use super::super::{
-    bitrate::BitrateRegistry,
     codec,
-    packet_loop::{PacketLoopBuffers, record_incoming_stats_for_benchmark},
-    state::PacketLoopState,
+    packet_loop::record_incoming_stats_for_benchmark,
+    state::{PacketLoopState, bitrate::BitrateRegistry},
     test_support::{
         MediaWorkerScenario, reset_packet_resolution,
         sample_forwarded_packet_with_rid_and_audio_activity, sample_forwarded_packet_without_mid,
         test_transport_session_key,
     },
+    worker::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,

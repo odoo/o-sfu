@@ -1,50 +1,38 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Instant,
-};
+use std::{sync::Arc, time::Instant};
 
 use str0m::media::Mid;
 
-use super::fixtures::RuntimeMetricsSnapshotTestExt;
-use crate::engine::{
-    UserId,
-    media_transport::{
-        TransportMediaId, TransportSessionKey,
-        rtc::{
+use super::{
+    super::{
+        packet_loop::{
             forwarded_packet::ForwardedPacket,
             forwarding_destination::ForwardingDestination,
-            forwarding_planner::plan_forwards as plan_pkt_forwards,
+            forwarding_planner::{PacketGateDecision, plan_forwards as plan_pkt_forwards},
+        },
+        state::{
+            PacketLoopState,
             relay_registry::{RelayPacketMailbox, RelayTargetId},
             route_control::PacketLayerGate,
-            state::PacketLoopState,
-            test_support::{
-                MediaWorkerScenario, sample_already_relayed_packet, sample_forwarded_packet,
-                sample_forwarded_packet_with_rid, test_transport_session_key,
-            },
+        },
+        test_support::{
+            MediaWorkerScenario, sample_already_relayed_packet, sample_forwarded_packet,
+            sample_forwarded_packet_with_rid, test_transport_session_key,
         },
     },
-    metrics::{RtpForwardDestinationKind, RuntimeMetrics},
+    fixtures::RuntimeMetricsSnapshotTestExt,
+};
+use crate::engine::{
+    UserId,
+    media_transport::{TransportMediaId, TransportSessionKey},
+    metrics::{RtcRouteControlOutcome, RtpForwardDestinationKind, RuntimeMetrics},
     packet_sink_registry::{
         PacketSink as MediaPacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry,
     },
 };
 
-struct CountingSink {
-    packets: AtomicUsize,
-}
+struct PlannerSink;
 
-impl CountingSink {
-    fn new() -> Self {
-        Self {
-            packets: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl MediaPacketSink for CountingSink {
+impl MediaPacketSink for PlannerSink {
     fn record_packet(
         &self,
         _session_key: &TransportSessionKey,
@@ -52,7 +40,6 @@ impl MediaPacketSink for CountingSink {
         _received_at: Instant,
         _payload: &[u8],
     ) {
-        self.packets.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -67,7 +54,22 @@ fn populate_forward_routes(
     packet_sink_cache.refresh_from(packet_sinks);
     let rtc_metrics = metrics.register_rtc_worker();
     for packet in pending_packets {
-        plan_pkt_forwards(state, &packet_sink_cache, &rtc_metrics, packet, forwards);
+        let visits_origin = packet.visits_origin_sinks();
+        let Some(facts) = packet.resolve_facts(state) else {
+            continue;
+        };
+        if let Some(decision) = plan_pkt_forwards(
+            facts,
+            visits_origin,
+            &state.routes,
+            &packet_sink_cache,
+            forwards,
+        ) {
+            rtc_metrics.record_rtc_route_control(match decision {
+                PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
+                PacketGateDecision::Dropped => RtcRouteControlOutcome::LayerDropped,
+            });
+        }
     }
 }
 
@@ -136,14 +138,13 @@ fn plan_forwards_keeps_recording_and_local_rtc_destinations_together() {
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let sink = Arc::new(CountingSink::new());
     let mut scenario = MediaWorkerScenario::new(&mut state);
     let src_media = scenario.source(producer_session.clone(), Mid::from("aud-up"));
     let consumer_media =
         scenario.destination(src_media, consumer_session.clone(), Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     let forwards = plan_forwards(
@@ -270,7 +271,6 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (first_relay_mailbox, _first_relay_rx) = RelayPacketMailbox::channel_for_test();
     let (second_relay_mailbox, _second_relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut scenario = MediaWorkerScenario::new(&mut state);
@@ -278,7 +278,7 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
     scenario.destination(src_media, consumer_session, Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -375,14 +375,13 @@ fn plan_forwards_keeps_relay_packets_out_of_recording_and_second_hop_relay_sinks
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let src_media = TransportMediaId::new(51);
     let mut scenario = MediaWorkerScenario::new(&mut state);
     scenario.destination(src_media, consumer_session, Mid::from("aud-down"));
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -589,7 +588,6 @@ fn plan_forwards_gates_only_the_selected_source_media() {
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let metrics = RuntimeMetrics::default();
-    let recording_sink = Arc::new(CountingSink::new());
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut scenario = MediaWorkerScenario::new(&mut state);
     let gated_src_media = scenario.source(gated_producer_session.clone(), Mid::from("cam-up"));
@@ -609,7 +607,7 @@ fn plan_forwards_gates_only_the_selected_source_media() {
         .set_local_pkt_gate(gated_src_media, Some(PacketLayerGate::Rid("hi".into())));
     packet_sink_registry.register_room(
         gated_producer_session.room_instance_id(),
-        Arc::<CountingSink>::clone(&recording_sink),
+        Arc::new(PlannerSink),
         RtpForwardDestinationKind::Recording,
     );
     state
@@ -645,4 +643,80 @@ fn plan_forwards_gates_only_the_selected_source_media() {
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.rtc_route_control_layer_dropped(), 1);
     assert_eq!(snapshot.rtc_route_control_layer_allowed(), 1);
+}
+
+#[test]
+fn plan_forwards_omits_gate_metrics_without_routed_destinations() {
+    let producer_session = test_transport_session_key(71, 0, 72, UserId::Integer(73));
+    let consumer_session = test_transport_session_key(71, 0, 72, UserId::Integer(74));
+    let mut state = PacketLoopState::default();
+    let packet_sink_registry = RoomPacketSinkRegistry::default();
+    let metrics = RuntimeMetrics::default();
+    let src_media =
+        MediaWorkerScenario::new(&mut state).source(producer_session.clone(), Mid::from("aud-up"));
+    let mut packets = vec![sample_forwarded_packet(
+        producer_session.clone(),
+        "aud-up",
+        b"payload",
+    )];
+    let mut forwards = Vec::new();
+
+    populate_forward_routes(
+        &state,
+        &packet_sink_registry,
+        &metrics,
+        &mut packets,
+        &mut forwards,
+    );
+    assert_forward_plan(&state, &forwards, &[]);
+
+    packet_sink_registry.register_room(
+        producer_session.room_instance_id(),
+        Arc::new(PlannerSink),
+        RtpForwardDestinationKind::Recording,
+    );
+    populate_forward_routes(
+        &state,
+        &packet_sink_registry,
+        &metrics,
+        &mut packets,
+        &mut forwards,
+    );
+    assert_forward_plan(&state, &forwards, &[ExpectedForward::PacketSink]);
+    forwards.clear();
+
+    let consumer_media = MediaWorkerScenario::new(&mut state).destination(
+        src_media,
+        consumer_session.clone(),
+        Mid::from("aud-down"),
+    );
+    state
+        .routes
+        .set_consumer_active(src_media, 0, &consumer_session, consumer_media, false)
+        .unwrap();
+    state
+        .routes
+        .set_local_pkt_gate(src_media, Some(PacketLayerGate::Block));
+    populate_forward_routes(
+        &state,
+        &packet_sink_registry,
+        &metrics,
+        &mut packets,
+        &mut forwards,
+    );
+    assert_forward_plan(&state, &forwards, &[ExpectedForward::PacketSink]);
+    forwards.clear();
+
+    packets[0] = sample_forwarded_packet(producer_session, "unknown", b"payload");
+    populate_forward_routes(
+        &state,
+        &packet_sink_registry,
+        &metrics,
+        &mut packets,
+        &mut forwards,
+    );
+    assert_forward_plan(&state, &forwards, &[]);
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot.rtc_route_control_layer_allowed(), 0);
+    assert_eq!(snapshot.rtc_route_control_layer_dropped(), 0);
 }

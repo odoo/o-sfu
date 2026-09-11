@@ -10,7 +10,6 @@ mod consumer_gates;
 mod drain;
 mod fanout;
 mod ingress;
-mod local_rewrite;
 mod local_send;
 mod meeting;
 mod observation;
@@ -25,12 +24,11 @@ mod worker;
 pub use active_speaker::ActiveSpeakerBenchFixture;
 pub use consumer_gates::ConsumerGateBatchBenchFixture;
 pub use drain::{RelayDrainBenchFixture, SessionDrainBenchFixture};
-pub use fanout::{FanoutBenchTopology, ROUTE_PLANNING_TURNS};
+pub use fanout::{FanoutBenchTopology, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture};
 pub use ingress::{
     INGRESS_COMPLETED_BURST_DATAGRAMS, INGRESS_DEMUX_ATTEMPTS, IngressBurstBenchFixture,
     IngressRoutingBenchFixture,
 };
-pub use local_rewrite::LocalRewriteBenchFixture;
 pub use local_send::LocalSendBenchFixture;
 pub use meeting::{
     MEETING_ADMITTED_AUDIO_SOURCES, MEETING_LONG_SECONDS, MEETING_PARTICIPANTS,
@@ -52,4 +50,7 @@ pub use worker::{
     WorkerPacketCommandMixBenchFixture,
 };
 
-pub use super::routing_miss::packet_fingerprint_for_benchmark as routing_miss_packet_fingerprint;
+pub use super::{
+    consumer_egress::LocalRewriteBenchFixture,
+    packet_loop::routing_miss::packet_fingerprint_for_benchmark as routing_miss_packet_fingerprint,
+};

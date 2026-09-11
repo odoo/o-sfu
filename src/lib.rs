@@ -1,12 +1,22 @@
-//! A Selective Forwarding Unit (SFU) for audio/video calls.
+//! Odoo's Selective Forwarding Unit (SFU) for audio/video calls.
 //!
-//! A SFU receives each participant's media once and selectively forwards it to
-//! the others, so an N-party call costs one upload per sender rather than one
-//! per listener and no stream is transcoded or mixed. `o-sfu` runs this model as
-//! a dedicated server that handles room admission, routing topology, media
-//! policy, packet forwarding, signaling and telemetry. Applications provision
-//! rooms over HTTP, browsers connect over WebSocket and media travels over UDP
-//! with `str0m` terminating ICE, DTLS and SRTP.
+//! `o-sfu` provides a dedicated server and an embeddable Rust runtime for room
+//! admission, media policy, signaling and packet forwarding. Applications
+//! provision rooms over HTTP, browsers connect over WebSocket and media travels
+//! over UDP without transcoding or mixing.
+//!
+//! `str0m` supplies the WebRTC state machine for ICE, DTLS and SRTP. `o-sfu`
+//! supplies the UDP sockets, worker threads and packet loops that drive it.
+//!
+//! # Reading Map
+//!
+//! - **Start or embed the server**: [`run`], [`Runtime`] and [`config`].
+//! - **Understand admission**: [`auth`], [`http`] and [`websocket`].
+//! - **Change room and media behavior**: [`core::server::room::Room`],
+//!   [`o_sfu_router::Router`] and [`core::server::transport::MediaTransport`].
+//! - **Integrate a browser client**: `SfuClient` exposes the Odoo-facing API.
+//!   [`o_sfu_protocol::host::ProtocolCore`] supplies its signaling state machine.
+//!
 //!
 //! # Core Concepts
 //!
@@ -18,7 +28,7 @@
 //! - **[`core::server::room::Room`]**: The control plane boundary for a set of participants. It commits membership and media relationships.
 //! - **[`o_sfu_router::Router`]**: The routing plane, a pure, sans-I/O engine owning the placement graph that maps users to connections.
 //! - **[`core::prelude::MediaSession`]**: Orchestrates a user's connection, bridging room intent to transport effects.
-//! - **[`core::server::transport::MediaTransport`]**: Owns the media workers and hides their threading model. Each worker holds a packet loop and applies projected routes to incoming datagrams.
+//! - **[`core::server::transport::MediaTransport`]**: Owns the media workers and abstracts their threading model. Each worker holds a packet loop and applies projected routes to incoming datagrams.
 //!
 //! # Architecture
 //!
@@ -26,24 +36,26 @@
 //! resulting transport state to UDP datagrams.
 //!
 //! ```text
-//! HTTP control API ----------------------> RoomManager
-//!                                               |
-//! WebSocket session -> SfuCore -> MediaSession  |
-//!                              \                /
-//!                               +----> Room <----+
-//!                                      |
-//!                                      +<----> Router
-//!                                      |
-//!                                      v
-//!                                MediaTransport
-//!                                 |    |    |
-//!                                 v    v    v
+//! HTTP control API ------------------------------> RoomManager
+//!                                                       |
+//! WebSocket session -> SfuCore -> MediaSession          |
+//!                                    \                  /
+//!                                     +----> Room <----+
+//!                                             |
+//!                                             +<----> Router
+//!                                             |
+//!                                             v
+//!                                       MediaTransport
+//!                                        |    |    |
+//!                                        v    v    v
 //!                          RTC workers / packet loops
-//!                         |            |              |
-//!                      UDP:40001   UDP:40002      UDP:40003
-//!                         |            |              |
-//!                         v            v              v
-//!                      fanout        fanout        fanout
+//!                           (one thread per worker)
+//!                         |            |             |
+//!                      UDP socket   UDP socket   UDP socket
+//!                         |            |             |
+//!                         v            v             v
+//!                      fanout       fanout        fanout
+//!                      UDP OUT      UDP OUT       UDP OUT
 //! ```
 //!
 //! # Admission Edge
@@ -55,35 +67,25 @@
 //! JWT authentication before admission.
 //!
 //! ```text
-//!                     +----------------------------------------+
-//!                     |     Incoming HTTP / WebSocket I/O      |
-//!                     +----------------------------------------+
-//!                                         |
-//!                                         v
-//!                     +----------------------------------------+
-//!                     |              Axum Router               |
-//!                     +----------------------------------------+
-//!                                         |
-//!        +--------------------+-----------+-----------+--------------------+
-//!        |                    |                       |                    |
-//!        v                    v                       v                    v
-//!  [ GET /v1/noop ]  [ GET /v1/channel ]     [ WebSocket / ]   [ Operator Routes ]   <-- Routes
-//!  (Public Liveness) [ POST /v1/disconnect ] (Signaling Path)  - GET /v1/stats
-//!        |                    |                     |          - GET /metrics
-//!        |                    |                     |          - GET /internal/...
-//!        |                    v                     v                  |
-//!        |           +---------------+     +---------------+   +---------------+
-//!        |           | VerifiedRoom  |     | Upgrade       |   | OperatorAccess|     <-- Extractors
-//!        |           | VerifiedClaims|     | ConnectInfo   |   | (Route Layer) |
-//!        |           | (JWT Header)  |     | 1st-Frame JWT |   | (Bearer/Local)|
-//!        |           +---------------+     +---------------+   +---------------+
-//!        |                    |                     |                  |
-//!        v                    v                     v                  v
-//!  +---------------+ +---------------+     +---------------+   +---------------+
-//!  | noop          | | room          |     | upgrade       |   | stats         |     <-- Handlers
-//!  |               | | disconnect    |     | -> admit_user |   | metrics       |
-//!  | -> 200 JSON   | | -> Room State |     | -> WS Session |   | diagnostics_* |
-//!  +---------------+ +---------------+     +---------------+   +---------------+
+//! Incoming HTTP / WebSocket I/O
+//!     |
+//!     v
+//! Axum Router
+//!     |
+//!     +-> GET /v1/noop
+//!     |     public liveness -> noop
+//!     |
+//!     +-> GET /v1/channel
+//!     |     Authorization JWT -> VerifiedRoomRequest -> room
+//!     |
+//!     +-> POST /v1/disconnect
+//!     |     request-body JWT -> VerifiedDisconnectClaims -> disconnect
+//!     |
+//!     +-> WebSocket /
+//!     |     upgrade -> first-frame JWT -> admit_user -> session
+//!     |
+//!     +-> GET /v1/stats, /metrics and /internal/diagnostics/...
+//!           authorize_operator -> stats, metrics or diagnostics
 //! ```
 //!
 //! - **HTTP**: Parses server-to-server requests using [`http::CreateRoomQuery`]. Verifies [`auth::HttpRoomClaims`]. The request that creates the current room fixes its signing key.
@@ -93,20 +95,21 @@
 //!
 //! `o-sfu` secures two planes independently. Application-layer JWTs gate room
 //! admission on the control plane. `str0m` encrypts media on the packet plane
-//! with DTLS-SRTP. Signaling transport confidentiality is terminated at the
-//! deployment edge rather than in process.
+//! with DTLS-SRTP. An external reverse proxy provides TLS for HTTP and
+//! WebSocket signaling.
 //!
 //! ```text
 //! control plane    JWT HS256           admission trust
 //! packet plane     DTLS-SRTP (str0m)   media confidentiality
-//! signaling wire   TLS at edge         transport confidentiality
+//! signaling wire   TLS (via proxy)     transport confidentiality
 //! ```
 //!
 //! ## JWT Admission
 //!
 //! Tokens are `HS256` only. [`auth::verify`] rejects any other `alg`, checks the
-//! HMAC in constant time and enforces `exp`, `nbf` plus an `iat` future-skew
-//! bound. It caps token size at [`auth::MAX_JWT_TOKEN_BYTES`].
+//! HMAC in constant time and validates `exp`, `nbf` and the `iat` future-skew
+//! bound when those claims are present. It caps token size at
+//! [`auth::MAX_JWT_TOKEN_BYTES`].
 //!
 //! There are two different keys:
 //!
@@ -126,7 +129,7 @@
 //!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
 //!   never against `AUTH_KEY`.
 //!
-//! Token carriage differs per surface: HTTP room creation uses the
+//! HTTP room creation uses the
 //! `Authorization` header, HTTP disconnect uses the request body and the
 //! WebSocket client sends a first-frame auth envelope decoded by
 //! [`websocket::decode_auth_payload_text`]. An unverified room id selects only a
@@ -136,38 +139,12 @@
 //! only after verification with that room's key.
 //!
 //! Admission establishes identity and room scope. It does not enforce the
-//! per-user `permissions` claim, which room state collapses to a marker.
-//!
-//! ## Signaling Ingress
-//!
-//! Every authenticated client frame passes through the same decoder as the auth
-//! frame, [`websocket::decode_client_batch`], which bounds parser work with
-//! static caps: [`websocket::MAX_CLIENT_FRAME_BYTES`] per frame and
-//! [`websocket::MAX_CLIENT_BATCH_ENVELOPES`] per batch. The Axum upgrade applies
-//! the frame cap at the socket and the decoder re-checks it. Oversized frames,
-//! oversized batches, malformed JSON, ambiguous routing metadata and unknown
-//! protocol tags reject as [`websocket::ClientBatchDecodeError`] and close the
-//! socket with a protocol-error code.
-//!
-//! Two further bounds guard against resource exhaustion:
-//!
-//! - **Pre-auth admission**: global and per-origin permits cap concurrent
-//!   unauthenticated sockets and return `503` once exhausted. See [`config`].
-//! - **Outbound backpressure**: per-user fanout is a bounded queue by message
-//!   count and by bytes. A consumer that falls behind is closed rather than
-//!   buffered without limit.
-//!
-//! A first-frame auth timeout rejects clients that never authenticate. A
-//! ping/pong health loop closes clients that stop responding. There is no
-//! per-session request-rate budget: the size, count and backpressure caps bound
-//! the work rather than metering a rate.
+//! per-user `permissions` claim provided by each tenant.
 //!
 //! ## Media Transport
 //!
-//! `str0m` terminates ICE, DTLS and SRTP over UDP with the [`aws-lc-rs`](https://github.com/aws/aws-lc-rs) crypto
-//! backend. `o-sfu` builds and drives the `str0m` session but implements no DTLS
-//! or SRTP itself: it forwards already-decrypted RTP between sessions and hands
-//! outbound RTP back to `str0m` for SRTP protection.
+//! `str0m` handles ICE, DTLS and SRTP over UDP. `o-sfu` builds and drives the
+//! `str0m` sessions to forward RTP between participants.
 //!
 //! - **Keying**: the DTLS handshake derives SRTP keys per RFC 5764 DTLS-SRTP.
 //! - **Certificate**: `str0m` generates a self-signed certificate when each RTC
@@ -179,10 +156,12 @@
 //!
 //! ## Signaling Transport
 //!
-//! HTTP and WebSocket are served in plaintext in process. HTTPS and WSS are
-//! terminated by an external reverse proxy, so a forwarded scheme and client
-//! address are trusted only when the proxy is trusted through [`config`]
-//! (`PROXY`). Operator route access is documented by [`http`].
+//! HTTPS and WSS are expected to be terminated by an external reverse proxy.
+//! Setting `PROXY=true` in [`config`] trusts forwarded headers for every request.
+//! It does not restrict trust to selected proxy addresses. Every request must
+//! then pass through a proxy that strips or overwrites client-supplied
+//! `x-forwarded-*` headers. See [`http::resolve_request_origin`] for origin
+//! resolution and [`http`] for operator route access.
 //!
 //! # Room and Router Ownership
 //!
@@ -207,8 +186,10 @@
 //! Browsers use `SfuClient` for connection, publication, subscription and room
 //! control. Signaling state stays in [`o_sfu_protocol::host::ProtocolCore`] and
 //! yields ordered [`o_sfu_protocol::host::Command`] values. The WASM bridge
-//! serializes those commands then maps protocol events to Odoo bundle updates
-//! that drive browser `WebSocket`, `RTCPeerConnection` and timer APIs.
+//! serializes commands for `BrowserRuntime`, which executes effects through
+//! browser `WebSocket`, `RTCPeerConnection` and timer APIs. Protocol events are
+//! mapped to Odoo bundle updates during command serialization. `BrowserRuntime`
+//! applies those updates to client state and notifies the application.
 //!
 //! ```text
 //! SfuClient (public API)
@@ -249,11 +230,10 @@
 //!              +-> local RTC -> RTP identity and codec rewrite
 //! ```
 //!
-//! `str0m` handles ICE, DTLS and SRTP. The private `rtc::codec` boundary keeps
-//! codec branching out of route planning. Origin packet sinks precede route
-//! gates so recording can observe a publisher without active receivers. Source,
-//! relay and receiver gates then narrow routed fanout. Same-process relays share
-//! payload data with another worker for local delivery.
+//! Registered origin packet sinks observe publisher packets before route gates,
+//! including publishers without active receivers. Source, relay and receiver
+//! gates then narrow routed fanout. Same-process relays share payload data with
+//! another worker for local delivery.
 //!
 //! Worker BWE and audio observations feed into room source policy, which updates route gates for later packets.
 //!
@@ -267,21 +247,6 @@
 //!   route gates for later packets
 //! ```
 //!
-//! # Shutdown and Teardown
-//!
-//! Teardown is explicit async work. [`Runtime::serve_listener`] stops listener acceptance, drains tracked web sockets and stops background tasks within [`config::HttpConfig::shutdown_timeout_ms`].
-//!
-//! ```text
-//! Runtime::serve_listener
-//!     |
-//!     +-> stop listener
-//!     +-> close tracker and cancel sessions
-//!     +-> wait for tracker emptiness
-//!     +-> stop source-policy sync and media workers
-//! ```
-//!
-//! Missing worker-local sessions or media during teardown are successful no-ops. Unavailable workers or ownership mismatches are terminal.
-//!
 //! # Observability
 //!
 //! Monitored through the [`o_sfu_telemetry`] sub-crate. See [`http::telemetry`] for the HTTP contracts.
@@ -291,15 +256,19 @@
 //!
 //! # Scaling
 //!
-//! Rooms use one [`o_sfu_router::Router`] facade and can opt into additional same-process local routers through [`config::RoomWorkerPolicy`].
-//! Joins stay on an assigned healthy packet loop. When no assigned worker has a
-//! known delay below the configured threshold, a join can attach a healthy
-//! worker not yet assigned to the room.
+//! Rooms use one [`o_sfu_router::Router`] facade and default to one local router.
+//! [`config::RoomWorkerPolicy`] can enable additional same-process local routers.
+//! Joins then prefer assigned workers with a known delay below the configured
+//! threshold. When none qualifies, a join may attach an unused healthy worker
+//! within the router cap and worker count. If expansion is unavailable, joins
+//! reuse an assigned worker even when it exceeds the delay threshold. The
+//! single-router policy always reuses the room's primary placement.
 //!
 //! # Feature Flags
 //!
 //! Core media behavior is configured at runtime through [`config`], not Cargo features.
-//! The default feature `otel-tracing` enables OpenTelemetry tracing support through [`o_sfu_telemetry::TraceExportConfig`]. Other features are used strictly for tests and benchmarking.
+//! The default feature `otel-tracing` enables OpenTelemetry tracing support through [`o_sfu_telemetry::TraceExportConfig`].
+//! Other features are only used for tests and benchmarking.
 //!
 //! # Sub-crates
 //!
@@ -311,15 +280,6 @@
 //! | [`o_sfu_core`] | Room engine, [`core::prelude::SourcePolicy`], recording taps and [`core::server::transport::MediaTransport`] projection |
 //! | [`o_sfu_protocol`] | Sans-I/O [`o_sfu_protocol::host::ProtocolCore`] and typed commands |
 //! | [`o_sfu_telemetry`] | Tracing setup, metrics, diagnostics response types and graph payloads |
-//!
-//! # Reading Map
-//!
-//! - [`run`] and [`Runtime`] own boot, serving, background tasks and shutdown.
-//! - [`config`] is the environment-to-runtime boundary.
-//! - [`auth`], [`http`] and [`websocket`] form the admission edge.
-//! - [`crate::core`] turns accepted control-plane intent into room mutations and transport effects.
-//! - [`o_sfu_protocol::host::ProtocolCore`] keeps browser signaling sans-I/O.
-//! - [`core::server::transport::MediaTransport`] owns the media workers and hides their threading model.
 pub mod config;
 pub mod core {
     pub use o_sfu_core::{prelude, server};

@@ -1,29 +1,27 @@
 //! Private WebRTC backend below [`MediaTransport`](super::MediaTransport).
 //!
-//! Each [`RtcWorker`] runs one packet loop for its assigned `str0m` sessions,
-//! one UDP socket shared by those sessions and command plus relay mailboxes.
-//! [`MediaTransport`](super::MediaTransport) routes sessions to the workers
-//! named by their transport keys and coordinates relay routes between workers.
+//! Each [`RtcWorker`] drives its sessions through one shared UDP socket and
+//! bounded mailboxes. [`control`] and [`packet_loop`] share [`recovery`]:
 //!
-//! Main boundaries:
+//! ```text
+//! worker
+//!   +-- commands ------> control ------+
+//!   |                                  +--> recovery
+//!   `-- media packets -> packet_loop --+
+//!                            |
+//!                            `--> consumer_egress
+//! ```
 //!
-//! - [`worker`], [`commands`] and [`state`] cover worker startup, mailbox control
-//!   and packet-loop state.
-//! - [`bootstrap`] creates worker sockets and session-local `str0m` state.
-//! - [`codec`] centralizes RTP profiles, negotiated capabilities, negotiated RID
-//!   handling and codec-specific packet inspection plus rewriting.
-//! - [`packet_loop`] owns UDP routing and `str0m` polling. [`demux`] provides
-//!   recovery indexes and [`routing_miss`] bounds repeated fallback work while
-//!   `Rtc::accepts()` remains the session authority.
-//! - [`route_table`], [`source_route`], [`route_control`] and
-//!   [`keyframe_tracker`] keep forwarding routes, packet gates, activity ranking
-//!   and keyframe retry state.
-//! - [`forwarded_packet`], [`forwarding_planner`],
-//!   [`forwarding_destination`], [`local_forwarding`] and [`local_send_rewrite`]
-//!   share payloads across sinks, relays and local RTC destinations. Local RTC
-//!   egress projects receiver RTP identity.
-//! - [`media_registry`], [`relay_registry`] and [`bitrate`] keep media handles,
-//!   relay targets and bitrate observations.
+//! [`state::PacketLoopState`] holds the sessions, media identity, routes and
+//! scheduling indexes used by these operations. Its lifecycle methods keep
+//! dependent indexes and stream retirement together. [`state::RtcSnapshotState`]
+//! exposes observations without granting access to that mutable state.
+//!
+//! [`worker::loop_driver`] governs turn ordering. [`consumer_egress`] provides
+//! receiver RTP writes. Packet processing and recovery do not call command handlers.
+//!
+//! [`commands`] defines shared mailbox contracts, [`codec`] provides codec rules
+//! and [`bootstrap`] initializes sockets and sessions.
 
 use std::{sync::Arc, time::Duration};
 
@@ -35,28 +33,16 @@ mod TESTS;
 #[cfg(feature = "internal-benchmarks")]
 #[path = "TESTS/benchmark_support/mod.rs"]
 pub mod benchmark_support;
-mod bitrate;
 mod bootstrap;
 mod codec;
 mod commands;
-mod demux;
-mod forwarded_packet;
-mod forwarding_destination;
-mod forwarding_planner;
+mod consumer_egress;
+mod control;
 #[cfg(any(test, fuzzing))]
 #[path = "TESTS/fuzz_support/mod.rs"]
 pub(crate) mod fuzz_support;
-mod keyframe_tracker;
-mod local_forwarding;
-mod local_send_rewrite;
-mod media_registry;
 mod packet_loop;
-mod relay_registry;
-mod route_control;
-mod route_table;
-mod routing_miss;
-mod slots;
-mod source_route;
+mod recovery;
 mod state;
 #[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
 #[path = "TESTS/test_support/mod.rs"]
@@ -70,10 +56,11 @@ pub(super) use commands::{ParsedSessionAnswer, RtcSessionOffer};
 pub use commands::{
     RtcWorkerCommand, RtcWorkerResponse, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
 };
-#[cfg(any(test, feature = "testing-transport"))]
-pub use forwarded_packet::ForwardedPacket;
-pub(super) use route_control::PacketLayerGate;
 pub use worker::RtcWorker;
+
+#[cfg(any(test, feature = "testing-transport"))]
+pub use self::packet_loop::forwarded_packet::ForwardedPacket;
+pub(super) use self::state::route_control::PacketLayerGate;
 
 #[derive(Clone, Debug)]
 struct RtcWorkerConfig {

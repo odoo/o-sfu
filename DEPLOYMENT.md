@@ -282,7 +282,7 @@ the outer Docker record looks like this:
 
 ```json
 {
-  "log": "{\"timestamp\":\"2026-07-09T10:12:34.567890123Z\",\"level\":\"INFO\",\"target\":\"o_sfu::runtime::http_server::controller\",\"event\":\"http.listener.ready\",\"message\":\"booted HTTP and WebSocket listener\",\"service.name\":\"o-sfu\",\"service.version\":\"0.7.0\",\"service.instance.id\":\"pid-1\",\"deployment.environment\":\"production\",\"bind_address\":\"0.0.0.0:8070\",\"local_address\":\"0.0.0.0:8070\",\"trust_proxy_headers\":true}\n",
+  "log": "{\"timestamp\":\"2026-07-09T10:12:34.567890123Z\",\"level\":\"INFO\",\"target\":\"o_sfu::runtime::http_server::server\",\"event\":\"http.listener.ready\",\"message\":\"booted HTTP and WebSocket listener\",\"service.name\":\"o-sfu\",\"service.version\":\"0.7.0\",\"service.instance.id\":\"pid-1\",\"deployment.environment\":\"production\",\"bind_address\":\"0.0.0.0:8070\",\"local_address\":\"0.0.0.0:8070\",\"trust_proxy_headers\":true}\n",
   "stream": "stdout",
   "time": "2026-07-09T10:12:34.568000000Z"
 }
@@ -298,7 +298,7 @@ shape because rutnime event fields are flattened at the top level
 {
   "timestamp": "2026-07-09T10:12:34.567890123Z",
   "level": "INFO",
-  "target": "o_sfu::runtime::http_server::controller",
+  "target": "o_sfu::runtime::http_server::server",
   "event": "http.listener.ready",
   "message": "booted HTTP and WebSocket listener",
   "service.name": "o-sfu",

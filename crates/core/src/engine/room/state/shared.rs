@@ -7,7 +7,7 @@ use std::{
 use o_sfu_router::rtp::{MediaCapabilities, MediaCapabilities as RouterRtpCapabilities};
 
 use super::super::{
-    RoomAdmissionPolicy, RoomMediaCounts, RoomUserPermissions,
+    RoomAdmissionPolicy, RoomMediaCounts,
     media_graph::{ConsumerRouteView, RoomTopology},
     outbound::{
         OutboundSender, RemoteTrackProjection, RemoteTrackSnapshot, VersionedRemoteTrackSnapshot,
@@ -41,7 +41,6 @@ pub struct RoomState {
 #[derive(Debug)]
 pub struct ActiveUser {
     pub(super) user_id: Arc<UserId>,
-    pub(super) permissions: RoomUserPermissions,
     pub(super) info: UserInfo,
     pub(super) server_featured: Option<bool>,
     pub parsed_client_rtp_capabilities: Option<RouterRtpCapabilities>,

@@ -16,14 +16,11 @@ use std::{
 use tokio::sync::mpsc;
 
 use super::super::{
-    bitrate::BitrateRegistry,
-    bootstrap::ensure_session_rtc_state,
-    forwarded_packet::ForwardedPacket,
-    packet_loop::{
-        PacketLoopBuffers, SessionDrainContext, drain_ready_sessions, drain_relay_packets,
-    },
-    state::{PacketLoopState, RtcSnapshotState},
+    bootstrap::test_support::ensure_session_rtc_state,
+    packet_loop::{drain_relay_packets, forwarded_packet::ForwardedPacket},
+    state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
     test_support::{sample_forwarded_packet, test_transport_session_key},
+    worker::{PacketLoopBuffers, SessionDrainContext, drain_ready_sessions},
 };
 use crate::{
     Bitrate,

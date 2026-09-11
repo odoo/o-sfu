@@ -23,8 +23,8 @@ use crate::engine::{
     },
     metrics::{self, BudgetSolverOutcome},
     room::{
-        Room, RoomEventMessage, effects::transport::RoomRouteEffects, outbound::MessageFanout,
-        state::RoomState,
+        Room, RoomEventMessage, SourcePolicyGuard, effects::transport::RoomRouteEffects,
+        outbound::MessageFanout, state::RoomState,
     },
     source_model::{
         PolicyPauseReason, ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy,
@@ -59,19 +59,19 @@ impl SourcePolicyTurn {
         if !self.requested {
             return;
         }
-        let _guard = room.source_policy_turn.lock().await;
-        self.execute_guarded(room, media_transport, active_speaker_sources)
+        let guard = room.lock_source_policy().await;
+        self.execute_guarded(&guard, media_transport, active_speaker_sources)
             .await;
     }
 
     pub(in crate::engine::room) async fn execute_guarded(
         self,
-        room: &Room,
+        guard: &SourcePolicyGuard<'_>,
         media_transport: Option<&MediaTransport>,
         active_speaker_sources: Option<&[ActiveSpeakerSource]>,
     ) {
         self.execute_observed(
-            room,
+            guard,
             media_transport,
             active_speaker_sources,
             None,
@@ -82,7 +82,7 @@ impl SourcePolicyTurn {
 
     async fn execute_observed(
         self,
-        room: &Room,
+        guard: &SourcePolicyGuard<'_>,
         media_transport: Option<&MediaTransport>,
         active_speaker_sources: Option<&[ActiveSpeakerSource]>,
         bandwidth: Option<&ReceiverBandwidthSnapshot>,
@@ -94,6 +94,7 @@ impl SourcePolicyTurn {
         let Some(media_transport) = media_transport else {
             return false;
         };
+        let room = guard.room();
         let transaction = if let Some(sources) = active_speaker_sources {
             run_packet_selection(room, sources, media_transport, bandwidth, now).await
         } else {
@@ -109,16 +110,24 @@ impl SourcePolicyTurn {
     }
 }
 
+/// Runs policy with injected bandwidth and optional prebuilt speaker observations.
 #[cfg(feature = "internal-benchmarks")]
 pub async fn run_source_policy_turn_for_benchmark(
     room: &Room,
     media_transport: &MediaTransport,
     bandwidth: &ReceiverBandwidthSnapshot,
+    active_speakers: Option<&[ActiveSpeakerSource]>,
     now: Instant,
 ) -> bool {
-    let _guard = room.source_policy_turn.lock().await;
+    let guard = room.lock_source_policy().await;
     SourcePolicyTurn::packet_selection()
-        .execute_observed(room, Some(media_transport), None, Some(bandwidth), now)
+        .execute_observed(
+            &guard,
+            Some(media_transport),
+            active_speakers,
+            Some(bandwidth),
+            now,
+        )
         .await
 }
 
@@ -615,5 +624,5 @@ fn commit_featured_user_updates(
         .into_iter()
         .filter_map(|user_id| state.user_info_snapshot(&user_id))
         .collect();
-    Some(state.fanout_all(&RoomEventMessage::UserInfoChanged(snapshot)))
+    Some(state.fanout_all(RoomEventMessage::UserInfoChanged(snapshot)))
 }

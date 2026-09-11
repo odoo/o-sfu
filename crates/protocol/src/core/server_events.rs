@@ -15,8 +15,8 @@ pub(super) fn handle_server_message(core: &mut ProtocolCore, message: ServerMess
             }]
         }
         ServerMessage::PeerLeft(payload) => {
-            core.track_bindings
-                .retain(|_, binding| binding.user_id != payload.user_id);
+            core.track_users_by_mid
+                .retain(|_, user_id| *user_id != payload.user_id);
             vec![Command::EmitEvent {
                 event: ProtocolEvent::PeerLeft {
                     user_id: payload.user_id,
@@ -41,10 +41,9 @@ pub(super) fn handle_server_message(core: &mut ProtocolCore, message: ServerMess
 }
 
 fn replace_track_snapshot(core: &mut ProtocolCore, bindings: Vec<TrackBinding>) -> Commands {
-    core.track_bindings = bindings
+    core.track_users_by_mid = bindings
         .iter()
-        .cloned()
-        .map(|binding| (binding.mid.clone(), binding))
+        .map(|binding| (binding.mid.clone(), binding.user_id.clone()))
         .collect();
     vec![Command::EmitEvent {
         event: ProtocolEvent::TrackSnapshot { bindings },

@@ -125,12 +125,10 @@ pub(super) async fn make_session_ready_with_transport(
     user_id: &UserId,
     media_transport: &MediaTransport,
 ) {
-    create_transport_session_offer(room, user_id, media_transport).await;
-    assert!(
-        room.test_api()
-            .mark_session_ready(user_id, test_client_rtp_capabilities(), media_transport,)
-            .await
-    );
+    room.test_api()
+        .make_session_ready(user_id, media_transport)
+        .await
+        .expect("real RTC test user should become ready");
 }
 
 pub(super) async fn create_transport_session_offer(
@@ -190,16 +188,6 @@ impl StagedPublishScenario {
         self.operation()
             .rollback_staged_publish(&stream_id_for_source(TestSourceKind::ScalableVideo))
             .await
-    }
-
-    pub(super) async fn commit(&self) {
-        let applied_answer = AppliedSessionAnswer::from_negotiated_producers([(
-            self.staged_media_id(TestSourceKind::ScalableVideo).await,
-            test_simulcast_video_rtp_parameters(),
-        )]);
-        self.operation()
-            .commit_staged_publishes(&applied_answer)
-            .await;
     }
 
     pub(super) async fn close_user(&self) {
@@ -348,30 +336,10 @@ pub(super) async fn setup_ready_users_with_transport(
     (room, adapter)
 }
 
-pub(super) async fn setup_ready_users_with_transport_and_media_limits(
+async fn setup_ready_users_with_manager(
     user_ids: &[i64],
-    media_limits: RoomMediaLimits,
+    manager: RoomManager,
 ) -> (Arc<super::super::Room>, MediaTransport) {
-    let manager = RoomManager::for_test_with_media_limits(media_limits);
-    let room = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
-        .await
-        .expect("test room should be served");
-    let adapter = real_adapter();
-    for &raw_user_id in user_ids {
-        let (sender, _receiver) = test_sender();
-        let user_id = UserId::Integer(raw_user_id);
-        join_user_without_transport_teardown(&room, &adapter, user_id.clone(), sender).await;
-        make_session_ready_with_transport(&room, &user_id, &adapter).await;
-    }
-    (room, adapter)
-}
-
-pub(super) async fn setup_ready_users_with_transport_and_tuning(
-    user_ids: &[i64],
-    tuning: VideoAdaptationTuning,
-) -> (Arc<super::super::Room>, MediaTransport) {
-    let manager = RoomManager::for_test_with_video_adaptation_tuning(tuning);
     let room = manager
         .serve_room("issuer-a", TEST_ROOM_KEY, &RoomConfig::default(), None)
         .await
@@ -435,8 +403,11 @@ impl SourcePolicyScenario {
         user_ids: &[i64],
         media_limits: RoomMediaLimits,
     ) -> Self {
-        let (room, adapter) =
-            setup_ready_users_with_transport_and_media_limits(user_ids, media_limits).await;
+        let (room, adapter) = setup_ready_users_with_manager(
+            user_ids,
+            RoomManager::for_test_with_media_limits(media_limits),
+        )
+        .await;
         Self {
             room,
             adapter,
@@ -448,7 +419,11 @@ impl SourcePolicyScenario {
         user_ids: &[i64],
         tuning: VideoAdaptationTuning,
     ) -> Self {
-        let (room, adapter) = setup_ready_users_with_transport_and_tuning(user_ids, tuning).await;
+        let (room, adapter) = setup_ready_users_with_manager(
+            user_ids,
+            RoomManager::for_test_with_video_adaptation_tuning(tuning),
+        )
+        .await;
         Self {
             room,
             adapter,

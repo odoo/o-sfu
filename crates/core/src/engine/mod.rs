@@ -14,7 +14,6 @@
 pub mod media_transport;
 mod observability;
 pub mod packet_sink_registry;
-pub mod recording;
 pub mod room;
 pub mod source_model;
 pub mod sync;

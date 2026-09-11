@@ -1,5 +1,4 @@
-import { COMMAND_KIND } from "../protocol_contract.js";
-import type { HostCommand, PendingRequest } from "../runtime_contract.js";
+import { COMMAND_KIND, type HostCommand, type PendingRequest } from "../protocol_contract.js";
 
 type PendingRequestCallbacks = {
     reject: (error: Error) => void;

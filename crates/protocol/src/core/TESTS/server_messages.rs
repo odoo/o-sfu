@@ -1,11 +1,10 @@
 use super::*;
 
 #[test]
-fn protocol_core_emits_replacement_track_snapshots() {
+fn protocol_core_emits_replacement_track_snapshots() -> Result<(), String> {
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
     let _ = core.accept_welcome(sample_welcome_payload());
-
     let peer_1_audio = TrackBinding {
         mid: String::from("0"),
         user_id: String::from("peer-1").into(),
@@ -21,11 +20,10 @@ fn protocol_core_emits_replacement_track_snapshots() {
     let first_tracks = encode_server_batch(ServerEnvelope::Message(ServerMessage::Tracks(vec![
         peer_1_audio.clone(),
         peer_2_camera.clone(),
-    ])));
+    ])))?;
     let second_tracks = encode_server_batch(ServerEnvelope::Message(ServerMessage::Tracks(vec![
         peer_2_camera.clone(),
-    ])));
-
+    ])))?;
     assert_eq!(
         core.on_ws_message(&first_tracks).as_slice(),
         &[Command::EmitEvent {
@@ -34,7 +32,6 @@ fn protocol_core_emits_replacement_track_snapshots() {
             },
         }]
     );
-
     assert_eq!(
         core.on_ws_message(&second_tracks).as_slice(),
         &[Command::EmitEvent {
@@ -43,28 +40,86 @@ fn protocol_core_emits_replacement_track_snapshots() {
             },
         }]
     );
-
     let peer_left = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerLeft(
         PeerLeftPayload {
             user_id: String::from("peer-2").into(),
         },
-    )));
+    )))?;
     let _ = core.on_ws_message(&peer_left);
-
     assert!(!core.disconnect().iter().any(|command| matches!(
         command,
         Command::EmitEvent {
             event: ProtocolEvent::TrackSnapshot { .. },
         }
     )));
+    Ok(())
 }
 
 #[test]
-fn protocol_core_peer_left_preserves_other_track_cleanup() {
+fn protocol_core_duplicate_mids_preserve_snapshot_and_last_peer_cleanup() -> Result<(), String> {
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
     let _ = core.accept_welcome(sample_welcome_payload());
+    let bindings = vec![
+        TrackBinding {
+            mid: String::from("0"),
+            user_id: 1_i64.into(),
+            stream_type: StreamType::Audio,
+            active: true,
+        },
+        TrackBinding {
+            mid: String::from("0"),
+            user_id: 2_i64.into(),
+            stream_type: StreamType::Camera,
+            active: false,
+        },
+    ];
+    let tracks = encode_server_batch(ServerEnvelope::Message(ServerMessage::Tracks(
+        bindings.clone(),
+    )))?;
+    assert_eq!(
+        core.on_ws_message(&tracks),
+        vec![Command::EmitEvent {
+            event: ProtocolEvent::TrackSnapshot { bindings },
+        }]
+    );
+    for (departing_peer, expected_cleanup_snapshots) in [(1_i64, 1), (2, 0)] {
+        let mut core = core.clone();
+        let peer_left = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerLeft(
+            PeerLeftPayload {
+                user_id: departing_peer.into(),
+            },
+        )))?;
+        assert_eq!(
+            core.on_ws_message(&peer_left),
+            vec![Command::EmitEvent {
+                event: ProtocolEvent::PeerLeft {
+                    user_id: departing_peer.into(),
+                },
+            }]
+        );
+        let commands = core.disconnect();
+        let cleanup_snapshots = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::EmitEvent {
+                    event: ProtocolEvent::TrackSnapshot { bindings },
+                } => Some(bindings),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(cleanup_snapshots.len(), expected_cleanup_snapshots);
+        assert!(cleanup_snapshots.iter().all(|bindings| bindings.is_empty()));
+        assert!(core.disconnect().is_empty());
+    }
+    Ok(())
+}
 
+#[test]
+fn protocol_core_peer_left_preserves_other_track_cleanup() -> Result<(), String> {
+    let mut core = ProtocolCore::new();
+    let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
+    let _ = core.accept_welcome(sample_welcome_payload());
     let peer_1 = TrackBinding {
         mid: String::from("0"),
         user_id: String::from("peer-1").into(),
@@ -80,7 +135,7 @@ fn protocol_core_peer_left_preserves_other_track_cleanup() {
     let tracks = encode_server_batch(ServerEnvelope::Message(ServerMessage::Tracks(vec![
         peer_1.clone(),
         peer_2.clone(),
-    ])));
+    ])))?;
     assert_eq!(
         core.on_ws_message(&tracks).as_slice(),
         &[Command::EmitEvent {
@@ -89,13 +144,11 @@ fn protocol_core_peer_left_preserves_other_track_cleanup() {
             },
         }]
     );
-
     let peer_left = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerLeft(
         PeerLeftPayload {
             user_id: String::from("peer-1").into(),
         },
-    )));
-
+    )))?;
     assert_eq!(
         core.on_ws_message(&peer_left).as_slice(),
         &[Command::EmitEvent {
@@ -104,7 +157,6 @@ fn protocol_core_peer_left_preserves_other_track_cleanup() {
             },
         }]
     );
-
     let commands = core.disconnect();
     assert_eq!(core.state(), ConnectionState::Disconnected);
     assert!(commands.iter().any(|command| matches!(
@@ -113,6 +165,7 @@ fn protocol_core_peer_left_preserves_other_track_cleanup() {
             event: ProtocolEvent::TrackSnapshot { bindings },
         } if bindings.is_empty()
     )));
+    Ok(())
 }
 
 #[test]
@@ -161,11 +214,10 @@ fn protocol_core_ignores_legacy_sources_with_or_without_tracks() -> serde_json::
 }
 
 #[test]
-fn protocol_core_emits_peer_and_recording_updates_from_server_messages() {
+fn protocol_core_emits_peer_and_recording_updates_from_server_messages() -> Result<(), String> {
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
     let _ = core.accept_welcome(sample_welcome_payload());
-
     let peer_info_frame = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerInfo(
         PeerInfoPayload {
             user_id: String::from("peer-1").into(),
@@ -174,12 +226,12 @@ fn protocol_core_emits_peer_and_recording_updates_from_server_messages() {
                 ..UserInfo::default()
             },
         },
-    )));
+    )))?;
     let peer_left_frame = encode_server_batch(ServerEnvelope::Message(ServerMessage::PeerLeft(
         PeerLeftPayload {
             user_id: String::from("peer-1").into(),
         },
-    )));
+    )))?;
     let recording_frame = encode_server_batch(ServerEnvelope::Message(
         ServerMessage::RecordingChange(RecordingStateUpdate {
             state: RecordingState {
@@ -190,14 +242,13 @@ fn protocol_core_emits_peer_and_recording_updates_from_server_messages() {
             },
             stop_code: Some(StopCode::UserRequest),
         }),
-    ));
+    ))?;
     let broadcast_frame = encode_server_batch(ServerEnvelope::Message(ServerMessage::Broadcast(
         ServerBroadcastPayload {
             sender_id: String::from("peer-2").into(),
             message: serde_json::json!({ "body": "hello" }),
         },
-    )));
-
+    )))?;
     assert_eq!(
         core.on_ws_message(&peer_info_frame).as_slice(),
         &[Command::EmitEvent {
@@ -253,6 +304,7 @@ fn protocol_core_emits_peer_and_recording_updates_from_server_messages() {
             },
         ]
     );
+    Ok(())
 }
 
 #[test]

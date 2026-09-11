@@ -45,33 +45,78 @@ async fn duplicate_staged_publish_is_ignored_before_transport_reservation() {
 }
 
 #[tokio::test]
-async fn staged_negotiated_publish_commit_moves_through_room_owned_transaction() {
+async fn staged_answer_commits_all_publications_before_next_policy_turn() {
     let mut scenario = StagedPublishScenario::new().await;
 
     assert_eq!(
         scenario.stage_scalable_video().await,
         PublishStageOutcome::Staged
     );
-    let transport_media_id = scenario
+    let scalable_media_id = scenario
         .staged_media_id(TestSourceKind::ScalableVideo)
         .await;
-
+    assert_eq!(
+        scenario.stage_source(TestSourceKind::ReadableVideo).await,
+        PublishStageOutcome::Staged
+    );
+    let readable_media_id = scenario
+        .staged_media_id(TestSourceKind::ReadableVideo)
+        .await;
+    let applied_answer = AppliedSessionAnswer::from_negotiated_producers([
+        (scalable_media_id, test_simulcast_video_rtp_parameters()),
+        (readable_media_id, test_video_rtp_parameters()),
+    ]);
+    let operation =
+        scenario
+            .room
+            .user_operation(&scenario.user_id, scenario.connection_id, &scenario.adapter);
     {
-        let source_policy_guard = scenario.room.source_policy_turn.lock().await;
-        let mut commit = Box::pin(scenario.commit());
+        let source_policy_guard = scenario.room.lock_source_policy().await;
+        let mut commit = Box::pin(operation.commit_staged_publishes(&applied_answer));
         assert!(
             timeout(Duration::from_millis(10), commit.as_mut())
                 .await
                 .is_err()
         );
         assert_eq!(scenario.room.test_api().producer_count().await, 0);
-        assert_eq!(scenario.staged_count().await, 1);
+        assert_eq!(scenario.staged_count().await, 2);
         drop(commit);
         drop(source_policy_guard);
     }
-    scenario.commit().await;
-
+    {
+        let release_worker = scenario
+            .adapter
+            .test_api()
+            .pause_first_worker()
+            .await
+            .expect("test worker should pause before answer effects");
+        let mut commit = Box::pin(operation.commit_staged_publishes(&applied_answer));
+        assert!(
+            timeout(Duration::from_millis(10), commit.as_mut())
+                .await
+                .is_err()
+        );
+        assert_eq!(scenario.room.test_api().producer_count().await, 1);
+        let mut next_policy_turn = Box::pin(scenario.room.lock_source_policy());
+        assert!(
+            timeout(Duration::from_millis(10), next_policy_turn.as_mut())
+                .await
+                .is_err()
+        );
+        release_worker.send(()).expect("test worker should resume");
+        // The queued waiter must not acquire between publications in one answer.
+        timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                biased;
+                _ = next_policy_turn.as_mut() => panic!("policy overtook the accepted answer batch"),
+                () = commit.as_mut() => {},
+            }
+        })
+        .await
+        .expect("answer effects should finish after the worker resumes");
+    }
     assert_eq!(scenario.staged_count().await, 0);
+    assert_eq!(scenario.room.test_api().producer_count().await, 2);
     assert!(scenario.scalable_video_is_published().await);
     assert!(
         scenario
@@ -79,7 +124,7 @@ async fn staged_negotiated_publish_commit_moves_through_room_owned_transaction()
             .state
             .read()
             .await
-            .inspect_source_encoding_ids_for_transport_media_id(transport_media_id)
+            .inspect_source_encoding_ids_for_transport_media_id(scalable_media_id)
             .is_some()
     );
     assert!(scenario.drain_publisher().is_empty());
@@ -92,6 +137,7 @@ async fn staged_negotiated_publish_commit_moves_through_room_owned_transaction()
         "pending consumer routes must not emit empty remote track snapshots"
     );
     assert_remote_track_snapshot_for_stream(&subscriber_output, TestSourceKind::ScalableVideo);
+    assert_remote_track_snapshot_for_stream(&subscriber_output, TestSourceKind::ReadableVideo);
 }
 
 #[tokio::test]

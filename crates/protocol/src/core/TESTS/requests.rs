@@ -6,13 +6,11 @@ fn protocol_core_tracks_recording_request_until_matching_response() -> Result<()
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
     let _ = core.accept_welcome(sample_welcome_payload());
-
     let commands = core.start_recording(RecordingOptions {
         audio: Some(true),
         video: Some(true),
         transcription: None,
     });
-
     let [
         Command::BeginPendingRequest {
             request: pending_request,
@@ -27,32 +25,23 @@ fn protocol_core_tracks_recording_request_until_matching_response() -> Result<()
     };
     assert_eq!(pending_request.timeout_ms, REQUEST_TIMEOUT_MS);
     let request_id = pending_request.request_id.clone();
-
     let flush_commands = core.on_timer(*flush_timer_id);
-    let mut batch = decode_sent_batch(&flush_commands).into_iter();
-    let Some(envelope) = batch.next() else {
-        return Err(format!(
-            "expected flushed request envelope, got {flush_commands:?}"
-        ));
-    };
-    assert_eq!(
-        ClientEnvelope::decode(envelope),
-        Ok(ClientEnvelope::Request {
+    assert_sent_client_envelopes(
+        &flush_commands,
+        vec![ClientEnvelope::Request {
             request_id: request_id.clone(),
             request: ClientRequest::StartRecording(RecordingOptions {
                 audio: Some(true),
                 video: Some(true),
                 transcription: None,
             }),
-        })
+        }],
     );
-
     let response_frame = encode_server_batch(ServerEnvelope::Response {
         response_to: request_id.clone(),
         response: ServerResponse::StartRecording(RecordingActionResult { ok: true }),
-    });
+    })?;
     let response_commands = core.on_ws_message(&response_frame);
-
     assert_eq!(
         response_commands.as_slice(),
         &[Command::CompletePendingRequest {
@@ -101,22 +90,19 @@ fn protocol_core_matches_overlapping_recording_requests_and_clears_in_begin_orde
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);
     let _ = core.accept_welcome(sample_welcome_payload());
-
     let start = pending_request(&core.start_recording(RecordingOptions::default()))?;
     let stop = pending_request(&core.stop_recording())?;
     assert!(core.start_recording(RecordingOptions::default()).is_empty());
     assert!(core.stop_recording().is_empty());
-
     let crossed_response = encode_server_batch(ServerEnvelope::Response {
         response_to: stop.request_id.clone(),
         response: ServerResponse::StartRecording(RecordingActionResult { ok: true }),
-    });
+    })?;
     assert!(core.on_ws_message(&crossed_response).is_empty());
-
     let stop_response = encode_server_batch(ServerEnvelope::Response {
         response_to: stop.request_id.clone(),
         response: ServerResponse::StopRecording(RecordingActionResult { ok: true }),
-    });
+    })?;
     assert_eq!(
         core.on_ws_message(&stop_response).as_slice(),
         &[Command::CompletePendingRequest {
@@ -126,11 +112,10 @@ fn protocol_core_matches_overlapping_recording_requests_and_clears_in_begin_orde
         }]
     );
     assert!(core.on_timer(stop.timeout_timer_id).is_empty());
-
     let start_response = encode_server_batch(ServerEnvelope::Response {
         response_to: start.request_id.clone(),
         response: ServerResponse::StartRecording(RecordingActionResult { ok: false }),
-    });
+    })?;
     assert_eq!(
         core.on_ws_message(&start_response).as_slice(),
         &[Command::CompletePendingRequest {
@@ -140,7 +125,6 @@ fn protocol_core_matches_overlapping_recording_requests_and_clears_in_begin_orde
         }]
     );
     assert!(core.on_ws_message(&start_response).is_empty());
-
     let stop = pending_request(&core.stop_recording())?;
     let start = pending_request(&core.start_recording(RecordingOptions::default()))?;
     let completions = core

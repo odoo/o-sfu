@@ -9,8 +9,8 @@ use tracing::{debug, error, warn};
 
 use super::{
     super::{
-        BroadcastPayload, BroadcastPayloadError, RoomEventMessage, RoomJoinError,
-        RoomUserPermissions, RouterPlacement, UserCloseReason,
+        BroadcastPayload, BroadcastPayloadError, RoomEventMessage, RoomJoinError, RouterPlacement,
+        UserCloseReason,
         effects::transport::RoomTransportPlan,
         media_graph::{
             CommittedTransportReceipt, SessionPlacementCommit, SessionPlacementRejection,
@@ -93,13 +93,13 @@ pub struct DisconnectCommit {
 }
 
 impl RoomState {
-    pub fn fanout_all(&self, message: &RoomEventMessage) -> MessageFanout {
+    pub fn fanout_all(&self, message: RoomEventMessage) -> MessageFanout {
         fanout_all(self.users.values().map(|user| user.sender.clone()), message)
     }
 
     pub fn fanout_all_except(
         &self,
-        message: &RoomEventMessage,
+        message: RoomEventMessage,
         excluded_user_id: &UserId,
     ) -> MessageFanout {
         fanout_all(
@@ -154,13 +154,11 @@ impl RoomState {
     fn install_joined_session(
         &mut self,
         user_id: &UserId,
-        permissions: RoomUserPermissions,
         sender: OutboundSender,
         connection_id: ConnectionId,
     ) -> Option<OutboundSender> {
         if let Some(user) = self.users.get_mut(user_id) {
             let old_sender = mem::replace(&mut user.sender, sender);
-            user.permissions = permissions;
             user.reset_presentation();
             user.parsed_client_rtp_capabilities = None;
             user.connection_id = connection_id;
@@ -171,7 +169,6 @@ impl RoomState {
             user_id.clone(),
             ActiveUser {
                 user_id: Arc::new(user_id.clone()),
-                permissions,
                 info: UserInfo::default(),
                 server_featured: None,
                 parsed_client_rtp_capabilities: None,
@@ -187,12 +184,10 @@ impl RoomState {
     pub fn apply_join(
         &mut self,
         user_id: &UserId,
-        permissions: impl Into<RoomUserPermissions>,
         sender: OutboundSender,
     ) -> Result<JoinCommit, RoomJoinError> {
         self.apply_join_on_placement(
             user_id,
-            permissions,
             sender,
             UserJoinedFanout::Suppress,
             self.fallback_join_placement(),
@@ -202,12 +197,10 @@ impl RoomState {
     pub fn apply_join_on_placement(
         &mut self,
         user_id: &UserId,
-        permissions: impl Into<RoomUserPermissions>,
         sender: OutboundSender,
         joined_fanout: UserJoinedFanout,
         home_placement: RouterPlacement,
     ) -> Result<JoinCommit, RoomJoinError> {
-        let permissions = permissions.into();
         let previous_connection = self.users.get(user_id).map(|user| user.connection_id);
         let is_new = previous_connection.is_none();
         if is_new && self.users.len() >= self.admission_policy.max_sessions {
@@ -232,8 +225,7 @@ impl RoomState {
             );
         }
 
-        let previous_sender =
-            self.install_joined_session(user_id, permissions, sender, connection_id);
+        let previous_sender = self.install_joined_session(user_id, sender, connection_id);
         let had_previous_sender = previous_sender.is_some();
 
         let mut effects = LifecycleEffects::default();
@@ -246,7 +238,7 @@ impl RoomState {
             .extend(self.remote_track_snapshots_for_users(source_recipients, true));
         effects.push_fanout(had_previous_sender.then(|| {
             self.fanout_all_except(
-                &RoomEventMessage::UserDeparted {
+                RoomEventMessage::UserDeparted {
                     user_id: user_id.clone(),
                 },
                 user_id,
@@ -256,7 +248,7 @@ impl RoomState {
             self.user_info_snapshot(user_id)
                 .map(|(joined_user_id, info)| {
                     self.fanout_all_except(
-                        &RoomEventMessage::UserJoined {
+                        RoomEventMessage::UserJoined {
                             user_id: joined_user_id,
                             info,
                         },
@@ -315,7 +307,7 @@ impl RoomState {
                     sender: user.sender,
                     reason: UserCloseReason::RemovedByRuntime,
                 }],
-                fanouts: vec![self.fanout_all(&RoomEventMessage::UserDeparted {
+                fanouts: vec![self.fanout_all(RoomEventMessage::UserDeparted {
                     user_id: user_id.clone(),
                 })],
                 track_snapshots: self.remote_track_snapshots_for_users(source_recipients, true),
@@ -330,7 +322,7 @@ impl RoomState {
         connection_id: ConnectionId,
         info: &UserInfo,
     ) -> Option<PresenceCommit> {
-        let Some(current_user) = self.users.get(user_id) else {
+        let Some(current_user) = self.users.get_mut(user_id) else {
             warn!(
                 ?user_id,
                 connection_id = ?connection_id,
@@ -349,10 +341,7 @@ impl RoomState {
             );
             return None;
         }
-        {
-            let user = self.user_mut_for_connection(user_id, connection_id)?;
-            user.apply_info_update(info);
-        }
+        current_user.apply_info_update(info);
         let snapshot = BTreeMap::from([self.user_info_snapshot(user_id)?]);
         debug!(
             ?user_id,
@@ -362,7 +351,7 @@ impl RoomState {
             "applied user presence update and staged user info fanout"
         );
         Some(PresenceCommit {
-            fanout: self.fanout_all(&RoomEventMessage::UserInfoChanged(snapshot)),
+            fanout: self.fanout_all(RoomEventMessage::UserInfoChanged(snapshot)),
         })
     }
 
@@ -409,7 +398,7 @@ impl RoomState {
                 sender: user.sender,
                 reason: UserCloseReason::RemovedByRuntime,
             });
-            fanouts.push(self.fanout_all(&RoomEventMessage::UserDeparted {
+            fanouts.push(self.fanout_all(RoomEventMessage::UserDeparted {
                 user_id: user_id.clone(),
             }));
         }
@@ -446,7 +435,7 @@ impl RoomState {
         }
         let message = BroadcastPayload::try_new(message)?;
         Ok(Some(self.fanout_all_except(
-            &RoomEventMessage::Broadcast {
+            RoomEventMessage::Broadcast {
                 sender_id: user_id.clone(),
                 message,
             },

@@ -253,14 +253,14 @@ impl RouteGraph {
         source_id: PublishedSourceId,
         selection: ConsumerSourceSelection,
     ) -> Option<ConsumerRouteReservation> {
-        let current = self.entries.get(&key)?.current.as_ref()?;
+        let current = self.entries.get_mut(&key)?.current.as_mut()?;
         if current.source_id != source_id
             || !matches!(current.realization, ConsumerRealization::Absent)
         {
             return None;
         }
-        let id = self.next_reservation();
-        let current = self.entries.get_mut(&key)?.current.as_mut()?;
+        self.next_reservation.0 += 1;
+        let id = self.next_reservation;
         current.selection = selection;
         current.realization = ConsumerRealization::Pending(id, None);
         Some(ConsumerRouteReservation {
@@ -321,17 +321,13 @@ impl RouteGraph {
         route: &TransportConsumerRoute,
         update: impl FnOnce(&mut ConsumerSourceSelection),
     ) -> bool {
-        let Some(current) = self
-            .entries
-            .get_mut(key)
-            .and_then(|entry| entry.current.as_mut())
-        else {
+        let Some(current) = self.current_mut(key, source_id) else {
             return false;
         };
         let ConsumerRealization::Committed(committed) = &current.realization else {
             return false;
         };
-        if current.source_id != source_id || &committed.route != route {
+        if &committed.route != route {
             return false;
         }
         update(&mut current.selection);
@@ -566,11 +562,6 @@ impl RouteGraph {
             .or_default()
             .insert(key.clone());
         self.entries.entry(key).or_default()
-    }
-
-    fn next_reservation(&mut self) -> RouteReservationId {
-        self.next_reservation.0 += 1;
-        self.next_reservation
     }
 
     fn current_mut(

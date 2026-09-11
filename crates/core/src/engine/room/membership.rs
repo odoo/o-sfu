@@ -22,7 +22,7 @@ use crate::engine::{
     media_transport::MediaTransport, room::state::JoinCommit,
 };
 
-/// Room-state marker that collapses every authenticated [`UserPermissions`] value.
+/// Compatibility marker that collapses every authenticated [`UserPermissions`] value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RoomUserPermissions;
 
@@ -43,7 +43,7 @@ pub struct JoinUserRequest {
     pub user_id: UserId,
     /// Ignored by room admission.
     pub label: Option<String>,
-    /// Collapsed to [`RoomUserPermissions`] during admission.
+    /// Ignored by room admission.
     pub permissions: UserPermissions,
     pub sender: UserOutboundSender,
 }
@@ -70,8 +70,14 @@ impl Room {
         commit: JoinCommit,
         context: RoomEffectContext<'_>,
     ) -> CommittedTransportReceipt {
-        let receipt = commit.receipt.clone();
-        RoomEffects::from_join(commit).execute(self, context).await;
+        let JoinCommit {
+            receipt,
+            effects,
+            transport_plan,
+        } = commit;
+        RoomEffects::from_join(effects, transport_plan)
+            .execute(self, context)
+            .await;
         let session = &receipt.transport_session_key;
         info!(
             event = telemetry_event::USER_JOINED,
@@ -210,12 +216,14 @@ impl Room {
         &self,
         user_ids: &[UserId],
         media_transport: &MediaTransport,
-    ) {
+    ) -> usize {
         self.disconnect_users_with_teardown(user_ids, RoomEffectContext::runtime(media_transport))
-            .await;
+            .await
     }
 
     /// Removes current sessions in one state commit and ignores missing users.
+    ///
+    /// Returns the number of sessions actually torn down.
     ///
     /// # Panics
     ///
@@ -224,7 +232,7 @@ impl Room {
         &self,
         user_ids: &[UserId],
         context: RoomEffectContext<'_>,
-    ) {
+    ) -> usize {
         let commit = {
             let mut state = self.state.write().await;
             state.apply_disconnect_users(user_ids)
@@ -237,7 +245,7 @@ impl Room {
         RoomEffects::from_disconnect(commit)
             .execute(self, context)
             .await;
-        for session in sessions {
+        for session in &sessions {
             info!(
                 event = telemetry_event::USER_DISCONNECTED,
                 room_id = self.uuid(),
@@ -247,6 +255,7 @@ impl Room {
                 "user disconnected"
             );
         }
+        sessions.len()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]

@@ -3,15 +3,12 @@ use std::time::{Duration, Instant};
 use o_sfu_router::rtp::{MediaStream as RouterRtpParameters, StreamBinding};
 use tokio::sync::mpsc;
 
-use super::*;
+use super::{super::relay_registry::RelayTargetId, *};
 use crate::engine::{
     UserId,
     media_transport::{
         TransportSourceKey,
-        rtc::{
-            commands::RemoteSourceControl, relay_registry::RelayTargetId,
-            test_support::test_transport_session_key,
-        },
+        rtc::{commands::RemoteSourceControl, test_support::test_transport_session_key},
     },
     metrics::RuntimeMetrics,
 };

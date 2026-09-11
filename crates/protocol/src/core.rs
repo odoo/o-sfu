@@ -28,10 +28,9 @@ use crate::{
         StreamType, UserId, UserInfo,
     },
     signaling::{
-        AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, Envelope,
-        MAX_ENVELOPE_BATCH_LEN, NegotiationUploadSlot, PeerSnapshot, RecordingOptions, RequestId,
-        ServerEnvelope, StreamIntentPayload, SubscribePayload, TrackBinding, WebSocketCloseCode,
-        WelcomePayload, decode_envelope_batch,
+        AuthPayload, ClientBroadcastPayload, ClientEnvelope, ClientMessage, MAX_ENVELOPE_BATCH_LEN,
+        NegotiationUploadSlot, PeerSnapshot, RequestId, ServerEnvelope, StreamIntentPayload,
+        SubscribePayload, TrackBinding, WebSocketCloseCode, WelcomePayload, decode_envelope_batch,
     },
     wire::ServerMessage,
 };
@@ -51,7 +50,7 @@ const MAX_OUTBOUND_BATCH_LEN: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Command {
-    /// Serialize and send a JSON frame over the WebSocket.
+    /// Send the already serialized JSON frame unchanged over the WebSocket.
     SendWebSocket {
         frame: String,
     },
@@ -273,11 +272,11 @@ pub(super) enum NegotiationRejection {
 pub struct ProtocolCore {
     /// Lifecycle and server-driven negotiation state.
     phase: ProtocolPhase,
-    /// Current server-maintained mapping from SDP mid to stream binding metadata.
+    /// Users retained by SDP MID for peer departure and teardown cleanup.
     ///
-    /// The map is replaced by track snapshots and trimmed when peers leave. It
-    /// is runtime state only and is cleared on disconnect or socket loss.
-    track_bindings: BTreeMap<String, TrackBinding>,
+    /// Track snapshots replace the map and the last binding for a MID wins.
+    /// Peer departures remove their entries. Disconnect and socket loss clear it.
+    track_users_by_mid: BTreeMap<String, UserId>,
     /// Latest client intent that must be replayed after a recovered socket is
     /// authenticated.
     ///
@@ -329,7 +328,7 @@ impl ProtocolCore {
     pub fn new() -> Self {
         Self {
             phase: ProtocolPhase::Disconnected,
-            track_bindings: BTreeMap::new(),
+            track_users_by_mid: BTreeMap::new(),
             sticky_replay: StickyReplayState::new(),
             connect_context: None,
             recovery_delay_ms: INITIAL_RECOVERY_DELAY_MS,
@@ -343,34 +342,12 @@ impl ProtocolCore {
         self.phase.connection_state()
     }
 
-    /// Starts a fresh connection attempt when the current state permits one.
-    ///
-    /// Accepts [`ConnectionState::Disconnected`], [`ConnectionState::Closed`] and
-    /// [`ConnectionState::Recovering`]. Calls from [`ConnectionState::Connecting`],
-    /// [`ConnectionState::Authenticated`] and [`ConnectionState::Connected`] return
-    /// no commands without replacing the saved admission context.
-    ///
-    /// This is stricter than a reconnect path: it clears sticky
-    /// replay and runtime state so a caller switching rooms or credentials cannot
-    /// accidentally leak the previous user intent into the new connection.
-    pub fn connect(
-        &mut self,
-        url: impl Into<String>,
-        jwt: impl Into<String>,
-        room: Option<String>,
-    ) -> Vec<Command> {
-        connection_lifecycle::connect(self, url.into(), jwt.into(), room)
-    }
-
     /// Authenticates a newly opened socket with the stored connect context.
     ///
     /// Recovery reuses the same JWT and optional room that [`ProtocolCore::connect`] captured,
     /// which keeps every socket attempt tied to one explicit admission context.
     pub fn on_ws_open(&mut self) -> Vec<Command> {
-        if !matches!(
-            self.phase.connection_state(),
-            ConnectionState::Connecting | ConnectionState::Recovering
-        ) {
+        if !self.phase.is_awaiting_welcome() {
             return Vec::new();
         }
         let Some(connect_context) = self.connect_context.as_ref() else {
@@ -436,10 +413,7 @@ impl ProtocolCore {
     }
 
     fn accept_welcome(&mut self, payload: WelcomePayload) -> Commands {
-        if !matches!(
-            self.phase.connection_state(),
-            ConnectionState::Connecting | ConnectionState::Recovering
-        ) {
+        if !self.phase.is_awaiting_welcome() {
             return Vec::new();
         }
         let WelcomePayload {
@@ -510,7 +484,7 @@ impl ProtocolCore {
     pub fn subscribe(&mut self, user_id: UserId, states: DownloadStates) -> Vec<Command> {
         self.sticky_replay
             .remember_subscription_states(&user_id, &states);
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(
@@ -526,7 +500,7 @@ impl ProtocolCore {
     /// state back to server defaults.
     pub fn update_info(&mut self, info: UserInfo) -> Vec<Command> {
         self.sticky_replay.remember_info(&info);
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(ClientMessage::Info(info), FlushMode::Batched)
@@ -538,42 +512,13 @@ impl ProtocolCore {
     /// authenticated, the message is dropped instead of being replayed later out
     /// of its original conversational context.
     pub fn broadcast(&mut self, message: JsonPayload) -> Vec<Command> {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         self.enqueue_client_message(
             ClientMessage::Broadcast(ClientBroadcastPayload { message }),
             FlushMode::Batched,
         )
-    }
-
-    pub fn start_recording(&mut self, options: RecordingOptions) -> Vec<Command> {
-        request_flow::start_recording(self, options)
-    }
-    pub fn stop_recording(&mut self) -> Vec<Command> {
-        request_flow::stop_recording(self)
-    }
-
-    /// Replies to the currently pending negotiation request.
-    ///
-    /// The host must echo the exact `request_id` and `kind` from
-    /// [`Command::ApplyNegotiation`]; mismatches are ignored so a stale or
-    /// reordered SDP answer cannot accidentally resolve the wrong negotiation.
-    pub fn submit_negotiation_answer(
-        &mut self,
-        request_id: &RequestId,
-        kind: NegotiationKind,
-        sdp: impl Into<String>,
-    ) -> Vec<Command> {
-        request_flow::submit_negotiation_answer(self, request_id, kind, sdp)
-    }
-
-    pub fn disconnect(&mut self) -> Vec<Command> {
-        connection_lifecycle::disconnect(self)
-    }
-
-    pub fn on_ws_close(&mut self, code: u16) -> Vec<Command> {
-        connection_lifecycle::on_ws_close(self, code)
     }
 
     /// Dispatches all timer callbacks through one entry point.
@@ -586,7 +531,7 @@ impl ProtocolCore {
             return connection_lifecycle::handle_recovery_timer(self);
         }
         if timer_id == BATCH_FLUSH_TIMER_ID {
-            return self.flush_pending_batch(false);
+            return self.outbound_batch.flush(false);
         }
         if let Some(commands) = RequestTimeoutId::try_from_raw(timer_id)
             .and_then(|timeout_id| self.request_tracker.resolve_timeout(timeout_id))
@@ -596,23 +541,15 @@ impl ProtocolCore {
         Vec::new()
     }
 
-    fn enqueue_envelope(&mut self, envelope: Envelope, mode: FlushMode) -> Commands {
-        self.outbound_batch.enqueue(envelope, mode)
-    }
-
     fn enqueue_client_message(&mut self, message: ClientMessage, mode: FlushMode) -> Commands {
         let Some(envelope) = ClientEnvelope::Message(message).into_envelope().ok() else {
             return Vec::new();
         };
-        self.enqueue_envelope(envelope, mode)
-    }
-
-    fn flush_pending_batch(&mut self, cancel_timer: bool) -> Commands {
-        self.outbound_batch.flush(cancel_timer)
+        self.outbound_batch.enqueue(envelope, mode)
     }
 
     fn clear_runtime_state(&mut self) {
-        self.track_bindings.clear();
+        self.track_users_by_mid.clear();
         self.outbound_batch.clear();
         self.request_tracker.clear();
     }
@@ -625,8 +562,8 @@ impl ProtocolCore {
     fn teardown_runtime_state(&mut self) -> Commands {
         let mut commands = self.outbound_batch.discard_pending();
         commands.extend(self.request_tracker.fail_all());
-        if !self.track_bindings.is_empty() {
-            self.track_bindings.clear();
+        if !self.track_users_by_mid.is_empty() {
+            self.track_users_by_mid.clear();
             commands.push(Command::EmitEvent {
                 event: ProtocolEvent::TrackSnapshot {
                     bindings: Vec::new(),
@@ -636,52 +573,37 @@ impl ProtocolCore {
         commands
     }
 
-    fn clear_sticky_state(&mut self) {
-        self.sticky_replay.clear();
-    }
-
     /// Flushes room-level intent immediately after the server snapshot is known.
     fn replay_session_state(&mut self) -> Commands {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
         let Some(replay_batch) = self.sticky_replay.replay_session_batch() else {
             return Vec::new();
         };
-
         self.outbound_batch.extend(replay_batch);
-        self.flush_pending_batch(true)
+        self.outbound_batch.flush(true)
     }
 
     /// Flushes publish intent after the recovered media transport is ready.
     fn replay_publication_state(&mut self) -> Commands {
-        if !self.can_send_client_messages() {
+        if !self.phase.can_send_client_messages() {
             return Vec::new();
         }
-
-        let mut replay_batch = Vec::new();
-        for stream_type in self.sticky_replay.active_publications() {
-            let Some(envelope) =
-                ClientEnvelope::Message(ClientMessage::Publish(StreamIntentPayload {
-                    stream_type,
-                }))
-                .into_envelope()
-                .ok()
-            else {
-                continue;
-            };
-            replay_batch.push(envelope);
-        }
+        let replay_batch: Vec<_> = self
+            .sticky_replay
+            .active_publications()
+            .filter_map(|stream_type| {
+                ClientEnvelope::Message(ClientMessage::Publish(StreamIntentPayload { stream_type }))
+                    .into_envelope()
+                    .ok()
+            })
+            .collect();
         if replay_batch.is_empty() {
             return Vec::new();
         }
-
         self.outbound_batch.extend(replay_batch);
-        self.flush_pending_batch(true)
-    }
-
-    fn can_send_client_messages(&self) -> bool {
-        self.phase.can_send_client_messages()
+        self.outbound_batch.flush(true)
     }
 }
 
@@ -705,11 +627,7 @@ fn close_for_protocol_error() -> Commands {
 /// The sequence is modest so short-lived outages recover quickly,
 /// but repeated failures still spread out retries and avoid hot-loop reconnects.
 fn next_recovery_delay(current_delay_ms: u32) -> u32 {
-    current_delay_ms
-        .saturating_mul(3)
-        .checked_div(2)
-        .unwrap_or(MAX_RECOVERY_DELAY_MS)
-        .min(MAX_RECOVERY_DELAY_MS)
+    (current_delay_ms.saturating_mul(3) / 2).min(MAX_RECOVERY_DELAY_MS)
 }
 
 #[cfg(test)]

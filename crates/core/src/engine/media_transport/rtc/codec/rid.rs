@@ -10,10 +10,8 @@ use str0m::{
     media::{Mid, Rid, Simulcast, SimulcastLayer},
 };
 
-use crate::{
-    Bitrate, VideoBitrateLimits,
-    engine::media_transport::{SessionUploadEncoding, rtc::route_control::PacketLayerGate},
-};
+use super::super::state::route_control::PacketLayerGate;
+use crate::{Bitrate, VideoBitrateLimits, engine::media_transport::SessionUploadEncoding};
 
 pub(super) const DEFAULT_LOW_RID: &str = "lo";
 pub(super) const DEFAULT_MIDDLE_RID: &str = "mid";
@@ -177,16 +175,16 @@ pub(in crate::engine::media_transport::rtc) fn initial_packet_gate(
 }
 
 fn parse_section_rids(section: &str) -> Result<Vec<AnswerRid>, SimulcastAnswerError> {
-    let accepted_rids = accepted_send_simulcast_rids(section)?;
-    let mut rids = Vec::with_capacity(accepted_rids.len());
-    for rid in accepted_rids {
-        let declaration = send_rid_declaration(section, rid)?;
-        rids.push(AnswerRid {
-            rid: declaration.rid.to_owned(),
-            max_bitrate: declaration.max_bitrate,
-        });
-    }
-    Ok(rids)
+    accepted_send_simulcast_rids(section)?
+        .into_iter()
+        .map(|rid| {
+            let declaration = send_rid_declaration(section, rid)?;
+            Ok(AnswerRid {
+                rid: declaration.rid.to_owned(),
+                max_bitrate: declaration.max_bitrate,
+            })
+        })
+        .collect()
 }
 
 fn negotiate_answer_rids(

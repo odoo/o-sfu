@@ -5,6 +5,8 @@ mod packets;
 #[cfg(any(test, feature = "testing-transport"))]
 mod probe;
 #[cfg(any(test, feature = "internal-benchmarks"))]
+mod remote_control;
+#[cfg(any(test, feature = "internal-benchmarks"))]
 mod route_graph;
 
 #[cfg(test)]
@@ -14,9 +16,7 @@ use std::time::Instant;
 pub(super) use media_routes::{
     add_source_rid_stream, assert_consumer_packet_gate, assert_remote_keyframe_command,
     assert_remote_packet_gate_command, drain_ready_sessions, install_video_route_with_gate,
-    install_video_route_with_pending_gate, register_remote_source_control,
-    register_saturated_remote_source, saturated_remote_control, test_consumer_session_key,
-    test_consumer_session_key_on_worker, test_source_session_key,
+    test_consumer_session_key, test_consumer_session_key_on_worker, test_source_session_key,
 };
 #[cfg(any(test, feature = "testing-transport"))]
 pub use probe::{DebugPacketGate, DebugRouteDestination, DebugRouteEntry};
@@ -30,35 +30,41 @@ pub(super) use probe::{
 pub(super) use probe::{
     RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
 };
+#[cfg(any(test, feature = "internal-benchmarks"))]
+pub(super) use remote_control::register_saturated_remote_source;
+#[cfg(test)]
+pub(super) use remote_control::{register_remote_source_control, saturated_remote_control};
 #[cfg(test)]
 pub(super) use route_graph::prepare_source_session_with_rid;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-pub(super) use {
-    super::forwarded_packet::test_support::sample_forwarded_packet_without_mid,
-    packets::serialize_stun_message,
-    route_graph::{MediaWorkerScenario, prepare_source_session},
-};
-#[cfg(feature = "internal-benchmarks")]
-pub(super) use {
-    super::forwarded_packet::test_support::{
-        BenchmarkPacketStaging, BenchmarkStreamIdentity, reset_packet_resolution,
-        restage_packet_for_benchmark, sample_forwarded_packet_with_rid_and_audio_activity,
-        sample_local_forwarded_packet_for_benchmark,
-    },
-    packets::sample_rtp_packet_with_len,
-};
 #[cfg(test)]
 pub(super) use {
-    super::forwarded_packet::test_support::{
+    self::packets::sample_rtp_packet,
+    super::packet_loop::forwarded_packet::test_support::{
         sample_already_relayed_audio_packet_at, sample_already_relayed_packet,
         sample_forwarded_packet_with_audio_activity, sample_forwarded_packet_with_rid,
         sample_local_forwarded_packet, sample_local_repaired_packet,
     },
-    packets::sample_rtp_packet,
+};
+#[cfg(feature = "internal-benchmarks")]
+pub(super) use {
+    self::packets::sample_rtp_packet_with_len,
+    super::packet_loop::forwarded_packet::test_support::{
+        BenchmarkPacketStaging, BenchmarkStreamIdentity, reset_packet_resolution,
+        restage_packet_for_benchmark, sample_forwarded_packet_with_rid_and_audio_activity,
+        sample_local_forwarded_packet_for_benchmark,
+    },
+};
+#[cfg(any(test, feature = "internal-benchmarks"))]
+pub(super) use {
+    self::{
+        packets::serialize_stun_message,
+        route_graph::{MediaWorkerScenario, prepare_source_session},
+    },
+    super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet_without_mid,
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-pub use super::forwarded_packet::test_support::sample_forwarded_packet;
+pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 use crate::engine::{
     ConnectionId, MediaWorkerId, RoomInstanceId, UserId, media_transport::TransportSessionKey,

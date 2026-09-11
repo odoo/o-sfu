@@ -33,15 +33,14 @@ use std::{net::SocketAddr, time::Instant};
 use str0m::media::Mid;
 use tokio::sync::{mpsc, oneshot};
 
+use super::super::{
+    control::WorkerCommandContext,
+    state::{PacketLoopState, route_control::PacketLayerGate},
+    worker::PacketLoopInputReceivers,
+};
 use crate::{
     Bitrate,
-    engine::media_transport::{
-        TransportMediaId, TransportSessionKey,
-        rtc::{
-            packet_loop::PacketLoopInputReceivers, route_control::PacketLayerGate,
-            state::PacketLoopState, worker::WorkerCommandContext,
-        },
-    },
+    engine::media_transport::{TransportMediaId, TransportSessionKey},
 };
 
 const DEBUG_PROBE_CHANNEL_CAPACITY: usize = 64;

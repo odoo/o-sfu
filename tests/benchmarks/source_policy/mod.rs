@@ -59,8 +59,8 @@ use o_sfu_core::{
         metrics::RuntimeMetrics,
         packet_sinks::RoomPacketSinkRegistry,
         room::{
-            JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomManager, RoomRuntimePolicy,
-            UserOutboundReceiver, UserOutboundSender,
+            ConsumerRouteState, JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig,
+            RoomManager, RoomRuntimePolicy, UserOutboundReceiver, UserOutboundSender,
             benchmark_support::run_source_policy_turn_for_benchmark,
             test_support::{
                 TestSourceKind, TestSubscriptionStates, stream_id_for_source,
@@ -69,8 +69,8 @@ use o_sfu_core::{
         },
         session::{UserId, UserPermissions, VideoLayoutIntent},
         transport::{
-            MediaTransport, MediaTransportConfig, MediaTransportDeps, ReceiverBandwidthSnapshot,
-            TransportSessionKey, test_support::test_rtc_port_range,
+            ActiveSpeakerSource, MediaTransport, MediaTransportConfig, MediaTransportDeps,
+            ReceiverBandwidthSnapshot, TransportSessionKey, test_support::test_rtc_port_range,
         },
     },
 };
@@ -171,6 +171,49 @@ impl SourcePolicyFixture {
         Self { runtime, scenario }
     }
 
+    /// Adds a fixed speaker snapshot containing active, inactive and foreign sources.
+    ///
+    /// Publications are real. Injecting their observations keeps worker polling and
+    /// wall-clock expiry outside the measured room-selection boundary.
+    pub fn mixed_speakers() -> Self {
+        let mut fixture = Self::new();
+        fixture
+            .runtime
+            .block_on(fixture.scenario.prepare_mixed_speakers())
+            .expect("mixed speaker publications should be available");
+        fixture
+    }
+
+    /// Checks admitted audio and featured output against the mixed speaker snapshot.
+    pub fn assert_speaker_selection(&self) {
+        assert!(self.scenario.speaker_snapshot.is_some());
+        self.runtime.block_on(async {
+            let receiver = user(raw_user_id(PARTICIPANTS - 1));
+            let audio = stream_id_for_source(TestSourceKind::AudioDetector);
+            for (publisher, expected) in [
+                (MAX_ACTIVE_AUDIO_SPEAKERS - 1, ConsumerRouteState::Active),
+                (MAX_ACTIVE_AUDIO_SPEAKERS, ConsumerRouteState::Inactive),
+            ] {
+                assert_eq!(
+                    self.scenario
+                        .room
+                        .test_api()
+                        .consumer_route_state(&receiver, &user(raw_user_id(publisher)), &audio)
+                        .await,
+                    Some(expected)
+                );
+            }
+            let (_, info) = self
+                .scenario
+                .room
+                .test_api()
+                .user_info_snapshot(&user(raw_user_id(0)))
+                .await
+                .expect("the leading local speaker should remain present");
+            assert_eq!(info.is_featured, Some(true));
+        });
+    }
+
     /// runs the measured source-policy turns and returns the accumulated work
     #[expect(
         clippy::panic,
@@ -192,6 +235,7 @@ impl SourcePolicyFixture {
     /// turn produced a transaction and committed it
     pub fn assert_every_turn_planned(&self) {
         let stats = self.scenario.stats;
+        assert_eq!(stats.turns, POLICY_TURNS);
         assert_eq!(
             stats.turns_with_work, stats.turns,
             "each bandwidth or dwell turn must commit its receiver plan, got {} of {}",
@@ -245,8 +289,7 @@ fn build_runtime() -> Runtime {
 }
 
 struct SourcePolicyScenario {
-    /// the manager owns the served room, so the scenario must outlive it
-    _manager: Arc<RoomManager>,
+    manager: Arc<RoomManager>,
     media_transport: MediaTransport,
     outbound_metrics: Arc<RuntimeMetrics>,
     receivers: BTreeMap<RawUserId, UserOutboundReceiver>,
@@ -255,6 +298,7 @@ struct SourcePolicyScenario {
     session_keys: Vec<TransportSessionKey>,
     stats: SourcePolicyStats,
     user_sessions: BTreeMap<RawUserId, MediaSession>,
+    speaker_snapshot: Option<Vec<ActiveSpeakerSource>>,
 }
 
 impl SourcePolicyScenario {
@@ -271,7 +315,7 @@ impl SourcePolicyScenario {
             .await?;
         let core = SfuCore::new(media_transport.clone(), Arc::clone(&manager));
         let mut scenario = Self {
-            _manager: manager,
+            manager,
             media_transport,
             outbound_metrics: Arc::new(RuntimeMetrics::default()),
             receivers: BTreeMap::new(),
@@ -280,6 +324,7 @@ impl SourcePolicyScenario {
             session_keys: Vec::with_capacity(PARTICIPANTS),
             stats: SourcePolicyStats::default(),
             user_sessions: BTreeMap::new(),
+            speaker_snapshot: None,
         };
         scenario.build_room(&core).await?;
         scenario.now = Instant::now();
@@ -289,6 +334,94 @@ impl SourcePolicyScenario {
         }
         scenario.stats = SourcePolicyStats::default();
         Ok(scenario)
+    }
+
+    async fn prepare_mixed_speakers(&mut self) -> Result<()> {
+        let mut sources = Vec::with_capacity(PARTICIPANTS + 1);
+        for (index, (raw_user, session)) in self.user_sessions.iter().enumerate() {
+            let media_id = self
+                .room
+                .test_api()
+                .producer_transport_media_id(
+                    &user(*raw_user),
+                    session.connection_id(),
+                    TestSourceKind::AudioDetector,
+                )
+                .await
+                .ok_or_else(|| anyhow!("local audio publication is missing"))?;
+            // Rank excluded speakers first to exercise filtering before the speaker limit.
+            let recency = if index == PARTICIPANTS - 1 {
+                PARTICIPANTS + 1
+            } else {
+                PARTICIPANTS - index
+            };
+            sources.push(ActiveSpeakerSource::new(
+                media_id,
+                self.now + Duration::from_millis(u64::try_from(recency)?),
+            ));
+        }
+        let audio = stream_id_for_source(TestSourceKind::AudioDetector);
+        if !self
+            .room
+            .test_api()
+            .deactivate_publication(
+                &user(raw_user_id(PARTICIPANTS - 1)),
+                &audio,
+                &self.media_transport,
+            )
+            .await
+        {
+            return Err(anyhow!("inactive speaker publication was not deactivated"));
+        }
+        let foreign_room = self
+            .manager
+            .serve_room(
+                "foreign-speaker-benchmark",
+                TEST_ROOM_KEY,
+                &RoomConfig::default(),
+                None,
+            )
+            .await?;
+        let foreign_user = raw_user_id(PARTICIPANTS);
+        let (sender, receiver) = UserOutboundSender::channel(
+            OUTBOUND_QUEUE_CAPACITY,
+            Arc::clone(&self.outbound_metrics),
+        );
+        let connection = foreign_room
+            .test_api()
+            .join_user(user(foreign_user), None, UserPermissions::default(), sender)
+            .await
+            .map_err(|error| anyhow!("foreign speaker admission failed: {error:?}"))?;
+        foreign_room
+            .test_api()
+            .make_session_ready(&user(foreign_user), &self.media_transport)
+            .await?;
+        foreign_room
+            .test_api()
+            .publish_track(
+                &user(foreign_user),
+                TestSourceKind::AudioDetector,
+                rtp_samples::sample_audio_rtp_parameters(12_000),
+                &self.media_transport,
+            )
+            .await
+            .ok_or_else(|| anyhow!("foreign audio publication is missing"))?;
+        let foreign_media = foreign_room
+            .test_api()
+            .producer_transport_media_id(
+                &user(foreign_user),
+                connection,
+                TestSourceKind::AudioDetector,
+            )
+            .await
+            .ok_or_else(|| anyhow!("foreign audio identity is missing"))?;
+        self.now += Duration::from_millis(u64::try_from(PARTICIPANTS + 2)?);
+        sources.push(ActiveSpeakerSource::new(foreign_media, self.now));
+        self.receivers.insert(foreign_user, receiver);
+        self.speaker_snapshot = Some(sources);
+        self.run_turn(BANDWIDTH_TRACE_BPS[0]).await?;
+        self.stats = SourcePolicyStats::default();
+        Ok(())
     }
 
     async fn run(&mut self) -> Result<SourcePolicyStats> {
@@ -316,6 +449,7 @@ impl SourcePolicyScenario {
             &self.room,
             &self.media_transport,
             &bandwidth,
+            self.speaker_snapshot.as_deref(),
             self.now,
         )
         .await;

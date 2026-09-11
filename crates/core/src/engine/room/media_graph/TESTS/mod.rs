@@ -25,7 +25,7 @@ use super::{
 use crate::{
     Bitrate, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserId, UserPermissions,
+        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserId,
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
             TransportConsumerRoute, TransportMediaId, TransportSessionKey,
@@ -100,7 +100,7 @@ fn test_sender() -> UserOutboundSender {
 
 fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
     state
-        .apply_join(user_id, UserPermissions::default(), test_sender())
+        .apply_join(user_id, test_sender())
         .expect("test user should join")
         .receipt
         .transport_session_key

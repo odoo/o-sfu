@@ -1,14 +1,11 @@
-use crate::engine::{
-    UserId,
-    media_transport::{
-        TransportMediaId,
-        rtc::{
-            relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox, RelayTargetId},
-            state::PacketLoopState,
-            test_support::{sample_forwarded_packet, test_transport_session_key},
-        },
+use super::super::{
+    state::{
+        PacketLoopState,
+        relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox, RelayTargetId},
     },
+    test_support::{sample_forwarded_packet, test_transport_session_key},
 };
+use crate::engine::{UserId, media_transport::TransportMediaId};
 
 #[test]
 fn worker_local_relay_targets_track_active_sources() {

@@ -1,13 +1,56 @@
-//! Each [`RtcWorker`] creates a private current-thread executor inside a dedicated
-//! OS thread. UDP ingress, relay packets and command APIs therefore mutate RTC
-//! state in the same packet-loop task instead of entering the process-wide
-//! work-stealing runtime.
+//! Thread lifecycle and turn scheduling for one [`RtcWorker`].
 //!
-//! Read-side snapshots remain observational. They may race packet processing or
-//! teardown and cannot authorize room state.
+//! Each worker runs its sessions on a dedicated OS thread. Mailboxes and
+//! completed UDP receives feed one loop that mutates [`PacketLoopState`](super::state::PacketLoopState):
+//!
+//! ```text
+//! RtcWorker senders       shared UDP socket
+//!        |                       |
+//!        v                       v
+//! input mailboxes            UdpIngress
+//!        |                       |
+//!        +----> loop_driver <----+
+//!                    |
+//!             PacketLoopState
+//! ```
+//!
+//! [`lifecycle`] defines startup and shutdown. [`loop_driver`] defines input
+//! priority and packet ordering across [`super::control`], [`super::packet_loop`]
+//! and [`super::recovery`]. [`session_drain`] stages session output at the turn's
+//! timestamp and rolls it back before closing a session that exceeds its budget.
+//!
+//! Read-side snapshots may race processing or teardown and cannot authorize
+//! room state.
 
-mod handlers;
+#[cfg(feature = "internal-benchmarks")]
+pub(crate) use loop_driver::{BenchmarkTurnInput, PacketLoopTurn};
+
+#[cfg(feature = "internal-benchmarks")]
+pub use self::{
+    buffers::PacketLoopBuffers,
+    loop_driver::route_queued_ingress_datagrams_for_benchmark,
+    session_drain::{SessionDrainContext, drain_ready_sessions},
+};
+pub use self::{
+    delay::PacketLoopDelaySnapshot,
+    input::PacketLoopInputReceivers,
+    loop_driver::{PacketLoopConfig, run_packet_loop},
+};
+
+pub(super) mod buffers;
+pub(super) mod delay;
+pub(super) mod input;
 mod lifecycle;
+pub(super) mod loop_driver;
+pub(super) mod session_drain;
+
+#[cfg(test)]
+#[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
+mod TESTS;
+
+#[cfg(any(test, feature = "internal-benchmarks"))]
+#[path = "TESTS/commands.rs"]
+mod command_support;
 
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/support.rs"]
@@ -19,38 +62,19 @@ use std::{
     thread,
 };
 
-#[cfg(feature = "internal-benchmarks")]
-pub use handlers::apply_media_control_batch;
-#[cfg(feature = "internal-benchmarks")]
-pub(in crate::engine::media_transport::rtc) use handlers::guarded_pkt_gate;
-pub(super) use handlers::{
-    KeyframeRequestMode, KeyframeRequestTarget, SessionCloseDisposition, WorkerCommandContext,
-    apply_src_decoder_ready, handle_worker_command, request_kf_for_target, worker_close_session,
-};
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use str0m::media::MediaKind;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-use super::commands::ParsedSessionAnswer;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use super::commands::RtcSessionOffer;
 use super::{
-    bitrate::BitrateRegistry,
     commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
-    packet_loop::PacketLoopDelaySnapshot,
-    relay_registry::{RelayPacketMailbox, RelayTargetId},
-    state::RtcSnapshotState,
+    state::{
+        RtcSnapshotState,
+        bitrate::BitrateRegistry,
+        relay_registry::{RelayPacketMailbox, RelayTargetId},
+    },
 };
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use crate::engine::media_transport::TransportAdapterError;
 #[cfg(test)]
-use crate::engine::media_transport::{AppliedSessionAnswer, SourcePolicySignal};
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use crate::engine::media_transport::{SessionOffer, TransportMediaId, TransportSessionKey};
+use crate::engine::media_transport::SourcePolicySignal;
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::metrics::RuntimeMetrics;
 use crate::engine::{
@@ -95,131 +119,6 @@ pub struct RtcWorker {
 }
 
 impl RtcWorker {
-    #[cfg(any(test, feature = "internal-benchmarks"))]
-    pub async fn create_initial_session_offer(
-        &self,
-        room_id: &str,
-        session_key: &TransportSessionKey,
-    ) -> Result<SessionOffer, TransportAdapterError> {
-        let room_id: Arc<str> = Arc::from(room_id);
-        self.request_worker(
-            move |response| RtcWorkerCommand::CreateInitialSessionOffer {
-                room_id,
-                session_key: session_key.clone(),
-                response,
-            },
-        )
-        .await
-        .map(RtcSessionOffer::into_session_offer)
-    }
-
-    #[cfg(test)]
-    pub async fn create_session_renegotiation_offer(
-        &self,
-        session_key: &TransportSessionKey,
-    ) -> Result<SessionOffer, TransportAdapterError> {
-        self.request_worker(
-            |response| RtcWorkerCommand::CreateSessionRenegotiationOffer {
-                session_key: session_key.clone(),
-                response,
-            },
-        )
-        .await
-        .map(RtcSessionOffer::into_session_offer)
-    }
-
-    #[cfg(test)]
-    pub async fn apply_session_answer(
-        &self,
-        session_key: &TransportSessionKey,
-        answer_sdp: &str,
-    ) -> Result<AppliedSessionAnswer, TransportAdapterError> {
-        let answer = ParsedSessionAnswer::parse(answer_sdp)?;
-        self.request_worker(|response| RtcWorkerCommand::ApplySessionAnswer {
-            session_key: session_key.clone(),
-            answer,
-            response,
-        })
-        .await
-    }
-    #[cfg(any(test, feature = "internal-benchmarks"))]
-    pub async fn close_session(
-        &self,
-        session_key: &TransportSessionKey,
-    ) -> Result<(), TransportAdapterError> {
-        self.request_worker(|response| RtcWorkerCommand::CloseSession {
-            session_key: session_key.clone(),
-            response,
-        })
-        .await
-    }
-    #[cfg(any(test, feature = "internal-benchmarks"))]
-    pub async fn remove_media(
-        &self,
-        session_key: &TransportSessionKey,
-        transport_media_id: TransportMediaId,
-    ) -> Result<(), TransportAdapterError> {
-        self.request_worker(|response| RtcWorkerCommand::RemoveMedia {
-            session_key: session_key.clone(),
-            transport_media_id,
-            response,
-        })
-        .await
-    }
-
-    #[cfg(test)]
-    pub async fn negotiated_producer_parameters(
-        &self,
-        session_key: &TransportSessionKey,
-        transport_media_id: TransportMediaId,
-    ) -> Result<RouterRtpParameters, TransportAdapterError> {
-        self.request_worker(
-            |response| RtcWorkerCommand::ResolveNegotiatedProducerParameters {
-                session_key: session_key.clone(),
-                transport_media_id,
-                response,
-            },
-        )
-        .await
-    }
-
-    #[cfg(any(test, feature = "internal-benchmarks"))]
-    pub async fn add_recv_media(
-        &self,
-        session_key: &TransportSessionKey,
-        media_kind: MediaKind,
-        rtp_parameters: &RouterRtpParameters,
-    ) -> Result<TransportMediaId, TransportAdapterError> {
-        self.request_worker(|response| RtcWorkerCommand::AddRecvMedia {
-            session_key: session_key.clone(),
-            media_kind,
-            rtp_parameters: rtp_parameters.clone(),
-            response,
-        })
-        .await
-    }
-
-    #[cfg(test)]
-    pub async fn add_send_media(
-        &self,
-        consumer_key: &TransportSessionKey,
-        media_kind: MediaKind,
-        source: TransportSourceKey,
-        consumer_rtp_parameters: &RouterRtpParameters,
-        active: bool,
-    ) -> Result<TransportMediaId, TransportAdapterError> {
-        self.request_worker(|response| RtcWorkerCommand::AddSendMedia {
-            consumer_key: consumer_key.clone(),
-            media_kind,
-            source,
-            remote_source_control: None,
-            consumer_rtp_parameters: consumer_rtp_parameters.clone(),
-            active,
-            response,
-        })
-        .await
-    }
-
     /// Builds the handle `consumer` stores for a producer owned by `self`.
     ///
     /// The returned handle lets the consumer worker send best-effort keyframe
