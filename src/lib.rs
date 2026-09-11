@@ -85,7 +85,7 @@
 //!     |     upgrade -> first-frame JWT -> admit_user -> session
 //!     |
 //!     +-> GET /v1/stats, /metrics and /internal/diagnostics/...
-//!           OperatorAccess route layer -> stats, metrics or diagnostics
+//!           authorize_operator -> stats, metrics or diagnostics
 //! ```
 //!
 //! - **HTTP**: Parses server-to-server requests using [`http::CreateRoomQuery`]. Verifies [`auth::HttpRoomClaims`]. The request that creates the current room fixes its signing key.
