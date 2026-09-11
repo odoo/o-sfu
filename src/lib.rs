@@ -26,18 +26,18 @@
 //! resulting transport state to UDP datagrams.
 //!
 //! ```text
-//! HTTP control API ----------------------> RoomManager
-//!                                               |
-//! WebSocket session -> SfuCore -> MediaSession  |
-//!                              \                /
-//!                               +----> Room <----+
-//!                                      |
-//!                                      +<----> Router
-//!                                      |
-//!                                      v
-//!                                MediaTransport
-//!                                 |    |    |
-//!                                 v    v    v
+//! HTTP control API ------------------------------> RoomManager
+//!                                                       |
+//! WebSocket session -> SfuCore -> MediaSession          |
+//!                                    \                  /
+//!                                     +----> Room <----+
+//!                                             |
+//!                                             +<----> Router
+//!                                             |
+//!                                             v
+//!                                       MediaTransport
+//!                                        |    |    |
+//!                                        v    v    v
 //!                          RTC workers / packet loops (~1 worker per thread)
 //!                         |            |             |
 //!                      UDP:40001   UDP:40002     UDP:40003
