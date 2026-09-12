@@ -11,6 +11,7 @@
 //! state is scoped to the destination session so every consumer can rewrite the
 //! same source packet without copying payload bytes
 
+use core::hint::cold_path;
 #[cfg(test)]
 use std::sync::Arc;
 use std::{
@@ -326,13 +327,15 @@ impl ConsumerStream {
         was_repair: bool,
     ) -> Option<ProjectedIdentity> {
         if delivery_generation != self.delivery_generation {
+            if was_repair {
+                return None;
+            }
             return self.project_new_generation(
                 delivery_generation,
                 source_ssrc,
                 source_seq_no,
                 source_timestamp,
                 codec_identity,
-                was_repair,
             );
         }
         let projected = self.rtp.project(
@@ -342,38 +345,39 @@ impl ConsumerStream {
             false,
             was_repair,
         )?;
-        // Switched sources advance the RTP high-water mark. Literal codec modes and
-        // transitions preserve specialization in the ARM64 rewrite benchmark.
-        match projected.transition {
-            SourceTransition::Switched { previous_ssrc } => Some(ProjectedIdentity {
+        // Source switches advance the high-water mark. Separate returns keep
+        // codec reanchoring specialized for each transition.
+        match projected.outcome {
+            RtpProjectionOutcome::Advanced => Some(ProjectedIdentity {
+                seq_no: projected.seq_no,
+                rtp_timestamp: projected.rtp_timestamp,
+                codec: self.codec.project(codec_identity, false),
+                transition: SourceTransition::Unchanged,
+                resets_rtx_cache: false,
+            }),
+            RtpProjectionOutcome::Observed => {
+                let mut observed_codec = self.codec;
+                Some(ProjectedIdentity {
+                    seq_no: projected.seq_no,
+                    rtp_timestamp: projected.rtp_timestamp,
+                    codec: observed_codec.project(codec_identity, false),
+                    transition: SourceTransition::Unchanged,
+                    resets_rtx_cache: false,
+                })
+            }
+            RtpProjectionOutcome::Switched { previous_ssrc } => Some(ProjectedIdentity {
                 seq_no: projected.seq_no,
                 rtp_timestamp: projected.rtp_timestamp,
                 codec: self.codec.project(codec_identity, true),
                 transition: SourceTransition::Switched { previous_ssrc },
                 resets_rtx_cache: false,
             }),
-            SourceTransition::Unchanged => {
-                let codec = if projected.advances_high_water {
-                    self.codec.project(codec_identity, false)
-                } else {
-                    let mut observed_codec = self.codec;
-                    observed_codec.project(codec_identity, false)
-                };
-                Some(ProjectedIdentity {
-                    seq_no: projected.seq_no,
-                    rtp_timestamp: projected.rtp_timestamp,
-                    codec,
-                    transition: SourceTransition::Unchanged,
-                    resets_rtx_cache: false,
-                })
-            }
         }
     }
 
-    /// Requires a different delivery generation.
+    /// Requires a primary packet from a different delivery generation.
     ///
-    /// Rejects older generations and cross-generation repairs before changing
-    /// RTP or codec identity.
+    /// Rejects older generations before changing RTP or codec identity.
     #[cold]
     #[inline(never)]
     fn project_new_generation(
@@ -383,12 +387,11 @@ impl ConsumerStream {
         source_seq_no: SeqNo,
         source_timestamp: u32,
         codec_identity: codec::PacketIdentity,
-        was_repair: bool,
     ) -> Option<ProjectedIdentity> {
         // Compare wrapping generations as serial numbers. Older delivery epochs
-        // and repairs from another epoch cannot re-anchor receiver identity.
+        // cannot re-anchor receiver identity.
         let generation_delta = delivery_generation.wrapping_sub(self.delivery_generation);
-        if was_repair || generation_delta > u64::MAX / 2 {
+        if generation_delta > u64::MAX / 2 {
             return None;
         }
         let projected =
@@ -396,11 +399,19 @@ impl ConsumerStream {
                 .project(source_ssrc, source_seq_no, source_timestamp, true, false)?;
         let codec = self.codec.project(codec_identity, true);
         self.delivery_generation = delivery_generation;
+        let transition = match projected.outcome {
+            RtpProjectionOutcome::Switched { previous_ssrc } => {
+                SourceTransition::Switched { previous_ssrc }
+            }
+            RtpProjectionOutcome::Observed | RtpProjectionOutcome::Advanced => {
+                SourceTransition::Unchanged
+            }
+        };
         Some(ProjectedIdentity {
             seq_no: projected.seq_no,
             rtp_timestamp: projected.rtp_timestamp,
             codec,
-            transition: projected.transition,
+            transition,
             resets_rtx_cache: true,
         })
     }
@@ -451,6 +462,8 @@ impl RtpProjection {
     /// Returns `None` for repairs outside the active SSRC sequence window or
     /// source deltas outside the representable receiver sequence range.
     /// The caller validates the delivery generation before requesting reanchoring.
+    // Outlining this transition adds a call frame to every primary packet.
+    #[inline]
     fn project(
         &mut self,
         source_ssrc: Ssrc,
@@ -463,59 +476,8 @@ impl RtpProjection {
             return None;
         }
         match &mut self.timeline {
-            RtpTimeline::Active {
-                ssrc,
-                highest_src_seq,
-                src_timestamp_anchor,
-                dst_timestamp_anchor,
-                highest_timestamp,
-                ..
-            } if *ssrc == source_ssrc && !reanchor => {
-                if !highest_src_seq.is_next(source_seq_no) {
-                    return self.project_source_delta(source_seq_no, source_timestamp);
-                }
-                let seq_no = self.next_seq_no.inc();
-                *highest_src_seq = source_seq_no;
-                let rtp_timestamp = dst_timestamp_anchor
-                    .wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
-                *highest_timestamp = rtp_timestamp;
-                Some(ProjectedRtp {
-                    seq_no,
-                    rtp_timestamp,
-                    advances_high_water: true,
-                    transition: SourceTransition::Unchanged,
-                })
-            }
-            RtpTimeline::Active {
-                ssrc: previous_ssrc,
-                highest_timestamp,
-                ..
-            } => {
-                let previous_ssrc = *previous_ssrc;
-                let seq_no = self.next_seq_no.inc();
-                let rtp_timestamp = highest_timestamp.wrapping_add(1);
-                self.timeline = RtpTimeline::Active {
-                    ssrc: source_ssrc,
-                    src_seq_anchor: source_seq_no,
-                    dst_seq_anchor: seq_no,
-                    highest_src_seq: source_seq_no,
-                    src_timestamp_anchor: source_timestamp,
-                    dst_timestamp_anchor: rtp_timestamp,
-                    highest_timestamp: rtp_timestamp,
-                };
-                let transition = if previous_ssrc == source_ssrc {
-                    SourceTransition::Unchanged
-                } else {
-                    SourceTransition::Switched { previous_ssrc }
-                };
-                Some(ProjectedRtp {
-                    seq_no,
-                    rtp_timestamp,
-                    advances_high_water: true,
-                    transition,
-                })
-            }
             RtpTimeline::Empty => {
+                cold_path();
                 let seq_no = self.next_seq_no.inc();
                 self.timeline = RtpTimeline::Active {
                     ssrc: source_ssrc,
@@ -529,8 +491,56 @@ impl RtpProjection {
                 Some(ProjectedRtp {
                     seq_no,
                     rtp_timestamp: source_timestamp,
-                    advances_high_water: true,
-                    transition: SourceTransition::Unchanged,
+                    outcome: RtpProjectionOutcome::Advanced,
+                })
+            }
+            RtpTimeline::Active {
+                ssrc,
+                highest_src_seq,
+                src_timestamp_anchor,
+                dst_timestamp_anchor,
+                highest_timestamp,
+                ..
+            } => {
+                if *ssrc == source_ssrc && !reanchor {
+                    // The checked predecessor rejects extended-sequence wrap and lets
+                    // x86 compare the high-water mark in memory without a separate load.
+                    if source_seq_no.checked_sub(1) != Some(**highest_src_seq) {
+                        cold_path();
+                        return self.project_source_delta(source_seq_no, source_timestamp);
+                    }
+                    let seq_no = self.next_seq_no.inc();
+                    *highest_src_seq = source_seq_no;
+                    let rtp_timestamp = dst_timestamp_anchor
+                        .wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
+                    *highest_timestamp = rtp_timestamp;
+                    return Some(ProjectedRtp {
+                        seq_no,
+                        rtp_timestamp,
+                        outcome: RtpProjectionOutcome::Advanced,
+                    });
+                }
+                let previous_ssrc = *ssrc;
+                let seq_no = self.next_seq_no.inc();
+                let rtp_timestamp = highest_timestamp.wrapping_add(1);
+                self.timeline = RtpTimeline::Active {
+                    ssrc: source_ssrc,
+                    src_seq_anchor: source_seq_no,
+                    dst_seq_anchor: seq_no,
+                    highest_src_seq: source_seq_no,
+                    src_timestamp_anchor: source_timestamp,
+                    dst_timestamp_anchor: rtp_timestamp,
+                    highest_timestamp: rtp_timestamp,
+                };
+                let outcome = if previous_ssrc == source_ssrc {
+                    RtpProjectionOutcome::Advanced
+                } else {
+                    RtpProjectionOutcome::Switched { previous_ssrc }
+                };
+                Some(ProjectedRtp {
+                    seq_no,
+                    rtp_timestamp,
+                    outcome,
                 })
             }
         }
@@ -554,8 +564,11 @@ impl RtpProjection {
         )
     }
 
-    // An outlined delta path imposes a call frame on every packet projection.
-    #[inline]
+    #[expect(
+        clippy::inline_always,
+        reason = "outlining the delta path adds a call frame to every packet projection"
+    )]
+    #[inline(always)]
     fn project_source_delta(
         &mut self,
         source_seq_no: SeqNo,
@@ -577,19 +590,20 @@ impl RtpProjection {
         let seq_no: SeqNo = (**dst_seq_anchor).checked_add(source_delta)?.into();
         let rtp_timestamp =
             dst_timestamp_anchor.wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
-        let advances_high_water = source_seq_no > *highest_src_seq;
-        if advances_high_water {
+        let outcome = if source_seq_no > *highest_src_seq {
             // Reject an unrepresentable successor before committing either high-water mark.
             let next_seq_no = (*seq_no).checked_add(1)?.into();
             *highest_src_seq = source_seq_no;
             *highest_timestamp = rtp_timestamp;
             self.next_seq_no = next_seq_no;
-        }
+            RtpProjectionOutcome::Advanced
+        } else {
+            RtpProjectionOutcome::Observed
+        };
         Some(ProjectedRtp {
             seq_no,
             rtp_timestamp,
-            advances_high_water,
-            transition: SourceTransition::Unchanged,
+            outcome,
         })
     }
 }
@@ -598,8 +612,20 @@ impl RtpProjection {
 struct ProjectedRtp {
     seq_no: SeqNo,
     rtp_timestamp: u32,
-    advances_high_water: bool,
-    transition: SourceTransition,
+    outcome: RtpProjectionOutcome,
+}
+
+/// Accepted changes to receiver RTP identity.
+///
+/// A source switch always advances the receiver high-water marks.
+#[derive(Debug, Clone, Copy)]
+enum RtpProjectionOutcome {
+    /// Receiver high-water marks advanced without changing publisher SSRC.
+    Advanced,
+    /// Packet identity was projected without advancing receiver high-water marks.
+    Observed,
+    /// Publisher SSRC changed and receiver high-water marks advanced.
+    Switched { previous_ssrc: Ssrc },
 }
 
 /// source and receiver anchors for one projected RTP line
