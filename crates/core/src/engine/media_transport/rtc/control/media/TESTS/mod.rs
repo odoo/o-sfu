@@ -1742,6 +1742,92 @@ fn flushed_remote_packet_gate_can_queue_again_under_later_pressure() {
 }
 
 #[test]
+fn closed_remote_packet_gate_is_not_queued_for_retry() {
+    let source_session = test_source_session_key(176);
+    let mut state = PacketLoopState::default();
+    let metrics = RuntimeMetrics::default();
+    let rtc_metrics = metrics.register_rtc_worker();
+    let src_media = TransportMediaId::new(66);
+    let mut command_rx = register_saturated_remote_source(
+        &mut state,
+        src_media,
+        &source_session,
+        RelayTargetId::new(23),
+        rtc_metrics,
+    );
+    command_rx.close();
+    state
+        .routes
+        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+    assert_eq!(
+        state
+            .routes
+            .remote_source(src_media)
+            .and_then(RemoteSourceRegistration::pending_gate),
+        None
+    );
+    for _ in 0..3 {
+        state.routes.flush_remote_pkt_gates();
+    }
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 1);
+    assert_eq!(snapshot.rtc_remote_packet_gate_retries(), 0);
+    assert_eq!(snapshot.rtc_remote_packet_gate_flushes(), 0);
+}
+
+#[test]
+fn pending_remote_packet_gate_is_retired_when_receiver_closes() {
+    for republish_after_close in [false, true] {
+        let source_session = test_source_session_key(177);
+        let mut state = PacketLoopState::default();
+        let metrics = RuntimeMetrics::default();
+        let rtc_metrics = metrics.register_rtc_worker();
+        let src_media = TransportMediaId::new(67);
+        let mut command_rx = register_saturated_remote_source(
+            &mut state,
+            src_media,
+            &source_session,
+            RelayTargetId::new(24),
+            rtc_metrics,
+        );
+        state
+            .routes
+            .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+        assert_eq!(
+            state
+                .routes
+                .remote_source(src_media)
+                .and_then(RemoteSourceRegistration::pending_gate),
+            Some(PacketLayerGate::Block)
+        );
+        command_rx.close();
+        if republish_after_close {
+            state
+                .routes
+                .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
+        }
+        state.routes.flush_remote_pkt_gates();
+        assert_eq!(
+            state
+                .routes
+                .remote_source(src_media)
+                .and_then(RemoteSourceRegistration::pending_gate),
+            None
+        );
+        for _ in 0..3 {
+            state.routes.flush_remote_pkt_gates();
+        }
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 2);
+        assert_eq!(
+            snapshot.rtc_remote_packet_gate_retries(),
+            u64::from(!republish_after_close)
+        );
+        assert_eq!(snapshot.rtc_remote_packet_gate_flushes(), 0);
+    }
+}
+
+#[test]
 fn remote_source_teardown_drops_pending_gate_state() {
     let source_session = test_transport_session_key(141, 0, 170, UserId::Integer(171));
     let mut state = PacketLoopState::default();

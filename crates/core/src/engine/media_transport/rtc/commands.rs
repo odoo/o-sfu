@@ -95,11 +95,13 @@ impl RemoteSourceControl {
     }
 
     /// publishes the effective remote-source packet gate to the source worker
+    ///
+    /// `Full` requires a later retry. `Closed` ends retry authority.
     pub(super) fn set_pkt_gate(
         &self,
         source: &TransportSourceKey,
         packet_gate: PacketLayerGate,
-    ) -> bool {
+    ) -> RemoteControlSendOutcome {
         self.send_command(
             RouteControlRequest::SetRemoteSourcePacketGate {
                 source: source.clone(),
@@ -107,7 +109,7 @@ impl RemoteSourceControl {
                 packet_gate,
             },
             RtcRemoteControlDropKind::PacketGate,
-        ) == RemoteControlSendOutcome::Forwarded
+        )
     }
 
     pub(super) fn record_pkt_gate_retry(&self) {
