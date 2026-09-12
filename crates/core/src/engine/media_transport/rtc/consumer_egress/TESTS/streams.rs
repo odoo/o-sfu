@@ -609,6 +609,224 @@ fn repair_projection_preserves_extended_sequence_wrap() {
 }
 
 #[test]
+fn rejected_source_deltas_preserve_the_next_valid_projection() {
+    let source_ssrc = Ssrc::from(111);
+    let inspector = vp8_inspector();
+    for (receiver_anchor, source_anchor, rejected_sequence) in
+        [(0, 10_u64, 9), (u64::MAX - 3, 10, 15), (0, 0, u64::MAX)]
+    {
+        let mut stream = ConsumerStream {
+            rtp: RtpProjection::new(receiver_anchor.into()),
+            ..ConsumerStream::default()
+        };
+        assert!(
+            stream
+                .project(
+                    0,
+                    source_ssrc,
+                    source_anchor.into(),
+                    10_000,
+                    vp8_packet(&inspector, 10, 10).identity(),
+                    false,
+                )
+                .is_some()
+        );
+        let mut control = stream;
+        assert!(
+            stream
+                .project(
+                    0,
+                    source_ssrc,
+                    rejected_sequence.into(),
+                    50_000,
+                    vp8_packet(&inspector, 100, 100).identity(),
+                    false,
+                )
+                .is_none()
+        );
+        for (ssrc, sequence, timestamp, codec_identity) in [
+            (
+                source_ssrc,
+                source_anchor + 1,
+                11_000,
+                vp8_packet(&inspector, 11, 11).identity(),
+            ),
+            (
+                Ssrc::from(222),
+                1,
+                1_000,
+                vp8_packet(&inspector, 1, 1).identity(),
+            ),
+        ] {
+            let actual = stream.project(0, ssrc, sequence.into(), timestamp, codec_identity, false);
+            let expected =
+                control.project(0, ssrc, sequence.into(), timestamp, codec_identity, false);
+            assert!(expected.is_some());
+            assert_eq!(actual, expected);
+        }
+    }
+}
+
+#[test]
+fn repair_admission_preserves_the_active_projection_window() {
+    let source_ssrc = Ssrc::from(111);
+    let inspector = vp8_inspector();
+    let mut stream = ConsumerStream {
+        rtp: RtpProjection::new(0_u64.into()),
+        ..ConsumerStream::default()
+    };
+    let mut control = stream;
+    assert!(
+        stream
+            .project(
+                0,
+                source_ssrc,
+                9_u64.into(),
+                9_000,
+                vp8_packet(&inspector, 9, 9).identity(),
+                true,
+            )
+            .is_none()
+    );
+    for sequence in [10_u64, 12] {
+        let actual = stream.project(
+            0,
+            source_ssrc,
+            sequence.into(),
+            12_000,
+            vp8_packet(&inspector, 12, 12).identity(),
+            false,
+        );
+        let expected = control.project(
+            0,
+            source_ssrc,
+            sequence.into(),
+            12_000,
+            vp8_packet(&inspector, 12, 12).identity(),
+            false,
+        );
+        assert!(expected.is_some());
+        assert_eq!(actual, expected);
+    }
+    for (generation, ssrc, sequence) in [
+        (0, source_ssrc, 9_u64),
+        (0, source_ssrc, 12),
+        (0, source_ssrc, 13),
+        (0, Ssrc::from(222), 11),
+        (1, source_ssrc, 11),
+    ] {
+        assert!(
+            stream
+                .project(
+                    generation,
+                    ssrc,
+                    sequence.into(),
+                    50_000,
+                    vp8_packet(&inspector, 100, 100).identity(),
+                    true,
+                )
+                .is_none()
+        );
+    }
+    for (sequence, expected_receiver_sequence) in [(10_u64, 0_u64), (11, 1)] {
+        let Some(repair) = stream.project(
+            0,
+            source_ssrc,
+            sequence.into(),
+            11_000,
+            vp8_packet(&inspector, 11, 11).identity(),
+            true,
+        ) else {
+            panic!("repairs within the source projection window should be admitted");
+        };
+        assert_eq!(repair.seq_no, expected_receiver_sequence.into());
+        assert_eq!(repair.transition, SourceTransition::Unchanged);
+        assert!(!repair.resets_rtx_cache);
+    }
+    let actual = stream.project(
+        0,
+        Ssrc::from(222),
+        1_u64.into(),
+        1_000,
+        vp8_packet(&inspector, 1, 1).identity(),
+        false,
+    );
+    let expected = control.project(
+        0,
+        Ssrc::from(222),
+        1_u64.into(),
+        1_000,
+        vp8_packet(&inspector, 1, 1).identity(),
+        false,
+    );
+    assert!(expected.is_some());
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn delivery_generation_wrap_preserves_serial_order() {
+    let source_ssrc = Ssrc::from(111);
+    let mut stream = ConsumerStream {
+        delivery_generation: u64::MAX,
+        ..ConsumerStream::default()
+    };
+    let Some(before_wrap) = stream.project(
+        u64::MAX,
+        source_ssrc,
+        10_u64.into(),
+        10_000,
+        codec::PacketIdentity::default(),
+        false,
+    ) else {
+        panic!("current delivery generation should initialize the projection");
+    };
+    let Some(after_wrap) = stream.project(
+        0,
+        source_ssrc,
+        100_u64.into(),
+        100_000,
+        codec::PacketIdentity::default(),
+        false,
+    ) else {
+        panic!("generation zero should follow the maximum wrapping generation");
+    };
+    assert!(before_wrap.seq_no.is_next(after_wrap.seq_no));
+    assert_eq!(after_wrap.rtp_timestamp, before_wrap.rtp_timestamp + 1);
+    assert!(after_wrap.resets_rtx_cache);
+    let mut control = stream;
+    assert!(
+        stream
+            .project(
+                u64::MAX,
+                source_ssrc,
+                11_u64.into(),
+                11_000,
+                codec::PacketIdentity::default(),
+                false,
+            )
+            .is_none()
+    );
+    let actual = stream.project(
+        0,
+        source_ssrc,
+        101_u64.into(),
+        101_000,
+        codec::PacketIdentity::default(),
+        false,
+    );
+    let expected = control.project(
+        0,
+        source_ssrc,
+        101_u64.into(),
+        101_000,
+        codec::PacketIdentity::default(),
+        false,
+    );
+    assert!(expected.is_some());
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn projected_sequence_numbers_are_scoped_by_consumer_stream() {
     let mut streams = ConsumerStreamStore::default();
     let stream_handle = allocate_at(&mut streams, 10);
