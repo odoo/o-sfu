@@ -23,7 +23,7 @@ use super::{
             RemoteSourceRegistration, SelectedRefresh,
         },
     },
-    ConsumerRouteUpdate, RidReadinessScratch,
+    ConsumerRouteUpdate, RelayForwardView, RidReadinessScratch,
 };
 use crate::engine::media_transport::{
     ActiveSpeakerSource, ActiveSpeakerSourceDiagnostic, SourceActivityRevision,
@@ -167,6 +167,13 @@ impl RouteSource {
             registration
                 .has_active_targets()
                 .then(|| registration.active_targets())
+        })
+    }
+
+    pub(super) fn relay_forward_view(&self) -> Option<RelayForwardView<'_>> {
+        self.active_relay_targets().map(|targets| RelayForwardView {
+            targets,
+            gates: &self.packet.relays,
         })
     }
 
@@ -468,10 +475,6 @@ impl RouteSource {
 
     pub(super) fn set_relay_pkt_gate(&mut self, target_id: RelayTargetId, gate: PacketLayerGate) {
         self.packet.set_relay_gate(target_id, gate);
-    }
-
-    pub(super) fn relay_packet_gate(&self, target_id: RelayTargetId) -> Option<&PacketLayerGate> {
-        self.packet.relays.get(&target_id)
     }
 
     pub(super) fn next_active_speaker_deadline(&self, now: Instant) -> Option<Instant> {

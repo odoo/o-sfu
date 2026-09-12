@@ -25,8 +25,7 @@ use str0m::media::Rid;
 
 use super::{
     super::state::{
-        relay_registry::{ActiveRelayTarget, RelayTargetId},
-        route_table::{ForwardView, RouteTable},
+        route_table::{ForwardView, RelayForwardView, RouteTable},
         source_route::MediaRouteEntry,
     },
     forwarded_packet::PacketFacts,
@@ -96,7 +95,7 @@ pub(in super::super) fn plan_forwards(
         return Some(PacketGateDecision::Dropped);
     }
     if let Some(relays) = relays {
-        populate_relay_forwards(routes, relays, src_media, packet_rid, forwards);
+        populate_relay_forwards(relays, src_media, packet_rid, forwards);
     }
     if let Some(route) = route {
         populate_local_forwards(route, src_media, packet_rid, forwards);
@@ -113,12 +112,12 @@ pub(in super::super) fn plan_forwards(
 /// crosses a previous high-water mark.
 fn reserve_forward_capacity(
     origin_sink: Option<&RegisteredPacketSink>,
-    relay_targets: Option<&[ActiveRelayTarget]>,
+    relay_targets: Option<RelayForwardView<'_>>,
     route_entry: Option<&MediaRouteEntry>,
     forwards: &mut Vec<ForwardingDestination>,
 ) {
     let planned_forwards = usize::from(origin_sink.is_some())
-        + relay_targets.map_or(0, <[ActiveRelayTarget]>::len)
+        + relay_targets.map_or(0, RelayForwardView::len)
         + route_entry.map_or(0, |entry| entry.destinations.len());
     if forwards.capacity().saturating_sub(forwards.len()) < planned_forwards {
         forwards.reserve(planned_forwards);
@@ -132,21 +131,15 @@ fn reserve_forward_capacity(
 /// route control decides whether the current packet layer is allowed for each
 /// target.
 fn populate_relay_forwards(
-    routes: &RouteTable,
-    relay_targets: &[ActiveRelayTarget],
+    relay_targets: RelayForwardView<'_>,
     src_media: TransportMediaId,
     packet_rid: Option<Rid>,
     forwards: &mut Vec<ForwardingDestination>,
 ) {
     forwards.extend(
         relay_targets
-            .iter()
-            .filter(|target| {
-                relay_target_gate_permits(routes, src_media, target.target_id, packet_rid)
-            })
-            .map(|target| {
-                ForwardingDestination::from_relay_target(src_media, target.target.clone())
-            }),
+            .targets_for_packet(packet_rid)
+            .map(|target| ForwardingDestination::from_relay_target(src_media, target.clone())),
     );
 }
 
@@ -183,31 +176,14 @@ fn populate_local_forwards(
     );
 }
 
-/// Checks relay-target packet policy without treating a missing gate as a drop.
-///
-/// Missing relay gates mean the target has no extra layer restriction beyond
-/// the source-wide gate. This keeps newly activated relay targets open until
-/// room or transport policy installs a narrower packet gate.
-fn relay_target_gate_permits(
-    routes: &RouteTable,
-    src_media: TransportMediaId,
-    target_id: RelayTargetId,
-    packet_rid: Option<Rid>,
-) -> bool {
-    routes
-        .relay_packet_gate(src_media, target_id)
-        .is_none_or(|packet_gate| packet_gate.permits(packet_rid))
-}
-
 /// Reports whether route planning has any destination work after origin sinks.
 ///
 /// Origin sinks are excluded because recording or similar side
 /// effects must still run for source packets even when the source has no live
 /// relay or local RTC consumers.
 fn has_routed_forward(
-    relay_targets: Option<&[ActiveRelayTarget]>,
+    relay_targets: Option<RelayForwardView<'_>>,
     route_entry: Option<&MediaRouteEntry>,
 ) -> bool {
-    route_entry.is_some_and(MediaRouteEntry::has_active_destinations)
-        || relay_targets.is_some_and(|targets| !targets.is_empty())
+    route_entry.is_some_and(MediaRouteEntry::has_active_destinations) || relay_targets.is_some()
 }

@@ -580,6 +580,83 @@ fn plan_forwards_enforces_per_relay_target_gates_after_aggregate_admits() {
 }
 
 #[test]
+fn plan_forwards_keeps_staged_relay_gates_through_activation() {
+    let producer_session = test_transport_session_key(94, 0, 95, UserId::Integer(96));
+    let mut state = PacketLoopState::default();
+    let packet_sink_registry = RoomPacketSinkRegistry::default();
+    let metrics = RuntimeMetrics::default();
+    let src_media =
+        MediaWorkerScenario::new(&mut state).source(producer_session.clone(), Mid::from("cam-up"));
+    let hi_target_id = RelayTargetId::new(1);
+    let lo_target_id = RelayTargetId::new(2);
+    let unrestricted_target_id = RelayTargetId::new(3);
+    let (hi_mailbox, mut hi_rx) = RelayPacketMailbox::channel_for_test();
+    let (unrestricted_mailbox, mut unrestricted_rx) = RelayPacketMailbox::channel_for_test();
+    state
+        .routes
+        .set_relay_pkt_gate(src_media, hi_target_id, PacketLayerGate::Rid("hi".into()));
+    state
+        .routes
+        .add_relay_target(src_media, unrestricted_target_id, unrestricted_mailbox);
+    state
+        .routes
+        .set_relay_target_active(src_media, unrestricted_target_id, true);
+    assert_eq!(
+        state.routes.effective_packet_gate(src_media),
+        Some(PacketLayerGate::Rid("hi".into()))
+    );
+    state
+        .routes
+        .set_relay_pkt_gate(src_media, lo_target_id, PacketLayerGate::Rid("lo".into()));
+    assert_eq!(
+        state.routes.effective_packet_gate(src_media),
+        Some(PacketLayerGate::Open)
+    );
+    state
+        .routes
+        .add_relay_target(src_media, hi_target_id, hi_mailbox);
+    for (active, rid, expect_hi) in [
+        (false, "hi", false),
+        (true, "hi", true),
+        (true, "lo", false),
+    ] {
+        state
+            .routes
+            .set_relay_target_active(src_media, hi_target_id, active);
+        let mut packet = sample_forwarded_packet_with_rid(
+            producer_session.clone(),
+            "cam-up",
+            Some(rid),
+            b"packet",
+        );
+        let mut forwards = Vec::new();
+        populate_forward_routes(
+            &state,
+            &packet_sink_registry,
+            &metrics,
+            std::slice::from_mut(&mut packet),
+            &mut forwards,
+        );
+        assert_eq!(forwards.len(), 1 + usize::from(expect_hi));
+        for forward in forwards {
+            let ForwardingDestination::Relay(destination) = forward else {
+                panic!("relay-only source planned another destination");
+            };
+            assert!(destination.send(&state, &packet).is_some());
+        }
+        assert_eq!(unrestricted_rx.try_recv().unwrap().payload(), b"packet");
+        if expect_hi {
+            assert_eq!(hi_rx.try_recv().unwrap().payload(), b"packet");
+        } else {
+            assert!(hi_rx.try_recv().is_err());
+        }
+    }
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot.rtc_route_control_layer_allowed(), 3);
+    assert_eq!(snapshot.rtc_route_control_layer_dropped(), 0);
+}
+
+#[test]
 fn plan_forwards_gates_only_the_selected_source_media() {
     let gated_producer_session = test_transport_session_key(61, 0, 62, UserId::Integer(63));
     let open_producer_session = test_transport_session_key(61, 0, 62, UserId::Integer(64));
