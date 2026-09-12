@@ -93,6 +93,11 @@ jobs:
             harness: vp8_identity_projection_matches_modular_model
             covers: 10
             timeout_minutes: 30
+          - shard: core-rtp-projection
+            package: o-sfu-core
+            harness: rtp_projection_matches_affine_model
+            covers: 24
+            timeout_minutes: 30
 
     steps:
       - name: Checkout repository

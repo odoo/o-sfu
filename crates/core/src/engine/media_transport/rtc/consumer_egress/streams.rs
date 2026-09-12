@@ -284,7 +284,8 @@ impl ConsumerStreamStore {
     /// delivery-generation projection window. This does not prove that packet was lost.
     ///
     /// Returns `None` for a stale handle, an older delivery generation, a repair outside
-    /// that window or a source sequence outside the representable projection range.
+    /// that window, a source sequence outside the representable projection range or
+    /// an advancing packet without a representable receiver successor.
     pub(super) fn project_identity(
         &mut self,
         stream_handle: ConsumerStreamHandle,
@@ -459,8 +460,10 @@ impl RtpProjection {
 
     /// Projects one packet without changing the RTP mapping on rejection.
     ///
-    /// Returns `None` for repairs outside the active SSRC sequence window or
-    /// source deltas outside the representable receiver sequence range.
+    /// Returns `None` for repairs outside the active SSRC sequence window,
+    /// source deltas outside the representable receiver sequence range or
+    /// advancement whose receiver successor would exceed `u64::MAX`.
+    /// Reordered packets and accepted repairs remain projectable after exhaustion.
     /// The caller validates the delivery generation before requesting reanchoring.
     // Outlining this transition adds a call frame to every primary packet.
     #[inline]
@@ -478,7 +481,8 @@ impl RtpProjection {
         match &mut self.timeline {
             RtpTimeline::Empty => {
                 cold_path();
-                let seq_no = self.next_seq_no.inc();
+                let seq_no = self.next_seq_no;
+                self.next_seq_no = (*seq_no).checked_add(1)?.into();
                 self.timeline = RtpTimeline::Active {
                     ssrc: source_ssrc,
                     src_seq_anchor: source_seq_no,
@@ -509,7 +513,9 @@ impl RtpProjection {
                         cold_path();
                         return self.project_source_delta(source_seq_no, source_timestamp);
                     }
-                    let seq_no = self.next_seq_no.inc();
+                    // A source gap can exhaust the successor before the next consecutive packet.
+                    let seq_no = self.next_seq_no;
+                    self.next_seq_no = (*seq_no).checked_add(1)?.into();
                     *highest_src_seq = source_seq_no;
                     let rtp_timestamp = dst_timestamp_anchor
                         .wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
@@ -521,7 +527,8 @@ impl RtpProjection {
                     });
                 }
                 let previous_ssrc = *ssrc;
-                let seq_no = self.next_seq_no.inc();
+                let seq_no = self.next_seq_no;
+                self.next_seq_no = (*seq_no).checked_add(1)?.into();
                 let rtp_timestamp = highest_timestamp.wrapping_add(1);
                 self.timeline = RtpTimeline::Active {
                     ssrc: source_ssrc,
@@ -680,6 +687,10 @@ pub fn rotate_rtx_cache(rtc: &mut Rtc, primary_ssrc: Ssrc) {
         stream.set_rtx_cache(RTX_CACHE_MAX_PACKETS, RTX_CACHE_LIFETIME, RTX_RATIO_CAP);
     }
 }
+
+#[cfg(kani)]
+#[path = "PROOFS/streams.rs"]
+mod proofs;
 
 #[cfg(test)]
 #[path = "TESTS/streams.rs"]
