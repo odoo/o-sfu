@@ -12,7 +12,7 @@ fn local_send_contract_keeps_payload_inside_the_adapter_boundary() {
     let packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
     let rtp = packet.local_send_packet();
 
-    assert_eq!(rtp.header().ext_vals.mid, Some(Mid::from("aud-up")));
+    assert_eq!(rtp.header.ext_vals.mid, Some(Mid::from("aud-up")));
     assert_eq!(rtp.payload.as_ref(), b"payload");
 }
 
@@ -21,7 +21,7 @@ fn outbound_extension_values_rewrite_source_identity_to_consumer_stream() {
     let session_key = test_transport_session_key(45, 0, 12, UserId::Integer(9));
     let packet = sample_forwarded_packet(session_key, "cam-up", b"payload");
     let rtp = packet.local_send_packet();
-    let mut source_header = rtp.header().clone();
+    let mut source_header = rtp.header.clone();
     source_header.ext_vals.rid = Some(Rid::from("hi"));
     source_header.ext_vals.rid_repair = Some(Rid::from("lo"));
     source_header.ext_vals.voice_activity = Some(true);
@@ -41,8 +41,8 @@ fn outbound_payload_type_prefers_consumer_negotiated_payload_type() {
     let rtp = packet.local_send_packet();
 
     assert_eq!(
-        outbound_payload_type(rtp.header(), Some(Pt::from(96))),
+        outbound_payload_type(rtp.header, Some(Pt::from(96))),
         Pt::from(96)
     );
-    assert_eq!(outbound_payload_type(rtp.header(), None), Pt::from(111));
+    assert_eq!(outbound_payload_type(rtp.header, None), Pt::from(111));
 }

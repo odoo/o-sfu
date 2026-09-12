@@ -58,11 +58,8 @@
 //! layer no producer stream exists for is dropped before it reaches the
 //! publisher, and codec inspection returns an empty packet without parsing a
 //! descriptor, detecting a keyframe or rewriting an identity
-//! the header storage is the one part that cannot match: production keeps the
-//! whole `str0m` packet for local ingress, and `RtpPacket` has private fields and
-//! no public constructor, so only a session that completed ICE and DTLS can
-//! produce one. the staged packets therefore use the relay-shaped header storage,
-//! which costs one enum arm in `local_send_packet` and `rtp_header`
+//! staged packets use the same RTP metadata and shared payload representation
+//! as packets normalized from local `str0m` output
 //!
 //! # why the branches matter
 //!
