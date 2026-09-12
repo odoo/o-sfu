@@ -27,6 +27,9 @@
 //! the room here is real, so the effects do reach a worker, but the numbers move
 //! with the cost of deciding rather than the cost of forwarding
 //!
+//! All room sessions share one worker. Profiler-induced packet-loop delay must
+//! not change the number of worker snapshots or route batches between runs.
+//!
 //! # why a bandwidth trace
 //!
 //! production reads receiver bandwidth out of the media transport, which only
@@ -43,7 +46,6 @@
 use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv4Addr},
-    num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -665,6 +667,15 @@ impl SourcePolicyScenario {
                 self.session_keys.len()
             ));
         }
+        if !self.session_keys.first().is_some_and(|first| {
+            self.session_keys
+                .iter()
+                .all(|key| key.media_worker_id() == first.media_worker_id())
+        }) {
+            return Err(anyhow!(
+                "source-policy benchmark sessions must share one worker"
+            ));
+        }
         Ok(())
     }
 
@@ -682,10 +693,7 @@ impl SourcePolicyScenario {
     }
 }
 
-/// builds the transport with the defaults an operator actually runs
-///
-/// the room benchmark that came before this one disabled media-quality sampling
-/// and forced bounded spillover, neither of which matches a normal deployment
+/// Retains four transport workers and normal media-quality sampling.
 fn media_transport() -> Result<MediaTransport> {
     let rtc_port_range = test_rtc_port_range();
     let config = MediaTransportConfig {
@@ -707,6 +715,7 @@ fn media_transport() -> Result<MediaTransport> {
         .map_err(|error| anyhow!("benchmark media transport build failed: {error}"))
 }
 
+/// Keeps room sessions on one worker during benchmark setup.
 fn room_manager(media_transport: &MediaTransport) -> Result<Arc<RoomManager>> {
     let media_limits = RoomMediaLimits::try_new(MAX_ACTIVE_AUDIO_SPEAKERS, MAX_VIDEO_DOWNLOADS)?;
     Ok(Arc::new(RoomManager::for_test_with_runtime_policy(
@@ -715,11 +724,7 @@ fn room_manager(media_transport: &MediaTransport) -> Result<Arc<RoomManager>> {
             RuntimeFeatureFlags::default(),
             media_transport.router_rtp_capabilities(),
         )
-        .with_room_worker_policy(RoomWorkerPolicy::new(
-            NonZeroUsize::new(WORKER_COUNT).expect("benchmark worker count must be positive"),
-            NonZeroU64::new(RoomWorkerPolicy::DEFAULT_PACKET_LOOP_DELAY_THRESHOLD_MS)
-                .expect("benchmark packet loop delay threshold must be positive"),
-        ))
+        .with_room_worker_policy(RoomWorkerPolicy::strict_single_router())
         .with_media_limits(media_limits),
     )))
 }
