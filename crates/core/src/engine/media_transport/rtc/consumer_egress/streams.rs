@@ -325,37 +325,83 @@ impl ConsumerStream {
         codec_identity: codec::PacketIdentity,
         was_repair: bool,
     ) -> Option<ProjectedIdentity> {
-        let reanchor = delivery_generation != self.delivery_generation;
-        if reanchor {
-            // Compare wrapping generations as serial numbers. Older delivery epochs
-            // and repairs from another epoch cannot re-anchor receiver identity.
-            let generation_delta = delivery_generation.wrapping_sub(self.delivery_generation);
-            if was_repair || generation_delta > u64::MAX / 2 {
-                return None;
-            }
+        if delivery_generation != self.delivery_generation {
+            return self.project_new_generation(
+                delivery_generation,
+                source_ssrc,
+                source_seq_no,
+                source_timestamp,
+                codec_identity,
+                was_repair,
+            );
         }
         let projected = self.rtp.project(
             source_ssrc,
             source_seq_no,
             source_timestamp,
-            reanchor,
+            false,
             was_repair,
         )?;
-        let reanchor_codec =
-            reanchor || matches!(projected.transition, SourceTransition::Switched { .. });
-        let codec = if projected.advances_high_water {
-            self.codec.project(codec_identity, reanchor_codec)
-        } else {
-            let mut observed_codec = self.codec;
-            observed_codec.project(codec_identity, reanchor_codec)
-        };
+        // Switched sources advance the RTP high-water mark. Literal codec modes and
+        // transitions preserve specialization in the ARM64 rewrite benchmark.
+        match projected.transition {
+            SourceTransition::Switched { previous_ssrc } => Some(ProjectedIdentity {
+                seq_no: projected.seq_no,
+                rtp_timestamp: projected.rtp_timestamp,
+                codec: self.codec.project(codec_identity, true),
+                transition: SourceTransition::Switched { previous_ssrc },
+                resets_rtx_cache: false,
+            }),
+            SourceTransition::Unchanged => {
+                let codec = if projected.advances_high_water {
+                    self.codec.project(codec_identity, false)
+                } else {
+                    let mut observed_codec = self.codec;
+                    observed_codec.project(codec_identity, false)
+                };
+                Some(ProjectedIdentity {
+                    seq_no: projected.seq_no,
+                    rtp_timestamp: projected.rtp_timestamp,
+                    codec,
+                    transition: SourceTransition::Unchanged,
+                    resets_rtx_cache: false,
+                })
+            }
+        }
+    }
+
+    /// Requires a different delivery generation.
+    ///
+    /// Rejects older generations and cross-generation repairs before changing
+    /// RTP or codec identity.
+    #[cold]
+    #[inline(never)]
+    fn project_new_generation(
+        &mut self,
+        delivery_generation: u64,
+        source_ssrc: Ssrc,
+        source_seq_no: SeqNo,
+        source_timestamp: u32,
+        codec_identity: codec::PacketIdentity,
+        was_repair: bool,
+    ) -> Option<ProjectedIdentity> {
+        // Compare wrapping generations as serial numbers. Older delivery epochs
+        // and repairs from another epoch cannot re-anchor receiver identity.
+        let generation_delta = delivery_generation.wrapping_sub(self.delivery_generation);
+        if was_repair || generation_delta > u64::MAX / 2 {
+            return None;
+        }
+        let projected =
+            self.rtp
+                .project(source_ssrc, source_seq_no, source_timestamp, true, false)?;
+        let codec = self.codec.project(codec_identity, true);
         self.delivery_generation = delivery_generation;
         Some(ProjectedIdentity {
             seq_no: projected.seq_no,
             rtp_timestamp: projected.rtp_timestamp,
             codec,
             transition: projected.transition,
-            resets_rtx_cache: reanchor,
+            resets_rtx_cache: true,
         })
     }
 }
@@ -508,8 +554,8 @@ impl RtpProjection {
         )
     }
 
-    #[cold]
-    #[inline(never)]
+    // An outlined delta path imposes a call frame on every packet projection.
+    #[inline]
     fn project_source_delta(
         &mut self,
         source_seq_no: SeqNo,
