@@ -1,8 +1,8 @@
 //! Decoder readiness effects and keyframe dispatch across RTC workers.
 //!
 //! [`RouteTable`](super::state::route_table::RouteTable) owns decoder gates and
-//! source/RID retry state. [`apply_src_decoder_ready`] couples gate transitions
-//! to consumer RTX invalidation before dispatching refresh feedback. Packet
+//! source/RID retry state. [`apply_src_decoder_ready`] dispatches refresh feedback
+//! after packet-loop state commits gates and consumer RTX invalidation. Packet
 //! liveness must already be recorded before applying decoder readiness.
 //!
 //! [`request_kf_for_target`] dispatches through the current producer or remote
@@ -28,7 +28,7 @@ mod keyframe;
 #[path = "TESTS/support.rs"]
 mod test_support;
 
-pub use decoder_readiness::{apply_src_decoder_ready, invalidate_source_repair};
+pub use decoder_readiness::apply_src_decoder_ready;
 pub use feedback::{PendingKeyframeRequest, drain_due_kf_retries, flush_pending_kf_reqs_at};
 pub use keyframe::{
     KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target, worker_request_consumer_kf,

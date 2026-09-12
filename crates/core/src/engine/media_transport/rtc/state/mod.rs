@@ -29,6 +29,7 @@ mod consumer_egress;
 mod consumer_routes;
 mod media_lifecycle;
 mod ownership;
+mod route_delivery;
 mod schedule;
 mod session;
 mod session_lifecycle;

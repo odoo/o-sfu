@@ -10,20 +10,14 @@
 //! RID liveness but do not activate a pending gate. A RID-less keyframe may
 //! activate a pending `Open` gate.
 
-use std::{
-    mem::take,
-    time::{Duration, Instant},
-};
+use std::{mem::take, time::Instant};
 
 use str0m::media::{KeyframeRequestKind, Rid};
 use tracing::{debug, warn};
 
 use super::{
     super::state::{
-        PacketLoopState,
-        route_table::{
-            RidReadinessRouteUpdate, RidReadinessScratch, RidReadinessSelectedGateUpdate,
-        },
+        PacketLoopState, route_table::RidReadinessSelectedGateUpdate,
         source_route::RemoteSourceRegistration,
     },
     KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target,
@@ -32,12 +26,6 @@ use crate::engine::{
     media_transport::{TransportMediaId, TransportSessionKey},
     metrics::RtcMetricsRecorder,
 };
-
-/// maximum age for treating a producer rid as live enough for strict gating
-///
-/// browser encoders may stop sending a rid after adaptation
-/// readiness is therefore freshness-based instead of a permanent once-seen bit
-const SELECTED_RID_READY_MAX_AGE: Duration = Duration::from_secs(2);
 
 /// Applies one producer packet's decoder readiness to its consumer routes.
 ///
@@ -55,7 +43,7 @@ pub fn apply_src_decoder_ready(
 ) -> bool {
     let mut scratch = take(&mut state.rid_readiness_scratch);
     let route_update =
-        update_rid_readiness_routes(state, src_media, rid, is_keyframe, now, &mut scratch);
+        state.update_decoder_readiness(src_media, rid, is_keyframe, now, &mut scratch);
     for stale_rid in scratch.stale.iter().copied() {
         request_live_rid_kf(
             state,
@@ -97,41 +85,6 @@ pub fn apply_src_decoder_ready(
     scratch.clear();
     state.rid_readiness_scratch = scratch;
     route_update.changed_gate()
-}
-
-/// updates rid-gated routes with one scan over the source destinations
-///
-/// packet observation can activate a selected rid, open a temporary bootstrap
-/// fallback or suspend a stale selected rid
-/// keeping those decisions in one route pass makes the packet-loop cost
-/// proportional to the source fanout once per observed rid packet instead of
-/// once per sub-decision
-fn update_rid_readiness_routes(
-    state: &mut PacketLoopState,
-    src_media: TransportMediaId,
-    incoming_rid: Option<Rid>,
-    is_keyframe: bool,
-    now: Instant,
-    scratch: &mut RidReadinessScratch,
-) -> RidReadinessRouteUpdate {
-    state.routes.collect_ready_producer_rids(
-        src_media,
-        now,
-        SELECTED_RID_READY_MAX_AGE,
-        &mut scratch.ready,
-    );
-    let (routes, users) = (&mut state.routes, &mut state.users);
-    routes.update_decoder_readiness(
-        src_media,
-        incoming_rid,
-        is_keyframe,
-        scratch,
-        |destination| {
-            if let Some(session_state) = users.get_mut(&destination.dest_session) {
-                session_state.invalidate_rtx_stream(destination.dest_stream);
-            }
-        },
-    )
 }
 
 /// requests a keyframe for a live rid on either a local or remote source
@@ -199,19 +152,4 @@ fn request_live_rid_kf(
         KeyframeRequestKind::Pli,
         mode,
     );
-}
-
-/// Invalidates retransmission state after an accepted source activity change.
-pub fn invalidate_source_repair(state: &mut PacketLoopState, src_media: TransportMediaId) {
-    let (routes, users) = (&state.routes, &mut state.users);
-    let Some(route) = routes.local_route(src_media) else {
-        return;
-    };
-    for destination in &route.destinations {
-        if destination.repair_enabled
-            && let Some(session_state) = users.get_mut(&destination.dest_session)
-        {
-            session_state.invalidate_rtx_stream(destination.dest_stream);
-        }
-    }
 }

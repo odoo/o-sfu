@@ -13,9 +13,9 @@ fn packet_gate_only_forwards_the_selected_rid() {
 fn aggregate_packet_gates_prefers_a_shared_selected_rid() {
     assert_eq!(
         aggregate_packet_gates([
-            &PacketLayerGate::Rid("hi".into()),
-            &PacketLayerGate::Rid("hi".into()),
-            &PacketLayerGate::Block,
+            PacketLayerGate::Rid("hi".into()),
+            PacketLayerGate::Rid("hi".into()),
+            PacketLayerGate::Block,
         ]),
         Some(PacketLayerGate::Rid("hi".into()))
     );
@@ -25,13 +25,13 @@ fn aggregate_packet_gates_prefers_a_shared_selected_rid() {
 fn aggregate_packet_gates_reopens_when_routes_disagree() {
     assert_eq!(
         aggregate_packet_gates([
-            &PacketLayerGate::Rid("hi".into()),
-            &PacketLayerGate::Rid("lo".into()),
+            PacketLayerGate::Rid("hi".into()),
+            PacketLayerGate::Rid("lo".into()),
         ]),
         Some(PacketLayerGate::Open)
     );
     assert_eq!(
-        aggregate_packet_gates([&PacketLayerGate::Rid("hi".into()), &PacketLayerGate::Open]),
+        aggregate_packet_gates([PacketLayerGate::Rid("hi".into()), PacketLayerGate::Open]),
         Some(PacketLayerGate::Open)
     );
 }

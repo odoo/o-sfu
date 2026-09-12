@@ -2,10 +2,14 @@
 
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::media::Mid;
+use tracing::debug;
 
 use super::{
-    PacketLoopState, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
-    slots::ConsumerStreamHandle, source_route::MediaRouteDestination,
+    PacketLoopState,
+    media_registry::RegisteredMediaHandle,
+    route_control::PacketLayerGate,
+    slots::ConsumerStreamHandle,
+    source_route::{DecoderDelivery, MediaRouteDestination},
 };
 use crate::engine::media_transport::{
     TransportAdapterError, TransportConsumerRoute, TransportMediaId, TransportResult,
@@ -46,11 +50,15 @@ impl PacketLoopState {
         let repair_enabled = codec::repair_enabled(consumer_rtp);
         let requires_decoder_refresh =
             codec::requires_decoder_refresh(consumer_rtp, dest_payload_type);
-        let (packet_gate, pending_gate) = MediaRouteDestination::guarded_packet_gate(
-            requires_decoder_refresh,
-            src_media,
-            codec::initial_consumer_packet_gate(consumer_rtp),
-        );
+        let initial_gate = codec::initial_consumer_packet_gate(consumer_rtp);
+        let delivery = DecoderDelivery::new(requires_decoder_refresh, initial_gate);
+        if requires_decoder_refresh {
+            debug!(
+                source_transport_media_id = ?src_media,
+                requested_packet_gate = ?initial_gate,
+                "blocked video route until its decoder refresh arrives"
+            );
+        }
         let dst_idx = self.routes.add_consumer_route(
             src_media,
             MediaRouteDestination {
@@ -61,10 +69,7 @@ impl PacketLoopState {
                 dest_payload_type,
                 repair_enabled,
                 active,
-                requires_decoder_refresh,
-                delivery_generation: 0,
-                packet_gate,
-                pending_gate,
+                delivery,
             },
         );
         self.set_consumer_dst_idx(

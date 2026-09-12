@@ -40,8 +40,9 @@ use crate::{
                 },
                 state::{
                     PacketLoopState, RtcSnapshotState, TransportSessionHealth, muxed_rtp_ssrc,
-                    route_control::PacketLayerGate, slots::ConsumerStreamHandle,
-                    source_route::MediaRouteDestination,
+                    route_control::PacketLayerGate,
+                    slots::ConsumerStreamHandle,
+                    source_route::{DecoderDelivery, MediaRouteDestination},
                 },
                 test_support::{
                     sample_forwarded_packet, sample_forwarded_packet_without_mid,
@@ -198,10 +199,7 @@ impl LocalWriteDrainFixture {
                 dest_payload_type: Some(payload_type),
                 repair_enabled,
                 active: true,
-                requires_decoder_refresh: false,
-                delivery_generation: 0,
-                packet_gate: PacketLayerGate::Open,
-                pending_gate: None,
+                delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
             },
         );
         let ForwardingDestination::LocalRtc(destination) =

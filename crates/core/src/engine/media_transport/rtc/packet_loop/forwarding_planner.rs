@@ -174,7 +174,9 @@ fn populate_local_forwards(
             .destinations
             .iter()
             .enumerate()
-            .filter(|(_, dst)| (all_active || dst.active) && dst.packet_gate.permits(packet_rid))
+            .filter(|(_, dst)| {
+                (all_active || dst.active) && dst.delivery.effective_gate().permits(packet_rid)
+            })
             .map(|(dst_idx, _)| {
                 ForwardingDestination::from_local_route_destination(src_media, dst_idx)
             }),

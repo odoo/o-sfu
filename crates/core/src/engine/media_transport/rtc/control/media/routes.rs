@@ -1,12 +1,9 @@
 use crate::engine::media_transport::{
     SourceActivityUpdate, TransportAdapterError, TransportSourceKey,
-    rtc::{
-        recovery::invalidate_source_repair,
-        state::{
-            PacketLoopState,
-            relay_registry::{RelayPacketMailbox, RelayTargetId},
-            route_control::PacketLayerGate,
-        },
+    rtc::state::{
+        PacketLoopState,
+        relay_registry::{RelayPacketMailbox, RelayTargetId},
+        route_control::PacketLayerGate,
     },
 };
 
@@ -78,18 +75,7 @@ pub(super) fn worker_apply_producer_activity(
     source: &TransportSourceKey,
     update: SourceActivityUpdate,
 ) -> Result<bool, TransportAdapterError> {
-    let src_media = source.transport_media_id();
-    state.ensure_local_producer_mid(source.session_key(), src_media)?;
-    let active = update.activity().is_active();
-    let activity_changed = state.routes.source_is_active(src_media) != active;
-    let accepted = state.routes.apply_source_activity(src_media, update)?;
-    if accepted {
-        state.apply_producer_nack_policy(source.session_key(), src_media);
-    }
-    if accepted && activity_changed {
-        invalidate_source_repair(state, src_media);
-    }
-    Ok(accepted)
+    state.apply_producer_activity(source, update)
 }
 
 pub(super) fn worker_set_remote_source_activity(
@@ -97,17 +83,5 @@ pub(super) fn worker_set_remote_source_activity(
     source: &TransportSourceKey,
     update: SourceActivityUpdate,
 ) -> Result<(), TransportAdapterError> {
-    let src_media = source.transport_media_id();
-    match state.routes.remote_source(src_media) {
-        Some(registration) if registration.source() == source => {}
-        Some(_) => return Err(TransportAdapterError::InvalidInput),
-        None => return Ok(()),
-    }
-    let activity_changed =
-        state.routes.source_is_active(src_media) != update.activity().is_active();
-    let accepted = state.routes.apply_source_activity(src_media, update)?;
-    if accepted && activity_changed {
-        invalidate_source_repair(state, src_media);
-    }
-    Ok(())
+    state.set_remote_source_activity(source, update)
 }

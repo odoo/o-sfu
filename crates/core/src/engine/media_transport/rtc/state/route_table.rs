@@ -8,7 +8,8 @@
 //!
 //! [`PacketLoopState`](super::PacketLoopState) couples destination changes to
 //! session MID indexes and stream retirement. [`recovery`](super::super::recovery)
-//! combines decoder-gate transitions with RTX invalidation and producer feedback.
+//! dispatches producer feedback after `PacketLoopState` commits decoder gates
+//! together with RTX invalidation.
 //! The table retains source/RID retry state across those feedback attempts.
 //!
 //! Packet liveness alone cannot activate a pending decoder gate. An observable

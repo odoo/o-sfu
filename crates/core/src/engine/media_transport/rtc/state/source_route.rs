@@ -3,8 +3,13 @@
 //! source routes bind one producer media id to local consumer destinations
 //! plus the remote-source and decoder-refresh facts attached to that source
 
-use str0m::media::{Mid, Pt, Rid};
-use tracing::debug;
+use str0m::media::{Mid, Pt};
+
+mod decoder_delivery;
+
+pub(in super::super) use decoder_delivery::{
+    DecoderDelivery, DestinationKeyframeTarget, SelectedRefresh,
+};
 
 use super::{
     super::commands::RemoteSourceControl, route_control::PacketLayerGate,
@@ -41,17 +46,8 @@ pub(in super::super) struct MediaRouteDestination {
     pub(in super::super) repair_enabled: bool,
     /// destination-level activity gate controlled by consumer state
     pub(in super::super) active: bool,
-    /// video routes resume only from a decoder refresh packet
-    pub(in super::super) requires_decoder_refresh: bool,
-    /// increments when intentional filtering requires receiver RTP reanchoring
-    pub(in super::super) delivery_generation: u64,
-    /// effective transport gate used by the packet loop right now
-    pub(in super::super) packet_gate: PacketLayerGate,
-    /// selected strict gate that is waiting for a decodable live RID
-    ///
-    /// pending gates keep a route from opening to multiple publisher RIDs while
-    /// a browser is still bringing up or refreshing the selected layer
-    pub(in super::super) pending_gate: Option<PacketLayerGate>,
+    /// requested selection, decoder readiness and receiver delivery generation
+    pub(in super::super) delivery: DecoderDelivery,
 }
 
 /// local packet-loop fanout for one producer media id
@@ -108,13 +104,13 @@ impl MediaRouteEntry {
 
     pub(in super::super) fn advance_delivery(&mut self) {
         for destination in &mut self.destinations {
-            destination.advance_delivery();
+            destination.delivery.advance_generation();
         }
     }
 
     pub(in super::super) fn pause_delivery(&mut self) {
         for destination in &mut self.destinations {
-            destination.pause_delivery();
+            destination.delivery.pause();
         }
     }
 
@@ -135,87 +131,9 @@ impl MediaRouteEntry {
         } else {
             self.active_destination_count -= 1;
         }
-        destination.pause_delivery();
+        destination.delivery.pause();
         destination.active = active;
         true
-    }
-}
-
-pub(in super::super) enum DestinationKeyframeTarget {
-    Current(Option<Rid>),
-    Stale,
-}
-
-impl MediaRouteDestination {
-    /// Defers a decoder-sensitive gate until a keyframe makes the destination decodable.
-    ///
-    /// When no decoder refresh is required the requested gate takes effect directly.
-    /// Otherwise `Block` remains effective while the requested gate stays pending.
-    /// Recent packet liveness alone cannot restore the decoder reference chain.
-    pub fn guarded_packet_gate(
-        requires_decoder_refresh: bool,
-        src_media: TransportMediaId,
-        packet_gate: PacketLayerGate,
-    ) -> (PacketLayerGate, Option<PacketLayerGate>) {
-        if !requires_decoder_refresh {
-            return (packet_gate, None);
-        }
-        debug!(
-            source_transport_media_id = ?src_media,
-            requested_packet_gate = ?packet_gate,
-            "blocked video route until its decoder refresh arrives"
-        );
-        (PacketLayerGate::Block, Some(packet_gate))
-    }
-
-    pub(in super::super) fn advance_delivery(&mut self) {
-        self.delivery_generation = self.delivery_generation.wrapping_add(1);
-    }
-
-    /// Starts a new delivery generation and blocks routes that require refresh.
-    ///
-    /// The effective gate moves to `pending_gate` so a matching decoder refresh
-    /// can restore the requested selection.
-    pub(in super::super) fn pause_delivery(&mut self) {
-        self.advance_delivery();
-        if !self.requires_decoder_refresh {
-            return;
-        }
-        if self.pending_gate.is_none() {
-            self.pending_gate = Some(self.packet_gate);
-        }
-        self.packet_gate = PacketLayerGate::Block;
-    }
-
-    /// Activates the requested gate and consumes the pending decoder wait.
-    pub(in super::super) fn activate_refresh(&mut self, packet_gate: PacketLayerGate) {
-        self.packet_gate = packet_gate;
-        self.pending_gate = None;
-        self.advance_delivery();
-    }
-
-    /// Admits a decodable fallback without consuming the pending selected gate.
-    ///
-    /// The fallback can render while keyframe retries continue for the selected
-    /// RID.
-    pub(in super::super) fn activate_bootstrap_refresh(&mut self, packet_gate: PacketLayerGate) {
-        self.packet_gate = packet_gate;
-        self.advance_delivery();
-    }
-
-    pub(in super::super) fn keyframe_target_rid(
-        &self,
-        open_rid: Option<Rid>,
-    ) -> DestinationKeyframeTarget {
-        if let Some(pending_gate) = self.pending_gate {
-            return DestinationKeyframeTarget::Current(pending_gate.selected_rid());
-        }
-        let target_rid = match self.packet_gate {
-            PacketLayerGate::Rid(rid) => Some(rid),
-            PacketLayerGate::Block => return DestinationKeyframeTarget::Stale,
-            PacketLayerGate::Open => open_rid,
-        };
-        DestinationKeyframeTarget::Current(target_rid)
     }
 }
 

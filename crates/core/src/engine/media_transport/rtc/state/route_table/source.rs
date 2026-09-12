@@ -20,7 +20,7 @@ use super::{
         },
         source_route::{
             DestinationKeyframeTarget, MediaRouteDestination, MediaRouteEntry,
-            RemoteSourceRegistration,
+            RemoteSourceRegistration, SelectedRefresh,
         },
     },
     ConsumerRouteUpdate, RidReadinessScratch,
@@ -267,22 +267,11 @@ impl RouteSource {
             .as_mut()
             .ok_or(TransportAdapterError::TransportUnavailable)?;
         let dst = validate_destination(route, dst_idx, session_key, media_id)?;
-        if dst.packet_gate == packet_gate {
-            let changed = dst.pending_gate.take().is_some();
-            return Ok(ConsumerRouteUpdate::new(changed, false));
-        }
-        if dst.pending_gate == Some(packet_gate) {
-            return Ok(ConsumerRouteUpdate::new(false, false));
-        }
-        if dst.requires_decoder_refresh {
-            dst.packet_gate = PacketLayerGate::Block;
-            dst.pending_gate = Some(packet_gate);
-        } else {
-            dst.packet_gate = packet_gate;
-            dst.pending_gate = None;
-        }
-        dst.advance_delivery();
-        Ok(ConsumerRouteUpdate::new(true, dst.repair_enabled))
+        let transition = dst.delivery.select(packet_gate);
+        Ok(ConsumerRouteUpdate::new(
+            transition.changed(),
+            transition.delivery_changed() && dst.repair_enabled,
+        ))
     }
 
     pub(super) fn update_decoder_readiness(
@@ -361,7 +350,7 @@ impl RouteSource {
             route.destinations.iter().any(|destination| {
                 destination.active
                     && matches!(
-                        destination.keyframe_target_rid(None),
+                        destination.delivery.keyframe_target_rid(None),
                         DestinationKeyframeTarget::Current(target_rid)
                             if rid.is_none() || target_rid == rid
                     )
@@ -728,7 +717,7 @@ impl SourcePacketState {
 
     fn refresh_effective(&mut self) {
         self.effective = intersect_packet_gates(
-            aggregate_packet_gates(self.local.iter().chain(self.relays.values())),
+            aggregate_packet_gates(self.local.iter().chain(self.relays.values()).copied()),
             self.audio.as_ref().map(SourceAudioPolicyState::packet_gate),
         );
     }
@@ -872,32 +861,35 @@ fn update_decoder_ready_dsts(
                 &mut update,
             );
         }
-        let Some(pending_gate) = dst.pending_gate else {
-            continue;
-        };
-        if let Some(selected_rid) = pending_gate.selected_rid() {
+        if let Some(selected_rid) = dst
+            .delivery
+            .pending_gate()
+            .and_then(|gate| gate.selected_rid())
+        {
             push_unique_rid(&mut scratch.pending_selected, selected_rid);
-            if Some(selected_rid) != incoming_rid {
-                continue;
-            }
-        } else if !matches!(pending_gate, PacketLayerGate::Open) {
-            continue;
         }
-        update.mark_pending_selected_gate();
-        if is_keyframe {
-            debug!(
-                ?source_id,
-                consumer_session_key = ?dst.dest_session,
-                consumer_transport_media_id = ?dst.dest_transport_media_id,
-                ?incoming_rid,
-                activated_packet_gate = ?pending_gate,
-                "activated deferred strict RID packet gate after producer RID became live"
-            );
-            dst.activate_refresh(pending_gate);
-            notify_repair_delivery_changed(dst, &mut on_repair_delivery_changed);
-            update.mark_activated_pending_gate();
+        match dst
+            .delivery
+            .observe_selected_refresh(incoming_rid, is_keyframe)
+        {
+            SelectedRefresh::NotWaiting => {}
+            SelectedRefresh::Pending => update.mark_pending_selected_gate(),
+            SelectedRefresh::Activated => {
+                debug!(
+                    ?source_id,
+                    consumer_session_key = ?dst.dest_session,
+                    consumer_transport_media_id = ?dst.dest_transport_media_id,
+                    ?incoming_rid,
+                    activated_packet_gate = ?dst.delivery.effective_gate(),
+                    "activated deferred strict RID packet gate after producer RID became live"
+                );
+                notify_repair_delivery_changed(dst, &mut on_repair_delivery_changed);
+                update.mark_activated_pending_gate();
+            }
         }
     }
+    // Requested-gate activation anywhere in the source suppresses fallback
+    // for this packet, including activation on an inactive destination.
     if is_keyframe
         && update.selected_gate != RidReadinessSelectedGateUpdate::Activated
         && let Some(incoming_rid) = incoming_rid
@@ -922,26 +914,18 @@ fn suspend_stale_dst_gate(
     on_repair_delivery_changed: &mut impl FnMut(&MediaRouteDestination),
     update: &mut RidReadinessRouteUpdate,
 ) {
-    if dst.pending_gate.is_some() {
-        return;
-    }
-    let Some(selected_rid) = dst.packet_gate.selected_rid() else {
+    let Some(selected_rid) = dst.delivery.suspend_stale(incoming_rid, ready) else {
         return;
     };
-    if selected_rid == incoming_rid || ready.contains(&selected_rid) {
-        return;
-    }
-    let packet_gate = dst.packet_gate;
     debug!(
         ?source_id,
         consumer_session_key = ?dst.dest_session,
         consumer_transport_media_id = ?dst.dest_transport_media_id,
         ?incoming_rid,
         stale_rid = ?selected_rid,
-        pending_packet_gate = ?packet_gate,
+        pending_packet_gate = ?PacketLayerGate::Rid(selected_rid),
         "blocked stale selected RID route until selected producer RID resumes"
     );
-    dst.pause_delivery();
     push_unique_rid(stale, selected_rid);
     notify_repair_delivery_changed(dst, on_repair_delivery_changed);
     update.mark_suspended_stale_gate();
@@ -955,16 +939,9 @@ fn activate_bootstrap_dsts(
     update: &mut RidReadinessRouteUpdate,
 ) {
     for dst in &mut route.destinations {
-        let Some(selected_rid) = dst
-            .pending_gate
-            .as_ref()
-            .and_then(PacketLayerGate::selected_rid)
-        else {
+        let Some(selected_rid) = dst.delivery.activate_fallback(incoming_rid) else {
             continue;
         };
-        if selected_rid == incoming_rid || !matches!(dst.packet_gate, PacketLayerGate::Block) {
-            continue;
-        }
         debug!(
             ?source_id,
             consumer_session_key = ?dst.dest_session,
@@ -973,7 +950,6 @@ fn activate_bootstrap_dsts(
             pending_selected_rid = ?selected_rid,
             "activated bootstrap fallback RID packet gate while selected producer RID is pending"
         );
-        dst.activate_bootstrap_refresh(PacketLayerGate::Rid(incoming_rid));
         notify_repair_delivery_changed(dst, on_repair_delivery_changed);
         update.mark_bootstrap_fallback();
     }
@@ -1000,7 +976,7 @@ fn local_src_pkt_gate(route_entry: &MediaRouteEntry) -> Option<PacketLayerGate> 
             .destinations
             .iter()
             .filter(|destination| destination.active)
-            .map(|destination| &destination.packet_gate),
+            .map(|destination| destination.delivery.effective_gate()),
     )
 }
 
@@ -1019,7 +995,7 @@ fn remote_pkt_gate_for_route(
             if route_entry
                 .destinations
                 .iter()
-                .any(|destination| destination.pending_gate.is_some()) =>
+                .any(|destination| destination.delivery.pending_gate().is_some()) =>
         {
             PacketLayerGate::Open
         }

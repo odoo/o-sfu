@@ -114,7 +114,7 @@ use super::super::{
         relay_registry::{RelayPacketMailbox, RelayTargetId},
         route_control::PacketLayerGate,
         slots::SessionHandle,
-        source_route::MediaRouteDestination,
+        source_route::{DecoderDelivery, MediaRouteDestination},
     },
     test_support::{
         BenchmarkPacketStaging, BenchmarkStreamIdentity, restage_packet_for_benchmark,
@@ -920,7 +920,7 @@ impl MeetingFlowBenchFixture {
                 let Some(routed) = route.destinations.get(destination.dst_idx) else {
                     continue;
                 };
-                if routed.packet_gate != featured_gate {
+                if routed.delivery.effective_gate() != featured_gate {
                     continue;
                 }
                 let Some(slot) = layout.get_mut(destination.receiver) else {
@@ -1483,11 +1483,7 @@ impl MeetingFlowBenchFixture {
         let requires_decoder_refresh = consumer_rtp.as_ref().is_some_and(|parameters| {
             codec::requires_decoder_refresh(parameters, dest_payload_type)
         });
-        let (packet_gate, pending_gate) = MediaRouteDestination::guarded_packet_gate(
-            requires_decoder_refresh,
-            src_media,
-            packet_gate,
-        );
+        let delivery = DecoderDelivery::new(requires_decoder_refresh, packet_gate);
         let dst_idx = self.state.routes.add_consumer_route(
             src_media,
             MediaRouteDestination {
@@ -1498,10 +1494,7 @@ impl MeetingFlowBenchFixture {
                 dest_payload_type,
                 repair_enabled: false,
                 active: true,
-                requires_decoder_refresh,
-                delivery_generation: 0,
-                packet_gate,
-                pending_gate,
+                delivery,
             },
         );
         self.state.set_consumer_dst_idx(

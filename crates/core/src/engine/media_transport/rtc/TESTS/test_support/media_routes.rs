@@ -55,8 +55,8 @@ pub fn assert_consumer_packet_gate(
     assert!(state.routes.local_route(src_media).is_some_and(|route| {
         route.destinations.iter().any(|dst| {
             dst.dest_session == *consumer_session
-                && &dst.packet_gate == packet_gate
-                && dst.pending_gate.as_ref() == pending_gate
+                && &dst.delivery.effective_gate() == packet_gate
+                && dst.delivery.pending_gate().as_ref() == pending_gate
         })
     }));
 }
