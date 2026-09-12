@@ -96,8 +96,41 @@ use crate::engine::media_transport::{
 #[derive(Default)]
 pub(in super::super) struct ForwardView<'a> {
     pub route: Option<&'a MediaRouteEntry>,
-    pub relays: Option<&'a [ActiveRelayTarget]>,
+    pub relays: Option<RelayForwardView<'a>>,
     pub source_gate: Option<PacketLayerGate>,
+}
+
+/// Active relay targets and their independently retained packet gates.
+///
+/// At least one target is active. Gate updates can precede target registration
+/// or activation, so the view borrows both collections from the same source.
+#[derive(Clone, Copy)]
+pub(in super::super) struct RelayForwardView<'a> {
+    targets: &'a [ActiveRelayTarget],
+    gates: &'a BTreeMap<RelayTargetId, PacketLayerGate>,
+}
+
+impl<'a> RelayForwardView<'a> {
+    pub(in super::super) const fn len(self) -> usize {
+        self.targets.len()
+    }
+
+    /// Yields active mailboxes whose target gate permits the packet RID.
+    ///
+    /// A missing target gate imposes no restriction beyond the source gate.
+    pub(in super::super) fn targets_for_packet(
+        self,
+        rid: Option<Rid>,
+    ) -> impl Iterator<Item = &'a RelayPacketMailbox> {
+        self.targets
+            .iter()
+            .filter(move |target| {
+                self.gates
+                    .get(&target.target_id)
+                    .is_none_or(|gate| gate.permits(rid))
+            })
+            .map(|target| &target.target)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -122,7 +155,7 @@ impl RouteTable {
             (
                 source.local_route(),
                 if include_relays {
-                    source.active_relay_targets()
+                    source.relay_forward_view()
                 } else {
                     None
                 },
@@ -725,16 +758,6 @@ impl RouteTable {
             .entry(source_id)
             .or_default()
             .set_relay_pkt_gate(target_id, packet_gate);
-    }
-
-    pub(in super::super) fn relay_packet_gate(
-        &self,
-        source_id: TransportMediaId,
-        target_id: RelayTargetId,
-    ) -> Option<&PacketLayerGate> {
-        self.sources
-            .get(&source_id)
-            .and_then(|source| source.relay_packet_gate(target_id))
     }
 
     pub(in super::super) fn active_speaker_sources(
