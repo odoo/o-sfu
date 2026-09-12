@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    slice,
     sync::{Arc, Mutex, PoisonError},
     time::Instant,
 };
@@ -81,16 +82,16 @@ struct ForwardingHarness {
 impl ForwardingHarness {
     fn new() -> Self {
         let metrics = RuntimeMetrics::default();
-        let rtp_metrics = metrics.register_rtp_worker();
-        let rtc_metrics = metrics.register_rtc_worker();
+        let rtp = metrics.register_rtp_worker();
+        let control = metrics.register_rtc_worker();
         Self {
             state: PacketLoopState::default(),
             forwarder: PacketForwarder::default(),
             packet_sinks: RoomPacketSinkRegistry::default(),
             source_policy_signal: SourcePolicySignal::default(),
             metrics,
-            rtp_metrics,
-            rtc_metrics,
+            rtp_metrics: rtp,
+            rtc_metrics: control,
         }
     }
 
@@ -100,6 +101,80 @@ impl ForwardingHarness {
                 session_key: session.clone(),
                 mid: Mid::from("aud-up"),
             })
+    }
+
+    fn register_video_with_pending_consumer(
+        &mut self,
+        producer: &TransportSessionKey,
+        consumer: TransportSessionKey,
+        selected_rid: Rid,
+    ) -> TransportMediaId {
+        let src_media = prepare_source_session_with_rid(
+            &mut self.state,
+            producer,
+            Mid::from("cam-up"),
+            4_321,
+            Some(selected_rid),
+        );
+        self.state.routes.refresh_packet_inspector(
+            src_media,
+            &MediaStream::new(
+                vec![MediaFormat::new(
+                    RouterMediaKind::Video,
+                    CodecName::Vp8,
+                    PayloadType::new(111),
+                    90_000,
+                )],
+                vec![],
+                vec![],
+            ),
+        );
+        self.state.register_incoming_bitrate_counter(
+            src_media,
+            Arc::new(MediaBitrateCounter::new(Instant::now())),
+        );
+        let consumer_mid = Mid::from("cam-down");
+        let consumer_media = self
+            .state
+            .register_media_handle(RegisteredMediaHandle::Consumer {
+                session_key: consumer.clone(),
+                mid: consumer_mid,
+                src_media,
+            });
+        self.state.routes.add_consumer_route(
+            src_media,
+            MediaRouteDestination {
+                dest_session: consumer,
+                dest_transport_media_id: consumer_media,
+                dest_stream: ConsumerStreamHandle::default(),
+                dest_mid: consumer_mid,
+                dest_payload_type: None,
+                repair_enabled: false,
+                active: true,
+                delivery: DecoderDelivery::new(true, PacketLayerGate::Rid(selected_rid)),
+            },
+        );
+        src_media
+    }
+
+    fn completed_scratch_capacities(&self) -> [usize; 5] {
+        assert_eq!(
+            [
+                self.forwarder.forwards.len(),
+                self.forwarder.observed_rids.len(),
+                self.forwarder.pending_first_video_keyframes.len(),
+                self.forwarder.rid_readiness_changed_sources.len(),
+                self.forwarder.dirty_source_policy_channel_ids.len(),
+            ],
+            [0; 5]
+        );
+        [
+            self.forwarder.forwards.capacity(),
+            self.forwarder.observed_rids.capacity(),
+            self.forwarder.pending_first_video_keyframes.capacity(),
+            self.forwarder.rid_readiness_changed_sources.capacity(),
+            self.forwarder.dirty_source_policy_channel_ids.capacity(),
+        ]
     }
 
     fn forward(&mut self, packets: &mut [ForwardedPacket]) {
@@ -220,51 +295,7 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
         dirty_source_policy_channel_ids: Vec::new(),
         ..PacketForwarder::default()
     };
-    let src_media = prepare_source_session_with_rid(
-        &mut harness.state,
-        &producer,
-        Mid::from("cam-up"),
-        4_321,
-        Some(selected_rid),
-    );
-    harness.state.routes.refresh_packet_inspector(
-        src_media,
-        &MediaStream::new(
-            vec![MediaFormat::new(
-                RouterMediaKind::Video,
-                CodecName::Vp8,
-                PayloadType::new(111),
-                90_000,
-            )],
-            vec![],
-            vec![],
-        ),
-    );
-    harness.state.register_incoming_bitrate_counter(
-        src_media,
-        Arc::new(MediaBitrateCounter::new(Instant::now())),
-    );
-    let consumer_mid = Mid::from("cam-down");
-    let consumer_media = harness
-        .state
-        .register_media_handle(RegisteredMediaHandle::Consumer {
-            session_key: consumer.clone(),
-            mid: consumer_mid,
-            src_media,
-        });
-    harness.state.routes.add_consumer_route(
-        src_media,
-        MediaRouteDestination {
-            dest_session: consumer,
-            dest_transport_media_id: consumer_media,
-            dest_stream: ConsumerStreamHandle::default(),
-            dest_mid: consumer_mid,
-            dest_payload_type: None,
-            repair_enabled: false,
-            active: true,
-            delivery: DecoderDelivery::new(true, PacketLayerGate::Rid(selected_rid)),
-        },
-    );
+    let src_media = harness.register_video_with_pending_consumer(&producer, consumer, selected_rid);
     let (relay, mut relay_rx) = RelayPacketMailbox::channel_for_test();
     let target_id = RelayTargetId::new(1);
     // The relay shares local demand, so the pending decoder gate blocks both.
@@ -290,7 +321,7 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
     harness.forward(&mut packets);
     let forwarded = relay_rx
         .try_recv()
-        .map_err(|_| "selected keyframe should reach the relay")?;
+        .or(Err("selected keyframe should reach the relay"))?;
     assert_eq!(forwarded.payload(), KEYFRAME);
     assert!(matches!(
         relay_rx.try_recv(),
@@ -308,29 +339,13 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
     assert_eq!(snapshot.rtc_route_control_layer_dropped(), 1);
     assert_eq!(snapshot.rtc_route_control_layer_allowed(), 1);
     assert_eq!(snapshot.rtp_forwarded_packets_intra_node_relay(), 1);
-    let scratch_capacities = [
-        harness.forwarder.forwards.capacity(),
-        harness.forwarder.observed_rids.capacity(),
-        harness.forwarder.pending_first_video_keyframes.capacity(),
-        harness.forwarder.rid_readiness_changed_sources.capacity(),
-        harness.forwarder.dirty_source_policy_channel_ids.capacity(),
-    ];
+    let scratch_capacities = harness.completed_scratch_capacities();
     assert!(scratch_capacities.into_iter().all(|capacity| capacity > 0));
-    assert_eq!(
-        [
-            harness.forwarder.forwards.len(),
-            harness.forwarder.observed_rids.len(),
-            harness.forwarder.pending_first_video_keyframes.len(),
-            harness.forwarder.rid_readiness_changed_sources.len(),
-            harness.forwarder.dirty_source_policy_channel_ids.len(),
-        ],
-        [0; 5]
-    );
     let [mut delta, _] = packets;
-    harness.forward(std::slice::from_mut(&mut delta));
+    harness.forward(slice::from_mut(&mut delta));
     let forwarded = relay_rx
         .try_recv()
-        .map_err(|_| "delta should pass after decoder readiness")?;
+        .or(Err("delta should pass after decoder readiness"))?;
     assert_eq!(forwarded.payload(), DELTA);
     assert!(matches!(
         relay_rx.try_recv(),
@@ -344,26 +359,7 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
         2
     );
     assert!(updates.take_pending_updates().is_empty());
-    assert_eq!(
-        [
-            harness.forwarder.forwards.len(),
-            harness.forwarder.observed_rids.len(),
-            harness.forwarder.pending_first_video_keyframes.len(),
-            harness.forwarder.rid_readiness_changed_sources.len(),
-            harness.forwarder.dirty_source_policy_channel_ids.len(),
-        ],
-        [0; 5]
-    );
-    assert_eq!(
-        [
-            harness.forwarder.forwards.capacity(),
-            harness.forwarder.observed_rids.capacity(),
-            harness.forwarder.pending_first_video_keyframes.capacity(),
-            harness.forwarder.rid_readiness_changed_sources.capacity(),
-            harness.forwarder.dirty_source_policy_channel_ids.capacity(),
-        ],
-        scratch_capacities
-    );
+    assert_eq!(harness.completed_scratch_capacities(), scratch_capacities);
     Ok(())
 }
 

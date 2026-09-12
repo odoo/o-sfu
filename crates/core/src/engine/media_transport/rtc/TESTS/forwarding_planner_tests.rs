@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{slice, sync::Arc, time::Instant};
 
 use str0m::media::Mid;
 
@@ -633,7 +633,7 @@ fn plan_forwards_keeps_staged_relay_gates_through_activation() {
             &state,
             &packet_sink_registry,
             &metrics,
-            std::slice::from_mut(&mut packet),
+            slice::from_mut(&mut packet),
             &mut forwards,
         );
         assert_eq!(forwards.len(), 1 + usize::from(expect_hi));
