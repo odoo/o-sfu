@@ -65,7 +65,18 @@ cargo kani --package o-sfu-proofs --lib \
 
 cargo kani --package o-sfu-core --lib \
   --harness vp8_identity_projection_matches_modular_model
+
+cargo kani --package o-sfu-core --lib \
+  --harness rtp_projection_matches_affine_model
 ```
+
+The RTP harness checks the production projection against widened sequence and
+modular timestamp arithmetic. It proves output agreement, state preservation on
+rejection or observation and preservation of the active sequence invariant.
+Exhausted states remain in scope: advancing packets are rejected while eligible
+observations and repairs retain their mapping. Repairs cannot request reanchoring.
+The theorem excludes generation admission, codec commits, SRTP validation and RTC
+writes. Both Kani workflows require all 24 transition cover properties to pass.
 
 CI builds its Rust 1.95-compatible Kani toolchain from an exact upstream
 revision until that compiler support is available in a Kani release.

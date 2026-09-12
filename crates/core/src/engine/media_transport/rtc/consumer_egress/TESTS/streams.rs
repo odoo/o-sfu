@@ -671,6 +671,100 @@ fn rejected_source_deltas_preserve_the_next_valid_projection() {
 }
 
 #[test]
+fn exhausted_sequence_preserves_observations() {
+    let source_ssrc = Ssrc::from(111);
+    let inspector = vp8_inspector();
+    let mut stream = ConsumerStream {
+        rtp: RtpProjection::new(0_u64.into()),
+        ..ConsumerStream::default()
+    };
+    for (sequence, timestamp, picture_id) in [(0_u64, 10_000, 10), (u64::MAX - 1, 20_000, 12)] {
+        let Some(projected) = stream.project(
+            0,
+            source_ssrc,
+            sequence.into(),
+            timestamp,
+            vp8_packet(&inspector, u16::from(picture_id), picture_id).identity(),
+            false,
+        ) else {
+            panic!("a representable receiver successor should be accepted");
+        };
+        assert_eq!(projected.seq_no, sequence.into());
+    }
+    assert_eq!(stream.rtp.next_seq_no, u64::MAX.into());
+    for (generation, ssrc, sequence) in [
+        (0, source_ssrc, u64::MAX),
+        (0, Ssrc::from(222), 1),
+        (1, source_ssrc, 1),
+    ] {
+        let mut control = stream;
+        assert!(
+            stream
+                .project(
+                    generation,
+                    ssrc,
+                    sequence.into(),
+                    50_000,
+                    vp8_packet(&inspector, 100, 100).identity(),
+                    false,
+                )
+                .is_none()
+        );
+        assert_eq!(stream.delivery_generation, control.delivery_generation);
+        assert_eq!(stream.rtp.next_seq_no, control.rtp.next_seq_no);
+        assert!(
+            stream
+                .project(
+                    0,
+                    source_ssrc,
+                    (u64::MAX - 1).into(),
+                    20_000,
+                    vp8_packet(&inspector, 12, 12).identity(),
+                    true,
+                )
+                .is_none()
+        );
+        for (sequence, was_repair) in [(0_u64, false), (u64::MAX - 2, true), (u64::MAX - 1, false)]
+        {
+            let identity = vp8_packet(&inspector, 11, 11).identity();
+            let actual = stream.project(
+                0,
+                source_ssrc,
+                sequence.into(),
+                11_000,
+                identity,
+                was_repair,
+            );
+            let expected = control.project(
+                0,
+                source_ssrc,
+                sequence.into(),
+                11_000,
+                identity,
+                was_repair,
+            );
+            assert!(expected.is_some());
+            assert_eq!(actual, expected);
+        }
+        let mut actual_codec = stream.codec;
+        let mut expected_codec = control.codec;
+        let identity = vp8_packet(&inspector, 1, 1).identity();
+        assert_eq!(
+            actual_codec.project(identity, true),
+            expected_codec.project(identity, true)
+        );
+    }
+    let mut empty = RtpProjection::new(u64::MAX.into());
+    assert!(
+        empty
+            .project(source_ssrc, 0_u64.into(), 0, false, false)
+            .is_none()
+    );
+    assert_eq!(empty.next_seq_no, u64::MAX.into());
+    assert!(matches!(empty.timeline, RtpTimeline::Empty));
+}
+
+#[test]
 fn repair_admission_preserves_the_active_projection_window() {
     let source_ssrc = Ssrc::from(111);
     let inspector = vp8_inspector();
