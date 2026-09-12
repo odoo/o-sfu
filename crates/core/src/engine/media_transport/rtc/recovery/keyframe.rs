@@ -15,7 +15,6 @@ use super::super::{
         keyframe_tracker::{KeyframeRequestDecision, KeyframeRequestOrigin},
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayTargetId,
-        route_control::PacketLayerGate,
         source_route::{MediaRouteDestination, RemoteSourceRegistration},
     },
 };
@@ -345,12 +344,7 @@ pub fn worker_request_consumer_kf(
 
 /// Resolves the producer RID that consumer feedback must refresh.
 fn kf_req_rid(dst: &MediaRouteDestination) -> Option<Rid> {
-    // Feedback during bootstrap must advance the intended layer rather than
-    // refresh the temporary fallback currently being forwarded.
-    dst.pending_gate
-        .as_ref()
-        .and_then(PacketLayerGate::selected_rid)
-        .or_else(|| dst.packet_gate.selected_rid())
+    dst.delivery.requested_keyframe_rid()
 }
 
 fn local_kf_req_mid(

@@ -535,7 +535,8 @@ impl PacketLoopState {
         if !source_active || !destination.active {
             return None;
         }
-        let DestinationKeyframeTarget::Current(rid) = destination.keyframe_target_rid(feedback_rid)
+        let DestinationKeyframeTarget::Current(rid) =
+            destination.delivery.keyframe_target_rid(feedback_rid)
         else {
             return None;
         };

@@ -70,14 +70,14 @@ impl PacketLayerGate {
 /// destination-level gates still apply later and perform the final narrowing
 ///
 /// returns `None` when no gate was installed by any caller
-pub fn aggregate_packet_gates<'a>(
-    packet_gates: impl IntoIterator<Item = &'a PacketLayerGate>,
+pub fn aggregate_packet_gates(
+    packet_gates: impl IntoIterator<Item = PacketLayerGate>,
 ) -> Option<PacketLayerGate> {
     let mut aggregate = None;
     for packet_gate in packet_gates {
         aggregate = Some(aggregate.map_or_else(
-            || *packet_gate,
-            |current| union_packet_gates(current, *packet_gate),
+            || packet_gate,
+            |current| union_packet_gates(current, packet_gate),
         ));
         if matches!(aggregate.as_ref(), Some(PacketLayerGate::Open)) {
             return aggregate;

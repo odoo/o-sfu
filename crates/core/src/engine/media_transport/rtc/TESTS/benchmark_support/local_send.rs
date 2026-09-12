@@ -19,7 +19,7 @@ use super::super::{
         PacketLoopState,
         bitrate::{BitrateRegistry, MediaBitrateCounter},
         route_control::PacketLayerGate,
-        source_route::MediaRouteDestination,
+        source_route::{DecoderDelivery, MediaRouteDestination},
     },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
@@ -93,10 +93,7 @@ impl LocalSendBenchFixture {
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,
-                requires_decoder_refresh: false,
-                delivery_generation: 0,
-                packet_gate: PacketLayerGate::Open,
-                pending_gate: None,
+                delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
             },
         );
         let mut bitrate_registry = BitrateRegistry::default();

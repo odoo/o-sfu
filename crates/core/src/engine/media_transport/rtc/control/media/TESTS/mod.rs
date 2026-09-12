@@ -3,6 +3,8 @@
     reason = "media worker tests use panic only for mandatory fixture setup failures"
 )]
 
+#[path = "decoder_delivery.rs"]
+mod decoder_delivery;
 #[path = "fixtures.rs"]
 mod fixtures;
 
@@ -975,8 +977,8 @@ fn set_consumer_pkt_gate_updates_one_route_without_rewriting_the_source_gate() {
         state.routes.local_route(src_media),
         Some(route_entry) if route_entry.destinations.iter().any(|destination| {
             destination.dest_session == first_consumer_session
-                && destination.packet_gate == PacketLayerGate::Block
-                && destination.pending_gate == Some(PacketLayerGate::Rid("lo".into()))
+                && destination.delivery.effective_gate() == PacketLayerGate::Block
+                && destination.delivery.pending_gate() == Some(PacketLayerGate::Rid("lo".into()))
         })
     ));
     assert_eq!(
@@ -990,7 +992,7 @@ fn set_consumer_pkt_gate_updates_one_route_without_rewriting_the_source_gate() {
         state.routes.local_route(src_media),
         Some(route_entry) if route_entry.destinations.iter().any(|destination| {
             destination.dest_session == second_consumer_session
-                && destination.packet_gate == PacketLayerGate::Open
+                && destination.delivery.effective_gate() == PacketLayerGate::Open
         })
     ));
     assert_eq!(
@@ -1166,7 +1168,7 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
                     &mut session.consumer_streams,
                     stream,
                     SourceRtpIdentity {
-                        delivery_generation: destination.delivery_generation,
+                        delivery_generation: destination.delivery.generation(),
                         ssrc: source_ssrc,
                         seq_no: u64::from(sequence_number).into(),
                         timestamp: sequence_number,
@@ -1185,9 +1187,9 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
         .routes
         .local_route(route.src_media)
         .and_then(|entry| entry.destinations.first())
-        .map(|destination| destination.delivery_generation)
+        .map(|destination| destination.delivery.generation())
         .ok_or("activated route should keep its destination")?;
-    assert_ne!(delivery_generation, destination.delivery_generation);
+    assert_ne!(delivery_generation, destination.delivery.generation());
     assert!(!destination_repair_is_armed(
         &mut route.state,
         &route.consumer_session,
@@ -1298,7 +1300,7 @@ fn bootstrap_fallback_rotates_then_preserves_current_repair() -> Result<(), &'st
     else {
         panic!("pending selected RID fixture must install one local destination");
     };
-    let delivery_generation = destination.delivery_generation;
+    let delivery_generation = destination.delivery.generation();
     let consumer_route = TransportConsumerRoute::new(
         route.consumer_session.clone(),
         destination.dest_transport_media_id,
@@ -1319,7 +1321,7 @@ fn bootstrap_fallback_rotates_then_preserves_current_repair() -> Result<(), &'st
             .routes
             .local_route(route.src_media)
             .and_then(|entry| entry.destinations.first())
-            .map(|destination| destination.delivery_generation),
+            .map(|destination| destination.delivery.generation()),
         Some(delivery_generation)
     );
     assert!(destination_repair_is_armed(

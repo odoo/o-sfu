@@ -69,7 +69,7 @@ use super::{
             relay_registry::{RelayPacketMailbox, RelayTargetId},
             route_control::PacketLayerGate,
             slots::ConsumerStreamHandle,
-            source_route::MediaRouteDestination,
+            source_route::{DecoderDelivery, MediaRouteDestination},
         },
         test_support::{
             DebugProbe, DebugProbeRequest, collect_ready_session_keys,
@@ -426,10 +426,7 @@ fn insert_open_route(
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: false,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Open,
-            pending_gate: None,
+            delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
         },
     );
 }
@@ -498,10 +495,7 @@ fn register_consumer_route_fixture(
             dest_payload_type: None,
             repair_enabled: false,
             active,
-            requires_decoder_refresh: false,
-            delivery_generation: 0,
-            packet_gate,
-            pending_gate,
+            delivery: DecoderDelivery::fixture(false, packet_gate, pending_gate),
         },
     );
 }
@@ -1294,10 +1288,11 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: true,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Block,
-            pending_gate: Some(PacketLayerGate::Rid(selected_rid)),
+            delivery: DecoderDelivery::fixture(
+                true,
+                PacketLayerGate::Block,
+                Some(PacketLayerGate::Rid(selected_rid)),
+            ),
         },
     );
     let mut packets = [
@@ -1412,8 +1407,8 @@ fn inactive_source_ignores_late_rid_readiness_and_first_ingress_feedback() {
 
     assert!(state.routes.local_route(src_media).is_some_and(|route| {
         route.destinations.iter().any(|destination| {
-            destination.packet_gate == PacketLayerGate::Block
-                && destination.pending_gate == Some(PacketLayerGate::Rid(selected_rid))
+            destination.delivery.effective_gate() == PacketLayerGate::Block
+                && destination.delivery.pending_gate() == Some(PacketLayerGate::Rid(selected_rid))
         })
     }));
     assert!(drain_ready_sessions(&mut state).is_empty());
@@ -2329,10 +2324,7 @@ fn silent_audio_packets_are_dropped_from_routed_fanout_after_transport_activity_
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: false,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Open,
-            pending_gate: None,
+            delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
         },
     );
     harness.state.set_consumer_dst_idx(

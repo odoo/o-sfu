@@ -12,7 +12,7 @@ use super::super::{
         route_control::PacketLayerGate,
         route_table::{RidReadinessScratch, RouteTable},
         slots::ConsumerStreamHandle,
-        source_route::MediaRouteDestination,
+        source_route::{DecoderDelivery, MediaRouteDestination},
     },
     test_support::test_transport_session_key,
 };
@@ -77,10 +77,7 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: true,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Rid(selected_rid),
-            pending_gate: None,
+            delivery: DecoderDelivery::fixture(true, PacketLayerGate::Rid(selected_rid), None),
         },
     );
 
@@ -95,9 +92,12 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     assert!(update.route_changed);
     assert!(!update.repair_delivery_changed);
     let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
-    assert_eq!(destination.packet_gate, PacketLayerGate::Block);
     assert_eq!(
-        destination.pending_gate,
+        destination.delivery.effective_gate(),
+        PacketLayerGate::Block
+    );
+    assert_eq!(
+        destination.delivery.pending_gate(),
         Some(PacketLayerGate::Rid(selected_rid))
     );
 
@@ -107,7 +107,9 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
         panic!("repair-disabled destination invalidated repair state")
     });
     assert_eq!(
-        state.local_route(src_media).unwrap().destinations[dst_idx].packet_gate,
+        state.local_route(src_media).unwrap().destinations[dst_idx]
+            .delivery
+            .effective_gate(),
         PacketLayerGate::Block
     );
 
@@ -115,9 +117,12 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
         panic!("repair-disabled destination invalidated repair state")
     });
     let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
-    assert_eq!(destination.packet_gate, PacketLayerGate::Rid(selected_rid));
-    assert_eq!(destination.pending_gate, None);
-    assert!(destination.delivery_generation >= 3);
+    assert_eq!(
+        destination.delivery.effective_gate(),
+        PacketLayerGate::Rid(selected_rid)
+    );
+    assert_eq!(destination.delivery.pending_gate(), None);
+    assert!(destination.delivery.generation() >= 3);
 
     let update = state
         .set_consumer_pkt_gate(
@@ -134,8 +139,8 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
         panic!("repair-disabled destination invalidated repair state");
     });
     let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
-    assert_eq!(destination.packet_gate, PacketLayerGate::Open);
-    assert_eq!(destination.pending_gate, None);
+    assert_eq!(destination.delivery.effective_gate(), PacketLayerGate::Open);
+    assert_eq!(destination.delivery.pending_gate(), None);
 }
 
 fn track_source_wide(
@@ -421,10 +426,7 @@ fn route_control_refreshes_source_gate_after_relay_gate_removal() {
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: false,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Open,
-            pending_gate: None,
+            delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
         },
     );
     state.set_local_pkt_gate(src_media, Some(PacketLayerGate::Rid("hi".into())));
@@ -443,7 +445,9 @@ fn route_control_refreshes_source_gate_after_relay_gate_removal() {
         Some(PacketLayerGate::Rid("hi".into()))
     );
     assert_eq!(
-        state.local_route(src_media).unwrap().destinations[dst_idx].delivery_generation,
+        state.local_route(src_media).unwrap().destinations[dst_idx]
+            .delivery
+            .generation(),
         0
     );
 }
@@ -492,10 +496,7 @@ fn route_control_removing_last_consumer_route_preserves_producer_packet_state() 
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
-            requires_decoder_refresh: false,
-            delivery_generation: 0,
-            packet_gate: PacketLayerGate::Open,
-            pending_gate: None,
+            delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
         },
     );
     assert!(state.has_forwarding_sources());

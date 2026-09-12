@@ -8,8 +8,11 @@ use str0m::{
 use super::super::{
     bootstrap,
     state::{
-        PacketLoopState, media_registry::RegisteredMediaHandle, route_control::PacketLayerGate,
-        slots::ConsumerStreamHandle, source_route::MediaRouteDestination,
+        PacketLoopState,
+        media_registry::RegisteredMediaHandle,
+        route_control::PacketLayerGate,
+        slots::ConsumerStreamHandle,
+        source_route::{DecoderDelivery, MediaRouteDestination},
     },
 };
 use crate::{
@@ -135,10 +138,7 @@ impl<'a> MediaWorkerScenario<'a> {
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,
-                requires_decoder_refresh: true,
-                delivery_generation: 0,
-                packet_gate,
-                pending_gate,
+                delivery: DecoderDelivery::fixture(true, packet_gate, pending_gate),
             },
         );
         self.state.set_consumer_dst_idx(
