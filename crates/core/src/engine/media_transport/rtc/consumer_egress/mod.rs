@@ -25,7 +25,7 @@ use std::{sync::Arc, time::Instant};
 use str0m::{
     Rtc,
     media::{ExtensionValues, Mid, Pt},
-    rtp::{RtpHeader, RtpPacket, RtpWrite, SeqNo, StreamTx},
+    rtp::{RtpHeader, RtpWrite, SeqNo, StreamTx},
 };
 use tracing::debug;
 
@@ -55,30 +55,15 @@ pub(super) struct LocalPacketDestination {
 
 /// borrowed RTP metadata plus shared payload bytes for local egress
 pub(super) struct LocalForwardedRtp<'a> {
-    data: LocalForwardedRtpData<'a>,
+    header: &'a RtpHeader,
+    sequence_number: SeqNo,
+    timestamp: Instant,
     payload: &'a Arc<[u8]>,
     was_repair: bool,
 }
 
-enum LocalForwardedRtpData<'a> {
-    Str0m(&'a RtpPacket),
-    Relay {
-        header: &'a RtpHeader,
-        sequence_number: SeqNo,
-        timestamp: Instant,
-    },
-}
-
 impl<'a> LocalForwardedRtp<'a> {
-    pub(super) fn new(rtp_packet: &'a RtpPacket, payload: &'a Arc<[u8]>, was_repair: bool) -> Self {
-        Self {
-            data: LocalForwardedRtpData::Str0m(rtp_packet),
-            payload,
-            was_repair,
-        }
-    }
-
-    pub(super) fn from_relay(
+    pub(super) fn new(
         header: &'a RtpHeader,
         sequence_number: SeqNo,
         timestamp: Instant,
@@ -86,36 +71,11 @@ impl<'a> LocalForwardedRtp<'a> {
         was_repair: bool,
     ) -> Self {
         Self {
-            data: LocalForwardedRtpData::Relay {
-                header,
-                sequence_number,
-                timestamp,
-            },
+            header,
+            sequence_number,
+            timestamp,
             payload,
             was_repair,
-        }
-    }
-
-    fn header(&self) -> &RtpHeader {
-        match self.data {
-            LocalForwardedRtpData::Str0m(packet) => &packet.header,
-            LocalForwardedRtpData::Relay { header, .. } => header,
-        }
-    }
-
-    fn timestamp(&self) -> Instant {
-        match self.data {
-            LocalForwardedRtpData::Str0m(packet) => packet.timestamp,
-            LocalForwardedRtpData::Relay { timestamp, .. } => timestamp,
-        }
-    }
-
-    fn sequence_number(&self) -> SeqNo {
-        match self.data {
-            LocalForwardedRtpData::Str0m(packet) => packet.seq_no,
-            LocalForwardedRtpData::Relay {
-                sequence_number, ..
-            } => sequence_number,
         }
     }
 }
@@ -153,7 +113,7 @@ impl LocalPacketDestination {
     ) -> Option<usize> {
         let codec_identity =
             codec_packet.map_or_else(codec::PacketIdentity::default, codec::Packet::identity);
-        let header = rtp.header();
+        let header = rtp.header;
         let (identity, repairable_primary_ssrc) = {
             let mut direct_api = rtc.direct_api();
             let stream_tx = direct_api.stream_tx_by_mid(self.mid, None)?;
@@ -162,7 +122,7 @@ impl LocalPacketDestination {
                 SourceRtpIdentity {
                     delivery_generation: self.delivery_generation,
                     ssrc: header.ssrc,
-                    seq_no: rtp.sequence_number(),
+                    seq_no: rtp.sequence_number,
                     timestamp: header.timestamp,
                     was_repair: rtp.was_repair,
                 },
@@ -218,7 +178,7 @@ impl LocalPacketDestination {
         codec_packet: Option<&codec::Packet>,
         nackable: bool,
     ) {
-        let header = rtp.header();
+        let header = rtp.header;
         let payload_type = outbound_payload_type(header, self.payload_type);
         let ext_vals = outbound_extension_values(header, self.mid);
         // Share payload storage because copying bytes would multiply packet work
@@ -228,7 +188,7 @@ impl LocalPacketDestination {
             payload_type,
             identity.seq_no,
             identity.rtp_timestamp,
-            rtp.timestamp(),
+            rtp.timestamp,
             payload,
         )
         .marker(header.marker)

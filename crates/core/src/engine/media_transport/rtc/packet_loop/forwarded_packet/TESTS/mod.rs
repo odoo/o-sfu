@@ -128,17 +128,13 @@ fn forwarded_packet_decoder_refresh_follows_the_packet_payload_type() {
             0x10, 0x30, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x80, 0x02, 0x68, 0x01,
         ],
     );
-    if let ForwardedPacketData::RelayRtp(rtp) = &mut vp8_packet.data {
-        rtp.header.payload_type = 96.into();
-    }
+    vp8_packet.header.payload_type = 96.into();
     let vp8_facts = vp8_packet.resolve_facts(&state);
     assert!(vp8_facts.is_some_and(|facts| facts.codec.decoder_refresh()));
 
     let mut h264_packet =
         sample_forwarded_packet_with_rid(session_key, "cam-up", Some("hi"), &[0x65, 0x88]);
-    if let ForwardedPacketData::RelayRtp(rtp) = &mut h264_packet.data {
-        rtp.header.payload_type = 111.into();
-    }
+    h264_packet.header.payload_type = 111.into();
     let h264_facts = h264_packet.resolve_facts(&state);
     assert!(h264_facts.is_some_and(|facts| !facts.codec.decoder_refresh()));
 }
@@ -217,10 +213,8 @@ fn forwarded_packet_relay_clone_preserves_source_facts() {
         ],
     );
     let post_wrap_sequence = u64::from(RTP_SEQUENCE_NUMBER_MODULUS) + 1;
-    if let ForwardedPacketData::RelayRtp(rtp) = &mut source_packet.data {
-        rtp.header.ext_vals.rid = Some(Rid::from("hi"));
-        rtp.sequence_number = post_wrap_sequence.into();
-    }
+    source_packet.header.ext_vals.rid = Some(Rid::from("hi"));
+    source_packet.sequence_number = post_wrap_sequence.into();
     source_packet.was_repair = true;
     let source_facts = source_packet.resolve_facts(&source_state).copied();
     assert!(source_facts.is_some_and(|facts| facts.codec.decoder_refresh()));
@@ -245,11 +239,10 @@ fn forwarded_packet_relay_clone_preserves_source_facts() {
     assert_eq!(relay_facts.audio_level, source_facts.audio_level);
     assert!(relay_facts.codec.decoder_refresh());
     assert!(relay_packet.was_repair);
-    assert!(matches!(
-        relay_packet.data,
-        ForwardedPacketData::RelayRtp(ref rtp)
-            if rtp.sequence_number == post_wrap_sequence.into()
-    ));
+    assert_eq!(relay_packet.header, source_packet.header);
+    assert_eq!(relay_packet.sequence_number, post_wrap_sequence.into());
+    assert_eq!(relay_packet.received_at(), source_packet.received_at());
+    assert!(Arc::ptr_eq(&relay_packet.payload, &source_packet.payload));
     let source_codec = project_codec_packet(&source_facts.codec);
     assert_ne!(source_codec, codec::ProjectedPacket::default());
     assert_eq!(project_codec_packet(&relay_facts.codec), source_codec);
@@ -326,9 +319,7 @@ fn forwarded_packet_recovers_rid_from_ssrc_binding_when_extension_is_absent() {
     state.refresh_producer_ssrcs(&session_key, producer_mid, &parameters);
     let payload = [0x90, 0xe0, 0x80, 0x02, 0x09, 0x00, 0x00];
     let mut packet = sample_forwarded_packet_without_mid(session_key, producer_ssrc, &payload);
-    if let ForwardedPacketData::RelayRtp(rtp) = &mut packet.data {
-        rtp.header.payload_type = 96.into();
-    }
+    packet.header.payload_type = 96.into();
 
     let facts = packet.resolve_facts(&state).copied();
     assert!(facts.is_some());

@@ -10,12 +10,12 @@
 //! borrow cached codec inspection through [`ForwardedPacket::local_codec_packet`]
 //! so each destination uses the same source interpretation.
 
-use std::{mem::take, sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant};
 
 #[cfg(test)]
 use str0m::media::Pt;
 use str0m::{
-    media::{ExtensionValues, Mid, Rid},
+    media::{Mid, Rid},
     rtp::{RtpHeader, RtpPacket, SeqNo, Ssrc},
 };
 
@@ -65,8 +65,10 @@ pub struct ForwardedPacket {
     received_at: Instant,
     /// source payload bytes shared by relay and local fanout
     payload: Arc<[u8]>,
-    /// origin-specific RTP header storage
-    data: ForwardedPacketData,
+    /// source RTP header used by observation and destination rewriting
+    header: RtpHeader,
+    /// extended source sequence preserved across rollover and reordering
+    sequence_number: SeqNo,
 }
 
 /// source identity for one staged forwarded packet
@@ -91,26 +93,6 @@ impl ForwardedPacketSource {
     }
 }
 
-#[derive(Debug)]
-enum ForwardedPacketData {
-    Str0mRtp(ForwardedRtpData),
-    RelayRtp(ForwardedRelayRtpData),
-}
-
-/// local `str0m` packet metadata kept after the payload was moved out
-#[derive(Debug)]
-struct ForwardedRtpData {
-    rtp_packet: RtpPacket,
-}
-
-/// relay packet metadata after payload ownership has moved to `ForwardedPacket`
-#[derive(Debug)]
-pub(in super::super) struct ForwardedRelayRtpData {
-    pub(in super::super) header: RtpHeader,
-    /// extended source sequence preserved across rollover and reordering
-    pub(in super::super) sequence_number: SeqNo,
-}
-
 /// Source observations resolved once and preserved across relay fanout.
 ///
 /// Facts do not own packet bytes. Keeping them on the packet avoids resolving
@@ -132,15 +114,13 @@ pub(in super::super) struct PacketFacts {
 }
 
 impl ForwardedPacket {
-    /// stages one packet emitted by a local `str0m` session
+    /// Stages one packet emitted by a local `str0m` session.
     ///
-    /// the payload is moved out of the str0m packet immediately so relay fanout
-    /// and local fanout can share the same ownership model
-    /// the remaining `str0m` packet is kept only for header metadata and the
-    /// original receive time
+    /// Local and relay packets retain the same source header, extended sequence
+    /// and arrival time. Moving the payload preserves shared storage for fanout.
     pub(in super::super) fn from_rtp_packet(
         source_session_handle: SessionHandle,
-        mut rtp_packet: RtpPacket,
+        rtp_packet: RtpPacket,
         was_repair: bool,
     ) -> Self {
         Self {
@@ -150,8 +130,9 @@ impl ForwardedPacket {
             visits_origin_sinks: true,
             was_repair,
             received_at: rtp_packet.timestamp,
-            payload: take(&mut rtp_packet.payload),
-            data: ForwardedPacketData::Str0mRtp(ForwardedRtpData { rtp_packet }),
+            payload: rtp_packet.payload,
+            header: rtp_packet.header,
+            sequence_number: rtp_packet.seq_no,
         }
     }
 
@@ -190,13 +171,9 @@ impl ForwardedPacket {
     #[cfg(test)]
     #[must_use]
     pub(in super::super) fn repair_identity(&self) -> Option<(Pt, Ssrc, SeqNo)> {
-        let sequence_number = match &self.data {
-            ForwardedPacketData::Str0mRtp(data) => data.rtp_packet.seq_no,
-            ForwardedPacketData::RelayRtp(data) => data.sequence_number,
-        };
         self.was_repair.then(|| {
-            let header = self.rtp_header();
-            (header.payload_type, header.ssrc, sequence_number)
+            let header = &self.header;
+            (header.payload_type, header.ssrc, self.sequence_number)
         })
     }
 
@@ -221,11 +198,11 @@ impl ForwardedPacket {
         let rid = self.compute_route_control_rid(state);
         let codec = state.routes.inspect_packet(
             src_media,
-            self.rtp_header().payload_type,
+            self.header.payload_type,
             self.payload.as_ref(),
             rid.is_some(),
         );
-        let extensions = self.route_control_extension_values();
+        let extensions = &self.header.ext_vals;
         let facts = PacketFacts {
             src_media,
             rid,
@@ -255,7 +232,7 @@ impl ForwardedPacket {
     }
 
     fn compute_route_control_rid(&self, state: &PacketLoopState) -> Option<Rid> {
-        let extensions = self.route_control_extension_values();
+        let extensions = &self.header.ext_vals;
         extensions
             .rid
             .or(extensions.rid_repair)
@@ -263,15 +240,15 @@ impl ForwardedPacket {
     }
 
     pub(in super::super) fn route_control_ssrc(&self) -> Ssrc {
-        self.rtp_header().ssrc
+        self.header.ssrc
     }
 
     pub(in super::super) fn route_control_mid(&self) -> Option<Mid> {
-        self.route_control_extension_values().mid
+        self.header.ext_vals.mid
     }
 
     pub(in super::super) fn route_control_rid_extension(&self) -> Option<Rid> {
-        let extensions = self.route_control_extension_values();
+        let extensions = &self.header.ext_vals;
         extensions.rid.or(extensions.rid_repair)
     }
 
@@ -287,12 +264,6 @@ impl ForwardedPacket {
         state: &PacketLoopState,
         src_media: TransportMediaId,
     ) -> Option<Self> {
-        let (header, sequence_number) = match &self.data {
-            ForwardedPacketData::Str0mRtp(data) => {
-                (data.rtp_packet.header.clone(), data.rtp_packet.seq_no)
-            }
-            ForwardedPacketData::RelayRtp(data) => (data.header.clone(), data.sequence_number),
-        };
         Some(Self {
             source: ForwardedPacketSource::Relayed(self.source.session_key(state)?.clone()),
             src_media: Some(src_media),
@@ -301,10 +272,8 @@ impl ForwardedPacket {
             was_repair: self.was_repair,
             received_at: self.received_at,
             payload: Arc::clone(&self.payload),
-            data: ForwardedPacketData::RelayRtp(ForwardedRelayRtpData {
-                header,
-                sequence_number,
-            }),
+            header: self.header.clone(),
+            sequence_number: self.sequence_number,
         })
     }
 
@@ -329,7 +298,7 @@ impl ForwardedPacket {
             return Some(src_media);
         }
         let src_key = self.source.session_key(state)?;
-        let header = self.rtp_header();
+        let header = &self.header;
         let resolved = if let Some(source_mid) = header.ext_vals.mid
             && let Some(src_media) = state.src_media_for_mid(src_key, source_mid)
         {
@@ -346,38 +315,18 @@ impl ForwardedPacket {
     /// Avoids payload-byte copies during local fanout by borrowing source headers
     /// and the shared payload.
     pub(in super::super) fn local_send_packet(&self) -> LocalForwardedRtp<'_> {
-        let payload = &self.payload;
-        match &self.data {
-            ForwardedPacketData::Str0mRtp(rtp_data) => {
-                LocalForwardedRtp::new(&rtp_data.rtp_packet, payload, self.was_repair)
-            }
-            ForwardedPacketData::RelayRtp(rtp_data) => {
-                let header = &rtp_data.header;
-                LocalForwardedRtp::from_relay(
-                    header,
-                    rtp_data.sequence_number,
-                    self.received_at,
-                    payload,
-                    self.was_repair,
-                )
-            }
-        }
-    }
-
-    fn route_control_extension_values(&self) -> &ExtensionValues {
-        &self.rtp_header().ext_vals
-    }
-
-    fn rtp_header(&self) -> &RtpHeader {
-        match &self.data {
-            ForwardedPacketData::Str0mRtp(rtp_data) => &rtp_data.rtp_packet.header,
-            ForwardedPacketData::RelayRtp(rtp_data) => &rtp_data.header,
-        }
+        LocalForwardedRtp::new(
+            &self.header,
+            self.sequence_number,
+            self.received_at,
+            &self.payload,
+            self.was_repair,
+        )
     }
 
     fn route_control_rid_from_ssrc(&self, state: &PacketLoopState) -> Option<Rid> {
         let src_key = self.source.session_key(state)?;
-        state.source_rid_for_ssrc(src_key, self.rtp_header().ssrc)
+        state.source_rid_for_ssrc(src_key, self.header.ssrc)
     }
 }
 

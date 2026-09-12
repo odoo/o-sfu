@@ -5,7 +5,7 @@ use str0m::{
     rtp::{RtpHeader, Ssrc},
 };
 
-use super::{ForwardedPacket, ForwardedPacketData, ForwardedPacketSource, ForwardedRelayRtpData};
+use super::{ForwardedPacket, ForwardedPacketSource};
 #[cfg(test)]
 use crate::engine::media_transport::TransportMediaId;
 use crate::engine::media_transport::TransportSessionKey;
@@ -82,10 +82,8 @@ pub fn sample_local_repaired_packet(
 ) -> ForwardedPacket {
     let mut packet = sample_local_forwarded_packet(source_session_handle, mid, payload);
     packet.was_repair = true;
-    if let ForwardedPacketData::RelayRtp(data) = &mut packet.data {
-        data.sequence_number = sequence_number.into();
-        data.header.sequence_number = data.sequence_number.as_u16();
-    }
+    packet.sequence_number = sequence_number.into();
+    packet.header.sequence_number = packet.sequence_number.as_u16();
     packet
 }
 
@@ -188,27 +186,25 @@ pub fn sample_local_forwarded_packet_for_benchmark(
         was_repair: false,
         received_at,
         payload,
-        data: ForwardedPacketData::RelayRtp(ForwardedRelayRtpData {
-            sequence_number: 0_u64.into(),
-            header: RtpHeader {
-                version: 2,
-                has_padding: false,
-                has_extension: false,
-                csrc_count: 0,
-                marker: false,
-                payload_type: Pt::from(identity.payload_type),
-                sequence_number: 0,
-                timestamp: 0,
-                ssrc: Ssrc::from(identity.ssrc),
-                csrc: [0; 15],
-                ext_vals: ExtensionValues {
-                    rid: rid.map(Rid::from),
-                    mid: Some(Mid::from(mid)),
-                    ..ExtensionValues::default()
-                },
-                header_len: 12,
+        sequence_number: 0_u64.into(),
+        header: RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: false,
+            csrc_count: 0,
+            marker: false,
+            payload_type: Pt::from(identity.payload_type),
+            sequence_number: 0,
+            timestamp: 0,
+            ssrc: Ssrc::from(identity.ssrc),
+            csrc: [0; 15],
+            ext_vals: ExtensionValues {
+                rid: rid.map(Rid::from),
+                mid: Some(Mid::from(mid)),
+                ..ExtensionValues::default()
             },
-        }),
+            header_len: 12,
+        },
     }
 }
 
@@ -244,27 +240,25 @@ fn sample_forwarded_packet_with_source(
         was_repair: false,
         received_at,
         payload: Arc::from(payload),
-        data: ForwardedPacketData::RelayRtp(ForwardedRelayRtpData {
-            sequence_number: 1_u64.into(),
-            header: RtpHeader {
-                version: 2,
-                has_padding: false,
-                has_extension: false,
-                csrc_count: 0,
-                marker: false,
-                payload_type: Pt::from(111),
-                sequence_number: 1,
-                timestamp: 1234,
-                ssrc: Ssrc::from(4321),
-                csrc: [0; 15],
-                ext_vals: ExtensionValues {
-                    rid: rid.map(Rid::from),
-                    mid: Some(Mid::from(mid)),
-                    ..ext_vals
-                },
-                header_len: 12,
+        sequence_number: 1_u64.into(),
+        header: RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: false,
+            csrc_count: 0,
+            marker: false,
+            payload_type: Pt::from(111),
+            sequence_number: 1,
+            timestamp: 1234,
+            ssrc: Ssrc::from(4321),
+            csrc: [0; 15],
+            ext_vals: ExtensionValues {
+                rid: rid.map(Rid::from),
+                mid: Some(Mid::from(mid)),
+                ..ext_vals
             },
-        }),
+            header_len: 12,
+        },
     }
 }
 
@@ -284,23 +278,21 @@ pub fn sample_forwarded_packet_without_mid(
         was_repair: false,
         received_at,
         payload: Arc::from(payload),
-        data: ForwardedPacketData::RelayRtp(ForwardedRelayRtpData {
-            sequence_number: 1_u64.into(),
-            header: RtpHeader {
-                version: 2,
-                has_padding: false,
-                has_extension: false,
-                csrc_count: 0,
-                marker: false,
-                payload_type: Pt::from(111),
-                sequence_number: 1,
-                timestamp: 1234,
-                ssrc: Ssrc::from(ssrc),
-                csrc: [0; 15],
-                ext_vals: ExtensionValues::default(),
-                header_len: 12,
-            },
-        }),
+        sequence_number: 1_u64.into(),
+        header: RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: false,
+            csrc_count: 0,
+            marker: false,
+            payload_type: Pt::from(111),
+            sequence_number: 1,
+            timestamp: 1234,
+            ssrc: Ssrc::from(ssrc),
+            csrc: [0; 15],
+            ext_vals: ExtensionValues::default(),
+            header_len: 12,
+        },
     }
 }
 
@@ -326,13 +318,11 @@ pub fn restage_packet_for_benchmark(
     if let Some(payload) = payload {
         packet.payload = Arc::clone(payload);
     }
-    if let ForwardedPacketData::RelayRtp(data) = &mut packet.data {
-        data.sequence_number = staging.sequence_number.into();
-        data.header.sequence_number =
-            u16::try_from(staging.sequence_number & u64::from(u16::MAX)).unwrap_or(0);
-        data.header.timestamp = staging.rtp_timestamp;
-        data.header.marker = staging.marker;
-        data.header.ext_vals.audio_level = staging.audio_level;
-        data.header.ext_vals.voice_activity = staging.voice_activity;
-    }
+    packet.sequence_number = staging.sequence_number.into();
+    packet.header.sequence_number =
+        u16::try_from(staging.sequence_number & u64::from(u16::MAX)).unwrap_or(0);
+    packet.header.timestamp = staging.rtp_timestamp;
+    packet.header.marker = staging.marker;
+    packet.header.ext_vals.audio_level = staging.audio_level;
+    packet.header.ext_vals.voice_activity = staging.voice_activity;
 }
