@@ -612,9 +612,12 @@ fn repair_projection_preserves_extended_sequence_wrap() {
 fn rejected_source_deltas_preserve_the_next_valid_projection() {
     let source_ssrc = Ssrc::from(111);
     let inspector = vp8_inspector();
-    for (receiver_anchor, source_anchor, rejected_sequence) in
-        [(0, 10_u64, 9), (u64::MAX - 3, 10, 15), (0, 0, u64::MAX)]
-    {
+    for (receiver_anchor, source_anchor, rejected_sequence, next_valid_sequence) in [
+        (0, 10_u64, 9, 11),
+        (u64::MAX - 3, 10, 15, 11),
+        (0, 0, u64::MAX, 1),
+        (0, u64::MAX, 0, u64::MAX),
+    ] {
         let mut stream = ConsumerStream {
             rtp: RtpProjection::new(receiver_anchor.into()),
             ..ConsumerStream::default()
@@ -647,7 +650,7 @@ fn rejected_source_deltas_preserve_the_next_valid_projection() {
         for (ssrc, sequence, timestamp, codec_identity) in [
             (
                 source_ssrc,
-                source_anchor + 1,
+                next_valid_sequence,
                 11_000,
                 vp8_packet(&inspector, 11, 11).identity(),
             ),
