@@ -48,14 +48,11 @@ use super::{
         commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
         consumer_egress::test_support::{SourceRtpIdentity, project_identity},
         packet_loop::{
+            ForwardingDestination, PacketForwarder, PacketGateDecision, drain_relay_packets,
             event_observation::{RtcEventContext, observe_rtc_event},
-            forward_flush::{
-                drain_relay_packets, finish_incoming_stats, flush_packet_forwards,
-                record_incoming_packet, record_incoming_stats,
-            },
-            forwarding_destination::ForwardingDestination,
-            forwarding_planner::{PacketGateDecision, plan_forwards},
+            finish_incoming_stats, flush_packet_forwards,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+            plan_forwards, record_incoming_packet, record_incoming_stats,
             routing_miss::PacketLoopRoutingMissKey,
             udp::{RtcUdpSocket, UdpIngress},
         },
@@ -92,7 +89,7 @@ use super::{
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, RtcUdpIoBackend, VideoBitrateLimits,
     engine::{
-        RoomInstanceId, UserId,
+        UserId,
         media_transport::{
             ProducerActivity, SourceActivityRevision, SourceActivityUpdate, SourcePolicySignal,
             TransportMediaId, TransportSessionKey, TransportSourceKey,
@@ -748,7 +745,7 @@ fn populate_forward_routes(
     packet_sinks: &RoomPacketSinkRegistry,
     metrics: &RtcMetricsRecorder,
     pending_packets: &mut [super::super::packet_loop::forwarded_packet::ForwardedPacket],
-    forwards: &mut Vec<super::super::packet_loop::forwarding_destination::ForwardingDestination>,
+    forwards: &mut Vec<ForwardingDestination>,
 ) {
     let mut packet_sink_cache = PacketSinkRouteCache::default();
     packet_sink_cache.refresh_from(packet_sinks);
@@ -778,23 +775,19 @@ fn flush_only_packet_forwards(
     rtp_metrics: &RtpMetricsRecorder,
     rtc_recorder: &RtcMetricsRecorder,
     buffers: &PacketLoopBuffers,
+    forwards: &[ForwardingDestination],
 ) {
     assert_eq!(buffers.pending_packets.len(), 1);
     if let Some(packet) = buffers.pending_packets.first() {
-        flush_packet_forwards(
-            state,
-            metrics,
-            rtp_metrics,
-            rtc_recorder,
-            packet,
-            &buffers.forwards,
-        );
+        flush_packet_forwards(state, metrics, rtp_metrics, rtc_recorder, packet, forwards);
     }
 }
 
 struct PacketLoopHarness {
     state: PacketLoopState,
     buffers: PacketLoopBuffers,
+    forwarder: PacketForwarder,
+    forwards: Vec<ForwardingDestination>,
     metrics: RuntimeMetrics,
     rtp_metrics: Arc<RtpMetricsRecorder>,
     rtc_metrics: Arc<RtcMetricsRecorder>,
@@ -806,6 +799,8 @@ impl PacketLoopHarness {
         Self {
             state: PacketLoopState::default(),
             buffers: PacketLoopBuffers::new(),
+            forwarder: PacketForwarder::default(),
+            forwards: Vec::with_capacity(64),
             rtp_metrics: metrics.register_rtp_worker(),
             rtc_metrics: metrics.register_rtc_worker(),
             metrics,
@@ -855,28 +850,24 @@ impl PacketLoopHarness {
 
     fn add_recording_sink(&mut self, src_media: TransportMediaId, sink: &Arc<CountingSink>) {
         self.assert_only_packet();
-        self.buffers
-            .forwards
-            .push(ForwardingDestination::from_packet_sink(
-                src_media,
-                RegisteredPacketSink::new(
-                    Arc::<CountingSink>::clone(sink),
-                    RtpForwardDestinationKind::Recording,
-                ),
-            ));
+        self.forwards.push(ForwardingDestination::from_packet_sink(
+            src_media,
+            RegisteredPacketSink::new(
+                Arc::<CountingSink>::clone(sink),
+                RtpForwardDestinationKind::Recording,
+            ),
+        ));
     }
 
     fn add_relay(&mut self, src_media: TransportMediaId, target: RelayPacketMailbox) {
         self.assert_only_packet();
-        self.buffers
-            .forwards
+        self.forwards
             .push(ForwardingDestination::from_relay_target(src_media, target));
     }
 
     fn add_local(&mut self, src_media: TransportMediaId, dst_idx: usize) {
         self.assert_only_packet();
-        self.buffers
-            .forwards
+        self.forwards
             .push(ForwardingDestination::from_local_route_destination(
                 src_media, dst_idx,
             ));
@@ -1186,7 +1177,7 @@ fn recording_forward_destination_captures_packets_without_bypassing_the_contract
         &packet_sink_registry,
         harness.rtc_metrics.as_ref(),
         &mut harness.buffers.pending_packets,
-        &mut harness.buffers.forwards,
+        &mut harness.forwards,
     );
     flush_only_packet_forwards(
         &mut harness.state,
@@ -1194,9 +1185,10 @@ fn recording_forward_destination_captures_packets_without_bypassing_the_contract
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
-    assert_eq!(harness.buffers.forwards.len(), 1);
+    assert_eq!(harness.forwards.len(), 1);
     assert_eq!(sink.packets.load(Ordering::Relaxed), 1);
     let snapshot = harness.metrics.snapshot();
     assert_eq!(snapshot.rtp_payload_bytes_egress(), 0);
@@ -1212,6 +1204,7 @@ fn record_incoming_stats_learns_dynamic_rid_ssrc_bindings_from_rtp_extensions() 
     let packet_recorder = metrics.register_rtp_worker();
     let control_recorder = metrics.register_rtc_worker();
     let mut buffers = PacketLoopBuffers::new();
+    let mut forwarder = PacketForwarder::default();
 
     buffers
         .pending_packets
@@ -1226,7 +1219,8 @@ fn record_incoming_stats_learns_dynamic_rid_ssrc_bindings_from_rtp_extensions() 
         &SourcePolicySignal::default(),
         &control_recorder,
         &packet_recorder,
-        &mut buffers,
+        &mut forwarder,
+        &mut buffers.pending_packets,
     );
 
     let mut packet_without_extensions =
@@ -1321,7 +1315,7 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
             &mut harness.state,
             &harness.rtc_metrics,
             &harness.rtp_metrics,
-            &mut harness.buffers,
+            &mut harness.forwarder,
             packet,
         )
         .ok_or("packet source facts should resolve")?;
@@ -1330,20 +1324,20 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
             visits_origin,
             &harness.state.routes,
             &packet_sinks,
-            &mut harness.buffers.forwards,
+            &mut harness.forwards,
         );
         if packet_index == 0 {
-            assert!(harness.buffers.forwards.is_empty());
+            assert!(harness.forwards.is_empty());
         }
     }
     finish_incoming_stats(
         &mut harness.state,
         &SourcePolicySignal::default(),
         &harness.rtc_metrics,
-        &mut harness.buffers,
+        &mut harness.forwarder,
     );
 
-    assert_eq!(harness.buffers.forwards.len(), 1);
+    assert_eq!(harness.forwards.len(), 1);
     Ok(())
 }
 
@@ -1388,6 +1382,7 @@ fn inactive_source_ignores_late_rid_readiness_and_first_ingress_feedback() {
     let packet_recorder = metrics.register_rtp_worker();
     let control_recorder = metrics.register_rtc_worker();
     let mut buffers = PacketLoopBuffers::new();
+    let mut forwarder = PacketForwarder::default();
     buffers
         .pending_packets
         .push(sample_forwarded_packet_with_rid(
@@ -1402,7 +1397,8 @@ fn inactive_source_ignores_late_rid_readiness_and_first_ingress_feedback() {
         &SourcePolicySignal::default(),
         &control_recorder,
         &packet_recorder,
-        &mut buffers,
+        &mut forwarder,
+        &mut buffers.pending_packets,
     );
 
     assert!(state.routes.local_route(src_media).is_some_and(|route| {
@@ -1443,6 +1439,7 @@ fn flush_packet_forwards_records_non_local_forwarding_volume_by_destination() {
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     assert_eq!(sink.packets.load(Ordering::Relaxed), 1);
@@ -1491,6 +1488,7 @@ fn flush_packet_forwards_records_packet_sink_source_key_for_local_packet()
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     assert_eq!(sink.last_packet().0, Some(source_session.clone()));
@@ -1501,6 +1499,7 @@ fn flush_packet_forwards_records_packet_sink_source_key_for_local_packet()
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
     assert_eq!(sink.packets.load(Ordering::Relaxed), 1);
     assert_eq!(
@@ -1537,6 +1536,7 @@ fn flush_packet_forwards_records_closed_relays_and_keeps_later_destinations() {
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     let snapshot = harness.metrics.snapshot();
@@ -1619,6 +1619,7 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     let local_write = harness
@@ -1692,6 +1693,7 @@ fn flush_packet_forwards_drops_stale_local_consumer_stream_handle() -> Result<()
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     assert!(drain_ready_sessions(&mut harness.state).is_empty());
@@ -2350,17 +2352,18 @@ fn silent_audio_packets_are_dropped_from_routed_fanout_after_transport_activity_
         &SourcePolicySignal::default(),
         &harness.rtc_metrics,
         &harness.rtp_metrics,
-        &mut harness.buffers,
+        &mut harness.forwarder,
+        &mut harness.buffers.pending_packets,
     );
     populate_forward_routes(
         &harness.state,
         &packet_sink_registry,
         harness.rtc_metrics.as_ref(),
         &mut harness.buffers.pending_packets,
-        &mut harness.buffers.forwards,
+        &mut harness.forwards,
     );
 
-    assert!(harness.buffers.forwards.is_empty());
+    assert!(harness.forwards.is_empty());
     let snapshot = harness.metrics.snapshot();
     assert_eq!(snapshot.rtc_route_control_layer_dropped(), 1);
     assert_eq!(snapshot.rtc_route_control_layer_allowed(), 0);
@@ -2378,6 +2381,7 @@ fn repeated_active_audio_packets_do_not_republish_source_policy_dirty_room() {
     let source_policy_signal = SourcePolicySignal::default();
     let subscription = source_policy_signal.subscribe();
     let mut buffers = PacketLoopBuffers::new();
+    let mut forwarder = PacketForwarder::default();
 
     buffers
         .pending_packets
@@ -2393,7 +2397,8 @@ fn repeated_active_audio_packets_do_not_republish_source_policy_dirty_room() {
         &source_policy_signal,
         &control_recorder,
         &packet_recorder,
-        &mut buffers,
+        &mut forwarder,
+        &mut buffers.pending_packets,
     );
     assert_eq!(
         subscription.take_pending_updates(),
@@ -2415,7 +2420,8 @@ fn repeated_active_audio_packets_do_not_republish_source_policy_dirty_room() {
         &source_policy_signal,
         &control_recorder,
         &packet_recorder,
-        &mut buffers,
+        &mut forwarder,
+        &mut buffers.pending_packets,
     );
     assert!(subscription.take_pending_updates().is_empty());
 }
@@ -2449,6 +2455,7 @@ fn active_audio_rank_change_publishes_source_policy_dirty_room() {
     let source_policy_signal = SourcePolicySignal::default();
     let subscription = source_policy_signal.subscribe();
     let mut buffers = PacketLoopBuffers::new();
+    let mut forwarder = PacketForwarder::default();
 
     buffers
         .pending_packets
@@ -2464,31 +2471,14 @@ fn active_audio_rank_change_publishes_source_policy_dirty_room() {
         &source_policy_signal,
         &control_recorder,
         &packet_recorder,
-        &mut buffers,
+        &mut forwarder,
+        &mut buffers.pending_packets,
     );
 
     assert_eq!(
         subscription.take_pending_updates(),
         BTreeSet::from([room_instance_id])
     );
-}
-
-#[test]
-fn packet_loop_buffers_coalesce_source_policy_dirty_rooms_before_signal_flush() {
-    let mut buffers = PacketLoopBuffers::new();
-    let signal = SourcePolicySignal::default();
-    let subscription = signal.subscribe();
-    buffers.mark_source_policy_dirty(RoomInstanceId::from_raw(41));
-    buffers.mark_source_policy_dirty(RoomInstanceId::from_raw(41));
-    buffers.mark_source_policy_dirty(RoomInstanceId::from_raw(42));
-
-    buffers.flush_source_policy_dirty(&signal);
-
-    assert_eq!(
-        subscription.take_pending_updates(),
-        BTreeSet::from([RoomInstanceId::from_raw(41), RoomInstanceId::from_raw(42),])
-    );
-    assert!(subscription.take_pending_updates().is_empty());
 }
 
 #[test]
@@ -2591,6 +2581,7 @@ fn flush_packet_forwards_records_relay_overload_drops() {
         &harness.rtp_metrics,
         &harness.rtc_metrics,
         &harness.buffers,
+        &harness.forwards,
     );
 
     let snapshot = harness.metrics.snapshot();

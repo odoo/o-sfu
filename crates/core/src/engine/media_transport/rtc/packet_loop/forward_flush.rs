@@ -1,60 +1,17 @@
-//! Packet observation and forwarding flush for the packet loop.
+//! Packet observation and fanout in source arrival order.
 //!
-//! Local session output and relay intake share one batch. Each packet then moves
-//! through observation, planning and destination flush before the next packet
-//! can change route state. This prevents a later decoder refresh from admitting
-//! an earlier delta packet in the same batch.
+//! [`PacketForwarder`] completes observation, planning and destination writes for
+//! each packet before the next packet can change route state. Origin sinks run
+//! before relays and local RTC. Relayed packets skip origin sinks and extra hops.
 //!
-//! ```text
-//! staged RTP packets (local str0m output + relay mailbox)
-//!                     |
-//!                     v
-//!   +---------------------------------------------------+
-//!   | 1. resolve_facts(packet)                          |
-//!   |    - resolve source media, RID and audio facts    |
-//!   |    - inspect codec / decoder-refresh marker       |
-//!   +---------------------------------------------------+
-//!                     |
-//!                     v
-//!   +---------------------------------------------------+
-//!   | 2. packet observations & gate activation          |
-//!   |    - observe_audio_activity (voice level & rank)  |
-//!   |    - observe_decoder_refresh (clear retry tail)   |
-//!   |    - apply_src_decoder_ready when applicable      |
-//!   +---------------------------------------------------+
-//!                     |
-//!                     v
-//!   +---------------------------------------------------+
-//!   | 3. plan_forwards(packet, route_table)             |
-//!   |    - append origin sink, then gate routed fanout  |
-//!   +---------------------------------------------------+
-//!                     |
-//!                     v
-//!   +---------------------------------------------------+
-//!   | 4. flush_packet_forwards                          |
-//!   |    +--> packet sink (recording / monitoring)      |
-//!   |    +--> relay mailbox (cross-worker mpsc channel) |
-//!   |    +--> local RTC (str0m session send queue)      |
-//!   +---------------------------------------------------+
-//! ```
-//!
-//! - use MID to learn the packet SSRC and optional RID binding
-//! - cache codec-neutral decoder and rewrite facts once per packet
-//! - update active-speaker and incoming bitrate observations
-//! - stage broad ingress recovery and request RID recovery during observation
-//! - drain the staged relay wake packet and a bounded relay batch
-//! - send each planned packet to packet sink, relay or local RTC destinations
-//!
-//! Room policy decisions must already be projected into route-control state.
-//! This module observes packets and executes planned sends. It does not decide
-//! subscriptions or room membership.
+//! RID readiness is observed across the batch before broad ingress recovery and
+//! source-policy wakeups are flushed. Reusable scratch and the sink route cache
+//! stay with this owner. Room policy must already be projected into route gates.
 
 use core::hint::cold_path;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use std::mem::take;
 use std::time::Instant;
 
-use str0m::media::{KeyframeRequestKind, MediaKind};
+use str0m::media::{KeyframeRequestKind, MediaKind, Rid};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -68,35 +25,179 @@ use super::{
             PacketLoopState, media_registry::RegisteredMediaHandle,
             relay_registry::RelayEnqueueOutcome,
         },
-        worker::buffers::PacketLoopBuffers,
     },
     forwarded_packet::{ForwardedPacket, ForwardedPacketSource, PacketFacts},
     forwarding_destination::{ForwardingDestination, relay_enqueue_result},
+    forwarding_planner::{PacketGateDecision, plan_forwards},
 };
 use crate::engine::{
+    RoomInstanceId,
     media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
     metrics::{
-        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtpDecoderRefreshScope,
-        RtpForwardDestinationKind, RtpMetricsRecorder, RtpRelayDropKind, RuntimeMetrics,
+        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcRouteControlOutcome,
+        RtpDecoderRefreshScope, RtpForwardDestinationKind, RtpMetricsRecorder, RtpRelayDropKind,
+        RuntimeMetrics,
     },
+    packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-pub(in super::super) fn record_incoming_stats(
-    state: &mut PacketLoopState,
-    source_policy_signal: &SourcePolicySignal,
-    control: &RtcMetricsRecorder,
-    rtp: &RtpMetricsRecorder,
-    buffers: &mut PacketLoopBuffers,
-) {
-    let mut pending_packets = take(&mut buffers.pending_packets);
-    for packet in &mut pending_packets {
-        let _ = record_incoming_packet(state, control, rtp, buffers, packet);
+#[path = "forward_flush/TESTS/support.rs"]
+pub(super) mod test_support;
+
+/// Effects produced while forwarding a batch on one RTC worker.
+pub(in super::super) struct ForwardingEffects<'a> {
+    pub packet_sinks: &'a RoomPacketSinkRegistry,
+    pub source_policy_signal: &'a SourcePolicySignal,
+    pub metrics: &'a RuntimeMetrics,
+    pub rtp_metrics: &'a RtpMetricsRecorder,
+    pub rtc_metrics: &'a RtcMetricsRecorder,
+}
+
+/// Per-worker forwarding state with scratch retained across packet batches.
+///
+/// Each plan expires before the next packet is observed. Batch completion
+/// consumes deferred observations while preserving all allocation capacities.
+pub(in super::super) struct PacketForwarder {
+    packet_sink_cache: PacketSinkRouteCache,
+    forwards: Vec<ForwardingDestination>,
+    observed_rids: Vec<(TransportMediaId, Rid)>,
+    pending_first_video_keyframes: Vec<PendingFirstVideoKeyframe>,
+    rid_readiness_changed_sources: Vec<TransportMediaId>,
+    dirty_source_policy_channel_ids: Vec<RoomInstanceId>,
+    #[cfg(feature = "internal-benchmarks")]
+    planned_forwards: usize,
+}
+
+struct PendingFirstVideoKeyframe {
+    source: ForwardedPacketSource,
+    src_media: TransportMediaId,
+    observed_at: Instant,
+}
+
+impl Default for PacketForwarder {
+    fn default() -> Self {
+        Self {
+            packet_sink_cache: PacketSinkRouteCache::default(),
+            forwards: Vec::with_capacity(64),
+            observed_rids: Vec::with_capacity(8),
+            pending_first_video_keyframes: Vec::with_capacity(8),
+            rid_readiness_changed_sources: Vec::with_capacity(8),
+            dirty_source_policy_channel_ids: Vec::with_capacity(8),
+            #[cfg(feature = "internal-benchmarks")]
+            planned_forwards: 0,
+        }
     }
-    buffers.pending_packets = pending_packets;
-    // Finish after every applicable RID-readiness observation in the batch. Gate
-    // transitions can then suppress the broad ingress PLI and coalesce policy wakeups.
-    finish_incoming_stats(state, source_policy_signal, control, buffers);
+}
+
+impl PacketForwarder {
+    /// Observes and forwards a batch before dispatching its deferred recovery.
+    ///
+    /// Unresolved packets are omitted. Destination failures remain isolated to
+    /// that destination. Successful local writes mark sessions for their next
+    /// drain. Packet order and origin-sink precedence are preserved.
+    ///
+    /// The packet slice remains available to its staging owner. All forwarding
+    /// plans and observation scratch are empty when this operation returns.
+    pub(in super::super) fn forward_batch(
+        &mut self,
+        state: &mut PacketLoopState,
+        packets: &mut [ForwardedPacket],
+        effects: &ForwardingEffects<'_>,
+    ) {
+        self.packet_sink_cache.refresh_from(effects.packet_sinks);
+        for packet in packets {
+            // A later refresh must not admit an earlier delta from this batch.
+            let visits_origin = packet.visits_origin_sinks();
+            let Some(facts) = record_incoming_packet(
+                state,
+                effects.rtc_metrics,
+                effects.rtp_metrics,
+                self,
+                packet,
+            ) else {
+                continue;
+            };
+            if let Some(decision) = plan_forwards(
+                facts,
+                visits_origin,
+                &state.routes,
+                &self.packet_sink_cache,
+                &mut self.forwards,
+            ) {
+                effects
+                    .rtc_metrics
+                    .record_rtc_route_control(match decision {
+                        PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
+                        PacketGateDecision::Dropped => RtcRouteControlOutcome::LayerDropped,
+                    });
+            }
+            flush_packet_forwards(
+                state,
+                effects.metrics,
+                effects.rtp_metrics,
+                effects.rtc_metrics,
+                packet,
+                &self.forwards,
+            );
+            #[cfg(feature = "internal-benchmarks")]
+            {
+                self.planned_forwards = self.planned_forwards.saturating_add(self.forwards.len());
+            }
+            self.forwards.clear();
+        }
+        finish_incoming_stats(
+            state,
+            effects.source_policy_signal,
+            effects.rtc_metrics,
+            self,
+        );
+        self.observed_rids.clear();
+    }
+
+    #[cfg(feature = "internal-benchmarks")]
+    pub(in super::super) fn take_planned_forwards_for_benchmark(&mut self) -> usize {
+        std::mem::take(&mut self.planned_forwards)
+    }
+
+    fn observe_rid_once(&mut self, src_media: TransportMediaId, rid: Rid) -> bool {
+        if self.observed_rids.contains(&(src_media, rid)) {
+            return false;
+        }
+        self.observed_rids.push((src_media, rid));
+        true
+    }
+
+    fn push_first_video_keyframe(
+        &mut self,
+        source: &ForwardedPacketSource,
+        src_media: TransportMediaId,
+        observed_at: Instant,
+    ) {
+        if self
+            .pending_first_video_keyframes
+            .iter()
+            .any(|pending| pending.src_media == src_media)
+        {
+            return;
+        }
+        self.pending_first_video_keyframes
+            .push(PendingFirstVideoKeyframe {
+                source: source.clone(),
+                src_media,
+                observed_at,
+            });
+    }
+
+    fn flush_source_policy_dirty(&mut self, source_policy_signal: &SourcePolicySignal) {
+        if self.dirty_source_policy_channel_ids.is_empty() {
+            return;
+        }
+        self.dirty_source_policy_channel_ids.sort_unstable();
+        self.dirty_source_policy_channel_ids.dedup();
+        source_policy_signal.mark_dirty_rooms(self.dirty_source_policy_channel_ids.iter().copied());
+        self.dirty_source_policy_channel_ids.clear();
+    }
 }
 
 fn learn_producer_packet_binding(
@@ -138,13 +239,13 @@ fn learn_producer_packet_binding(
 /// incoming packet.
 ///
 /// Borrows cached facts for planning or returns `None` when source resolution fails.
-/// `buffers` stages policy wakeups and broad recovery while RID recovery may be
+/// `forwarder` stages policy wakeups and broad recovery while RID recovery may be
 /// requested immediately.
 pub(in super::super) fn record_incoming_packet<'a>(
     state: &mut PacketLoopState,
     control: &RtcMetricsRecorder,
     rtp: &RtpMetricsRecorder,
-    buffers: &mut PacketLoopBuffers,
+    forwarder: &mut PacketForwarder,
     packet: &'a mut ForwardedPacket,
 ) -> Option<&'a PacketFacts> {
     let _ = packet.resolve_facts(state);
@@ -169,7 +270,7 @@ pub(in super::super) fn record_incoming_packet<'a>(
     }
     if audio_policy_changed {
         cold_path();
-        buffers
+        forwarder
             .dirty_source_policy_channel_ids
             .push(facts.room_instance_id);
     }
@@ -194,7 +295,7 @@ pub(in super::super) fn record_incoming_packet<'a>(
     // a gate, so one scan per source/RID per turn is enough. Decoder refreshes
     // remain uncoalesced because they can activate pending gates.
     let check_readiness = decoder_refresh
-        || packet_rid.is_some_and(|rid| buffers.observe_rid_once(transport_media_id, rid));
+        || packet_rid.is_some_and(|rid| forwarder.observe_rid_once(transport_media_id, rid));
     if check_readiness {
         let route_changed = packet.src_key(state).cloned().is_some_and(|src_key| {
             apply_src_decoder_ready(
@@ -208,7 +309,7 @@ pub(in super::super) fn record_incoming_packet<'a>(
             )
         });
         if route_changed {
-            buffers
+            forwarder
                 .rid_readiness_changed_sources
                 .push(transport_media_id);
         }
@@ -217,7 +318,7 @@ pub(in super::super) fn record_incoming_packet<'a>(
         .record_incoming_bitrate(transport_media_id, packet.received_at(), payload_len)
         .unwrap_or_default();
     if bitrate_observation.policy_dirty() {
-        buffers
+        forwarder
             .dirty_source_policy_channel_ids
             .push(facts.room_instance_id);
     }
@@ -236,7 +337,7 @@ pub(in super::super) fn record_incoming_packet<'a>(
         // A later packet in this turn may change a RID gate by supplying its
         // refresh or triggering RID-specific recovery. Defer the broad ingress
         // PLI until the batch is fully observed.
-        buffers.push_first_video_keyframe(
+        forwarder.push_first_video_keyframe(
             packet.source(),
             transport_media_id,
             packet.received_at(),
@@ -252,32 +353,21 @@ pub(in super::super) fn finish_incoming_stats(
     state: &mut PacketLoopState,
     source_policy_signal: &SourcePolicySignal,
     control: &RtcMetricsRecorder,
-    buffers: &mut PacketLoopBuffers,
+    forwarder: &mut PacketForwarder,
 ) {
-    flush_first_video_kfs(state, control, buffers);
-    buffers.flush_source_policy_dirty(source_policy_signal);
-}
-
-#[cfg(feature = "internal-benchmarks")]
-pub fn record_incoming_stats_for_benchmark(
-    state: &mut PacketLoopState,
-    source_policy_signal: &SourcePolicySignal,
-    control: &RtcMetricsRecorder,
-    rtp: &RtpMetricsRecorder,
-    buffers: &mut PacketLoopBuffers,
-) {
-    record_incoming_stats(state, source_policy_signal, control, rtp, buffers);
+    flush_first_video_kfs(state, control, forwarder);
+    forwarder.flush_source_policy_dirty(source_policy_signal);
 }
 
 fn flush_first_video_kfs(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
-    buffers: &mut PacketLoopBuffers,
+    forwarder: &mut PacketForwarder,
 ) {
-    for pending in buffers.pending_first_video_keyframes.drain(..) {
+    for pending in forwarder.pending_first_video_keyframes.drain(..) {
         // A gate transition consumed a refresh or scheduled RID-specific
         // recovery. The source-wide ingress PLI would duplicate that work.
-        if buffers
+        if forwarder
             .rid_readiness_changed_sources
             .contains(&pending.src_media)
         {
@@ -294,7 +384,7 @@ fn flush_first_video_kfs(
             pending.observed_at,
         );
     }
-    buffers.rid_readiness_changed_sources.clear();
+    forwarder.rid_readiness_changed_sources.clear();
 }
 
 /// Requests source-wide recovery when active video ingress starts or resumes.
@@ -433,3 +523,7 @@ pub(in super::super) fn flush_packet_forwards(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "forward_flush/TESTS/mod.rs"]
+mod tests;

@@ -48,12 +48,8 @@ use super::{
         RtcWorkerConfig,
         control::WorkerCommandContext,
         packet_loop::{
-            forward_flush::{
-                drain_relay_packets, finish_incoming_stats, flush_packet_forwards,
-                record_incoming_packet,
-            },
+            ForwardingEffects, PacketForwarder, drain_relay_packets,
             forwarded_packet::ForwardedPacket,
-            forwarding_planner::{PacketGateDecision, plan_forwards},
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
             routing_miss::DemuxRecoveryState,
             udp::{RtcUdpSocket, UdpDatagram, UdpIngress},
@@ -70,8 +66,8 @@ use super::{
 use crate::engine::media_transport::TransportSessionKey;
 use crate::engine::{
     media_transport::SourcePolicySignal,
-    metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RtpMetricsRecorder, RuntimeMetrics},
-    packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
+    metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
+    packet_sink_registry::RoomPacketSinkRegistry,
 };
 
 /// immutable configuration and shared side channels for one packet-loop worker
@@ -123,13 +119,10 @@ pub(crate) struct BenchmarkTurnInput {
 /// after the turn has released mutable worker-state borrows
 pub(crate) struct PacketLoopTurn {
     buffers: PacketLoopBuffers,
-    packet_sink_cache: PacketSinkRouteCache,
+    forwarder: PacketForwarder,
     delay_publisher: PacketLoopDelayPublisher,
     ready_now_budget: usize,
     udp_burst_budget: usize,
-    /// forwarding destinations planned since the last benchmark read
-    #[cfg(feature = "internal-benchmarks")]
-    planned_forwards: usize,
 }
 
 /// borrowed state needed to apply the input selected by the wait phase
@@ -150,12 +143,10 @@ impl PacketLoopTurn {
     pub fn new(started_at: Instant) -> Self {
         Self {
             buffers: PacketLoopBuffers::new(),
-            packet_sink_cache: PacketSinkRouteCache::default(),
+            forwarder: PacketForwarder::default(),
             delay_publisher: PacketLoopDelayPublisher::new(started_at),
             ready_now_budget: MAX_READY_NOW_INPUTS_BEFORE_YIELD,
             udp_burst_budget: MAX_UDP_DATAGRAMS_PER_TURN,
-            #[cfg(feature = "internal-benchmarks")]
-            planned_forwards: 0,
         }
     }
 
@@ -239,7 +230,7 @@ impl PacketLoopTurn {
     /// afterwards
     #[cfg(feature = "internal-benchmarks")]
     pub fn take_planned_forwards_for_benchmark(&mut self) -> usize {
-        take(&mut self.planned_forwards)
+        self.forwarder.take_planned_forwards_for_benchmark()
     }
 
     /// runs the production turn phases once the buffers hold this turn's
@@ -283,67 +274,16 @@ impl PacketLoopTurn {
             &mut self.buffers.coalesced_keyframe_requests,
             now,
         );
-        // sink routes are refreshed once per turn so recording lookups do not take
-        // the shared registry lock per packet
-        self.packet_sink_cache
-            .refresh_from(&config.packet_sink_registry);
-        let mut pending_packets = take(&mut self.buffers.pending_packets);
-        for pkt in &mut pending_packets {
-            // Complete observation, planning and flush before observing the next
-            // packet. Otherwise a later decoder refresh could admit an earlier
-            // delta packet through a selected-RID gate.
-            let visits_origin = pkt.visits_origin_sinks();
-            let Some(facts) = record_incoming_packet(
-                state,
-                &config.rtc_metrics,
-                &config.rtp_metrics,
-                &mut self.buffers,
-                pkt,
-            ) else {
-                continue;
-            };
-            if let Some(decision) = plan_forwards(
-                facts,
-                visits_origin,
-                &state.routes,
-                &self.packet_sink_cache,
-                &mut self.buffers.forwards,
-            ) {
-                config.rtc_metrics.record_rtc_route_control(match decision {
-                    PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
-                    PacketGateDecision::Dropped => RtcRouteControlOutcome::LayerDropped,
-                });
-            }
-            // Execute the plan unchanged so origin sinks run before relays and
-            // local RTC. Successful local writes requeue their sessions because
-            // session draining already ran above.
-            flush_packet_forwards(
-                state,
-                &config.metrics,
-                &config.rtp_metrics,
-                &config.rtc_metrics,
-                pkt,
-                &self.buffers.forwards,
-            );
-            // the plan is cleared per packet, so a scenario benchmark has to
-            // accumulate it here instead of reading the buffer after the turn
-            #[cfg(feature = "internal-benchmarks")]
-            {
-                self.planned_forwards = self
-                    .planned_forwards
-                    .saturating_add(self.buffers.forwards.len());
-            }
-            self.buffers.forwards.clear();
-        }
-        self.buffers.pending_packets = pending_packets;
-        // Finish after every packet has updated RID readiness. Gate transitions
-        // can now suppress broad ingress PLIs and room wakeups can coalesce across
-        // the batch.
-        finish_incoming_stats(
+        self.forwarder.forward_batch(
             state,
-            &config.source_policy_signal,
-            &config.rtc_metrics,
-            &mut self.buffers,
+            &mut self.buffers.pending_packets,
+            &ForwardingEffects {
+                packet_sinks: &config.packet_sink_registry,
+                source_policy_signal: &config.source_policy_signal,
+                metrics: &config.metrics,
+                rtp_metrics: &config.rtp_metrics,
+                rtc_metrics: &config.rtc_metrics,
+            },
         );
         config
             .source_policy_signal

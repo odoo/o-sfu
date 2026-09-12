@@ -1,10 +1,9 @@
-//! Packet loop buffers
+//! Worker staging buffers for one packet-loop turn.
 //!
-//! The packet loop is a long-lived task, so temporary per-turn storage belongs
-//! in one reusable allocation surface instead of being rebuilt while packets are
-//! flowing. This module contains that surface. Callers borrow the vectors during one
-//! turn, then call [`PacketLoopBuffers::clear`] before the next turn to reset
-//! logical length while keeping capacity.
+//! Session output, relay intake and ready-session scheduling reuse these vectors.
+//! [`PacketLoopBuffers::clear`] resets staged work while retaining capacity.
+//! Packet observation and fanout scratch belong to
+//! [`PacketForwarder`](super::super::packet_loop::PacketForwarder).
 //!
 //! The buffers do not own durable routing state. Durable state stays in
 //! `PacketLoopState`, `RtcSnapshotState`, worker-local relay target maps or
@@ -12,22 +11,14 @@
 //! Values stored here are staged work that must either be flushed during the
 //! current turn or dropped as part of clearing the turn.
 
-use std::{net::SocketAddr, time::Instant};
-
-use str0m::media::Rid;
+use std::net::SocketAddr;
 
 use super::super::{
-    packet_loop::{
-        forwarded_packet::{ForwardedPacket, ForwardedPacketSource},
-        forwarding_destination::ForwardingDestination,
-    },
+    packet_loop::forwarded_packet::ForwardedPacket,
     recovery::PendingKeyframeRequest,
     state::{keyframe_tracker::SourceKeyframeRequest, slots::SessionHandle},
 };
-use crate::engine::{
-    RoomInstanceId,
-    media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
-};
+use crate::engine::media_transport::TransportSessionKey;
 
 pub(in super::super) const RECEIVE_BUFFER_LEN: usize = 2000;
 pub(in super::super) const MAX_RELAY_PACKETS_PER_ITERATION: usize = 64;
@@ -40,12 +31,6 @@ pub(in super::super) const MAX_RELAY_PACKETS_PER_ITERATION: usize = 64;
 pub(in super::super) struct PendingTransmit {
     pub(in super::super) destination: SocketAddr,
     pub(in super::super) contents: Vec<u8>,
-}
-
-pub(in super::super) struct PendingFirstVideoKeyframe {
-    pub(in super::super) source: ForwardedPacketSource,
-    pub(in super::super) src_media: TransportMediaId,
-    pub(in super::super) observed_at: Instant,
 }
 
 pub(in super::super) struct SessionDrainCheckpoint {
@@ -77,16 +62,6 @@ pub struct PacketLoopBuffers {
     pub coalesced_keyframe_requests: Vec<SourceKeyframeRequest>,
     /// due keyframe retries drained from the tracker
     pub keyframe_retries: Vec<SourceKeyframeRequest>,
-    /// source/RID pairs already checked for readiness during this turn
-    pub(in super::super) observed_rids: Vec<(TransportMediaId, Rid)>,
-    /// first-ingress keyframe probes delayed until RID readiness work is known
-    pub(in super::super) pending_first_video_keyframes: Vec<PendingFirstVideoKeyframe>,
-    /// sources whose selected-RID route state changed during this turn
-    pub(in super::super) rid_readiness_changed_sources: Vec<TransportMediaId>,
-    /// rooms whose source policy must be recomputed after packet observations
-    pub(in super::super) dirty_source_policy_channel_ids: Vec<RoomInstanceId>,
-    /// concrete forwarding destinations planned for the current packet
-    pub forwards: Vec<ForwardingDestination>,
 }
 
 impl PacketLoopBuffers {
@@ -104,11 +79,6 @@ impl PacketLoopBuffers {
             ready_sessions: Vec::with_capacity(32),
             coalesced_keyframe_requests: Vec::with_capacity(8),
             keyframe_retries: Vec::with_capacity(8),
-            observed_rids: Vec::with_capacity(8),
-            pending_first_video_keyframes: Vec::with_capacity(8),
-            rid_readiness_changed_sources: Vec::with_capacity(8),
-            dirty_source_policy_channel_ids: Vec::with_capacity(8),
-            forwards: Vec::with_capacity(64),
         }
     }
 
@@ -120,11 +90,6 @@ impl PacketLoopBuffers {
         self.ready_sessions.clear();
         self.coalesced_keyframe_requests.clear();
         self.keyframe_retries.clear();
-        self.observed_rids.clear();
-        self.pending_first_video_keyframes.clear();
-        self.rid_readiness_changed_sources.clear();
-        self.dirty_source_policy_channel_ids.clear();
-        self.forwards.clear();
     }
 
     /// Queue a UDP transmit by moving the owned `str0m` datagram buffer.
@@ -159,62 +124,5 @@ impl PacketLoopBuffers {
         &mut self,
     ) -> impl Iterator<Item = &mut PendingTransmit> {
         self.pending_transmits.iter_mut()
-    }
-
-    pub(in super::super) fn observe_rid_once(
-        &mut self,
-        src_media: TransportMediaId,
-        rid: Rid,
-    ) -> bool {
-        if self.observed_rids.contains(&(src_media, rid)) {
-            return false;
-        }
-        self.observed_rids.push((src_media, rid));
-        true
-    }
-
-    pub(in super::super) fn push_first_video_keyframe(
-        &mut self,
-        source: &ForwardedPacketSource,
-        src_media: TransportMediaId,
-        observed_at: Instant,
-    ) {
-        if self
-            .pending_first_video_keyframes
-            .iter()
-            .any(|pending| pending.src_media == src_media)
-        {
-            return;
-        }
-        self.pending_first_video_keyframes
-            .push(PendingFirstVideoKeyframe {
-                source: source.clone(),
-                src_media,
-                observed_at,
-            });
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn mark_source_policy_dirty(&mut self, room_instance_id: RoomInstanceId) {
-        self.dirty_source_policy_channel_ids.push(room_instance_id);
-    }
-
-    /// Coalesce source-policy wakeups and publish them to the room policy layer.
-    ///
-    /// Audio activity and receiver bandwidth changes can mark the same room
-    /// dirty multiple times during one turn. Sorting and deduplicating here
-    /// keeps the external wakeup cost proportional to changed rooms, not packet
-    /// count.
-    pub(in super::super) fn flush_source_policy_dirty(
-        &mut self,
-        source_policy_signal: &SourcePolicySignal,
-    ) {
-        if self.dirty_source_policy_channel_ids.is_empty() {
-            return;
-        }
-        self.dirty_source_policy_channel_ids.sort_unstable();
-        self.dirty_source_policy_channel_ids.dedup();
-        source_policy_signal.mark_dirty_rooms(self.dirty_source_policy_channel_ids.iter().copied());
-        self.dirty_source_policy_channel_ids.clear();
     }
 }

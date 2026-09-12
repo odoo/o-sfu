@@ -12,8 +12,7 @@ use str0m::{
 use super::super::{
     bootstrap,
     packet_loop::{
-        forwarded_packet::ForwardedPacket,
-        forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
+        ForwardingDestination, LocalRtcPacketDestination, forwarded_packet::ForwardedPacket,
     },
     state::{
         PacketLoopState,

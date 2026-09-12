@@ -10,8 +10,7 @@ use str0m::media::Mid;
 
 use super::super::{
     packet_loop::{
-        flush_packet_forwards,
-        forwarding_planner::{PacketGateDecision, plan_forwards},
+        ForwardingDestination, PacketGateDecision, flush_packet_forwards, plan_forwards,
     },
     state::{PacketLoopState, media_registry::RegisteredMediaHandle},
     test_support::{sample_forwarded_packet, test_transport_session_key},
@@ -74,6 +73,7 @@ pub struct PacketSinkFanoutBenchFixture {
     egress_metrics: Arc<RtpMetricsRecorder>,
     route_metrics: Arc<RtcMetricsRecorder>,
     buffers: PacketLoopBuffers,
+    forwards: Vec<ForwardingDestination>,
 }
 
 impl PacketSinkFanoutBenchFixture {
@@ -114,9 +114,10 @@ impl PacketSinkFanoutBenchFixture {
             egress_metrics,
             route_metrics,
             buffers,
+            forwards: Vec::with_capacity(64),
         };
         fixture.plan_and_flush_once();
-        fixture.buffers.forwards.clear();
+        fixture.forwards.clear();
         fixture.sink.reset();
         fixture
     }
@@ -124,7 +125,7 @@ impl PacketSinkFanoutBenchFixture {
     #[must_use]
     pub fn route_sink_turns(&mut self) -> usize {
         for _ in 0..PACKET_SINK_FANOUT_TURNS {
-            self.buffers.forwards.clear();
+            self.forwards.clear();
             self.plan_and_flush_once();
         }
         self.sink.packets()
@@ -141,7 +142,7 @@ impl PacketSinkFanoutBenchFixture {
                 visits_origin,
                 &self.state.routes,
                 &self.packet_sinks,
-                &mut self.buffers.forwards,
+                &mut self.forwards,
             ) {
                 self.route_metrics.record_rtc_route_control(match decision {
                     PacketGateDecision::Allowed => RtcRouteControlOutcome::LayerAllowed,
@@ -154,7 +155,7 @@ impl PacketSinkFanoutBenchFixture {
                 &self.egress_metrics,
                 &self.route_metrics,
                 packet,
-                &self.buffers.forwards,
+                &self.forwards,
             );
         }
     }
