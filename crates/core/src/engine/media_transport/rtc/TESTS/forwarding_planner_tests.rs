@@ -5,9 +5,8 @@ use str0m::media::Mid;
 use super::{
     super::{
         packet_loop::{
-            forwarded_packet::ForwardedPacket,
-            forwarding_destination::ForwardingDestination,
-            forwarding_planner::{PacketGateDecision, plan_forwards as plan_pkt_forwards},
+            ForwardingDestination, PacketGateDecision, forwarded_packet::ForwardedPacket,
+            plan_forwards as plan_pkt_forwards,
         },
         state::{
             PacketLoopState,

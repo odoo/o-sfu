@@ -13,7 +13,7 @@
 //!
 //! Planning runs inside the worker packet loop while the packet-loop state is
 //! borrowed. It must avoid async work, broad scans and steady-state allocation.
-//! `PacketLoopBuffers` keeps the destination list across iterations, so this
+//! `PacketForwarder` keeps the destination list across iterations, so this
 //! module may reserve the known fanout bound but must not create detached
 //! per-packet collections.
 //!

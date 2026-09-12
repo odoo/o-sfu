@@ -33,8 +33,8 @@ use crate::{
                 consumer_egress::test_support::RTX_CACHE_LIFETIME,
                 control::{WorkerCommandContext, handle_worker_command},
                 packet_loop::{
+                    ForwardingDestination, LocalRtcPacketDestination,
                     forwarded_packet::ForwardedPacket,
-                    forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
                     ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
                     routing_miss::DemuxRecoveryState,
                 },

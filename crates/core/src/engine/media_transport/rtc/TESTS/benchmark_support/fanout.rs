@@ -5,9 +5,7 @@ use tokio::sync::mpsc;
 
 use super::super::{
     packet_loop::{
-        forwarded_packet::ForwardedPacket,
-        forwarding_destination::ForwardingDestination,
-        forwarding_planner::{PacketGateDecision, plan_forwards},
+        ForwardingDestination, PacketGateDecision, forwarded_packet::ForwardedPacket, plan_forwards,
     },
     state::{
         PacketLoopState,

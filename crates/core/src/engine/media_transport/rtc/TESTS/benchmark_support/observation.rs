@@ -12,7 +12,7 @@ use str0m::{
 
 use super::super::{
     codec,
-    packet_loop::record_incoming_stats_for_benchmark,
+    packet_loop::{PacketForwarder, record_incoming_stats_for_benchmark},
     state::{PacketLoopState, bitrate::BitrateRegistry},
     test_support::{
         MediaWorkerScenario, reset_packet_resolution,
@@ -42,6 +42,7 @@ const VP8_INTERFRAME: &[u8] = &[0x90, 0xe0, 0x80, 0x03, 0x0a, 0x20, 0x01, 0x00, 
 pub struct IncomingObservationBenchFixture {
     state: PacketLoopState,
     buffers: PacketLoopBuffers,
+    forwarder: PacketForwarder,
     source_policy_signal: SourcePolicySignal,
     source_policy_updates: SourcePolicyUpdateSubscription,
     route_metrics: Arc<RtcMetricsRecorder>,
@@ -124,6 +125,7 @@ impl IncomingObservationBenchFixture {
         Self {
             state,
             buffers,
+            forwarder: PacketForwarder::default(),
             source_policy_signal,
             source_policy_updates,
             route_metrics,
@@ -142,7 +144,8 @@ impl IncomingObservationBenchFixture {
                 &self.source_policy_signal,
                 &self.route_metrics,
                 &self.rtp_metrics,
-                &mut self.buffers,
+                &mut self.forwarder,
+                &mut self.buffers.pending_packets,
             );
         }
         self.source_policy_updates.take_pending_updates().len()
