@@ -12,7 +12,8 @@ pub(in super::super) use decoder_delivery::{
 };
 
 use super::{
-    super::commands::RemoteSourceControl, route_control::PacketLayerGate,
+    super::commands::{RemoteControlSendOutcome, RemoteSourceControl},
+    route_control::PacketLayerGate,
     slots::ConsumerStreamHandle,
 };
 use crate::engine::media_transport::{TransportMediaId, TransportSessionKey, TransportSourceKey};
@@ -139,9 +140,9 @@ impl MediaRouteEntry {
 
 /// remote source control path with latest-gate retry state
 ///
-/// failed sends keep only the newest packet gate
+/// full mailboxes keep only the newest packet gate
 /// `RouteTable::flush_remote_pkt_gates` retries it until the source worker
-/// accepts it
+/// accepts it or its control receiver closes
 #[derive(Debug, Clone)]
 pub(in super::super) struct RemoteSourceRegistration {
     source: TransportSourceKey,
@@ -184,13 +185,11 @@ impl RemoteSourceRegistration {
         &mut self,
         packet_gate: PacketLayerGate,
     ) -> bool {
-        if self.source_control.set_pkt_gate(&self.source, packet_gate) {
-            self.pending_gate = None;
-            false
-        } else {
-            self.pending_gate = Some(packet_gate);
-            true
-        }
+        self.pending_gate = match self.source_control.set_pkt_gate(&self.source, packet_gate) {
+            RemoteControlSendOutcome::Forwarded | RemoteControlSendOutcome::Closed => None,
+            RemoteControlSendOutcome::Full => Some(packet_gate),
+        };
+        self.pending_gate.is_some()
     }
 
     pub(in super::super) fn flush_pending_gate(&mut self) -> bool {
@@ -198,12 +197,19 @@ impl RemoteSourceRegistration {
             return false;
         };
         self.source_control.record_pkt_gate_retry();
-        if self.source_control.set_pkt_gate(&self.source, packet_gate) {
-            self.pending_gate = None;
-            self.source_control.record_pkt_gate_flushed();
-            false
-        } else {
-            true
+        match self.source_control.set_pkt_gate(&self.source, packet_gate) {
+            RemoteControlSendOutcome::Forwarded => {
+                self.pending_gate = None;
+                self.source_control.record_pkt_gate_flushed();
+                false
+            }
+            RemoteControlSendOutcome::Full => true,
+            RemoteControlSendOutcome::Closed => {
+                // A closed worker cannot accept a later retry. Keeping this gate
+                // pending would retry and count the same terminal failure every turn.
+                self.pending_gate = None;
+                false
+            }
         }
     }
 }
