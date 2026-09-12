@@ -6,6 +6,8 @@
 //! avoid running a full async worker unless the contract under
 //! test requires worker scheduling behavior.
 
+mod scheduling;
+
 use std::{
     collections::BTreeSet,
     future::Future,

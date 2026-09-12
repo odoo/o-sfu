@@ -27,6 +27,10 @@ use tracing::warn;
 use super::super::worker::buffers::RECEIVE_BUFFER_LEN;
 use crate::RtcUdpIoBackend;
 
+#[cfg(test)]
+#[path = "udp/TESTS/support.rs"]
+pub(in super::super) mod test_support;
+
 const INGRESS_QUEUE_CAPACITY: usize = 32;
 const RECEIVE_BUFFER_POOL_CAPACITY: usize = 32;
 

@@ -12,7 +12,7 @@
 //!   -> finish batch observations and policy notifications
 //!   -> dispatch retries still pending after packet observation
 //!   -> flush staged UDP output
-//!   -> wait for one input, prioritizing shutdown and commands
+//!   -> wait for one input, prioritizing shutdown and bounded control bursts
 //! ```
 //!
 //! Each packet finishes before another can change decoder readiness. Origin
@@ -37,6 +37,7 @@ use std::{
 
 use tokio::{
     sync::mpsc,
+    task::yield_now,
     time::{sleep_until, timeout},
 };
 use tracing::warn;
@@ -121,6 +122,7 @@ pub(crate) struct PacketLoopTurn {
     buffers: PacketLoopBuffers,
     forwarder: PacketForwarder,
     delay_publisher: PacketLoopDelayPublisher,
+    input_yield_budget: usize,
     ready_now_budget: usize,
     udp_burst_budget: usize,
 }
@@ -145,6 +147,7 @@ impl PacketLoopTurn {
             buffers: PacketLoopBuffers::new(),
             forwarder: PacketForwarder::default(),
             delay_publisher: PacketLoopDelayPublisher::new(started_at),
+            input_yield_budget: MAX_INPUTS_BEFORE_YIELD,
             ready_now_budget: MAX_READY_NOW_INPUTS_BEFORE_YIELD,
             udp_burst_budget: MAX_UDP_DATAGRAMS_PER_TURN,
         }
@@ -307,9 +310,10 @@ impl PacketLoopTurn {
         self.flush_staged_transmits(socket).await;
     }
 
-    /// waits for the next event that should resume the worker loop
+    /// Waits for the next event that should resume the worker loop.
     ///
-    /// shutdown and control input are biased ahead of ingress receive
+    /// Shutdown wins ready inputs. Control precedes ingress except for one
+    /// completed datagram admitted after each bounded yield checkpoint.
     pub async fn wait_for_next_input(
         &mut self,
         snapshot: WaitPhaseSnapshot,
@@ -320,6 +324,20 @@ impl PacketLoopTurn {
         loop {
             if inputs.shutdown_cancelled() {
                 return None;
+            }
+            if self.input_yield_budget == 0 {
+                // Ready control and mixed inputs can bypass every receive await.
+                // Yield between complete turns, then admit one queued datagram
+                // before restoring control priority.
+                yield_now().await;
+                if inputs.shutdown_cancelled() {
+                    return None;
+                }
+                self.input_yield_budget = MAX_INPUTS_BEFORE_YIELD;
+                if let Some(datagram) = ingress.try_recv() {
+                    self.udp_burst_budget = MAX_UDP_DATAGRAMS_PER_TURN.saturating_sub(1);
+                    return Some(PacketLoopTurnInput::Datagram(datagram));
+                }
             }
             if let Some(input) = inputs.try_recv_control() {
                 return Some(PacketLoopTurnInput::Control(input));
@@ -369,8 +387,8 @@ impl PacketLoopTurn {
         context: &mut PacketLoopApplyContext<'_>,
         next_input: PacketLoopTurnInput,
     ) {
-        // real external input proves the loop yielded to its environment, so
-        // immediate internal wakeups get a fresh fairness budget
+        self.input_yield_budget = self.input_yield_budget.saturating_sub(1);
+        // External input restores timeout priority without postponing the yield.
         if !matches!(next_input, PacketLoopTurnInput::Timeout) {
             self.ready_now_budget = MAX_READY_NOW_INPUTS_BEFORE_YIELD;
         }
@@ -480,6 +498,7 @@ impl PacketLoopTurn {
 
 const MAX_UDP_DATAGRAMS_PER_TURN: usize = 16;
 const MAX_READY_NOW_INPUTS_BEFORE_YIELD: usize = 32;
+const MAX_INPUTS_BEFORE_YIELD: usize = 32;
 
 /// runs the worker-local media packet loop until shutdown or command-channel close
 ///
