@@ -75,6 +75,13 @@ impl DecoderDelivery {
         self.effective_gate
     }
 
+    /// Tests the packet RID against decoder-safe delivery.
+    ///
+    /// Fanout borrows the effective gate without materializing selection state.
+    pub(in crate::engine::media_transport::rtc) fn permits_packet(&self, rid: Option<Rid>) -> bool {
+        self.effective_gate.permits(rid)
+    }
+
     pub(in crate::engine::media_transport::rtc) const fn pending_gate(
         &self,
     ) -> Option<PacketLayerGate> {
