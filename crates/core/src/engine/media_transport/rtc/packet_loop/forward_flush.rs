@@ -1,4 +1,4 @@
-//! Packet observation and fanout in source arrival order.
+//! Packet observation and fanout in staged order.
 //!
 //! [`PacketForwarder`] completes observation, planning and destination writes for
 //! each packet before the next packet can change route state. Origin sinks run
@@ -9,6 +9,8 @@
 //! stay with this owner. Room policy must already be projected into route gates.
 
 use core::hint::cold_path;
+#[cfg(feature = "internal-benchmarks")]
+use std::mem::take;
 use std::time::Instant;
 
 use str0m::media::{KeyframeRequestKind, MediaKind, Rid};
@@ -157,7 +159,7 @@ impl PacketForwarder {
 
     #[cfg(feature = "internal-benchmarks")]
     pub(in super::super) fn take_planned_forwards_for_benchmark(&mut self) -> usize {
-        std::mem::take(&mut self.planned_forwards)
+        take(&mut self.planned_forwards)
     }
 
     fn observe_rid_once(&mut self, src_media: TransportMediaId, rid: Rid) -> bool {

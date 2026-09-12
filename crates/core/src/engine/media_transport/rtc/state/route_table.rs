@@ -16,7 +16,7 @@
 //! refresh can activate a matching gate and clear source/RID retries. Consumer
 //! feedback and opaque recovery keep bounded retry tails. Packet observations
 //! must precede planning for each packet, as described by
-//! [`forward_flush`](super::super::packet_loop::forward_flush).
+//! [`PacketForwarder`](super::super::packet_loop::PacketForwarder).
 
 mod active_rank;
 mod source;
