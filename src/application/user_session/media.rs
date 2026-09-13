@@ -95,6 +95,7 @@ impl User {
             field::display(target_user_id.path_segment()),
         );
         let source_intents = DiscussStream::all()
+            .into_iter()
             .filter_map(|stream| stream.subscription_intent_if_requested(&states))
             .collect::<BTreeMap<_, _>>();
         span.record("source_count", source_intents.len());

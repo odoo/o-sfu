@@ -6,26 +6,26 @@ use super::*;
 fn maps_discuss_stream_labels_to_stable_core_ids() {
     assert_eq!(
         stream_id_for_stream_type(StreamType::Audio).as_str(),
-        AUDIO_STREAM_LABEL
+        "audio"
     );
     assert_eq!(
         stream_id_for_stream_type(StreamType::Camera).as_str(),
-        CAMERA_STREAM_LABEL
+        "camera"
     );
     assert_eq!(
         stream_id_for_stream_type(StreamType::Screen).as_str(),
-        SCREEN_STREAM_LABEL
+        "screen"
     );
     assert_eq!(
-        stream_type_for_stream_id(&UserStreamId::new(AUDIO_STREAM_LABEL)),
+        stream_type_for_stream_id(&UserStreamId::new("audio")),
         Some(StreamType::Audio)
     );
     assert_eq!(
-        stream_type_for_stream_id(&UserStreamId::new(CAMERA_STREAM_LABEL)),
+        stream_type_for_stream_id(&UserStreamId::new("camera")),
         Some(StreamType::Camera)
     );
     assert_eq!(
-        stream_type_for_stream_id(&UserStreamId::new(SCREEN_STREAM_LABEL)),
+        stream_type_for_stream_id(&UserStreamId::new("screen")),
         Some(StreamType::Screen)
     );
     assert_eq!(
@@ -60,7 +60,7 @@ fn maps_discuss_streams_to_core_source_policy() {
 }
 
 fn assert_audio_policy(intent: &SourcePublishIntent) {
-    assert_eq!(intent.stream_id().as_str(), AUDIO_STREAM_LABEL);
+    assert_eq!(intent.stream_id().as_str(), "audio");
     assert_eq!(intent.media_kind(), MediaKind::Audio);
 
     let policy = intent.policy();
@@ -77,7 +77,7 @@ fn assert_audio_policy(intent: &SourcePublishIntent) {
 }
 
 fn assert_camera_policy(intent: &SourcePublishIntent) {
-    assert_eq!(intent.stream_id().as_str(), CAMERA_STREAM_LABEL);
+    assert_eq!(intent.stream_id().as_str(), "camera");
     assert_eq!(intent.media_kind(), MediaKind::Video);
     assert!(matches!(intent.presence(), Some(info) if info.is_camera_on == Some(true)));
 
@@ -109,7 +109,7 @@ fn assert_camera_policy(intent: &SourcePublishIntent) {
 }
 
 fn assert_screen_policy(intent: &SourcePublishIntent) {
-    assert_eq!(intent.stream_id().as_str(), SCREEN_STREAM_LABEL);
+    assert_eq!(intent.stream_id().as_str(), "screen");
     assert_eq!(intent.media_kind(), MediaKind::Video);
     assert!(matches!(intent.presence(), Some(info) if info.is_screen_sharing_on == Some(true)));
 
