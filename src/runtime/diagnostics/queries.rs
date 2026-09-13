@@ -15,10 +15,7 @@ use o_sfu_telemetry::diagnostics::{
     DiagnosticsWorkerSummary,
 };
 
-use crate::{
-    application::stream_catalog::{AUDIO_STREAM_LABEL, CAMERA_STREAM_LABEL, SCREEN_STREAM_LABEL},
-    runtime::room::RoomManager,
-};
+use crate::{application::stream_catalog::DiscussStream, runtime::room::RoomManager};
 
 pub(crate) async fn summary_response(
     rooms: &RoomManager,
@@ -110,7 +107,7 @@ pub(crate) async fn room_users_response(
         room_id,
         &bitrate,
         &health,
-        [AUDIO_STREAM_LABEL, CAMERA_STREAM_LABEL, SCREEN_STREAM_LABEL],
+        DiscussStream::all().map(DiscussStream::label),
     ))
 }
 

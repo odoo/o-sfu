@@ -9,55 +9,6 @@ use crate::core::prelude::{
     SourceRoomPolicySelector, SourceSubscriptionIntent, UserStreamId,
 };
 
-pub(crate) const AUDIO_STREAM_LABEL: &str = "audio";
-pub(crate) const CAMERA_STREAM_LABEL: &str = "camera";
-pub(crate) const SCREEN_STREAM_LABEL: &str = "screen";
-
-const DISCUSS_STREAMS: [DiscussStream; 3] = [
-    DiscussStream {
-        stream_type: StreamType::Audio,
-        label: AUDIO_STREAM_LABEL,
-        media_kind: MediaKind::Audio,
-        policy: SourcePolicy::new(
-            None,
-            SourceAdaptationPolicy::None,
-            Some(ActiveSpeakerPolicy::new(
-                ActiveSpeakerGroup::MAIN,
-                ActiveSpeakerSourceRole::Detector,
-            )),
-        ),
-    },
-    DiscussStream {
-        stream_type: StreamType::Camera,
-        label: CAMERA_STREAM_LABEL,
-        media_kind: MediaKind::Video,
-        policy: SourcePolicy::new(
-            Some(SourceLayoutPolicy::new(
-                SourceRoomPolicySelector::VisibleThumbnail,
-                Some(SourceRoomPolicySelector::ActiveSpeaker),
-            )),
-            SourceAdaptationPolicy::ScalableVideo,
-            Some(ActiveSpeakerPolicy::new(
-                ActiveSpeakerGroup::MAIN,
-                ActiveSpeakerSourceRole::Promotable,
-            )),
-        ),
-    },
-    DiscussStream {
-        stream_type: StreamType::Screen,
-        label: SCREEN_STREAM_LABEL,
-        media_kind: MediaKind::Video,
-        policy: SourcePolicy::new(
-            Some(SourceLayoutPolicy::new(
-                SourceRoomPolicySelector::ReadableDetail,
-                None,
-            )),
-            SourceAdaptationPolicy::ReadableDetail,
-            None,
-        ),
-    },
-];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DiscussStream {
     stream_type: StreamType,
@@ -67,25 +18,66 @@ pub(crate) struct DiscussStream {
 }
 
 impl DiscussStream {
-    pub(crate) fn all() -> impl Iterator<Item = Self> {
-        DISCUSS_STREAMS.into_iter()
+    /// Returns descriptors in audio, camera and screen order.
+    pub(crate) fn all() -> [Self; 3] {
+        [StreamType::Audio, StreamType::Camera, StreamType::Screen].map(Self::for_type)
     }
 
     pub(crate) const fn for_type(stream_type: StreamType) -> Self {
         match stream_type {
-            StreamType::Audio => DISCUSS_STREAMS[0],
-            StreamType::Camera => DISCUSS_STREAMS[1],
-            StreamType::Screen => DISCUSS_STREAMS[2],
+            StreamType::Audio => Self {
+                stream_type,
+                label: "audio",
+                media_kind: MediaKind::Audio,
+                policy: SourcePolicy::new(
+                    None,
+                    SourceAdaptationPolicy::None,
+                    Some(ActiveSpeakerPolicy::new(
+                        ActiveSpeakerGroup::MAIN,
+                        ActiveSpeakerSourceRole::Detector,
+                    )),
+                ),
+            },
+            StreamType::Camera => Self {
+                stream_type,
+                label: "camera",
+                media_kind: MediaKind::Video,
+                policy: SourcePolicy::new(
+                    Some(SourceLayoutPolicy::new(
+                        SourceRoomPolicySelector::VisibleThumbnail,
+                        Some(SourceRoomPolicySelector::ActiveSpeaker),
+                    )),
+                    SourceAdaptationPolicy::ScalableVideo,
+                    Some(ActiveSpeakerPolicy::new(
+                        ActiveSpeakerGroup::MAIN,
+                        ActiveSpeakerSourceRole::Promotable,
+                    )),
+                ),
+            },
+            StreamType::Screen => Self {
+                stream_type,
+                label: "screen",
+                media_kind: MediaKind::Video,
+                policy: SourcePolicy::new(
+                    Some(SourceLayoutPolicy::new(
+                        SourceRoomPolicySelector::ReadableDetail,
+                        None,
+                    )),
+                    SourceAdaptationPolicy::ReadableDetail,
+                    None,
+                ),
+            },
         }
     }
 
     pub(crate) fn for_stream_id(stream_id: &UserStreamId) -> Option<Self> {
-        match stream_id.as_str() {
-            AUDIO_STREAM_LABEL => Some(Self::for_type(StreamType::Audio)),
-            CAMERA_STREAM_LABEL => Some(Self::for_type(StreamType::Camera)),
-            SCREEN_STREAM_LABEL => Some(Self::for_type(StreamType::Screen)),
-            _ => None,
-        }
+        Self::all()
+            .into_iter()
+            .find(|stream| stream.label == stream_id.as_str())
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        self.label
     }
 
     pub(crate) fn stream_id(self) -> UserStreamId {
