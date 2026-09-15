@@ -294,6 +294,11 @@ pub mod auth {
     };
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub mod test_support {
+    pub use crate::runtime::auth::test_support::TestHttpRoomClaims;
+}
+
 /// HTTP route and payload contracts.
 ///
 /// `/v1/stats`, `/metrics` and diagnostics require the configured

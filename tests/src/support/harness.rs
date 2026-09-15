@@ -14,9 +14,7 @@ use anyhow::{Result, anyhow};
 use futures_util::{SinkExt, StreamExt};
 use o_sfu::{
     Runtime, ServeError,
-    auth::{
-        HttpDisconnectClaims, HttpRoomClaims, RegisteredJwtClaims, WebSocketConnectClaims, sign,
-    },
+    auth::{HttpDisconnectClaims, RegisteredJwtClaims, WebSocketConnectClaims, sign},
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
@@ -28,6 +26,7 @@ use o_sfu::{
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
     },
     http::{CreateRoomQuery, RoomResponse, StatsResponse, route},
+    test_support::TestHttpRoomClaims,
 };
 use o_sfu_core::server::transport::{MediaTransport, test_support::test_rtc_port_range};
 use o_sfu_protocol::wire::{
@@ -40,6 +39,7 @@ use o_sfu_telemetry::diagnostics::{
     DiagnosticsVideoLayoutRole,
 };
 use reqwest::StatusCode;
+use secrecy::{ExposeSecret, SecretString};
 use tokio::{
     net::{TcpListener, TcpStream},
     task::yield_now,
@@ -427,7 +427,7 @@ pub async fn spawn_room_server_with_config(
 pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
     Config {
         auth: AuthConfig {
-            key: TEST_AUTH_KEY.to_owned(),
+            key: SecretString::from(TEST_AUTH_KEY),
             authentication_timeout_ms,
             max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
             max_pre_auth_websocket_sessions_per_origin:
@@ -479,25 +479,27 @@ pub fn signed_connect_claims(key: &str, room_id: &str, user_id: UserId) -> Optio
             label: Some("Alice".to_owned()),
             permissions: Some(UserPermissions::default()),
         },
-        key,
+        &SecretString::from(key),
     )
     .ok()
+    .map(|token| token.expose_secret().to_owned())
 }
 
 #[must_use]
 pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
     sign(
-        &HttpRoomClaims {
+        &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: Some(issuer.to_owned()),
                 ..RegisteredJwtClaims::default()
             },
-            key: Some(key.to_owned()),
+            key: Some(key),
             key_seed: None,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY),
     )
     .ok()
+    .map(|token| token.expose_secret().to_owned())
 }
 
 #[must_use]
@@ -507,9 +509,10 @@ pub fn signed_disconnect_claims(user_ids_by_room: BTreeMap<String, Vec<UserId>>)
             registered: RegisteredJwtClaims::default(),
             user_ids_by_room,
         },
-        TEST_AUTH_KEY,
+        &SecretString::from(TEST_AUTH_KEY),
     )
     .ok()
+    .map(|token| token.expose_secret().to_owned())
 }
 
 pub async fn create_room(server: &TestServer, issuer: &str, key: &str) -> Option<String> {

@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{MethodRouter, post},
 };
+use secrecy::SecretString;
 use tracing::Instrument;
 
 use crate::runtime::{
@@ -83,7 +84,8 @@ impl FromRequest<RuntimeState> for VerifiedDisconnectClaims {
             .map_err(IntoResponse::into_response)?;
         let token = str::from_utf8(&body)
             .map_err(|_error| record_rejection(state, StatusCode::BAD_REQUEST))?;
-        let mut claims = auth::verify::<HttpDisconnectClaims>(token, &state.config.auth.key)
+        let token = SecretString::from(token);
+        let mut claims = auth::verify::<HttpDisconnectClaims>(&token, &state.config.auth.key)
             .map_err(|_error| record_rejection(state, StatusCode::UNPROCESSABLE_ENTITY))?;
         claims.normalize_runtime_user_ids();
         Ok(Self(claims))
