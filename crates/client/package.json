@@ -23,7 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@typescript/native": "npm:typescript@^7.0.2",
     "dts-bundle-generator": "^9.5.1",
     "esbuild": "^0.28.2",
