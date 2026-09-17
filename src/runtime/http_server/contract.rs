@@ -39,10 +39,6 @@ pub mod route {
         /// returns [`crate::http::telemetry::diagnostics::DiagnosticsUserDetail`]
         /// or `404 Not Found`.
         pub const ROOM_USER: &str = "/internal/diagnostics/rooms/{uuid}/users/{id}";
-        /// returns a JSON object with `nodes` and `edges` arrays or `404 Not Found`.
-        pub const ROOM_GRAPH: &str = "/internal/diagnostics/node-graph/rooms/{uuid}";
-        /// returns a JSON object with `nodes` and `edges` arrays or `404 Not Found`.
-        pub const USER_GRAPH: &str = "/internal/diagnostics/node-graph/rooms/{uuid}/users/{id}";
     }
 }
 

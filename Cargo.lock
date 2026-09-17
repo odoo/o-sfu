@@ -1475,6 +1475,7 @@ dependencies = [
  "time",
  "tracing",
  "tracing-opentelemetry",
+ "tracing-serde",
  "tracing-subscriber",
 ]
 

@@ -1,7 +1,3 @@
-#![allow(
-    clippy::panic,
-    reason = "diagnostics route tests use panic for malformed response failures"
-)]
 #![expect(
     clippy::indexing_slicing,
     clippy::too_many_lines,
@@ -9,7 +5,6 @@
 )]
 
 use std::{
-    collections::BTreeSet,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -39,7 +34,7 @@ use crate::{
 const TEST_DIAGNOSTICS_ROOM: &str = "test-room";
 const TEST_DIAGNOSTICS_USER: i64 = 1;
 
-fn diagnostics_route_paths() -> [String; 8] {
+fn diagnostics_route_paths() -> [String; 6] {
     let user_id = TEST_DIAGNOSTICS_USER.to_string();
     [
         route::diagnostics::SUMMARY.to_owned(),
@@ -47,10 +42,6 @@ fn diagnostics_route_paths() -> [String; 8] {
         route::diagnostics::WORKERS.to_owned(),
         route::diagnostics::ROOM.replace("{uuid}", TEST_DIAGNOSTICS_ROOM),
         route::diagnostics::ROOM_USERS.replace("{uuid}", TEST_DIAGNOSTICS_ROOM),
-        route::diagnostics::ROOM_GRAPH.replace("{uuid}", TEST_DIAGNOSTICS_ROOM),
-        route::diagnostics::USER_GRAPH
-            .replace("{uuid}", TEST_DIAGNOSTICS_ROOM)
-            .replace("{id}", &user_id),
         room_user_path(TEST_DIAGNOSTICS_ROOM, &user_id),
     ]
 }
@@ -59,37 +50,6 @@ fn room_user_path(room_id: &str, user_key: &str) -> String {
     route::diagnostics::ROOM_USER
         .replace("{uuid}", room_id)
         .replace("{id}", user_key)
-}
-
-fn assert_graph_ids(graph: &Value, room_id: &str, expected: [&str; 2]) {
-    for (collection, expected) in ["nodes", "edges"].into_iter().zip(expected) {
-        let Some(entries) = graph[collection].as_array() else {
-            panic!("graph collection should be an array");
-        };
-        let actual = entries
-            .iter()
-            .map(|entry| {
-                let Some(id) = entry["id"].as_str() else {
-                    panic!("graph entry should have an id");
-                };
-                id.replace(room_id, "{room}")
-            })
-            .collect::<BTreeSet<_>>();
-        let expected = expected
-            .split_ascii_whitespace()
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>();
-        assert_eq!(entries.len(), expected.len());
-        assert_eq!(actual, expected);
-    }
-}
-
-fn graph_edge_direction<'a>(graph: &'a Value, id: &str) -> Option<&'a str> {
-    graph["edges"]
-        .as_array()?
-        .iter()
-        .find(|edge| edge["id"] == id)?["detail__direction"]
-        .as_str()
 }
 
 async fn diagnostics_status(
@@ -414,78 +374,6 @@ async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult
     assert_eq!(alice_quality.sample_count, 4);
     assert_eq!(source_requests(), 1);
 
-    let room_graph: Value = diagnostics_json(
-        &test_state.state,
-        route::diagnostics::ROOM_GRAPH.replace("{uuid}", room.uuid()),
-    )
-    .await?;
-    assert_graph_ids(
-        &room_graph,
-        room.uuid(),
-        [
-            "room:{room} session:{room}:1 session:{room}:2 session:{room}:3 source:{room}:1",
-            "member:{room}:1 member:{room}:2 member:{room}:3 publish:{room}:1
-             download:{room}:1:2 download:{room}:1:3",
-        ],
-    );
-    assert_eq!(source_requests(), 2);
-
-    diagnostics_status(
-        &test_state.state,
-        &format!("/internal/diagnostics/node-graph/channels/{}", room.uuid()),
-        None,
-        StatusCode::NOT_FOUND,
-    )
-    .await?;
-
-    let alice_graph: Value = diagnostics_json(
-        &test_state.state,
-        route::diagnostics::USER_GRAPH
-            .replace("{uuid}", room.uuid())
-            .replace("{id}", alice_user_id.path_segment().as_ref()),
-    )
-    .await?;
-    assert_graph_ids(
-        &alice_graph,
-        room.uuid(),
-        [
-            "user:{room}:1 worker:0 source:{room}:1 user:{room}:2 user:{room}:3",
-            "transport:{room}:1:0 publish:{room}:1 transport:{room}:2:0 deliver:{room}:1:2
-             consume:{room}:1:2 transport:{room}:3:0 deliver:{room}:1:3 consume:{room}:1:3",
-        ],
-    );
-    assert_eq!(
-        graph_edge_direction(&alice_graph, &format!("deliver:{}:1:2", room.uuid())),
-        Some("outbound")
-    );
-    assert_eq!(
-        graph_edge_direction(&alice_graph, &format!("deliver:{}:1:3", room.uuid())),
-        Some("outbound")
-    );
-    assert_eq!(source_requests(), 3);
-
-    let bob_graph: Value = diagnostics_json(
-        &test_state.state,
-        route::diagnostics::USER_GRAPH
-            .replace("{uuid}", room.uuid())
-            .replace("{id}", bob_user_id.path_segment().as_ref()),
-    )
-    .await?;
-    assert_graph_ids(
-        &bob_graph,
-        room.uuid(),
-        [
-            "user:{room}:2 worker:0 user:{room}:1 source:{room}:1",
-            "transport:{room}:2:0 transport:{room}:1:0 publish:{room}:1
-             deliver:{room}:1:2 consume:{room}:1:2",
-        ],
-    );
-    assert_eq!(
-        graph_edge_direction(&bob_graph, &format!("deliver:{}:1:2", room.uuid())),
-        Some("inbound")
-    );
-    assert_eq!(source_requests(), 4);
-
     let session_detail: DiagnosticsUserDetail = diagnostics_json(
         &test_state.state,
         room_user_path(room.uuid(), alice_user_id.path_segment().as_ref()),
@@ -524,7 +412,7 @@ async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult
     assert_eq!(selection.selected_video_budget_bps, Some(10_000_000));
     assert_eq!(selection.active_video_route_count, 1);
     assert_eq!(selection.selected_video_bitrate_bps, 900_000);
-    assert_eq!(source_requests(), 4);
+    assert_eq!(source_requests(), 1);
 
     Ok(())
 }

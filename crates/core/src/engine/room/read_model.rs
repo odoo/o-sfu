@@ -159,7 +159,7 @@ impl RoomUsersCapture {
     }
 }
 
-/// Passive room state required by room detail and graph diagnostics.
+/// Passive room state required by room detail diagnostics.
 #[derive(Debug)]
 pub struct RoomDetailCapture {
     overview: RoomOverviewCapture,

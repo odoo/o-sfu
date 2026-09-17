@@ -275,68 +275,65 @@ with that setting, `o-sfu` writes one JSON object per stdout or stderr line
 
 the Docker `json-file` driver wraps each line in its own record
 
-collectors that read Docker log files must parse the outter Docker record first,
-then parse the inner `log` string as the `o-sfu` JSON payload
-
-the outer Docker record looks like this:
+Collectors parse the outer Docker record first, then parse its `log` string
+as the `o-sfu` JSON payload:
 
 ```json
 {
-  "log": "{\"timestamp\":\"2026-07-09T10:12:34.567890123Z\",\"level\":\"INFO\",\"target\":\"o_sfu::runtime::http_server::server\",\"event\":\"http.listener.ready\",\"message\":\"booted HTTP and WebSocket listener\",\"service.name\":\"o-sfu\",\"service.version\":\"0.7.0\",\"service.instance.id\":\"pid-1\",\"deployment.environment\":\"production\",\"bind_address\":\"0.0.0.0:8070\",\"local_address\":\"0.0.0.0:8070\",\"trust_proxy_headers\":true}\n",
+  "log": "{\"timestamp\":\"2026-07-09T10:12:34.567890123Z\",\"level\":\"INFO\",\"target\":\"o_sfu::runtime::http_server::server\",\"service.name\":\"o-sfu\",\"service.version\":\"0.7.0\",\"service.instance.id\":\"pid-1\",\"deployment.environment\":\"production\",\"fields\":{\"event\":\"http.listener.ready\",\"message\":\"booted HTTP and WebSocket listener\",\"bind_address\":\"0.0.0.0:8070\",\"local_address\":\"0.0.0.0:8070\",\"trust_proxy_headers\":true},\"spans\":[]}\n",
   "stream": "stdout",
   "time": "2026-07-09T10:12:34.568000000Z"
 }
 ```
 
-after decoding the outer `log` field, parse the resulting string as the inner
-`o-sfu` payload
-
-that payload is not the default nested `tracing-subscriber` JSON
-shape because rutnime event fields are flattened at the top level
+The decoded payload separates event fields from span context:
 
 ```json
 {
   "timestamp": "2026-07-09T10:12:34.567890123Z",
   "level": "INFO",
   "target": "o_sfu::runtime::http_server::server",
-  "event": "http.listener.ready",
-  "message": "booted HTTP and WebSocket listener",
   "service.name": "o-sfu",
   "service.version": "0.7.0",
   "service.instance.id": "pid-1",
   "deployment.environment": "production",
-  "bind_address": "0.0.0.0:8070",
-  "local_address": "0.0.0.0:8070",
-  "trust_proxy_headers": true
+  "fields": {
+    "event": "http.listener.ready",
+    "message": "booted HTTP and WebSocket listener",
+    "bind_address": "0.0.0.0:8070",
+    "local_address": "0.0.0.0:8070",
+    "trust_proxy_headers": true
+  },
+  "spans": []
 }
 ```
-
-common fields are:
 
 | field | type | value |
 | --- | --- | --- |
 | `timestamp` | string | RFC 3339 UTC timestamp generated when the event is formatted |
 | `level` | string | tracing level such as `INFO`, `WARN` or `ERROR` |
 | `target` | string | Rust tracing target that emitted the event |
-| `event` | string | stable `o-sfu` event name or `runtime.log` when the call site has no explicit event |
-| `message` | string | optional human log message |
 | `service.name` | string | `TELEMETRY_SERVICE_NAME` defaulting to `o-sfu` |
 | `service.version` | string | compiled `o-sfu` crate version |
 | `service.instance.id` | string | `TELEMETRY_SERVICE_INSTANCE_ID` defaulting to `pid-<pid>` |
 | `deployment.environment` | string | `TELEMETRY_DEPLOYMENT_ENVIRONMENT` defaulting to `local` |
-| `trace_id` | string | optional active trace id when tracing context exists |
+| `trace_id` | string | optional derived trace ID from the event's tracing context |
+| `fields` | object | values recorded on the event, including `event` and `message` when supplied |
+| `spans` | array | event parent scope from root to leaf, or an empty array outside a span |
 
-event-specific fields are also top-level keys
+Each span is `{ "name": "<span name>", "fields": {} }`. Its fields retain all
+recorded values and later `Span::record` updates. Numbers recorded as numbers
+remain JSON numbers. Event and span fields remain separate.
 
-examples include `room_id`, `user_id`, `connection_id`, `remote_address`,
-`operation`, `outcome`, `reason`, `close_code`, `error_kind`, `duration_ms`,
-`transport_media_id` and `media_worker_id`
+Consumers that need flattened correlation IDs first read the event's `fields`,
+then search span `fields` from the nearest parent toward the root. This applies
+to IDs such as `room_id`, `user_id` and `connection_id`. Treat `fields.event` as
+an optional discriminator. For the first `transport.health.changed` transition,
+`fields.from` is absent because no previous state exists.
 
-operator tooling should use `event` as the discriminator, require only the
-common fields it needs and tolerate unknown extra keys
-
-the reviewed event and field catalog lives in `crates/telemetry/src/schema.rs`
-the formatter is in `crates/telemetry/src/setup.rs`
+The event and field catalog is in
+`crates/telemetry/src/schema.rs` and the formatter is in
+`crates/telemetry/src/setup.rs`.
 
 `source_policy.route_changed` reports a receiver video route transition only
 after the media transport and current room topology accept it. `outcome` is

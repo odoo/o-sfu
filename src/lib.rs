@@ -279,7 +279,7 @@
 //! | [`o_sfu_router`] | Sans-I/O [`o_sfu_router::Router`] facade for room placement and routed media lifetimes |
 //! | [`o_sfu_core`] | Room engine, [`core::prelude::SourcePolicy`], recording taps and [`core::server::transport::MediaTransport`] projection |
 //! | [`o_sfu_protocol`] | Sans-I/O [`o_sfu_protocol::host::ProtocolCore`] and typed commands |
-//! | [`o_sfu_telemetry`] | Tracing setup, metrics, diagnostics response types and graph payloads |
+//! | [`o_sfu_telemetry`] | Tracing setup, metrics and diagnostics response types |
 pub mod config;
 pub mod core {
     pub use o_sfu_core::{prelude, server};
@@ -389,8 +389,6 @@ pub mod http {
         /// | `GET /internal/diagnostics/rooms/{uuid}` | one [`diagnostics::DiagnosticsRoomDetail`] | `uuid` from the rooms response |
         /// | `GET /internal/diagnostics/rooms/{uuid}/users` | array of [`diagnostics::DiagnosticsUserSummary`] | `uuid` from the rooms response |
         /// | `GET /internal/diagnostics/rooms/{uuid}/users/{id}` | one [`diagnostics::DiagnosticsUserDetail`] | `uuid` from rooms and `userKey` from room users |
-        /// | `GET /internal/diagnostics/node-graph/rooms/{uuid}` | `{ "nodes": [], "edges": [] }` | `uuid` from the rooms response |
-        /// | `GET /internal/diagnostics/node-graph/rooms/{uuid}/users/{id}` | `{ "nodes": [], "edges": [] }` | `uuid` from rooms and `userKey` from room users |
         ///
         /// `userId` may be a JSON number or string.
         /// `userKey` is always the string to put into `{id}`.
@@ -444,12 +442,12 @@ pub mod http {
         ///   const room = await getJson(`/internal/diagnostics/rooms/${roomUuid}`);
         ///   const users = await getJson(`/internal/diagnostics/rooms/${roomUuid}/users`);
         ///   const userKey = encodeURIComponent(users[0].userKey);
-        ///   const graph = await getJson(
-        ///     `/internal/diagnostics/node-graph/rooms/${roomUuid}/users/${userKey}`,
+        ///   const user = await getJson(
+        ///     `/internal/diagnostics/rooms/${roomUuid}/users/${userKey}`,
         ///   );
         ///
         ///   console.log(room.summary, room.users, room.sources);
-        ///   console.log(graph.nodes, graph.edges);
+        ///   console.log(user.user, user.recordingState);
         /// }
         ///
         /// main().catch((error) => {

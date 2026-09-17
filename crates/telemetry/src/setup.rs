@@ -1,28 +1,29 @@
-use std::{error::Error as StdError, fmt};
+use std::fmt;
 
 use anyhow::Result;
-use serde_json::{Map, Number, Value};
-use time::format_description::well_known::Rfc3339;
-use tracing::{
-    Span, Subscriber, field,
-    field::{Field, Visit},
-    span::{Attributes, Id, Record},
+use serde::{
+    Serialize, Serializer,
+    ser::{Error as _, SerializeSeq},
 };
+use serde_json::value::RawValue;
+use time::format_description::well_known::Rfc3339;
+use tracing::{Span, Subscriber, field};
+use tracing_serde::fields::AsMap;
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry,
+    EnvFilter, Registry,
     fmt::{
-        FmtContext,
-        format::{FormatEvent, FormatFields, JsonFields, Writer},
+        FmtContext, FormattedFields,
+        format::{FormatEvent, JsonFields, Writer},
         layer as fmt_layer,
     },
-    layer::{Context as LayerContext, SubscriberExt},
-    registry::LookupSpan,
+    layer::SubscriberExt,
+    registry::{LookupSpan, Scope},
     util::SubscriberInitExt,
 };
 #[cfg(feature = "otel-tracing")]
 use {
     opentelemetry::{
-        Context, KeyValue, global,
+        KeyValue, global,
         trace::{TraceContextExt, TracerProvider as _},
     },
     opentelemetry_otlp::{Protocol, WithExportConfig},
@@ -30,20 +31,15 @@ use {
         Resource,
         trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
     },
-    tracing::dispatcher,
+    std::sync::{Arc, OnceLock},
+    tracing::dispatcher::WeakDispatch,
     tracing_opentelemetry::{OpenTelemetrySpanExt, get_otel_context},
-    tracing_subscriber::registry::SpanRef,
+    tracing_subscriber::Layer,
 };
 
 use crate::{TelemetryConfig, TelemetryLogFormat, schema};
 
 const DEFAULT_ENV_FILTER: &str = "o_sfu=info,o_sfu_core=info,o_sfu_router=info";
-const INHERITED_CORRELATION_FIELDS: &[&str] = &[
-    schema::field::CONNECTION_ID,
-    schema::field::REMOTE_ADDRESS,
-    schema::field::ROOM_ID,
-    schema::field::USER_ID,
-];
 #[cfg(feature = "otel-tracing")]
 const PRODUCTION_ENVIRONMENT_NAME: &str = "production";
 #[cfg(feature = "otel-tracing")]
@@ -57,31 +53,45 @@ pub struct TelemetryHandle {
     tracer_provider: Option<SdkTracerProvider>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct TelemetryResourceFields {
+    #[serde(rename = "service.name")]
     service_name: String,
+    #[serde(rename = "service.version")]
     service_version: String,
+    #[serde(rename = "service.instance.id")]
     service_instance_id: String,
+    #[serde(rename = "deployment.environment")]
     deployment_environment: String,
 }
 
 #[derive(Debug, Clone)]
 struct RuntimeJsonFormatter {
     resource: TelemetryResourceFields,
+    #[cfg(feature = "otel-tracing")]
+    dispatch: Arc<OnceLock<WeakDispatch>>,
 }
 
-#[derive(Debug, Default)]
-struct JsonEventVisitor {
-    fields: Map<String, Value>,
+#[derive(Serialize)]
+struct JsonEvent<'a, E, S> {
+    timestamp: String,
+    level: &'static str,
+    target: &'static str,
+    #[serde(flatten)]
+    resource: &'a TelemetryResourceFields,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
+    fields: E,
+    spans: S,
 }
 
-#[derive(Debug, Default)]
-struct SpanFieldStore {
-    fields: Map<String, Value>,
+#[derive(Serialize)]
+struct JsonSpan<'a> {
+    name: &'static str,
+    fields: &'a RawValue,
 }
 
-#[derive(Debug, Default)]
-struct SpanFieldCaptureLayer;
+struct JsonSpans<'a, 'context, S>(&'a FmtContext<'context, S, JsonFields>);
 
 #[cfg(feature = "otel-tracing")]
 impl Drop for TelemetryHandle {
@@ -97,144 +107,91 @@ impl Drop for TelemetryHandle {
 
 impl RuntimeJsonFormatter {
     fn new(resource: TelemetryResourceFields) -> Self {
-        Self { resource }
+        Self {
+            resource,
+            #[cfg(feature = "otel-tracing")]
+            dispatch: Arc::default(),
+        }
+    }
+
+    #[cfg(feature = "otel-tracing")]
+    fn trace_id<S>(&self, ctx: &FmtContext<'_, S, JsonFields>) -> Option<String>
+    where
+        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        let dispatch = self.dispatch.get()?.upgrade()?;
+        let parent = ctx.parent_span()?;
+        let context = get_otel_context(&parent.id(), &dispatch)?;
+        let span = context.span();
+        let span_context = span.span_context();
+        span_context
+            .is_valid()
+            .then(|| span_context.trace_id().to_string())
+    }
+
+    #[cfg(not(feature = "otel-tracing"))]
+    fn trace_id<S>(&self, _ctx: &FmtContext<'_, S, JsonFields>) -> Option<String>
+    where
+        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    {
+        None
     }
 }
 
-impl<S, N> FormatEvent<S, N> for RuntimeJsonFormatter
+#[cfg(feature = "otel-tracing")]
+impl<S: Subscriber> Layer<S> for RuntimeJsonFormatter {
+    fn on_register_dispatch(&self, dispatch: &tracing::Dispatch) {
+        // Nested get_default calls hide the subscriber during event dispatch.
+        // The formatter clone in this layer shares a weak reference with the fmt layer.
+        let _ = self.dispatch.set(dispatch.downgrade());
+    }
+}
+
+impl<S> FormatEvent<S, JsonFields> for RuntimeJsonFormatter
 where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-    N: for<'fields> FormatFields<'fields> + 'static,
 {
     fn format_event(
         &self,
-        ctx: &FmtContext<'_, S, N>,
+        ctx: &FmtContext<'_, S, JsonFields>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> fmt::Result {
-        let mut visitor = JsonEventVisitor::default();
-        event.record(&mut visitor);
-        let mut payload = visitor.fields;
-        for span in ctx.event_scope().into_iter().flatten() {
-            if let Some(store) = span.extensions().get::<SpanFieldStore>() {
-                for (key, value) in &store.fields {
-                    payload.entry(key.clone()).or_insert_with(|| value.clone());
-                }
-            }
-        }
-        if payload.get(schema::field::EVENT).and_then(Value::as_str)
-            == Some(schema::event::TRANSPORT_HEALTH_CHANGED)
-        {
-            payload.entry("from".to_owned()).or_insert(Value::Null);
-        }
-        payload.insert(
-            schema::field::TIMESTAMP.to_owned(),
-            Value::String(
-                time::OffsetDateTime::now_utc()
-                    .format(&Rfc3339)
-                    .map_err(|_error| fmt::Error)?,
-            ),
-        );
-        payload.insert(
-            schema::field::LEVEL.to_owned(),
-            Value::String(event.metadata().level().to_string()),
-        );
-        payload.insert(
-            schema::field::TARGET.to_owned(),
-            Value::String(event.metadata().target().to_owned()),
-        );
-        payload
-            .entry(schema::field::EVENT.to_owned())
-            .or_insert_with(|| Value::String(schema::event::RUNTIME_LOG.to_owned()));
-        payload.insert(
-            schema::field::SERVICE_NAME.to_owned(),
-            Value::String(self.resource.service_name.clone()),
-        );
-        payload.insert(
-            schema::field::SERVICE_VERSION.to_owned(),
-            Value::String(self.resource.service_version.clone()),
-        );
-        payload.insert(
-            schema::field::SERVICE_INSTANCE_ID.to_owned(),
-            Value::String(self.resource.service_instance_id.clone()),
-        );
-        payload.insert(
-            schema::field::DEPLOYMENT_ENVIRONMENT.to_owned(),
-            Value::String(self.resource.deployment_environment.clone()),
-        );
-        if let Some(trace_id) = current_trace_id(ctx) {
-            payload.insert(schema::field::TRACE_ID.to_owned(), Value::String(trace_id));
-        }
+        let payload = JsonEvent {
+            timestamp: time::OffsetDateTime::now_utc()
+                .format(&Rfc3339)
+                .map_err(|_error| fmt::Error)?,
+            level: event.metadata().level().as_str(),
+            target: event.metadata().target(),
+            resource: &self.resource,
+            trace_id: self.trace_id(ctx),
+            fields: event.field_map(),
+            spans: JsonSpans(ctx),
+        };
         let encoded = serde_json::to_string(&payload).map_err(|_error| fmt::Error)?;
-        writer.write_str(encoded.as_str())?;
-        writeln!(writer)
+        writeln!(writer, "{encoded}")
     }
 }
 
-impl Visit for JsonEventVisitor {
-    fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields
-            .insert(field.name().to_owned(), Value::Bool(value));
-    }
-
-    fn record_i64(&mut self, field: &Field, value: i64) {
-        self.fields
-            .insert(field.name().to_owned(), Value::Number(Number::from(value)));
-    }
-
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        self.fields
-            .insert(field.name().to_owned(), Value::Number(Number::from(value)));
-    }
-
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.fields
-            .insert(field.name().to_owned(), Value::String(value.to_owned()));
-    }
-
-    fn record_error(&mut self, field: &Field, value: &(dyn StdError + 'static)) {
-        self.fields
-            .insert(field.name().to_owned(), Value::String(value.to_string()));
-    }
-
-    fn record_f64(&mut self, field: &Field, value: f64) {
-        let json_value =
-            Number::from_f64(value).map_or_else(|| Value::String(value.to_string()), Value::Number);
-        self.fields.insert(field.name().to_owned(), json_value);
-    }
-
-    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.fields
-            .insert(field.name().to_owned(), Value::String(format!("{value:?}")));
-    }
-}
-
-impl<S> Layer<S> for SpanFieldCaptureLayer
+impl<S> Serialize for JsonSpans<'_, '_, S>
 where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
 {
-    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: LayerContext<'_, S>) {
-        let Some(span) = ctx.span(id) else { return };
-        let mut visitor = JsonEventVisitor::default();
-        attrs.record(&mut visitor);
-        visitor
-            .fields
-            .retain(|name, _| INHERITED_CORRELATION_FIELDS.contains(&name.as_str()));
-        span.extensions_mut().insert(SpanFieldStore {
-            fields: visitor.fields,
-        });
-    }
-
-    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: LayerContext<'_, S>) {
-        let Some(span) = ctx.span(id) else { return };
-        let mut visitor = JsonEventVisitor::default();
-        values.record(&mut visitor);
-        visitor
-            .fields
-            .retain(|name, _| INHERITED_CORRELATION_FIELDS.contains(&name.as_str()));
-        if let Some(store) = span.extensions_mut().get_mut::<SpanFieldStore>() {
-            store.fields.extend(visitor.fields);
+    fn serialize<T: Serializer>(&self, serializer: T) -> Result<T::Ok, T::Error> {
+        let mut sequence = serializer.serialize_seq(None)?;
+        // Explicit-parent events can belong to a different scope than the entered span.
+        for span in self.0.event_scope().into_iter().flat_map(Scope::from_root) {
+            let extensions = span.extensions();
+            if let Some(fields) = extensions.get::<FormattedFields<JsonFields>>() {
+                let fields = serde_json::from_str::<&RawValue>(fields.fields.as_str())
+                    .map_err(T::Error::custom)?;
+                sequence.serialize_element(&JsonSpan {
+                    name: span.name(),
+                    fields,
+                })?;
+            }
         }
+        sequence.end()
     }
 }
 
@@ -268,15 +225,16 @@ pub fn init_tracing(config: &TelemetryConfig, process_id: u32) -> Result<Telemet
             subscriber.try_init()?;
         }
         TelemetryLogFormat::Json => {
-            let subscriber = Registry::default()
-                .with(env_filter)
-                .with(SpanFieldCaptureLayer)
-                .with(
-                    fmt_layer()
-                        .fmt_fields(JsonFields::new())
-                        .event_format(RuntimeJsonFormatter::new(resource.clone()))
-                        .with_ansi(false),
-                );
+            let formatter = RuntimeJsonFormatter::new(resource.clone());
+            let subscriber = Registry::default().with(env_filter);
+            #[cfg(feature = "otel-tracing")]
+            let subscriber = subscriber.with(formatter.clone());
+            let subscriber = subscriber.with(
+                fmt_layer()
+                    .fmt_fields(JsonFields::new())
+                    .event_format(formatter)
+                    .with_ansi(false),
+            );
             #[cfg(feature = "otel-tracing")]
             let subscriber = subscriber.with(
                 tracer
@@ -358,49 +316,6 @@ pub fn activated_span(span: Span) -> Span {
 #[must_use]
 pub fn activated_span(span: Span) -> Span {
     span
-}
-
-#[cfg(feature = "otel-tracing")]
-fn current_trace_id<S, N>(ctx: &FmtContext<'_, S, N>) -> Option<String>
-where
-    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-    N: for<'fields> FormatFields<'fields> + 'static,
-{
-    dispatcher::get_default(|dispatch| {
-        ctx.event_scope()
-            .and_then(|mut scope| scope.find_map(|span| trace_id_for_span(&span, dispatch)))
-            .or_else(|| {
-                ctx.lookup_current()
-                    .and_then(|span| trace_id_for_span(&span, dispatch))
-            })
-    })
-}
-
-#[cfg(not(feature = "otel-tracing"))]
-fn current_trace_id<S, N>(_ctx: &FmtContext<'_, S, N>) -> Option<String>
-where
-    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-    N: for<'fields> FormatFields<'fields> + 'static,
-{
-    None
-}
-
-#[cfg(feature = "otel-tracing")]
-fn trace_id_for_span<S>(span: &SpanRef<'_, S>, dispatch: &tracing::Dispatch) -> Option<String>
-where
-    S: for<'lookup> LookupSpan<'lookup>,
-{
-    get_otel_context(&span.id(), dispatch)
-        .and_then(|context| trace_id_from_context(&context))
-        .or_else(|| trace_id_from_context(&Context::current()))
-}
-
-#[cfg(feature = "otel-tracing")]
-fn trace_id_from_context(context: &Context) -> Option<String> {
-    let span_context = context.span().span_context().clone();
-    span_context
-        .is_valid()
-        .then(|| span_context.trace_id().to_string())
 }
 
 fn default_env_filter() -> EnvFilter {
