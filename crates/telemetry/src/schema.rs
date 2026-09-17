@@ -6,7 +6,6 @@
 //! strings when the name is part of the public telemetry contract
 
 pub mod event {
-    pub const RUNTIME_LOG: &str = "runtime.log";
     pub const HTTP_LISTENER_READY: &str = "http.listener.ready";
     pub const RUNTIME_BOOT: &str = "runtime.boot";
     pub const RUNTIME_TELEMETRY_INITIALIZED: &str = "runtime.telemetry_initialized";
@@ -40,6 +39,7 @@ pub mod field {
     pub const DURATION_MS: &str = "duration_ms";
     pub const ERROR_KIND: &str = "error_kind";
     pub const EVENT: &str = "event";
+    pub const FIELDS: &str = "fields";
     pub const LEVEL: &str = "level";
     pub const MESSAGE: &str = "message";
     pub const MEDIA_WORKER_ID: &str = "media_worker_id";
@@ -50,6 +50,7 @@ pub mod field {
     pub const SERVICE_INSTANCE_ID: &str = "service.instance.id";
     pub const SERVICE_NAME: &str = "service.name";
     pub const SERVICE_VERSION: &str = "service.version";
+    pub const SPANS: &str = "spans";
     pub const USER_ID: &str = "user_id";
     pub const TARGET: &str = "target";
     pub const TIMESTAMP: &str = "timestamp";
@@ -57,11 +58,12 @@ pub mod field {
     pub const TRANSPORT_MEDIA_ID: &str = "transport_media_id";
 }
 
+/// Required top-level JSON log envelope fields.
 pub const COMMON_FIELD_NAMES: &[&str] = &[
     field::TIMESTAMP,
     field::LEVEL,
-    field::EVENT,
-    field::MESSAGE,
+    field::FIELDS,
+    field::SPANS,
     field::TARGET,
     field::SERVICE_NAME,
     field::SERVICE_VERSION,

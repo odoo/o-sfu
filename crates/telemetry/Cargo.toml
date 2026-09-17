@@ -26,10 +26,11 @@ opentelemetry = { version = "0.32", features = ["trace"], optional = true }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"], optional = true }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace"], optional = true }
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 time.workspace = true
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.33", optional = true }
+tracing-serde = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [lints]

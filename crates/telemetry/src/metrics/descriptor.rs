@@ -22,6 +22,12 @@ use super::{
 mod tests;
 
 macro_rules! metric_catalog {
+    (@kind Counter) => { "counter" };
+    (@kind Gauge) => { "gauge" };
+    (@kind Histogram) => { "histogram" };
+    (@metadata $name:literal, $help:literal, $kind:ident) => {
+        concat!("# HELP ", $name, " ", $help, "\n# TYPE ", $name, " ", metric_catalog!(@kind $kind), "\n")
+    };
     ($($id:ident {
         name: $name:literal,
         help: $help:literal,
@@ -41,14 +47,13 @@ macro_rules! metric_catalog {
         pub(crate) const METRIC_FAMILY_COUNT: usize = [$(MetricName::$id),+].len();
 
         const PROMETHEUS_METADATA_CAPACITY: usize = 0 $(
-            + "# HELP ".len() + $name.len() + 1 + $help.len() + 1
-            + "# TYPE ".len() + $name.len() + 1 + MetricKind::$kind.name().len() + 1
+            + metric_catalog!(@metadata $name, $help, $kind).len()
         )+;
 
         fn export(
             metrics: &RuntimeMetrics,
             room_gauges: RoomGaugeValues,
-            output: &mut MetricOutput,
+            destination: &mut MetricDestination<'_>,
         ) {
             let capture = MetricCapture {
                 room_gauges,
@@ -56,17 +61,18 @@ macro_rules! metric_catalog {
                 rtc: metrics.rtc_metrics.snapshot(),
             };
             $(
-                output.begin_family(MetricDescriptor {
-                    #[cfg(any(test, feature = "test-support"))]
-                    id: MetricName::$id,
-                    name: $name,
-                    help: $help,
-                    kind: MetricKind::$kind,
-                });
                 {
                     let $metrics = metrics;
                     let $capture = &capture;
-                    let $output = &mut *output;
+                    let $output = &mut MetricOutput::new(
+                        MetricDescriptor {
+                            #[cfg(any(test, feature = "test-support"))]
+                            id: MetricName::$id,
+                            name: $name,
+                        },
+                        metric_catalog!(@metadata $name, $help, $kind),
+                        destination,
+                    );
                     let _ = ($metrics, $capture);
                     $samples
                 }
@@ -76,29 +82,10 @@ macro_rules! metric_catalog {
 }
 
 #[derive(Clone, Copy)]
-enum MetricKind {
-    Counter,
-    Gauge,
-    Histogram,
-}
-
-impl MetricKind {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Counter => "counter",
-            Self::Gauge => "gauge",
-            Self::Histogram => "histogram",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
 struct MetricDescriptor {
     #[cfg(any(test, feature = "test-support"))]
     id: MetricName,
     name: &'static str,
-    help: &'static str,
-    kind: MetricKind,
 }
 
 struct MetricCapture {
@@ -145,74 +132,57 @@ impl MetricLabel {
     }
 }
 
-struct MetricOutput {
-    family: Option<MetricDescriptor>,
-    text: Option<String>,
+enum MetricDestination<'a> {
+    Prometheus(&'a mut String),
     #[cfg(any(test, feature = "test-support"))]
-    snapshot: Option<SnapshotWriter>,
+    Snapshot(&'a mut SnapshotWriter),
 }
 
-impl MetricOutput {
-    fn prometheus() -> Self {
-        Self {
-            family: None,
-            text: Some(String::with_capacity(PROMETHEUS_METADATA_CAPACITY)),
+struct MetricOutput<'a, 'b> {
+    family: MetricDescriptor,
+    destination: &'a mut MetricDestination<'b>,
+}
+
+impl<'a, 'b> MetricOutput<'a, 'b> {
+    fn new(
+        family: MetricDescriptor,
+        metadata: &str,
+        destination: &'a mut MetricDestination<'b>,
+    ) -> Self {
+        match destination {
+            MetricDestination::Prometheus(output) => output.push_str(metadata),
             #[cfg(any(test, feature = "test-support"))]
-            snapshot: None,
+            MetricDestination::Snapshot(_) => {}
         }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn snapshot() -> Self {
         Self {
-            family: None,
-            text: None,
-            snapshot: Some(SnapshotWriter::default()),
+            family,
+            destination,
         }
-    }
-
-    fn begin_family(&mut self, descriptor: MetricDescriptor) {
-        self.family = Some(descriptor);
-        let Some(output) = &mut self.text else {
-            return;
-        };
-        output.push_str("# HELP ");
-        output.push_str(descriptor.name);
-        output.push(' ');
-        output.push_str(descriptor.help);
-        output.push('\n');
-        output.push_str("# TYPE ");
-        output.push_str(descriptor.name);
-        output.push(' ');
-        output.push_str(descriptor.kind.name());
-        output.push('\n');
     }
 
     fn counter(&mut self, labels: &[MetricLabel], value: u64) {
-        let Some(descriptor) = self.family else {
-            return;
-        };
-        if let Some(output) = &mut self.text {
-            append_sample_name(output, descriptor.name, labels);
-            let _ = writeln!(output, " {value}");
-        }
-        #[cfg(any(test, feature = "test-support"))]
-        if let Some(snapshot) = &mut self.snapshot {
-            snapshot.counter(descriptor.id, Box::from(labels), value);
+        match self.destination {
+            MetricDestination::Prometheus(output) => {
+                append_sample_name(output, self.family.name, labels);
+                let _ = writeln!(output, " {value}");
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            MetricDestination::Snapshot(snapshot) => {
+                snapshot.counter(self.family.id, Box::from(labels), value);
+            }
         }
     }
 
     fn gauge(&mut self, labels: &[MetricLabel], value: i64) {
-        let Some(descriptor) = self.family else {
-            return;
-        };
-        if let Some(output) = &mut self.text {
-            append_sample_name(output, descriptor.name, labels);
-            let _ = writeln!(output, " {value}");
-        }
-        #[cfg(any(test, feature = "test-support"))]
-        if let Some(snapshot) = &mut self.snapshot {
-            snapshot.gauge(descriptor.id, Box::from(labels), value);
+        match self.destination {
+            MetricDestination::Prometheus(output) => {
+                append_sample_name(output, self.family.name, labels);
+                let _ = writeln!(output, " {value}");
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            MetricDestination::Snapshot(snapshot) => {
+                snapshot.gauge(self.family.id, Box::from(labels), value);
+            }
         }
     }
 
@@ -225,82 +195,81 @@ impl MetricOutput {
     ) where
         B: MetricBucketLabel,
     {
-        let Some(descriptor) = self.family else {
-            return;
-        };
-        if let Some(output) = &mut self.text {
-            let mut floor = 0;
-            for bucket in B::VARIANTS {
-                let value = floor.max(load_bucket(*bucket));
-                floor = value;
-                output.push_str(descriptor.name);
-                output.push_str("_bucket");
-                append_labels(
-                    output,
-                    labels,
-                    Some(MetricLabel::text("le", bucket.upper_bound())),
-                );
-                let _ = writeln!(output, " {value}");
-            }
-            let count = floor.max(load_count());
-            let sum_micros = load_sum_micros();
-            output.push_str(descriptor.name);
-            output.push_str("_bucket");
-            append_labels(output, labels, Some(MetricLabel::text("le", "+Inf")));
-            let _ = writeln!(output, " {count}");
-            output.push_str(descriptor.name);
-            output.push_str("_sum");
-            append_labels(output, labels, None);
-            output.push(' ');
-            append_seconds_from_micros(output, sum_micros);
-            output.push('\n');
-            output.push_str(descriptor.name);
-            output.push_str("_count");
-            append_labels(output, labels, None);
-            let _ = writeln!(output, " {count}");
-        }
-        #[cfg(any(test, feature = "test-support"))]
-        if let Some(snapshot) = &mut self.snapshot {
-            let mut floor = 0;
-            let buckets = B::VARIANTS
-                .iter()
-                .map(|bucket| {
+        let descriptor = self.family;
+        match self.destination {
+            MetricDestination::Prometheus(output) => {
+                let mut floor = 0;
+                for bucket in B::VARIANTS {
                     let value = floor.max(load_bucket(*bucket));
                     floor = value;
-                    (bucket.upper_bound(), value)
-                })
-                .collect();
-            snapshot.histogram(
-                descriptor.id,
-                Box::from(labels),
-                buckets,
-                floor.max(load_count()),
-                load_sum_micros(),
-            );
+                    output.push_str(descriptor.name);
+                    output.push_str("_bucket");
+                    append_labels(
+                        output,
+                        labels,
+                        Some(MetricLabel::text("le", bucket.upper_bound())),
+                    );
+                    let _ = writeln!(output, " {value}");
+                }
+                let count = floor.max(load_count());
+                let sum_micros = load_sum_micros();
+                output.push_str(descriptor.name);
+                output.push_str("_bucket");
+                append_labels(output, labels, Some(MetricLabel::text("le", "+Inf")));
+                let _ = writeln!(output, " {count}");
+                output.push_str(descriptor.name);
+                output.push_str("_sum");
+                append_labels(output, labels, None);
+                output.push(' ');
+                append_seconds_from_micros(output, sum_micros);
+                output.push('\n');
+                output.push_str(descriptor.name);
+                output.push_str("_count");
+                append_labels(output, labels, None);
+                let _ = writeln!(output, " {count}");
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            MetricDestination::Snapshot(snapshot) => {
+                let mut floor = 0;
+                let buckets = B::VARIANTS
+                    .iter()
+                    .map(|bucket| {
+                        let value = floor.max(load_bucket(*bucket));
+                        floor = value;
+                        (bucket.upper_bound(), value)
+                    })
+                    .collect();
+                snapshot.histogram(
+                    descriptor.id,
+                    Box::from(labels),
+                    buckets,
+                    floor.max(load_count()),
+                    load_sum_micros(),
+                );
+            }
         }
-    }
-
-    fn finish_prometheus(self) -> String {
-        self.text.unwrap_or_default()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn finish_snapshot(self) -> RuntimeMetricsSnapshot {
-        self.snapshot.unwrap_or_default().finish()
     }
 }
 
 pub(crate) fn render_prometheus_text(metrics: &RuntimeMetrics, gauges: RoomGaugeValues) -> String {
-    let mut output = MetricOutput::prometheus();
-    export(metrics, gauges, &mut output);
-    output.finish_prometheus()
+    let mut text = String::with_capacity(PROMETHEUS_METADATA_CAPACITY);
+    export(
+        metrics,
+        gauges,
+        &mut MetricDestination::Prometheus(&mut text),
+    );
+    text
 }
 
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn build_snapshot(metrics: &RuntimeMetrics) -> RuntimeMetricsSnapshot {
-    let mut output = MetricOutput::snapshot();
-    export(metrics, RoomGaugeValues::default(), &mut output);
-    output.finish_snapshot()
+    let mut snapshot = SnapshotWriter::default();
+    export(
+        metrics,
+        RoomGaugeValues::default(),
+        &mut MetricDestination::Snapshot(&mut snapshot),
+    );
+    snapshot.finish()
 }
 
 fn gauge_count(value: usize) -> i64 {
@@ -890,7 +859,7 @@ metric_catalog! {
 }
 
 fn write_counter_family<L>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     family: &CounterFamily<L>,
     label_name: &'static str,
 ) where
@@ -905,14 +874,14 @@ fn write_counter_family<L>(
     }
 }
 
-fn write_label_pair_counter_family<L>(output: &mut MetricOutput, family: &CounterFamily<L>)
+fn write_label_pair_counter_family<L>(output: &mut MetricOutput<'_, '_>, family: &CounterFamily<L>)
 where
     L: ExportedMetricLabelPair,
 {
     write_label_pair_counters(output, |label| family.load(label));
 }
 
-fn write_label_pair_counters<L>(output: &mut MetricOutput, load: impl Fn(L) -> u64)
+fn write_label_pair_counters<L>(output: &mut MetricOutput<'_, '_>, load: impl Fn(L) -> u64)
 where
     L: ExportedMetricLabelPair,
 {
@@ -922,7 +891,7 @@ where
 }
 
 fn write_snapshot_counters<S, L>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     snapshot: &S,
     label_name: &'static str,
     read: fn(&S, L) -> u64,
@@ -939,7 +908,7 @@ fn write_snapshot_counters<S, L>(
 }
 
 fn write_rtp_worker_counters<L>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     snapshot: &RtpMetricsSnapshot,
     label_name: &'static str,
     read: fn(&RtpTrafficSnapshot, L) -> u64,
@@ -960,7 +929,7 @@ fn write_rtp_worker_counters<L>(
 }
 
 fn write_up_down_counter_family<L>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     family: &UpDownCounterFamily<L>,
     label_name: &'static str,
 ) where
@@ -975,7 +944,7 @@ fn write_up_down_counter_family<L>(
 }
 
 fn write_histogram_family<L, B>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     family: &HistogramFamily<L, B>,
     label_name: &'static str,
 ) where
@@ -993,7 +962,7 @@ fn write_histogram_family<L, B>(
 }
 
 fn counter<const N: usize>(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     labels: [(&'static str, &'static str); N],
     value: u64,
 ) {
@@ -1004,7 +973,7 @@ fn counter<const N: usize>(
 }
 
 fn control_plane_histogram(
-    output: &mut MetricOutput,
+    output: &mut MetricOutput<'_, '_>,
     histogram: &Histogram<ControlPlaneDurationBucket>,
 ) {
     output.histogram(

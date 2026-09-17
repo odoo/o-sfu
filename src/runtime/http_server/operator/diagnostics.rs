@@ -1,4 +1,4 @@
-//! HTTP response handlers for runtime diagnostics and node graphs.
+//! HTTP response handlers for runtime diagnostics.
 
 use std::sync::Arc;
 
@@ -72,36 +72,6 @@ pub(super) async fn room_users(
         &room_id,
     )
     .await;
-    optional_response(payload)
-}
-
-/// node-graph projection for one room diagnostics payload
-pub(super) async fn room_graph(
-    State(services): State<DiagnosticsServices>,
-    Path(room_id): Path<String>,
-) -> Response {
-    let payload = diagnostics::room_detail_response(
-        &services.room_manager,
-        &services.media_transport,
-        &room_id,
-    )
-    .await
-    .map(|payload| diagnostics::build_graph(&payload));
-    optional_response(payload)
-}
-
-/// node-graph projection rooted at one user in one room
-pub(super) async fn user_graph(
-    State(services): State<DiagnosticsServices>,
-    Path((room_id, user_key)): Path<(String, String)>,
-) -> Response {
-    let payload = diagnostics::room_detail_response(
-        &services.room_manager,
-        &services.media_transport,
-        &room_id,
-    )
-    .await
-    .and_then(|payload| diagnostics::build_user_graph(&payload, &user_key));
     optional_response(payload)
 }
 

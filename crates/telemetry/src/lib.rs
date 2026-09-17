@@ -24,7 +24,6 @@
 
 mod config;
 pub mod diagnostics;
-pub mod graph;
 pub mod metrics;
 pub mod prometheus;
 pub mod schema;

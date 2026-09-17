@@ -44,8 +44,6 @@ pub(super) fn routes(state: &RuntimeState, listener_address: SocketAddr) -> Rout
         .route(route::diagnostics::ROOM, get(diagnostics::room_detail))
         .route(route::diagnostics::ROOM_USERS, get(diagnostics::room_users))
         .route(route::diagnostics::ROOM_USER, get(diagnostics::user_detail))
-        .route(route::diagnostics::ROOM_GRAPH, get(diagnostics::room_graph))
-        .route(route::diagnostics::USER_GRAPH, get(diagnostics::user_graph))
         .route_layer(authorization);
     observation_routes.merge(diagnostics_routes)
 }

@@ -5,6 +5,7 @@ use std::{
 };
 
 use o_sfu_model::UserId;
+use serde_json::Value;
 use tracing::{Subscriber, subscriber};
 #[cfg(feature = "otel-tracing")]
 use tracing_opentelemetry::OpenTelemetryLayer;
@@ -54,16 +55,11 @@ fn json_values(writer: &SharedWriter) -> Result<Vec<Value>, Box<dyn Error>> {
         .map_err(Into::into)
 }
 
-fn json_string<'value>(value: &'value Value, key: &str) -> Option<&'value str> {
-    value.get(key).and_then(Value::as_str)
-}
-
-fn json_is_string(value: &Value, key: &str) -> bool {
-    value.get(key).is_some_and(Value::is_string)
-}
-
-fn assert_json_string(value: &Value, key: &str, expected: &str) {
-    assert_eq!(json_string(value, key), Some(expected));
+fn assert_json_string(value: &Value, pointer: &str, expected: &str) {
+    assert_eq!(
+        value.pointer(pointer).and_then(Value::as_str),
+        Some(expected)
+    );
 }
 
 #[cfg(feature = "otel-tracing")]
@@ -80,89 +76,84 @@ fn normalize_trace_export_endpoint_appends_default_http_trace_path() {
 }
 
 #[test]
-fn json_formatter_emits_common_fields() -> Result<(), Box<dyn Error>> {
+fn json_formatter_separates_event_fields_from_metadata() -> Result<(), Box<dyn Error>> {
     let writer = SharedWriter::default();
-    let subscriber = json_test_subscriber(writer.clone());
-    subscriber::with_default(subscriber, || {
-        let span = activated_span(tracing::info_span!("ws.handshake", room_id = "room-a"));
-        let _entered = span.enter();
+    subscriber::with_default(json_test_subscriber(writer.clone()), || {
         tracing::info!(
             event = schema::event::USER_JOINED,
-            user_id = "user-1",
-            message = "joined user"
+            target = "application-target",
+            trace_id = "application-trace",
+            timestamp = "application-time",
+            connection_id = u64::MAX,
+            active = true,
+            value = 1.5,
+            "joined user"
         );
     });
-
     let values = json_values(&writer)?;
     let [value] = values.as_slice() else {
         return Err(io::Error::other("expected one JSON log").into());
     };
-
-    assert_json_string(value, "event", schema::event::USER_JOINED);
-    assert_json_string(value, "message", "joined user");
-    assert_json_string(value, "service.name", "o-sfu-test");
-    assert_json_string(value, "service.version", env!("CARGO_PKG_VERSION"));
-    assert_json_string(value, "service.instance.id", "test-instance");
-    assert_json_string(value, "deployment.environment", "test");
-    assert_json_string(value, "user_id", "user-1");
-    assert_json_string(value, "target", "o_sfu_telemetry::setup::tests");
-    assert!(json_is_string(value, "timestamp"));
-    #[cfg(feature = "otel-tracing")]
-    assert!(json_is_string(value, "trace_id"));
-    #[cfg(feature = "otel-tracing")]
-    assert_ne!(
-        json_string(value, "trace_id"),
-        Some("00000000000000000000000000000000")
-    );
-    #[cfg(not(feature = "otel-tracing"))]
+    assert_json_string(value, "/fields/event", schema::event::USER_JOINED);
+    assert_json_string(value, "/fields/message", "joined user");
+    assert_json_string(value, "/service.name", "o-sfu-test");
+    assert_json_string(value, "/service.version", env!("CARGO_PKG_VERSION"));
+    assert_json_string(value, "/service.instance.id", "test-instance");
+    assert_json_string(value, "/deployment.environment", "test");
+    assert_json_string(value, "/target", "o_sfu_telemetry::setup::tests");
+    assert_json_string(value, "/fields/target", "application-target");
+    assert_json_string(value, "/fields/trace_id", "application-trace");
+    assert_json_string(value, "/fields/timestamp", "application-time");
+    assert!(value.get("timestamp").is_some_and(Value::is_string));
     assert!(value.get("trace_id").is_none());
+    assert_eq!(
+        value
+            .pointer("/fields/connection_id")
+            .and_then(Value::as_u64),
+        Some(u64::MAX)
+    );
+    assert_eq!(
+        value.pointer("/fields/active").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        value.pointer("/fields/value").and_then(Value::as_f64),
+        Some(1.5)
+    );
+    assert_eq!(
+        value.get("spans").and_then(Value::as_array).map(Vec::len),
+        Some(0)
+    );
     Ok(())
 }
 
 #[test]
-fn json_formatter_preserves_initial_transport_health_origin() -> Result<(), Box<dyn Error>> {
+fn json_formatter_preserves_optional_event_fields() -> Result<(), Box<dyn Error>> {
     let writer = SharedWriter::default();
-    let subscriber = json_test_subscriber(writer.clone());
-    subscriber::with_default(subscriber, || {
+    subscriber::with_default(json_test_subscriber(writer.clone()), || {
         tracing::info!(
-            target: "o_sfu_core::transport",
             event = schema::event::TRANSPORT_HEALTH_CHANGED,
-            room_id = "room-a",
-            user_id = "7",
-            media_worker_id = 1_u64,
             from = Option::<&str>::None,
             to = "connected",
             "transport health changed"
         );
-        tracing::info!(
-            target: "o_sfu_core::transport",
-            event = schema::event::TRANSPORT_HEALTH_CHANGED,
-            room_id = "room-a",
-            user_id = "7",
-            media_worker_id = 1_u64,
-            from = "connected",
-            to = "disconnected",
-            "transport health changed"
-        );
+        tracing::info!("message without an event name");
     });
-
     let values = json_values(&writer)?;
-    let [initial, transition] = values.as_slice() else {
+    let [initial, unnamed] = values.as_slice() else {
         return Err(io::Error::other("expected two JSON logs").into());
     };
-
-    assert!(initial.get("from").is_some_and(Value::is_null));
-    assert_json_string(initial, "to", "connected");
-    assert_json_string(transition, "from", "connected");
-    assert_json_string(transition, "to", "disconnected");
+    assert!(initial.pointer("/fields/from").is_none());
+    assert_json_string(initial, "/fields/to", "connected");
+    assert!(unnamed.pointer("/fields/event").is_none());
+    assert_json_string(unnamed, "/fields/message", "message without an event name");
     Ok(())
 }
 
 #[test]
-fn json_formatter_inherits_span_correlation_fields() -> Result<(), Box<dyn Error>> {
+fn json_formatter_preserves_span_fields_and_late_updates() -> Result<(), Box<dyn Error>> {
     let writer = SharedWriter::default();
-    let subscriber = json_test_subscriber(writer.clone());
-    subscriber::with_default(subscriber, || {
+    subscriber::with_default(json_test_subscriber(writer.clone()), || {
         let outer = activated_span(tracing::info_span!(
             "ws.handshake",
             room_id = field::Empty,
@@ -172,60 +163,122 @@ fn json_formatter_inherits_span_correlation_fields() -> Result<(), Box<dyn Error
             stream_type = "webcam",
             active = field::Empty,
         ));
-        // Late-record via Span::record, same shape as session.rs::record_current_span.
-        outer.record("room_id", field::display("room-late"));
+        outer.record("room_id", "room-before");
+        outer.record("room_id", "room-late");
         outer.record("user_id", field::display(UserId::Integer(7).path_segment()));
         outer.record("connection_id", 42_u64);
         outer.record("active", true);
         let _outer_guard = outer.enter();
-
-        tracing::info!(event = schema::event::USER_JOINED, "outer event");
-
         let inner = activated_span(tracing::info_span!(
             "room.join",
             user_id = "u-inner",
             source_count = 3_u64,
         ));
         let _inner_guard = inner.enter();
-
         tracing::info!(
             event = schema::event::USER_JOINED,
             room_id = "room-explicit",
-            "inner event",
+            "inner event"
         );
     });
-
     let values = json_values(&writer)?;
-    let [outer_event, inner_event] = values.as_slice() else {
-        return Err(io::Error::other("expected two JSON logs").into());
+    let [value] = values.as_slice() else {
+        return Err(io::Error::other("expected one JSON log").into());
     };
-
-    assert_json_string(outer_event, "room_id", "room-late");
-    assert_json_string(outer_event, "user_id", "7");
+    assert_json_string(value, "/fields/room_id", "room-explicit");
+    assert!(value.pointer("/fields/user_id").is_none());
+    assert!(value.get("room_id").is_none());
     assert_eq!(
-        outer_event.get("connection_id").and_then(Value::as_u64),
+        value.get("spans").and_then(Value::as_array).map(Vec::len),
+        Some(2)
+    );
+    assert_json_string(value, "/spans/0/name", "ws.handshake");
+    assert_json_string(value, "/spans/0/fields/room_id", "room-late");
+    assert_json_string(value, "/spans/0/fields/user_id", "7");
+    assert_json_string(value, "/spans/0/fields/remote_address", "remote-outer");
+    assert_json_string(value, "/spans/0/fields/stream_type", "webcam");
+    assert_eq!(
+        value
+            .pointer("/spans/0/fields/connection_id")
+            .and_then(Value::as_u64),
         Some(42)
     );
-    assert_json_string(outer_event, "remote_address", "remote-outer");
-
-    assert_json_string(inner_event, "room_id", "room-explicit");
-    assert_json_string(inner_event, "user_id", "u-inner");
     assert_eq!(
-        inner_event.get("connection_id").and_then(Value::as_u64),
-        Some(42)
+        value
+            .pointer("/spans/0/fields/active")
+            .and_then(Value::as_bool),
+        Some(true)
     );
-    assert_json_string(inner_event, "remote_address", "remote-outer");
-
-    for event in [outer_event, inner_event] {
-        assert!(event.get("stream_type").is_none());
-        assert!(event.get("active").is_none());
-        assert!(event.get("source_count").is_none());
-    }
+    assert_json_string(value, "/spans/1/name", "room.join");
+    assert_json_string(value, "/spans/1/fields/user_id", "u-inner");
+    assert_eq!(
+        value
+            .pointer("/spans/1/fields/source_count")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    #[cfg(feature = "otel-tracing")]
+    assert!(value.get("trace_id").is_some_and(|id| {
+        id.as_str()
+            .is_some_and(|id| id != "00000000000000000000000000000000")
+    }));
+    #[cfg(not(feature = "otel-tracing"))]
+    assert!(value.get("trace_id").is_none());
     Ok(())
 }
 
-fn json_test_config() -> TelemetryConfig {
-    TelemetryConfig {
+#[test]
+fn json_formatter_uses_the_event_parent_scope() -> Result<(), Box<dyn Error>> {
+    let writer = SharedWriter::default();
+    let expected_trace_id = subscriber::with_default(json_test_subscriber(writer.clone()), || {
+        let parent = tracing::info_span!(parent: None, "parent", room_id = "room-parent");
+        let entered = tracing::info_span!(parent: None, "entered", room_id = "room-entered");
+        let _guard = entered.enter();
+        tracing::info!(parent: &parent, "explicit parent");
+        tracing::info!(parent: None, "unparented event");
+        #[cfg(feature = "otel-tracing")]
+        let expected = Some(
+            parent
+                .context()
+                .span()
+                .span_context()
+                .trace_id()
+                .to_string(),
+        );
+        #[cfg(not(feature = "otel-tracing"))]
+        let expected = None::<String>;
+        expected
+    });
+    let values = json_values(&writer)?;
+    let [parented, unparented] = values.as_slice() else {
+        return Err(io::Error::other("expected two JSON logs").into());
+    };
+    assert_eq!(
+        parented
+            .get("spans")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_json_string(parented, "/spans/0/name", "parent");
+    assert_json_string(parented, "/spans/0/fields/room_id", "room-parent");
+    assert_eq!(
+        parented.get("trace_id").and_then(Value::as_str),
+        expected_trace_id.as_deref()
+    );
+    assert_eq!(
+        unparented
+            .get("spans")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(unparented.get("trace_id").is_none());
+    Ok(())
+}
+
+fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
+    let config = TelemetryConfig {
         log_format: TelemetryLogFormat::Json,
         resource: TelemetryResource {
             service_name: "o-sfu-test".to_owned(),
@@ -234,25 +287,23 @@ fn json_test_config() -> TelemetryConfig {
         },
         trace_export: TraceExportConfig::default(),
         media_quality_interval: None,
-    }
-}
-
-fn json_test_subscriber(writer: SharedWriter) -> impl Subscriber + Send + Sync {
-    let resource = telemetry_resource_fields(&json_test_config(), 7);
+    };
+    let resource = telemetry_resource_fields(&config, 7);
     #[cfg(feature = "otel-tracing")]
     let tracer_provider = SdkTracerProvider::builder().build();
     #[cfg(feature = "otel-tracing")]
     let tracer = tracer_provider.tracer(TRACE_EXPORTER_NAME);
-    let subscriber = Registry::default()
-        .with(EnvFilter::new(DEFAULT_ENV_FILTER))
-        .with(SpanFieldCaptureLayer)
-        .with(
-            fmt_layer()
-                .fmt_fields(JsonFields::new())
-                .event_format(RuntimeJsonFormatter::new(resource))
-                .with_ansi(false)
-                .with_writer(writer),
-        );
+    let formatter = RuntimeJsonFormatter::new(resource);
+    let subscriber = Registry::default().with(EnvFilter::new(DEFAULT_ENV_FILTER));
+    #[cfg(feature = "otel-tracing")]
+    let subscriber = subscriber.with(formatter.clone());
+    let subscriber = subscriber.with(
+        fmt_layer()
+            .fmt_fields(JsonFields::new())
+            .event_format(formatter)
+            .with_ansi(false)
+            .with_writer(writer),
+    );
     #[cfg(feature = "otel-tracing")]
     let subscriber = subscriber.with(Some(OpenTelemetryLayer::new(tracer)));
     subscriber
