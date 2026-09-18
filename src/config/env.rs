@@ -1,9 +1,12 @@
 use std::{
+    marker::PhantomData,
     net::{IpAddr, SocketAddr},
+    num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, ensure};
+use o_sfu_core::prelude::Bitrate;
 
 type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
@@ -27,26 +30,43 @@ impl<'a> Env<'a> {
         Var {
             lookup: self.lookup.as_ref(),
             key,
-            checks: Vec::new(),
+            check: |_key, value| Ok(value),
             aliases: Vec::new(),
+            value: PhantomData,
         }
     }
 }
 
-pub(super) struct Var<'env, 'lookup, T> {
+/// Parses the first present key and validates its value in check order.
+///
+/// Checks may transform values and capture other settings. They receive the
+/// supplying key, including aliases. Defaults use the primary key and pass
+/// through the same checks. Missing optional values bypass parsing and checks.
+pub(super) struct Var<'env, 'lookup, T, C = fn(&'static str, T) -> Result<T>> {
     lookup: &'lookup Lookup<'env>,
     key: &'static str,
-    checks: Vec<fn(&'static str, T) -> Result<T>>,
+    check: C,
     aliases: Vec<&'static str>,
+    value: PhantomData<fn(T) -> T>,
 }
 
-impl<T> Var<'_, '_, T>
+impl<'env, 'lookup, T, C> Var<'env, 'lookup, T, C>
 where
     T: EnvParse,
+    C: Fn(&'static str, T) -> Result<T>,
 {
-    pub(super) fn check(mut self, check: fn(&'static str, T) -> Result<T>) -> Self {
-        self.checks.push(check);
-        self
+    /// Appends a check that runs only after all preceding checks succeed.
+    pub(super) fn check(
+        self,
+        check: impl Fn(&'static str, T) -> Result<T>,
+    ) -> Var<'env, 'lookup, T, impl Fn(&'static str, T) -> Result<T>> {
+        Var {
+            lookup: self.lookup,
+            key: self.key,
+            check: move |key, value| check(key, (self.check)(key, value)?),
+            aliases: self.aliases,
+            value: PhantomData,
+        }
     }
 
     pub(super) fn alias(mut self, alias: &'static str) -> Self {
@@ -54,6 +74,10 @@ where
         self
     }
 
+    /// Returns the parsed and checked value of the first present key.
+    ///
+    /// # Errors
+    /// Returns [`anyhow::Error`] when every key is absent or parsing or a check fails.
     pub(super) fn required(self) -> Result<T> {
         let value = self
             .load()
@@ -61,13 +85,22 @@ where
         self.parse(value)
     }
 
+    /// Uses the typed default only when every key is absent.
+    ///
+    /// # Errors
+    /// Returns [`anyhow::Error`] when parsing or a check fails, including checks
+    /// of the default value.
     pub(super) fn default(self, default: T) -> Result<T> {
         let Some(value) = self.load() else {
-            return self.validate(self.key, default);
+            return (self.check)(self.key, default);
         };
         self.parse(value)
     }
 
+    /// Returns `None` only when every key is absent.
+    ///
+    /// # Errors
+    /// Returns [`anyhow::Error`] when parsing or a check of a present value fails.
     pub(super) fn optional(self) -> Result<Option<T>> {
         self.load().map(|value| self.parse(value)).transpose()
     }
@@ -87,14 +120,7 @@ where
 
     fn parse(&self, value: EnvValue) -> Result<T> {
         let key = value.key;
-        self.validate(key, T::parse(value)?)
-    }
-
-    fn validate(&self, key: &'static str, mut value: T) -> Result<T> {
-        for check in &self.checks {
-            value = check(key, value)?;
-        }
-        Ok(value)
+        (self.check)(key, T::parse(value)?)
     }
 }
 
@@ -123,6 +149,27 @@ parse_from_str!(u16, "u16");
 parse_from_str!(u64, "u64");
 parse_from_str!(usize, "usize");
 
+impl EnvParse for NonZeroUsize {
+    fn parse(value: EnvValue) -> Result<Self> {
+        let key = value.key;
+        Self::new(usize::parse(value)?).ok_or_else(|| anyhow!("{key} must be greater than zero"))
+    }
+}
+
+impl EnvParse for NonZeroU64 {
+    fn parse(value: EnvValue) -> Result<Self> {
+        let key = value.key;
+        Self::new(u64::parse(value)?).ok_or_else(|| anyhow!("{key} must be greater than zero"))
+    }
+}
+
+/// Parses integer bits per second, including zero.
+impl EnvParse for Bitrate {
+    fn parse(value: EnvValue) -> Result<Self> {
+        u64::parse(value).map(Self::from_bps)
+    }
+}
+
 impl EnvParse for bool {
     fn parse(value: EnvValue) -> Result<Self> {
         let key = value.key;
@@ -150,11 +197,15 @@ impl EnvParse for Duration {
     }
 }
 
+/// Requires a value greater than zero for types whose default is zero.
+///
+/// # Errors
+/// Returns [`anyhow::Error`] when the value is not greater than zero.
 pub(super) fn positive<T>(key: &'static str, value: T) -> Result<T>
 where
-    T: From<u8> + PartialOrd,
+    T: Default + PartialOrd,
 {
-    ensure!(value > T::from(0), "{key} must be greater than zero");
+    ensure!(value > T::default(), "{key} must be greater than zero");
     Ok(value)
 }
 

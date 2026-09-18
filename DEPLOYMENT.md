@@ -588,10 +588,7 @@ Eligible layer downsteps are immediate. Soft pauses may keep the selected video
 bitrate above the receiver budget until `ROOM_SOFT_PAUSE_DWELL_MS` expires.
 Hard media limits remain immediate. Both dwells are bounded to
 `3153600000000` ms to keep deadline addition within the portable `Instant`
-range. The legacy
-`ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS` and
-`ROOM_UPSWITCH_STABLE_OBSERVATIONS` variables now reject startup with an error
-naming the corresponding duration variable. Replace them before upgrading.
+range.
 
 telemetry:
 
