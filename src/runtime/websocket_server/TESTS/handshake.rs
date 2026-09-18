@@ -1,5 +1,6 @@
 use axum::extract::ws::Message;
 use o_sfu_protocol::wire::WebSocketCloseCode;
+use secrecy::ExposeSecret;
 use serde_json::json;
 
 use super::{MAX_CLIENT_FRAME_BYTES, parse_auth_payload};
@@ -23,7 +24,7 @@ fn parse_auth_payload_accepts_single_auth_message() {
     let Some(payload) = payload.ok() else {
         return;
     };
-    assert_eq!(payload.jwt, "token");
+    assert_eq!(payload.jwt.expose_secret(), "token");
     assert_eq!(payload.channel.as_deref(), Some("room-1"));
 }
 

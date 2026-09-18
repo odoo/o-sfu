@@ -11,6 +11,7 @@ use o_sfu_protocol::wire::{
     ServerEnvelope, ServerMessage, ServerRequest, ServerResponse, StreamIntentPayload, StreamType,
     SubscribePayload, UserId, UserInfo, WelcomePayload,
 };
+use secrecy::SecretString;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::{self, protocol::frame::coding::CloseCode};
 
@@ -90,7 +91,7 @@ fn connect_fake_peer_with_video_answer<'a>(
             .send(tungstenite::Message::Text(
                 encode_client_batch(vec![ClientEnvelope::Message(ClientMessage::Auth(
                     AuthPayload {
-                        jwt: token,
+                        jwt: SecretString::from(token),
                         channel: Some(room_id.to_owned()),
                     },
                 ))])?

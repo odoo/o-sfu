@@ -200,7 +200,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     let config = RoomConfig::default();
 
     let room = rooms
-        .serve_room("issuer", TEST_ROOM_KEY, &config, None)
+        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
     sleep(RESERVATION_TTL * 2).await;
@@ -211,7 +211,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     );
     assert_eq!(rooms.room_gauges().await, RoomGaugeValues::default());
     let room_again = rooms
-        .serve_room("issuer", TEST_ROOM_KEY, &config, None)
+        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
 
