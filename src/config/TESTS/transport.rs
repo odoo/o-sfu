@@ -112,6 +112,56 @@ fn load_transport_config_requires_public_ip() {
 }
 
 #[test]
+fn load_transport_config_validates_public_ip_alias() -> Result<()> {
+    let config =
+        load_transport_config(|key| (key == "PUBLIC_IP").then(|| "203.0.113.10".to_owned()))?;
+    assert_eq!(config.announced_ip, IpAddr::from([203, 0, 113, 10]));
+    for (address, message) in [
+        ("0.0.0.0", "PUBLIC_IP must be a concrete advertised address"),
+        ("::", "PUBLIC_IP must be a concrete advertised address"),
+        ("239.1.1.1", "PUBLIC_IP cannot be a multicast address"),
+        ("ff02::1", "PUBLIC_IP cannot be a multicast address"),
+    ] {
+        let error = load_transport_config(|key| (key == "PUBLIC_IP").then(|| address.to_owned()))
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(error.as_deref(), Some(message), "{address}");
+    }
+    let error = load_transport_config_with_defaults(&[
+        ("ANNOUNCED_IP", "0.0.0.0"),
+        ("PUBLIC_IP", "203.0.113.10"),
+    ])
+    .err()
+    .map(|error| error.to_string());
+    assert_eq!(
+        error.as_deref(),
+        Some("ANNOUNCED_IP must be a concrete advertised address")
+    );
+    Ok(())
+}
+
+#[test]
+fn load_transport_config_accepts_capacity_boundaries() -> Result<()> {
+    for (max_port, worker_count) in [("4000", "1"), ("4001", "2")] {
+        let config = load_transport_config_with_defaults(&[
+            ("RTC_MIN_PORT", "4000"),
+            ("RTC_MAX_PORT", max_port),
+            ("RTC_MEDIA_WORKER_COUNT", worker_count),
+            ("ROOM_MAX_LOCAL_ROUTERS", worker_count),
+        ])?;
+        assert_eq!(
+            config.rtc_media_worker_count,
+            usize::from(config.rtc_port_range.port_count())
+        );
+        assert_eq!(
+            config.room_worker_policy.max_local_routers(),
+            config.rtc_media_worker_count
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn load_transport_config_accepts_room_spillover_policy() -> Result<()> {
     let config = load_transport_config_with_defaults(&[
         ("RTC_MEDIA_WORKER_COUNT", "3"),
@@ -168,6 +218,17 @@ fn load_transport_config_accepts_video_adaptation_tuning() -> Result<()> {
 }
 
 #[test]
+fn load_transport_config_accepts_zero_audio_reserve() -> Result<()> {
+    let config =
+        load_transport_config_with_defaults(&[("ROOM_AUDIO_RESERVE_PER_SPEAKER_BPS", "0")])?;
+    assert_eq!(
+        config.video_adaptation_tuning,
+        VideoAdaptationTuning::default()
+    );
+    Ok(())
+}
+
+#[test]
 fn load_transport_config_rejects_invalid_video_adaptation_tuning() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
@@ -177,17 +238,6 @@ fn load_transport_config_rejects_invalid_video_adaptation_tuning() {
         InvalidTransportCase {
             overrides: &[("ROOM_UPGRADE_DWELL_MS", "0")],
             message: "ROOM_UPGRADE_DWELL_MS must be greater than zero",
-        },
-        InvalidTransportCase {
-            overrides: &[("ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS", "2")],
-            message: "ROOM_DOWNSWITCH_PRESSURE_OBSERVATIONS is no longer supported, use ROOM_SOFT_PAUSE_DWELL_MS",
-        },
-        InvalidTransportCase {
-            overrides: &[
-                ("ROOM_UPSWITCH_STABLE_OBSERVATIONS", "3"),
-                ("ROOM_UPGRADE_DWELL_MS", "1250"),
-            ],
-            message: "ROOM_UPSWITCH_STABLE_OBSERVATIONS is no longer supported, use ROOM_UPGRADE_DWELL_MS",
         },
         InvalidTransportCase {
             overrides: &[("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT", "150")],
@@ -228,10 +278,6 @@ fn load_transport_config_keeps_explicit_single_router_strict() -> Result<()> {
 fn load_transport_config_rejects_invalid_transport_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
-            overrides: &[("TRANSPORT_BACKEND", "rtc")],
-            message: "TRANSPORT_BACKEND is no longer supported; o-sfu always boots the RTC transport",
-        },
-        InvalidTransportCase {
             overrides: &[("RTC_UDP_IO_BACKEND", "epoll")],
             message: "RTC_UDP_IO_BACKEND must be one of tokio or io_uring, got epoll",
         },
@@ -245,6 +291,10 @@ fn load_transport_config_rejects_invalid_transport_values() {
         },
         InvalidTransportCase {
             overrides: &[("RTC_MIN_PORT", "5000"), ("RTC_MAX_PORT", "4000")],
+            message: "RTC_MAX_PORT must be greater than or equal to RTC_MIN_PORT",
+        },
+        InvalidTransportCase {
+            overrides: &[("RTC_MIN_PORT", "50000")],
             message: "RTC_MAX_PORT must be greater than or equal to RTC_MIN_PORT",
         },
         InvalidTransportCase {
@@ -313,7 +363,7 @@ fn load_transport_config_rejects_invalid_bitrate_and_media_limit_values() {
 }
 
 #[test]
-fn load_transport_config_preserves_legacy_error_precedence() {
+fn load_transport_config_validates_values_in_read_order() {
     let error =
         load_transport_config_with_defaults(&[("MAX_BITRATE_IN", "0"), ("RTC_MAX_PORT", "abc")])
             .err()
@@ -334,7 +384,7 @@ fn load_transport_config_preserves_legacy_error_precedence() {
 
     assert_eq!(
         error.as_deref(),
-        Some("ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS must be greater than zero")
+        Some("RTC_MAX_PORT must be greater than or equal to RTC_MIN_PORT")
     );
 }
 
