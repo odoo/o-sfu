@@ -1,20 +1,20 @@
 # R5. Keep packet and frame processing cheap
 
-Keep packet, frame and destination work bounded and allocation-free. Avoid
-payload copies, formatting, metric lookup, whole-room scans, blocking and
-contended locks. Reuse buffers. Resolve policy and handles before the repeated
-call. Compute shared facts once. Prefer bounded `Vec` scans when indexes add
-more state than they save.
+Keep packet, frame and per-destination work bounded and free of steady-state
+allocation. Reuse buffers, resolve policy and handles before repeated calls
+and compute shared facts once. Avoid payload copies, formatting, metric
+lookup, whole-room scans, blocking and contended locks.
 
-Measure the real path with the same workload and compiler settings. Exclude
-setup and prove the workload reached it. Use allocation profiles for
-allocations, load tests for latency and instruction counts for small synchronous
-work.
+Measure the production path under the same workload and compiler settings,
+excluding setup and confirming that the workload reaches the operation being
+measured. Choose evidence that answers the performance question: allocation
+profiles for allocations, load tests for latency and instruction counts for
+small synchronous operations.
 
 > [!NOTE]
-> More read: **[heap allocation costs](https://nnethercote.github.io/perf-book/heap-allocations.html)** and **[benchmark design](https://nnethercote.github.io/perf-book/benchmarking.html)**.
+> Further reading: **[heap allocation costs](https://nnethercote.github.io/perf-book/heap-allocations.html)** and **[benchmark design](https://nnethercote.github.io/perf-book/benchmarking.html)**.
 >
-> partially enforced with: [assigning_clones](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assigning_clones),
+> Related lints: [assigning_clones](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assigning_clones),
 > [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#redundant_clone),
 > [pedantic::format_collect](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#format_collect),
 > [pedantic::inefficient_to_string](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#inefficient_to_string),
@@ -25,7 +25,8 @@ work.
 > and [perf::unnecessary_to_owned](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_to_owned).
 
 **Example:** `PacketLoopRoutingMissRecord::overwrite` reuses the retained packet
-buffer when replacing an evicted cache entry.
+buffer when replacing an evicted cache entry. No allocation is needed when the
+replacement packet fits its capacity.
 
 **Avoid**
 

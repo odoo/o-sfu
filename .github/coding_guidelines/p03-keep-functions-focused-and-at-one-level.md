@@ -1,14 +1,15 @@
 # P3. Keep each function focused and at one level of detail
 
-A function coordinates domain operations or implements one lower-level step.
-Keep parsing, wire formatting, validation mechanics and collection details out
-of coordination code. Use `?`, `let ... else` and early returns to avoid deep
-nesting.
+Give each function one responsibility at a consistent level of detail. A
+function that coordinates domain operations should delegate parsing, wire
+formatting, validation mechanics and collection details to the operations that
+own them. Within each function, use `?`, `let ... else` and early returns to
+keep the main flow clear without deep nesting.
 
 > [!NOTE]
-> More read: **[Google's guidance on short functions](https://google.github.io/styleguide/cppguide.html#Write_Short_Functions)**.
+> Further reading: **[Google's guidance on short functions](https://google.github.io/styleguide/cppguide.html#Write_Short_Functions)**.
 >
-> partially enforced with: [cognitive_complexity](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cognitive_complexity),
+> Related lints: [cognitive_complexity](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cognitive_complexity),
 > [complexity::excessive_nesting](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#excessive_nesting),
 > [pedantic::manual_let_else](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_let_else),
 > [pedantic::too_many_lines](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_lines)

@@ -1,15 +1,17 @@
 # M4. Keep related code together
 
-Keep state, behavior, errors, constants and small helpers for one responsibility
-in one module. Extract a module only when it has its own clear responsibility,
-never merely to separate item kinds or shorten a file.
+Organize modules around responsibilities, keeping each responsibility's state,
+behavior, errors, constants and small helpers together. Extract a module when it
+has a clear responsibility of its own. Separating item kinds or shortening a
+file is not sufficient reason.
 
-Place main types and entry points before private helpers. Keep inherent `impl`s
-beside their types unless splitting a large owner by responsibility. Expose one
-module-root interface.
+Within a module, lead with the main types and entry points before introducing
+private helpers. Keep inherent `impl`s beside their types unless a large owner
+needs to be split by responsibility and expose one coherent interface at the
+module root.
 
-**Example:** `SourceModelError` stays beside `PublishedSourceDescriptor` and
-the constructor that returns it.
+**Example:** `SourceModelError` belongs beside `PublishedSourceDescriptor`
+because its meaning comes from the constructor that returns it.
 
 **Avoid**
 
@@ -31,5 +33,5 @@ mod descriptor;
 pub use descriptor::{PublishedSourceDescriptor, SourceModelError};
 ```
 
-**Rationale:** Related code is easier to understand and change when it is in
-one place. Arbitrary splits add navigation without reducing complexity.
+**Rationale:** A maintainer should be able to understand and change one
+responsibility without navigating artificial boundaries.

@@ -1,16 +1,19 @@
 # A4. Add abstractions only when they simplify callers
 
-Add abstractions only to remove caller decisions, enforce invariants, isolate
-external systems or capture reused contracts. Never add one only for future
-flexibility, file organization or mocking. Prefer concrete APIs until
-implementations reveal a shared contract. Scope trait bounds to the smallest
-function or `impl`. Hide incidental one-use type parameters with
-argument-position `impl Trait`. Remove replaced structure when refactoring.
+An abstraction earns its place by removing caller decisions, enforcing an
+invariant, isolating an external system or capturing a reused contract. Prefer
+concrete APIs until actual implementations reveal that contract. Future
+flexibility, file organization and mocking alone do not justify a new boundary.
+
+Keep generic APIs similarly focused by placing trait bounds on the smallest
+function or `impl` that needs them. Use argument-position `impl Trait` for
+incidental type parameters used only once and remove the structure an
+abstraction replaces when refactoring.
 
 > [!NOTE]
-> More read: **[avoiding unnecessary interfaces in Google's Go Style Guide](https://google.github.io/styleguide/go/best-practices.html#avoid-unnecessary-interfaces)**.
+> Further reading: **[avoiding unnecessary interfaces in Google's Go Style Guide](https://google.github.io/styleguide/go/best-practices.html#avoid-unnecessary-interfaces)**.
 >
-> partially enforced with: [complexity::extra_unused_type_parameters](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#extra_unused_type_parameters).
+> Related lints: [complexity::extra_unused_type_parameters](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#extra_unused_type_parameters).
 
 **Example:** `MediaTransport::publish_media` hides worker selection, command
 construction and channel dispatch behind one domain call.
@@ -33,5 +36,5 @@ let media = transport
     .await?;
 ```
 
-**Rationale:** An abstraction must remove more complexity from callers than it
-adds to the system.
+**Rationale:** A smaller interface is useful only if callers can also forget
+the details behind it.

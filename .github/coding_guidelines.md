@@ -59,7 +59,7 @@ boundary prevent partial observations and stale work from becoming
 behavior-changing races.
 
 - [S1. Avoid unnecessary mutability](coding_guidelines/s01-avoid-unnecessary-mutability.md)
-- [S2. Match synchronization primitives to invariant boundaries](coding_guidelines/s02-match-locks-and-atomics-to-the-state.md)
+- [S2. Choose the right synchronzation primitives](coding_guidelines/s02-match-locks-and-atomics-to-the-state.md)
 - [S3. Define how derived state stays valid](coding_guidelines/s03-define-how-derived-state-stays-valid.md)
 - [S4. Separate intent from realization](coding_guidelines/s04-separate-intent-from-current-realization.md)
 

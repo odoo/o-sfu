@@ -1,32 +1,32 @@
 # M2. Use consistent names, explicit imports and narrow visibility
 
-Use one term per concept. Name values by role and operations by action. Let
-types and modules provide context. Use short names only when their scope makes
-the meaning obvious. Simplify the boundary when a precise name becomes
-sentence-like.
+Use one term per concept, naming values by role and operations by action. Types
+and modules provide context, so short names work when their scope makes the
+meaning clear. If a precise name requires a sentence, simplify the boundary it
+describes.
 
-Use `as_` for cheap views, `to_` for conversions that retain the source and
-`into_` for conversions that consume it.
+Conversion names communicate both cost and ownership. Following the Rust API
+Guidelines' [conversion
+conventions](https://rust-lang.github.io/api-guidelines/naming.html#c-conv), use
+`as_` for cheap views of the existing representation, `to_` for conversions that
+retain the source and `into_` for conversions that consume it.
 
-See the Rust API Guidelines on [conversion
-conventions](https://rust-lang.github.io/api-guidelines/naming.html#c-conv).
-
-Use explicit production imports. Qualify generic names where context helps,
-such as `h264::Profile` or `fmt::Result`. Keep items private and grant callers
-only the visibility they need.
+Make dependencies visible through explicit production imports and qualify
+generic names where context helps, as in `h264::Profile` or `fmt::Result`. Keep
+items private until callers need access, then grant only the required visibility.
 
 > [!NOTE]
-> More read: **[visibility and privacy in the Rust Reference](https://doc.rust-lang.org/reference/visibility-and-privacy.html)**.
+> Further reading: **[visibility and privacy in the Rust Reference](https://doc.rust-lang.org/reference/visibility-and-privacy.html)**.
 >
-> partially enforced with: [absolute_paths](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#absolute_paths),
+> Related lints: [absolute_paths](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#absolute_paths),
 > [pedantic::enum_glob_use](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#enum_glob_use),
 > [pedantic::similar_names](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#similar_names),
 > [pedantic::struct_field_names](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#struct_field_names),
 > [pedantic::wildcard_imports](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#wildcard_imports)
 > and [style::wrong_self_convention](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#wrong_self_convention).
 
-**Example:** `PublishedSources` supplies enough context for short field names.
-Its imports and visibility also show exactly what the module uses and exposes.
+**Example:** `PublishedSources` gives its short field names meaning, while
+explicit imports and narrow visibility reveal the module boundary.
 
 **Avoid**
 
@@ -60,6 +60,6 @@ pub(super) struct PublishedSources {
 }
 ```
 
-**Rationale:** Consistent names make code easier to read and search. Explicit
-imports show where names come from. Narrow visibility stops internal details
+**Rationale:** Readers can follow and search consistent vocabulary without
+tracing every name to its definition. Narrow visibility keeps internal details
 from becoming dependencies.

@@ -1,21 +1,23 @@
 # O4. Make cancellation behavior explicit
 
-Treat each `.await` as a possible drop point. Before racing futures, identify
-what changes before each `.await` and what dropping a loser does. Recreating a
-losing future in a loop requires restart-safe cancellation or progress kept
-outside the future. One-shot shutdown or timeout races may lose work only by
-explicit call-site policy. Otherwise finish before honoring cancellation or
-move the operation into a tracked task whose result is handled. See
+Treat each `.await` as a point where the future may be dropped. Before racing
+futures, identify the changes made before each suspension and the consequences
+of dropping a losing future. If a loop recreates that future, cancellation must
+allow it to restart safely or its progress must survive outside the future.
+
+A one-shot shutdown or timeout race may lose work only when the call site
+explicitly permits it. Otherwise, finish the operation before honoring
+cancellation or move it into a tracked task whose result is handled. See
 [R6](r06-bound-externally-driven-work.md) for polling order and fairness.
 
 > [!NOTE]
-> More read: **[cancellation safety in Tokio](https://tokio.rs/tokio/tutorial/select#cancellation-safety)** and **[future execution in the Asynchronous Programming in Rust Book](https://rust-lang.github.io/async-book/02_execution/01_chapter.html)**.
+> Further reading: **[cancellation safety in Tokio](https://tokio.rs/tokio/tutorial/select#cancellation-safety)** and **[future execution in the Asynchronous Programming in Rust Book](https://rust-lang.github.io/async-book/02_execution/01_chapter.html)**.
 
 **Example:** Once `RtcWorker::request_worker` enqueues a command, its caller
 waits for the result before honoring later shutdown.
 
-`ingress_should_stop` deliberately drops one received datagram when shutdown
-wins because that one-shot shutdown policy accepts the loss.
+The one-shot shutdown policy in `ingress_should_stop` permits a different
+choice: it deliberately drops one received datagram when shutdown wins.
 
 **Avoid**
 
@@ -39,7 +41,7 @@ let result = worker.request_worker(build_command).await;
 handle(result);
 ```
 
-An accepted one-shot loss also stays visible in code:
+The call site makes the accepted datagram loss explicit:
 
 ```rust
 let should_stop = tokio::select! {
@@ -50,6 +52,6 @@ let should_stop = tokio::select! {
 };
 ```
 
-**Rationale:** `select!` drops unfinished losing futures. Their local work stops.
-Effects already handed to another task can continue with no caller left to
-observe the result.
+**Rationale:** Dropping an unfinished future stops its local work, but effects
+already handed to another task can continue without a caller to observe the
+result.

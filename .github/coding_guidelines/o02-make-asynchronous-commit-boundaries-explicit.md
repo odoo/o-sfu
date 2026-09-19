@@ -1,26 +1,27 @@
 # O2. Release state guards before async effects
 
-Never hold a blocking lock guard across `.await`. Release room-state guards
-before I/O or async effects. Read or update state, take out what the effect
-needs then leave the guard's scope. If I/O must succeed first, run it unlocked
-then reacquire the guard to revalidate and commit.
+Never hold a blocking lock guard across `.await` and release room-state guards
+before I/O or async effects. Capture what the effect needs while reading or
+updating the state, then leave the guard's scope before executing it. If I/O must
+succeed before a state change can commit, run it without the guard then
+reacquire the guard to revalidate and commit.
 
-An async ordering guard may span `.await` only to prevent effects from
-overtaking one another and only when awaited code cannot lock it directly or
-through another call. `Room::source_policy_turn` is one example.
+An async ordering guard, such as `Room::source_policy_turn`, may span `.await`
+only to prevent effects from overtaking one another. The awaited code must not
+acquire that guard, either directly or through another call.
 
 > [!NOTE]
-> More read: **[Tokio's shared-state guidance](https://tokio.rs/tokio/tutorial/shared-state)** and **[the async `Mutex` contract](https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html)**.
+> Further reading: **[Tokio's shared-state guidance](https://tokio.rs/tokio/tutorial/shared-state)** and **[the async `Mutex` contract](https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html)**.
 >
-> partially enforced with: [significant_drop_tightening](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#significant_drop_tightening),
+> Related lints: [significant_drop_tightening](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#significant_drop_tightening),
 > [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_lock)
 > and [suspicious::await_holding_refcell_ref](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_refcell_ref).
 
 The [publication lifecycle test](../../crates/core/src/engine/room/TESTS/producer_tests/publish_lifecycle.rs)
 checks that a competing transition waits for the ordered turn to finish.
 
-**Example:** `Room::update_user_info` takes the commit out of the state block
-and runs its effects after the guard is gone.
+**Example:** `Room::update_user_info` returns the commit from the state block
+and executes its effects after the guard is released.
 
 **Avoid**
 
@@ -45,6 +46,6 @@ if let Some(commit) = commit {
 }
 ```
 
-**Rationale:** Releasing state guards avoids blocking waiters and lock-order
-cycles. A dedicated ordering guard preserves effects that must not overtake each
-other.
+**Rationale:** State guards protect a mutation while ordering guards protect an
+effect sequence. Separating those duties limits how long state access waits and
+avoids lock-order cycles without allowing effects to overtake one another.

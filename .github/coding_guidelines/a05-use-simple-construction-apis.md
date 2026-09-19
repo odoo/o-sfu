@@ -1,24 +1,25 @@
 # A5. Use the simplest construction API
 
-Constructors return valid values. `new` accepts only valid input, `try_new`
-handles fallible validation and `Default` requires one unsurprising canonical
-value. Builders suit many or optional arguments, accumulated compound input,
-shared terminal-operation configuration or construction side effects, never a
-small fixed input set.
-See the Rust API Guidelines on [builders for complex
+Successful construction must establish the type's invariants. Use `new` when
+inputs are already valid and `try_new` when construction needs fallible
+validation. Reserve `Default` for one unsurprising canonical value and keep
+invariant-bearing fields private to preserve the guarantees of construction.
+Plain records may expose independent, unconstrained fields.
+
+Use a builder when it clarifies many or optional arguments, accumulated
+compound input, shared terminal-operation configuration or construction side
+effects. A small fixed input set does not justify a builder. See the Rust API
+Guidelines on [builders for complex
 construction](https://rust-lang.github.io/api-guidelines/type-safety.html#builders-enable-construction-of-complex-values-c-builder).
 
-Keep invariant-bearing fields private. Plain records may expose independent,
-unconstrained fields.
-
 > [!NOTE]
-> partially enforced with: [pedantic::unnecessary_wraps](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_wraps),
+> Related lints: [pedantic::unnecessary_wraps](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_wraps),
 > [style::new_ret_no_self](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#new_ret_no_self),
 > [style::new_without_default](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#new_without_default)
 > and [style::self_named_constructors](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#self_named_constructors).
 
-**Example:** `RoomMediaLimits::try_new` validates required limits at construction
-time instead of exposing unvalidated public fields.
+**Example:** `RoomMediaLimits::try_new` establishes the limits at construction
+time and private fields preserve them afterward.
 
 **Avoid**
 
@@ -58,6 +59,6 @@ impl RoomMediaLimits {
 }
 ```
 
-**Rationale:** A simple validated constructor prevents invalid states while
-avoiding builder boilerplate for small structs. Private fields also allow the
-internal layout to change without affecting callers.
+**Rationale:** Callers can trust a constructed value without learning how its
+invariants are enforced. Private fields also leave room to change the internal
+representation.

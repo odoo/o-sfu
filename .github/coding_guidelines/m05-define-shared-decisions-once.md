@@ -1,34 +1,44 @@
 # M5. Define shared decisions once
 
-When several paths share a default, mapping, limit or policy, define the
-decision once and derive every use from it. Keep similar code separate when
-cases may evolve independently. Do not add a helper or macro merely because
-snippets look alike.
+Define a shared default, mapping, limit or policy once and derive every use
+from that decision, so a change cannot leave competing versions behind.
+Similarity alone does not establish a shared decision. Keep cases separate when
+they may evolve independently instead of introducing a helper or macro merely
+to combine snippets that look alike.
 
-**Example:** The default outbound byte budget depends on the queue length and
-the largest broadcast payload.
+**Example:** The [protocol core](../../crates/protocol/src/core.rs) gives
+presence updates and broadcasts the same sending policy. Duplicated checks can
+drift so one succeeds while the other is silently dropped.
 
 **Avoid**
 
 ```rust
-pub const MAX_BROADCAST_PAYLOAD_BYTES: usize = 16 * 1024;
-pub const DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY: usize = 128;
-
-// This repeats both inputs. Updating either input can leave this value stale.
-pub const DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY: usize = 128 * 16 * 1024;
+// In update_info, authenticated clients may send before becoming connected.
+if !matches!(
+    self.phase,
+    ProtocolPhase::Authenticated(_) | ProtocolPhase::Connected(_)
+) {
+    return Vec::new();
+}
+// In broadcast, the duplicated rule accidentally requires a connected client.
+if !matches!(self.phase, ProtocolPhase::Connected(_)) {
+    return Vec::new();
+}
 ```
 
 **Prefer**
 
 ```rust
-pub const MAX_BROADCAST_PAYLOAD_BYTES: usize = 16 * 1024;
-pub const DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY: usize = 128;
-
-// Derive the byte budget from the queue and payload limits that define it.
-pub const DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY: usize =
-    DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY * MAX_BROADCAST_PAYLOAD_BYTES;
+impl ProtocolPhase {
+    const fn can_send_client_messages(&self) -> bool {
+        matches!(self, Self::Authenticated(_) | Self::Connected(_))
+    }
+}
+// Both update_info and broadcast use the same decision.
+if !self.phase.can_send_client_messages() {
+    return Vec::new();
+}
 ```
 
-**Rationale:** A change should not depend on finding every copy of the same
-decision. Keeping unrelated similarities separate avoids coupling behavior
-that can evolve independently.
+**Rationale:** A shared definition makes a policy change complete in one place.
+Keeping independent cases separate avoids accidental coupling.

@@ -1,19 +1,21 @@
 # A2. Hide ordered steps behind one operation
 
-Hide order-sensitive validation, mutation, effects and cleanup behind one
-operation. Keep its step methods inside the enforcing module. Define what
-commits on success, survives failure and becomes externally visible. Do not
-promise incidental internal order. The operation owner must verify every
-behavior-sensitive order. Never assume iteration, scheduling or completion
-order. Across `.await`, cancellation must preserve that contract. See
-[O4](o04-make-cancellation-behavior-explicit.md).
+Present validation, mutation, effects and cleanup as one operation whenever
+their order affects behavior. Keep the individual steps inside the module that
+enforces the sequence and define what commits on success, survives failure or
+becomes externally visible.
+
+The operation owner must verify every ordering requirement without promising
+incidental internal order. Rely only on documented iteration, scheduling or
+completion guarantees and preserve the operation's contract if cancellation
+occurs at an `.await`. See [O4](o04-make-cancellation-behavior-explicit.md).
 
 > [!NOTE]
-> More read: **[caller assumptions in Google's Building Secure and Reliable Systems](https://google.github.io/building-secure-and-reliable-systems/raw/ch06.html#system_architecture)**.
+> Further reading: **[caller assumptions in Google's Building Secure and Reliable Systems](https://google.github.io/building-secure-and-reliable-systems/raw/ch06.html#system_architecture)**.
 
-**Example:** `UserOutboundSender::send` reserves byte capacity, enqueues one
-message, releases the reservation on failure and signals overflow when a
-capacity limit is exceeded. Callers never sequence those steps.
+**Example:** `UserOutboundSender::send` owns the full enqueue operation:
+reserving byte capacity, sending the message, releasing the reservation on
+failure and signaling overflow when a capacity limit is exceeded.
 
 **Avoid**
 
@@ -31,4 +33,5 @@ sender.messages.try_send(QueuedUserOutbound { outbound, bytes })?;
 sender.send(outbound)?;
 ```
 
-**Rationale:** One complete operation prevents skipped or misordered steps.
+**Rationale:** Correct sequencing belongs to the operation owner, where every
+caller benefits from the same guarantees.

@@ -1,15 +1,16 @@
 # P1. Keep function inputs and outputs minimal
 
-Accept a slice for indexed or repeated access to a borrowed sequence,
-`impl IntoIterator` for a single pass and a concrete collection only when its
-storage, ownership or ordering matters. Return an iterator for traversal and a
-slice for indexed or repeated borrowed access. Do not return an owned
-collection for traversal alone.
+Choose inputs that express how a function uses its data: a slice for indexed
+or repeated borrowed access, `impl IntoIterator` for a single pass and a
+concrete collection when its storage, ownership or ordering is part of the
+contract. Apply the same principle to outputs, returning an iterator for
+traversal or a slice for repeated borrowed access. Return an owned collection
+only when the caller needs more than traversal.
 
 > [!NOTE]
-> More read: **[generic parameters in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/flexibility.html#functions-minimize-assumptions-about-parameters-by-using-generics-c-generic)**.
+> Further reading: **[generic parameters in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/flexibility.html#functions-minimize-assumptions-about-parameters-by-using-generics-c-generic)**.
 >
-> partially enforced with: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_ref_mut),
+> Related lints: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_ref_mut),
 > [pedantic::large_types_passed_by_value](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#large_types_passed_by_value),
 > [pedantic::needless_pass_by_value](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_value),
 > [pedantic::trivially_copy_pass_by_ref](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#trivially_copy_pass_by_ref),

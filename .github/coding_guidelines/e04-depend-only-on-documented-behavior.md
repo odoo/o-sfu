@@ -1,13 +1,14 @@
 # E4. Rely only on documented dependency behavior
 
-Do not rely on a dependency's iteration order, timing, private state or error
-text unless its public documentation guarantees it. Isolate unavoidable
-assumptions and verify them against the pinned version.
+Rely on a dependency's iteration order, timing, private state or error text
+only when its public documentation guarantees that behavior. Where an
+undocumented assumption is unavoidable, isolate it and verify it against the
+pinned version.
 
-**Example:** A successful `drain_single_session` polls `str0m::Rtc` until an
-`Output::Timeout` whose deadline lies after the current time. If its output
-budget is exhausted, the caller rolls back staged output and closes the session.
-A fixed count without either terminal policy could leave `Rtc` partly drained.
+**Example:** `drain_single_session` succeeds once `str0m::Rtc` returns an
+`Output::Timeout` with a future deadline. If the output budget runs out first,
+the caller rolls back staged output and closes the session. Stopping after a
+fixed number of polls without either policy could leave `Rtc` partly drained.
 
 **Avoid**
 
@@ -34,7 +35,7 @@ let deadline = loop {
 };
 ```
 
-The caller also makes budget exhaustion terminal:
+Budget exhaustion ends the session after discarding its staged output:
 
 ```rust
 SessionDrainOutcome::Exhausted(session_key, limit) => {
@@ -54,5 +55,5 @@ SessionDrainOutcome::Exhausted(session_key, limit) => {
 }
 ```
 
-**Rationale:** Undocumented behavior can change without an API break.
-Dependency upgrades can then expose hidden assumptions.
+**Rationale:** Dependencies may change undocumented behavior without an API
+break, turning hidden assumptions into upgrade failures.

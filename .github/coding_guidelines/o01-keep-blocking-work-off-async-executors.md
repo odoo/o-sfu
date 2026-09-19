@@ -1,19 +1,21 @@
 # O1. Never block an async executor
 
 Keep blocking I/O, potentially blocking OS-thread joins and sustained CPU work
-off async executors. Use async APIs when available. Use
+off async executors. Use async APIs where available and reserve
 [`spawn_blocking`](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html)
-only for bounded blocking work that finishes on its own because started jobs
-cannot be aborted. Long-running blocking work needs a dedicated OS thread with
-a lifecycle owner and cooperative shutdown. Await completion asynchronously.
-Do not poll `JoinHandle::is_finished` with `yield_now` for general completion
-because Tokio may immediately repoll the task.
+for bounded blocking work that finishes on its own, since a started job cannot
+be aborted. Long-running blocking work needs a dedicated OS thread with a
+lifecycle owner and cooperative shutdown.
+
+Await completion asynchronously. Do not use a loop of `JoinHandle::is_finished`
+and `yield_now` as a general completion mechanism, because Tokio may immediately
+poll the same task again.
 
 > [!NOTE]
-> More read: **[Tokio's task documentation](https://docs.rs/tokio/latest/tokio/task/index.html#blocking-and-yielding)**, **[cooperative multitasking](https://en.wikipedia.org/wiki/Cooperative_multitasking)** and **[thread pool starvation](https://en.wikipedia.org/wiki/Starvation_\(computer_science\))**.
+> Further reading: **[Tokio's task documentation](https://docs.rs/tokio/latest/tokio/task/index.html#blocking-and-yielding)**, **[cooperative multitasking](https://en.wikipedia.org/wiki/Cooperative_multitasking)** and **[thread pool starvation](https://en.wikipedia.org/wiki/Starvation_\(computer_science\))**.
 
-**Example:** After cooperative shutdown makes a dedicated worker's exit bounded,
-move its blocking join off the async executor.
+**Example:** Once cooperative shutdown bounds the time until a dedicated worker
+exits, move its blocking join off the async executor.
 
 **Avoid**
 

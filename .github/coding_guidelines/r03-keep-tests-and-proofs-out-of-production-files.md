@@ -1,19 +1,14 @@
 # R3. Keep tests and proofs out of production files
 
-Exclude verification bodies from production files. Put tests and support in
-nearest `TESTS/`, private-state Kani proofs in nearest `PROOFS/` behind
+Keep verification bodies in separate files: tests and support belong in the
+nearest `TESTS/`, private-state Kani proofs in the nearest `PROOFS/` behind
 `#[cfg(kani)]` and public-API proofs in
-[`tests/proofs/`](../../tests/proofs/). Production crates cannot depend on
-`o-sfu-proofs`. Rustdoc examples stay beside APIs. `#[cfg(kani)]` only gates
-compilation. Claim proof coverage only from an explicit Kani harness run.
+[`tests/proofs/`](../../tests/proofs/). Rustdoc examples remain beside their
+APIs, but production crates must not depend on `o-sfu-proofs`.
 
-Keep only gated module declarations and narrow cross-crate hooks in production
-files. Add a hook only when setup or observation must pass through the
-production owner. It must not bypass that owner or alter ordering, backpressure
-or cleanup.
-
-> [!NOTE]
-> More read: **[conditional compilation in the Rust Reference](https://doc.rust-lang.org/reference/conditional-compilation.html)** and **[Kani proof harness usage](https://model-checking.github.io/kani/usage.html)**.
+Keep test helpers with the tests and use the production API wherever possible.
+When a test needs access to internal state, expose only what it needs without
+changing production behavior.
 
 **Layout:**
 
@@ -63,4 +58,5 @@ mod tests;
 ```
 
 **Rationale:** Separate files keep production modules focused and keep
-verification scaffolding out of runtime code.
+verification scaffolding out of runtime code. This also allows easy exclusion
+of tests when grepping files.
