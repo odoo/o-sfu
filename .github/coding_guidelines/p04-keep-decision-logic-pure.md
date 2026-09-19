@@ -1,16 +1,19 @@
 # P4. Keep decision logic pure
 
-Prefer pure functions for parsing, calculations and policy decisions. Equal
-inputs must yield equal results without externally visible mutation. Local
-mutation may not escape. Pass time and external facts as inputs. Keep I/O,
-shared-state mutation, task spawning and telemetry in orchestration, which
-applies returned decisions, values or effect plans. See
-[P2](p02-make-dependencies-and-side-effects-explicit.md) for unavoidable
-effects and [O2](o02-make-asynchronous-commit-boundaries-explicit.md) for
-applying them.
+Keep parsing, calculations and policy decisions pure: equal inputs should
+yield equal results without changing externally visible state. Local mutation
+is compatible with purity when it cannot affect state outside the computation.
+Pass time and external facts as inputs so the result does not depend on hidden
+observations.
+
+Let orchestration apply the returned decisions, values or effect plans through
+I/O, shared-state mutation, task spawning and telemetry.
+[P2](p02-make-dependencies-and-side-effects-explicit.md) covers explicit
+dependencies and [O2](o02-make-asynchronous-commit-boundaries-explicit.md)
+covers the boundary for applying effects.
 
 > [!NOTE]
-> More read: **[pure functions](https://en.wikipedia.org/wiki/Pure_function)** and **[referential transparency](https://en.wikipedia.org/wiki/Referential_transparency)**.
+> Further reading: **[pure functions](https://en.wikipedia.org/wiki/Pure_function)** and **[referential transparency](https://en.wikipedia.org/wiki/Referential_transparency)**.
 
 **Example:** `SourcePolicyTransaction::plan` derives room state updates and
 transport effects from snapshots. `SourcePolicyTransaction::commit` applies
@@ -62,6 +65,5 @@ let Some(transaction) = transaction else {
 transaction.commit(room, media_transport).await;
 ```
 
-**Rationale:** Pure functions are easier to test and prove because their
-behavior depends only on their arguments. Purity does not prove correctness by
-itself.
+**Rationale:** Pure functions are easier to test, reason with and prove because their
+behavior depends only on their arguments.

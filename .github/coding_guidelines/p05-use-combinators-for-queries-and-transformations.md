@@ -1,17 +1,22 @@
 # P5. Use combinators for queries and transformations
 
-Use `Iterator`, `Option` and `Result` combinators when they express a query or
-transformation directly. Prefer `find`, `any`, `all`, `filter_map`, `map`,
-`and_then`, `or_else`, `unwrap_or_else`, `filter` and `collect` to manual loops,
-accumulators or indexing. Keep chains short. Use a `for` loop for ordered
-effects, related-state mutation, awaiting or branching that a chain would hide.
-Never use `map` only for effects. `Option` and `Result` combinators propagate
-`None` and `Err`.
+Prefer `Iterator`, `Option` and `Result` combinators when they express a query
+or transformation more clearly than manual loops, accumulators or indexing. A
+short chain of methods such as `find`, `filter_map` and `collect` lets the
+reader follow the data without tracking (/allocating) temporary state.
+
+Use a `for` loop when ordering, mutation of related state, `.await` or
+branching carries meaning that a chain would hide. Reserve `map` for
+transformations, never solely for effects. For `Option` and `Result`, choose
+the intended behavior: `map` and `and_then` preserve `None` or `Err`, while
+`or_else` and `unwrap_or_else` handle them with a fallback.
 
 > [!NOTE]
-> More read: **[monadic composition](https://en.wikipedia.org/wiki/Monad_(functional_programming))** and **[algebraic data types](https://en.wikipedia.org/wiki/Algebraic_data_type)**.
+> Further reading: **[`Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html)**,
+> **[`Option`](https://doc.rust-lang.org/std/option/index.html)** and
+> **[`Result`](https://doc.rust-lang.org/std/result/index.html)**.
 >
-> partially enforced with: [option_if_let_else](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#option_if_let_else),
+> Related lints: [option_if_let_else](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#option_if_let_else),
 > [single_option_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#single_option_map),
 > [useless_let_if_seq](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#useless_let_if_seq),
 > [complexity::bind_instead_of_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#bind_instead_of_map),
@@ -52,8 +57,10 @@ self.settings.iter().find_map(|setting| match setting {
 })
 ```
 
-**Example 2 (Monadic pipeline):** Chain sequential transformations using
-`and_then` rather than nested `match` or `if let` ladders.
+**Example 2 (Optional values):** `and_then` connects steps that may produce no
+value. Here missing and malformed claims intentionally have the same outcome:
+`.ok()` discards the parse error. Preserve the `Result` when callers need to
+distinguish those cases, as required by [C5](c05-preserve-meaningful-outcomes.md).
 
 **Avoid**
 
@@ -80,7 +87,5 @@ let room_id = get_token(header)
 `parse_codec_list` correctly keeps a loop because each iteration validates
 against previously accepted codecs and may return a distinct error.
 
-**Rationale:** Short chains show what the code computes without extra mutable
-state or loop control. Monadic pipelines propagate absence and errors linearly
-without nested pyramids. Loops remain clearer when ordering, mutation or
-effects matter.
+**Rationale:** The control structure should make the operation's purpose and
+failure behavior easy to follow.

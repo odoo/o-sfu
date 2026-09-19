@@ -1,26 +1,29 @@
 # C5. Do not discard meaningful outcomes
 
-Add `#[must_use]` when ignoring a function result or type value would skip a
-state change, cleanup or decision. Handle or propagate `Result` and `Option`.
-Do not discard errors with `.ok()`. Use enums for distinct outcomes. Use a
-named type when several values form one outcome or a boolean would be
-ambiguous. Reserve tuples for small obvious groups.
+Use `#[must_use]` on a function or type when ignoring a value would skip a
+state change, cleanup or decision. Handle or propagate `Result` and `Option`,
+preserving error distinctions that callers need. Use `.ok()` only when the
+contract deliberately treats failure as absence and no caller needs the error.
+Make the outcome clear in its type: use enums for distinct alternatives and
+named types for grouped values or ambiguous booleans, reserving tuples for
+small groups with obvious meanings.
 
-When the contract permits it, discard immediately with `let _ = expression`,
-intentionally retain a value such as a lock guard until the end of the scope
-with an `_`-prefixed binding or destroy an existing named binding immediately
-with `drop(value)`. Explain non-obvious choices.
+When the contract allows ignoring a fresh result, `let _ = expression`
+discards it without retaining the value. An `_`-prefixed binding instead keeps
+a value such as a lock guard until the end of its scope. Use `drop(value)` for
+early destruction of an existing named value and explain non-obvious lifetime
+choices.
 
 > [!NOTE]
-> More read: **[the `must_use` attribute](https://doc.rust-lang.org/stable/core/attribute.must_use.html)** and **[ignored values in Rust patterns](https://doc.rust-lang.org/book/ch19-03-pattern-syntax.html#ignoring-values-in-a-pattern)**.
+> Further reading: **[the `must_use` attribute](https://doc.rust-lang.org/stable/core/attribute.must_use.html)** and **[ignored values in Rust patterns](https://doc.rust-lang.org/book/ch19-03-pattern-syntax.html#ignoring-values-in-a-pattern)**.
 >
-> partially enforced with: [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unused_result_ok),
+> Related lints: [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unused_result_ok),
 > [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_lock),
 > [pedantic::must_use_candidate](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#must_use_candidate)
 > and [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_future).
 
-**Example:** `RoomEffects` is `#[must_use]` because discarding the batch skips its
-transport, output and source-policy effects.
+**Example:** Discarding `RoomEffects` skips the batch's transport, output and
+source-policy effects, so the type is marked `#[must_use]`.
 
 ```rust
 // Dropping `RoomEffects` would skip execution of the ordered effect plans below.
@@ -33,5 +36,5 @@ pub struct RoomEffects {
 }
 ```
 
-**Rationale:** Return values may carry unfinished work or a required decision.
-Discarding them can hide incomplete work.
+**Rationale:** Explicit handling makes unfinished work and required decisions
+visible at the call site.

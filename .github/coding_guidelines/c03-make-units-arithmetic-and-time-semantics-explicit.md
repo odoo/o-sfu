@@ -1,15 +1,16 @@
 # C3. Make units, overflow and clock choice explicit
 
-Use `Bitrate`, `Duration` and range-checked types instead of unitless integers
-at internal boundaries. Use `TryFrom` for values that may not fit. Choose
-checked, wrapping or saturating arithmetic by required overflow behavior.
-Inline obvious local literals. Name repeated or domain-significant literals
-with a constant, enum variant or domain type.
+Carry units and valid ranges through internal boundaries with `Bitrate`,
+`Duration` and range-checked types so arithmetic keep its domain meaning.
+Use `TryFrom` for conversions that may not fit and choose checked, wrapping or
+saturating arithmetic according to the required overflow behavior. Keep
+obvious local literals inline, giving repeated or domain-significant values
+names through constants, enum variants or domain types.
 
 > [!NOTE]
-> More read: **[integer overflow in The Rust Book](https://doc.rust-lang.org/book/ch03-02-data-types.html#integer-overflow)** and **[`Instant` in the standard library](https://doc.rust-lang.org/std/time/struct.Instant.html)**.
+> Further reading: **[integer overflow in The Rust Book](https://doc.rust-lang.org/book/ch03-02-data-types.html#integer-overflow)** and **[`Instant` in the standard library](https://doc.rust-lang.org/std/time/struct.Instant.html)**.
 >
-> partially enforced with: [as_conversions](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#as_conversions),
+> Related lints: [as_conversions](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#as_conversions),
 > [pedantic::cast_possible_truncation](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cast_possible_truncation),
 > [pedantic::cast_possible_wrap](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cast_possible_wrap),
 > [pedantic::cast_precision_loss](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cast_precision_loss),
@@ -29,7 +30,7 @@ let bitrate = bits_per_second;
 // RTP timestamps wrap at rollover, while plain `+` may panic when overflow checks are enabled.
 let next_timestamp = highest_timestamp + 1;
 // The default policy is hidden in an unnamed value.
-let video_limits = VideoBitrateLimits::new(Bitrate::from_mbps(4));
+let video_limits = VideoBitrateLimits::new(4);
 ```
 
 **Prefer**
@@ -44,10 +45,10 @@ let video_limits =
     VideoBitrateLimits::new(VideoBitrateLimits::DEFAULT_MAX_VIDEO_BITRATE);
 ```
 
-Use monotonic `Instant` for deadlines and elapsed time. Keep unit-suffixed
-integers at configuration or compatibility boundaries then convert them before
-internal arithmetic. Use wall-clock time only when an external protocol or
-output format requires it.
+Use monotonic `Instant` for deadlines and elapsed time, reserving wall-clock
+time for external protocols or output formats that require it. Keep
+unit-suffixed integers at configuration or compatibility boundaries and
+convert them before internal arithmetic.
 
-**Rationale:** Named values reveal their meaning. Explicit units, clocks and
-overflow rules prevent incorrect arithmetic.
+**Rationale:** Arithmetic is easier to review when each value's meaning and the
+rules for combining values are visible.

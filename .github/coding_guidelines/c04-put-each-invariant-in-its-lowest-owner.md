@@ -1,19 +1,20 @@
 # C4. Enforce invariants where the state lives
 
-Put each invariant in the lowest layer that controls every update. Ingress owns
-decoding, bounds and credential checks. State owners enforce authorization and
-transitions. Adapters translate network or storage failures. Callers do not
-repeat checks. One owner updates related records, indexes and derived views
-together.
+Enforce each invariant in the lowest layer that controls every update. This
+places decoding, bounds and credential checks at ingress, authorization and
+transitions with state owners and translation of network or storage failures
+in adapters. Callers rely on these guarantees without repeating checks, while
+one owner updates related records, indexes and derived views together.
 
-Keep identities where they are defined. Room source IDs (`PublishedSourceId`,
-`SourceEncodingId`), negotiated publisher values (`Mid`, `Rid`, `Ssrc`),
-transport IDs and receiver-local handles, sequence numbers and timestamps are
-separate. Translate only at a boundary that owns both layers. Never replace a
-room source ID with a negotiated, worker-local or receiver-local value.
+Keep identities in the layers that define them. Room source IDs
+(`PublishedSourceId`, `SourceEncodingId`), negotiated publisher values (`Mid`,
+`Rid`, `Ssrc`), transport IDs and receiver-local handles, sequence numbers and
+timestamps have distinct scopes. Translate only at a boundary that owns both
+layers and never substitute a negotiated, worker-local or receiver-local value
+for a room source ID.
 
 > [!NOTE]
-> More read: **[private struct fields in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/future-proofing.html#structs-have-private-fields-c-struct-private)**.
+> Further reading: **[private struct fields in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/future-proofing.html#structs-have-private-fields-c-struct-private)**.
 
 **Example:** `PublishedSourceDescriptor::new` rejects empty, duplicate or
 cross-source encodings. `PublishedSources` updates its map and indexes together.
@@ -37,5 +38,5 @@ let descriptor = PublishedSourceDescriptor::new(parts)?;
 let descriptor = PublishedSourceDescriptor::new(parts)?;
 ```
 
-**Rationale:** One owner per invariant keeps validation, identity mappings and
-representations consistent.
+**Rationale:** Keeping each invariant with its state prevents callers from
+enforcing different versions of the same contract.

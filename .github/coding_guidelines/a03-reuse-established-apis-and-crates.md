@@ -1,27 +1,29 @@
 # A3. Prefer existing APIs
 
-Reuse a standard-library, dependency or repository API that clearly expresses
-the contract. Prefer the standard library when equally clear. Add helpers or
-dependencies only when existing APIs do not cover the concern. Use
-`Config::from_env`/`Env::var` for configuration and `thiserror`/`anyhow` for
-errors. Use
+Use established APIs to make a contract recognizable, preferring the standard
+library when it is equally clear. Add a helper or dependency only when existing
+APIs leave a concern uncovered.
+
+In this repository, use `Config::from_env` and `Env::var` for configuration,
+`thiserror` and `anyhow` for errors and owner APIs such as
+`UserOutboundSender::channel_with_limits` for their domain operations. Use
 [`itertools`](https://docs.rs/itertools/0.14/itertools/trait.Itertools.html) when
-its adapters make an iterator rule clearer and owner APIs such as
-`UserOutboundSender::channel_with_limits`. Use standard traits for common
-contracts.
+its adapters express an iterator rule more clearly.
+
+Use standard traits for common contracts. In particular,
 [`From`](https://doc.rust-lang.org/std/convert/trait.From.html#when-to-implement-from)
-requires an infallible, lossless, value-preserving and obvious conversion.
-`TryFrom` handles fallible conversions.
+is appropriate only for infallible, lossless, value-preserving and obvious
+conversions, while `TryFrom` expresses conversions that can fail.
 
 > [!NOTE]
-> partially enforced with: [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_find),
+> Related lints: [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_find),
 > [perf::map_entry](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_entry),
 > [style::from_over_into](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#from_over_into),
 > [style::should_implement_trait](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#should_implement_trait)
 > and [style::unnecessary_fallible_conversions](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_fallible_conversions).
 
-**Examples:** An RID accepts exactly one restriction. `exactly_one` states and
-enforces that rule.
+**Examples:** The RID parser uses `exactly_one` to enforce the single
+restriction it supports when a restriction list is present.
 
 **Avoid**
 
@@ -68,5 +70,5 @@ match batches.get_mut(&key) {
 batches.entry(key).or_default().push(item);
 ```
 
-**Rationale:** Familiar APIs make intent clear and avoid local substitutes. They
-let contributors use existing language knowledge and documentation directly.
+**Rationale:** Familiar APIs reduce the amount of local behavior contributors
+must learn and give them documentation they can already rely on.

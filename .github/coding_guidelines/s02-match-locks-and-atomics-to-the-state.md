@@ -1,17 +1,20 @@
-# S2. Match synchronization primitives to invariant boundaries
+# S2. Choose the right synchronzation primitives
 
-Put coherent fields under one lock. Use atomics only for independent scalars.
-Multiple atomics need a documented publication protocol defining writer and
-reader order, memory ordering and valid combinations. Do not split dependent
-state across primitives or infer coherence from individual operations. Use
-generation, retry or release/acquire protocols only when measurements justify
-them on a hot path. Keep them within one owner and expose only invariant-valid
-values.
+Prefer one lock for fields that must remain consistent. Atomics suit
+independent scalars, but dependent values require an explicit publication
+protocol. Atomicity of individual operations does not guarantee a coherent
+snapshot.
+
+Use a generation, retry or release/acquire protocol only when hot-path
+measurements justify it. Keep the protocol within one owner that exposes only
+values satisfying the invariant. A publication protocol involving multiple
+atomics must document writer and reader order, memory ordering and valid
+combinations of values.
 
 > [!NOTE]
-> More read: **[linearizability](https://en.wikipedia.org/wiki/Linearizability)**, **[atomicity and concurrency in Rust](https://doc.rust-lang.org/nomicon/concurrency.html)** and **[atomic memory orderings in Rust](https://doc.rust-lang.org/std/sync/atomic/enum.Ordering.html)**.
+> Further reading: **[linearizability](https://en.wikipedia.org/wiki/Linearizability)**, **[atomicity and concurrency in Rust](https://doc.rust-lang.org/nomicon/concurrency.html)** and **[atomic memory orderings in Rust](https://doc.rust-lang.org/std/sync/atomic/enum.Ordering.html)**.
 >
-> partially enforced with: [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_lock),
+> Related lints: [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_lock),
 > [perf::readonly_write_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#readonly_write_lock),
 > [style::mut_mutex_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#mut_mutex_lock)
 > and [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_lock).
@@ -54,6 +57,6 @@ struct SessionState {
 }
 ```
 
-**Rationale:** Atomicity applies to one operation. A lock gives coherent
-multi-field state by construction. An atomic protocol provides only its
-documented ordering or validation guarantee.
+**Rationale:** A lock can protect a complete state transition. An atomic
+protocol provides only its documented ordering or validation guarantee, which
+may permit readers to observe values from different updates.

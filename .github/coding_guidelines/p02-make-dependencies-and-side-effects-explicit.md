@@ -1,31 +1,36 @@
 # P2. Pass dependencies and expose side effects
 
-Pass required time, configuration, external data and services into domain
-functions. Keep environment, clock, network and storage access in adapters or
-orchestration code.
+Give domain functions their dependencies as explicit inputs, including time,
+configuration, external data and services. Construct those services in
+orchestration code and keep environment, clock, network and storage access in
+adapters or orchestration so callers can see where external effects begin.
 
-Construct services in orchestration code. Names and signatures must expose
-mutation, resource creation, I/O, retries and caching.
+Make mutation, resource creation, I/O, retries and caching apparent in the
+operation's name and signature.
 
-**Example:** `DemuxRecoveryState::record_miss` receives the UDP ingress
-timestamp instead of reading the clock.
+**Example:** Formatting a report should not hide a
+[file write](https://doc.rust-lang.org/std/fs/fn.write.html). Let the caller
+decide whether and where to save the result.
 
 **Avoid**
 
 ```rust
-fn record_miss(&mut self, source_addr: SocketAddr) -> bool {
-    // The hidden clock makes identical calls depend on execution time.
-    self.source_rate_limiter
-        .record_miss(source_addr, Instant::now())
+fn format_report(total: u32) -> std::io::Result<String> {
+    let report = format!("Total: {total}\n");
+    std::fs::write("report.txt", &report)?;
+    Ok(report)
 }
 ```
 
 **Prefer**
 
 ```rust
-// Reuse the socket-completion timestamp so queue delay cannot change cooldown timing.
-let entered_cooldown =
-    demux.record_miss(miss_key, route.packet, route.source_addr, route.now);
+fn format_report(total: u32) -> String {
+    format!("Total: {total}\n")
+}
+
+let report = format_report(total);
+std::fs::write(path, &report)?;
 ```
 
 **Rationale:** Explicit inputs and effects make behavior predictable and

@@ -1,19 +1,22 @@
 # R9. Prefer `expect` for lint exceptions
 
-Fix real lint problems. Use `#[expect(...)]` to suppress intentional findings
-and let `unfulfilled_lint_expectations` report obsolete exceptions.
+Fix genuine lint problems before considering an exception. When a finding is
+intentional, prefer `#[expect(...)]` so `unfulfilled_lint_expectations` can
+report an exception that is no longer needed.
 
-Reserve `#[allow(...)]` for scopes where a lint need not appear in every build,
-including configuration-dependent code or intentional crate or module policy.
-Scope either attribute narrowly and name exact lints, not groups.
+Use `#[allow(...)]` where the lint need not appear in every build, such as
+configuration-dependent code or a deliberate crate or module policy. Keep
+either attribute as narrow as possible and name the exact lints it covers
+instead of a group.
 
-Each `expect` or `allow` needs `reason = "..."` explaining why the code is
-correct and obeying the lint would make it worse, not repeating its name.
+Every exception needs a `reason = "..."` that explains why the code is correct
+and why following the lint would make it worse. The reason should justify the
+decision without merely restating the lint's name.
 
 > [!NOTE]
-> More read: **[lint attributes in the Rust Reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#lint-check-attributes)** and **[`allow_attributes` in Clippy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes)**.
+> Further reading: **[lint attributes in the Rust Reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#lint-check-attributes)** and **[`allow_attributes` in Clippy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes)**.
 >
-> partially enforced with: [allow_attributes_without_reason](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes_without_reason).
+> Related lints: [allow_attributes_without_reason](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes_without_reason).
 
 **Example:** `AvpStaticPayloadType` uses `#[repr(u8)]`, which makes its
 conversion to `u8` lossless. The lint exception is local to `as_u8`:

@@ -1,14 +1,14 @@
 # S4. Separate intent from realization
 
-Keep requested intent separate from the resource that realizes it. Resource
-loss, replacement or renegotiation must not erase intent. Only its owning
-domain operation may remove it.
+Keep the requested intent separate from the resource that fulfills it, so
+resource loss, replacement or renegotiation cannot erase the request. Only the
+domain operation responsible for that intent may remove it.
 
-Give each pending realization an identity. Accept completion only when that
-identity matches the pending realization for the current request.
+Give each pending realization an identity and accept its completion only while
+that identity still matches the pending realization for the current request.
 
 > [!NOTE]
-> More read: **[the Kubernetes controller pattern](https://kubernetes.io/docs/concepts/architecture/controller/)** and **[optimistic concurrency control in Google Cloud](https://docs.cloud.google.com/java/docs/occ)**.
+> Further reading: **[the Kubernetes controller pattern](https://kubernetes.io/docs/concepts/architecture/controller/)** and **[optimistic concurrency control in Google Cloud](https://docs.cloud.google.com/java/docs/occ)**.
 
 **Example:** `RouteGraph` keeps `Subscription::intent` when its current
 publication detaches. `ConsumerRealization::Pending` carries a
@@ -53,5 +53,6 @@ enum ConsumerRealization {
 }
 ```
 
-**Rationale:** A temporary resource can disappear while the request remains.
-Stale completions must not modify or erase its replacement.
+**Rationale:** A request may outlive several resources or setup attempts.
+Separating their identities prevents a stale completion from modifying or
+erasing a replacement.

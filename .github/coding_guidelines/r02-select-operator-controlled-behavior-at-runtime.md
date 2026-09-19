@@ -1,16 +1,19 @@
 # R2. Configure operator choices at runtime
 
-Operator-controlled codecs, media policy and limits use runtime configuration,
-not Cargo features. Define variables under
-[`src/config`](../../src/config/), load them through `Env::var` in
-`Config::from_env` and document them in [`DEPLOYMENT.md`](../../DEPLOYMENT.md).
-Validate defaults and supplied values. Reject unsupported, conflicting or
-retired settings. Renames need precedence or mutual rejection.
+Keep operator choices such as codecs, media policy and limits in runtime
+configuration so one build can serve different deployments. Define variables
+under [`src/config`](../../src/config/), load them through `Env::var` in
+`Config::from_env` and document them in
+[`DEPLOYMENT.md`](../../DEPLOYMENT.md). Validate defaults and supplied values,
+rejecting unsupported, conflicting or retired settings. When renaming a
+variable, define which name takes precedence or reject configurations that
+supply both.
 
-Each Cargo feature must add optional infrastructure or verification capability.
-Document and test each feature combination enabled by CI or deployment
-manifests because Cargo can unify features across dependencies. See the
-[Cargo feature-unification guidance](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification).
+only use Cargo features for optional infrastructure or verification
+capabilities. Because Cargo can unify features across dependencies, document
+and test every combination enabled by CI or deployment manifests. See the
+[Cargo feature-unification
+guidance](https://doc.rust-lang.org/cargo/reference/features.html#feature-unification).
 
 **Example:** `load_media_codec_flags` loads each codec choice through `Env`.
 

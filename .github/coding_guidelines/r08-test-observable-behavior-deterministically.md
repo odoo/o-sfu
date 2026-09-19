@@ -1,18 +1,21 @@
 # R8. Make tests prove real behavior
 
-Test one contract through its narrowest production interface. Assert behavior a
-no-op cannot produce, not fixture-derived values.
+Test each contract through the narrowest production interface that exposes it.
+Assertions must observe behavior that requires the operation under test to
+work, rather than values computed by the fixture or results a no-op could
+produce.
 
-Make asynchronous tests deterministic: wait for readiness, control time and
-synchronize concurrent steps. Use timeouts only for hangs or expected absence.
-Never depend on execution order or shared process state.
+Make asynchronous progress explicit by waiting for readiness, controlling time
+and synchronizing concurrent steps. Use timeouts only to bound hangs or check
+expected absence, never as a substitute for readiness. Tests must remain
+independent of test execution order and shared process state.
 
-Compatibility tests must cross production boundaries. Drive real Rust and
-TypeScript producers and consumers. Check the built Odoo bundle against fixed
-expectations written independently.
+Compatibility tests must exercise real Rust and TypeScript producers and
+consumers across production boundaries. Check the built Odoo bundle against
+fixed expectations written independently of its implementation.
 
 > [!NOTE]
-> More read: **[async testing with paused time in Tokio](https://tokio.rs/tokio/topics/testing)**.
+> Further reading: **[async testing with paused time in Tokio](https://tokio.rs/tokio/topics/testing)**.
 
 **Example:** `websocket_rejects_batches_over_protocol_envelope_limit` drives the
 real WebSocket boundary then observes its close code and metrics.

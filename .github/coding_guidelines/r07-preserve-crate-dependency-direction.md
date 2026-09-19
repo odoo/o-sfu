@@ -1,12 +1,13 @@
 # R7. Keep infrastructure out of domain crates
 
-Domain crates must not depend on runtime, network, browser or transport
-implementations. Put integration in `o-sfu-core` or the root server crate. Place
-shared contracts in the lowest suitable crate. Never add a reverse dependency
-merely to reuse code.
+Keep domain crates independent of runtime, network, browser and transport
+implementations so their rules can be understood without infrastructure.
+Integration belongs in `o-sfu-core` or the root server crate, while shared
+contracts belong in the lowest suitable crate. Reuse must respect this
+dependency direction rather than introducing loops in the dependency graph.
 
 > [!NOTE]
-> More read: **[the dependency inversion principle](https://en.wikipedia.org/wiki/Dependency_inversion_principle)**.
+> Further reading: **[the dependency inversion principle](https://en.wikipedia.org/wiki/Dependency_inversion_principle)**.
 
 **Example:** `o-sfu-router` depends on `o-sfu-model` and `o-sfu-rfc` while
 `str0m` integration remains in `o-sfu-core`.

@@ -1,17 +1,19 @@
 # S1. Avoid unnecessary mutability
 
-Prefer immutable values and finish construction before exposure. Limit
-necessary mutation to the smallest scope. In **Rust** use `mut` only for
-reassignment or mutable borrowing and compute final values directly. In
-**TypeScript** prefer `const` and `readonly` outside mutable API contracts.
-Borrow when use stays local. Clone only when an independent value or shared
-ownership is required. Use `mem::take` or `mem::replace` to move without
-cloning.
+Prefer immutable values that are fully constructed before they are exposed.
+When mutation is necessary, keep it within the smallest scope. In **Rust**,
+compute final values directly and use `mut` only where reassignment or mutable
+borrowing requires it. In **TypeScript**, prefer `const` and `readonly` unless
+the API contract requires mutation.
+
+Borrow values for local use and clone only when an independent value or shared
+ownership is required. To move a value out of a mutable location, use
+`mem::take` or `mem::replace` to leave a valid replacement without cloning.
 
 > [!NOTE]
-> More read: **[aliasing in the Rustonomicon](https://doc.rust-lang.org/nomicon/aliasing.html)** and **[ownership and borrowing in The Rust Book](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html)**.
+> Further reading: **[aliasing in the Rustonomicon](https://doc.rust-lang.org/nomicon/aliasing.html)** and **[ownership and borrowing in The Rust Book](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html)**.
 >
-> partially enforced with: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_ref_mut),
+> Related lints: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_ref_mut),
 > [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#redundant_clone),
 > [complexity::clone_on_copy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#clone_on_copy)
 > and [style::unnecessary_mut_passed](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_mut_passed).
@@ -45,5 +47,4 @@ fn create_session(auth: &AuthPayload) -> Session {
 }
 ```
 
-**Rationale:** Immutable values prevent unintended writes. Keeping mutation
-local makes state transitions and ownership easier to audit.
+**Rationale:** Keeping mutation local makes state transitions and ownership easier to audit/understand.

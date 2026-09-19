@@ -1,18 +1,20 @@
 # E2. Convert external formats at adapter boundaries
 
-Use private wire types for transport-specific, versioned or loosely constrained
-data. Convert them to O-SFU domain types at adapter boundaries. Serialize domain
-types directly only when the format is their documented contract and requires
-no adapter validation. Keep HTTP extractors, WebSocket frames and
-external-library types inside adapters. Normalize compatibility forms before
-storage or indexing. Use `serde_json::Value` only when the contract allows
-arbitrary JSON.
+Represent transport-specific, versioned or loosely constrained data with
+private wire types, then convert it to O-SFU domain types at adapter
+boundaries. Direct serialization of domain types is appropriate only when the
+format is their documented contract and needs no adapter validation. Keep
+HTTP extractors, WebSocket frames and external-library types inside adapters
+so domain code works with validated representations. Normalize compatibility
+forms before storage or indexing and use `serde_json::Value` only when the
+contract permits arbitrary JSON.
 
 > [!NOTE]
-> More read: **[`TryFrom` in the standard library](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)**.
+> Further reading: **[`TryFrom` in the standard library](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)**.
 
 **Example:** `decode_client_batch` converts WebSocket input into
-`ClientEnvelope`. Domain code receives the enum instead of raw fields.
+`ClientEnvelope`, giving domain code a typed enum after rejecting unknown
+tags and malformed payloads.
 
 **Avoid**
 
@@ -35,5 +37,5 @@ pub async fn apply_client_envelope(
 ) -> Result<UserOutput, UserError>
 ```
 
-**Rationale:** Boundary conversion keeps transport details out of typed domain
-APIs.
+**Rationale:** Domain code can rely on validated values without interpreting
+transport details.
