@@ -21,6 +21,8 @@
     reason = "Gungraun's generated harness returns measured outputs and exits with the runner status"
 )]
 
+mod allocator;
+
 #[path = "callgrind_config.rs"]
 mod callgrind_config;
 
@@ -46,8 +48,8 @@ fn meeting_flow(mut fixture: MeetingFlowBenchFixture) -> MeetingFlowBenchFixture
 }
 
 library_benchmark_group!(
-    name = meeting_flow_callgrind;
+    name = meeting;
     benchmarks = meeting_flow
 );
 
-main!(library_benchmark_groups = meeting_flow_callgrind);
+main!(library_benchmark_groups = meeting);

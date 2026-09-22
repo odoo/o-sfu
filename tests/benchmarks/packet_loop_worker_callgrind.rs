@@ -26,6 +26,8 @@
     reason = "Gungraun's generated harness owns setup values, returns measured outputs and exits with the runner status"
 )]
 
+mod allocator;
+
 use std::{env, hint::black_box};
 
 // github actions runs this manual target on x86_64 linux
@@ -34,8 +36,8 @@ use std::{env, hint::black_box};
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use gungraun::client_requests::callgrind::{start_instrumentation, stop_instrumentation};
 use gungraun::{
-    Callgrind, EntryPoint, FlamegraphConfig, LibraryBenchmarkConfig, library_benchmark,
-    library_benchmark_group, main,
+    Callgrind, EntryPoint, FlamegraphConfig, LibraryBenchmarkConfig, ValgrindTool,
+    library_benchmark, library_benchmark_group, main,
 };
 use o_sfu_core::server::transport::benchmark_support::WorkerLoopBenchFixture;
 
@@ -53,7 +55,11 @@ fn callgrind_worker_config() -> LibraryBenchmarkConfig {
     }
 
     let mut config = LibraryBenchmarkConfig::default();
-    config.tool(callgrind);
+    if cfg!(feature = "dhat") {
+        config.default_tool(ValgrindTool::DHAT);
+    } else {
+        config.tool(callgrind);
+    }
     config
 }
 
@@ -67,8 +73,8 @@ fn worker_command_roundtrips(fixture: WorkerLoopBenchFixture) -> usize {
 }
 
 library_benchmark_group!(
-    name = packet_loop_worker_callgrind;
+    name = worker;
     benchmarks = worker_command_roundtrips
 );
 
-main!(library_benchmark_groups = packet_loop_worker_callgrind);
+main!(library_benchmark_groups = worker);

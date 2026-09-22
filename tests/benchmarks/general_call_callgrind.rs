@@ -15,6 +15,7 @@
     reason = "Gungraun's generated harness returns measured outputs and exits with the runner status"
 )]
 
+mod allocator;
 mod general_call;
 
 #[path = "callgrind_config.rs"]
@@ -33,8 +34,8 @@ fn room_flow(fixture: GeneralCallFixture) -> usize {
 }
 
 library_benchmark_group!(
-    name = general_call_callgrind;
+    name = room_control;
     benchmarks = room_flow
 );
 
-main!(library_benchmark_groups = general_call_callgrind);
+main!(library_benchmark_groups = room_control);

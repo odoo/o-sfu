@@ -38,6 +38,8 @@ use o_sfu_core::server::transport::benchmark_support::{
     routing_miss_packet_fingerprint,
 };
 
+mod allocator;
+
 #[path = "callgrind_config.rs"]
 mod callgrind_config;
 
@@ -319,7 +321,7 @@ fn relay_drain_256(mut fixture: RelayDrainBenchFixture) -> usize {
 }
 
 library_benchmark_group!(
-    name = packet_loop_callgrind;
+    name = packet_loop;
     benchmarks =
         route_plan_1024,
         relay_route_plan_1024,
@@ -342,4 +344,4 @@ library_benchmark_group!(
         relay_drain_256
 );
 
-main!(library_benchmark_groups = packet_loop_callgrind);
+main!(library_benchmark_groups = packet_loop);
