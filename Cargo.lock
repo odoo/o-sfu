@@ -1497,6 +1497,7 @@ dependencies = [
  "serde_json",
  "str0m",
  "str0m-netem",
+ "tikv-jemallocator",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tokio-util",

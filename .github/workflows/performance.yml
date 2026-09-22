@@ -45,7 +45,7 @@ on:
     # pull requests keep using the deterministic slice summary path below
     inputs:
       base_ref:
-        description: Base ref for manual Callgrind comparison
+        description: Base ref (must be in default-branch history when running on the default branch)
         required: false
         type: string
       worker_investigation:
@@ -149,11 +149,6 @@ jobs:
             callgrind_args="${callgrind_args:+${callgrind_args} }--branch-sim=yes"
           fi
 
-          tools=""
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$INPUT_DHAT" == "true" ]]; then
-            tools="dhat"
-          fi
-
           flamegraphs=""
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$INPUT_FLAMEGRAPHS" == "true" ]]; then
             flamegraphs="1"
@@ -164,7 +159,6 @@ jobs:
           {
             echo "callgrind-args=${callgrind_args}"
             echo "flamegraphs=${flamegraphs}"
-            echo "tools=${tools}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve comparison refs
@@ -173,27 +167,32 @@ jobs:
           set -euo pipefail
 
           git fetch --no-tags origin +refs/heads/*:refs/remotes/origin/*
+          default_sha="$(git rev-parse --verify "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}")"
+          head_ref="$GITHUB_SHA"
 
           # pull requests compare the target branch commit against GitHub's synthetic merge commit
           # this catches the performance impact of the code exactly as it would enter the base branch
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             base_ref="$PULL_REQUEST_BASE_SHA"
-            head_ref="refs/remotes/origin/pr-${PULL_REQUEST_NUMBER}-merge"
-            git fetch --no-tags origin "pull/${PULL_REQUEST_NUMBER}/merge:${head_ref}"
           # pushes compare the previous branch tip against the commit that triggered the workflow
           elif [[ "$GITHUB_EVENT_NAME" == "push" && -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
             base_ref="$PUSH_BEFORE_SHA"
-            head_ref="$GITHUB_SHA"
           # manual runs use the requested base ref or the default branch when no input was provided
           else
-            base_ref="${INPUT_BASE_REF:-origin/${DEFAULT_BRANCH}}"
-            head_ref="$GITHUB_SHA"
+            base_ref="${INPUT_BASE_REF:-$default_sha}"
           fi
 
-          # fail before running Valgrind when a ref cannot be resolved to a commit
-          git fetch --no-tags origin "$base_ref" || true
-          git cat-file -e "${base_ref}^{commit}"
+          # An empty destination prevents base_ref from rewriting local refs.
+          git fetch --no-tags -- origin "${base_ref}:" || true
+          base_ref="$(git rev-parse --verify --end-of-options "${base_ref}^{commit}")"
           git cat-file -e "${head_ref}^{commit}"
+
+          # Default-branch runs can write caches reused by other workflows.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]] &&
+            ! git merge-base --is-ancestor "$base_ref" "$default_sha"; then
+            echo "::error::Default-branch runs require base_ref to be in default-branch history."
+            exit 1
+          fi
 
           echo "base-ref=${base_ref}" >> "$GITHUB_OUTPUT"
           echo "head-ref=${head_ref}" >> "$GITHUB_OUTPUT"
@@ -212,12 +211,8 @@ jobs:
       - name: Save base Callgrind baseline
         run: |
           callgrind_args='${{ steps.investigation.outputs.callgrind-args }}'
-          tools='${{ steps.investigation.outputs.tools }}'
           if [[ -n "$callgrind_args" ]]; then
             export GUNGRAUN_CALLGRIND_ARGS="$callgrind_args"
-          fi
-          if [[ -n "$tools" ]]; then
-            export GUNGRAUN_TOOLS="$tools"
           fi
 
           # Gungraun stores the named baseline under target/gungraun for the next step in this same job
@@ -256,12 +251,8 @@ jobs:
       - name: Compare head Callgrind baseline
         run: |
           callgrind_args='${{ steps.investigation.outputs.callgrind-args }}'
-          tools='${{ steps.investigation.outputs.tools }}'
           if [[ -n "$callgrind_args" ]]; then
             export GUNGRAUN_CALLGRIND_ARGS="$callgrind_args"
-          fi
-          if [[ -n "$tools" ]]; then
-            export GUNGRAUN_TOOLS="$tools"
           fi
 
           # the head run loads the saved base baseline and emits JSON summaries with base-versus-head deltas
@@ -292,15 +283,11 @@ jobs:
           # it is not a base-versus-head gate and it never feeds PR comments
           callgrind_args='${{ steps.investigation.outputs.callgrind-args }}'
           flamegraphs='${{ steps.investigation.outputs.flamegraphs }}'
-          tools='${{ steps.investigation.outputs.tools }}'
           if [[ -n "$callgrind_args" ]]; then
             export GUNGRAUN_CALLGRIND_ARGS="$callgrind_args"
           fi
           if [[ -n "$flamegraphs" ]]; then
             export O_SFU_CALLGRIND_FLAMEGRAPHS="$flamegraphs"
-          fi
-          if [[ -n "$tools" ]]; then
-            export GUNGRAUN_TOOLS="$tools"
           fi
 
           # this target is diagnostic only
@@ -308,6 +295,51 @@ jobs:
           # manual PR comments may show its top-level summary when this run maps to one open PR
           git checkout --force "${{ steps.refs.outputs.head-ref }}"
           cargo bench --locked -p o-sfu-tests --features worker-benchmarks --bench packet_loop_worker_callgrind -- --save-summary=json
+
+      - name: Run manual DHAT investigation
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.dhat && steps.refs.outcome == 'success' }}
+        env:
+          BASE_REF: ${{ steps.refs.outputs.base-ref }}
+          HEAD_REF: ${{ steps.refs.outputs.head-ref }}
+          # DHAT summaries must not overwrite Callgrind's performance results.
+          GUNGRAUN_HOME: ${{ github.workspace }}/target/gungraun-dhat
+        run: |
+          status=0
+          base_targets=()
+          for revision in base head; do
+            if [[ "$revision" == "base" ]]; then
+              git checkout --force "$BASE_REF"
+            else
+              git checkout --force "$HEAD_REF"
+            fi
+            metadata=$(cargo metadata --locked --no-deps --format-version 1 | jq '.packages[] | select(.name == "o-sfu-tests")')
+            if ! jq -e '.features | has("dhat")' <<< "$metadata" >/dev/null; then
+              echo "Skipping DHAT on $revision: this revision has no separate DHAT mode"
+              continue
+            fi
+            for target in packet_loop_callgrind meeting_flow_callgrind source_policy_callgrind general_call_callgrind; do
+              if ! jq -e --arg target "$target" 'any(.targets[]; .name == $target and (.kind | index("bench")))' <<< "$metadata" >/dev/null; then
+                continue
+              fi
+              baseline_args=()
+              if [[ "$revision" == "base" ]]; then
+                baseline_args=(--save-baseline=base)
+              elif [[ " ${base_targets[*]} " == *" $target "* ]]; then
+                baseline_args=(--baseline=base)
+              fi
+              if cargo bench --locked -p o-sfu-tests --features dhat --bench "$target" -- "${baseline_args[@]}" --save-summary=json; then
+                if [[ "$revision" == "base" ]]; then
+                  base_targets+=("$target")
+                fi
+              else
+                status=1
+              fi
+            done
+            if [[ "$revision" == "head" && "$INPUT_WORKER_INVESTIGATION" == "true" ]]; then
+              cargo bench --locked -p o-sfu-tests --features dhat,worker-benchmarks --bench packet_loop_worker_callgrind -- --save-summary=json || status=1
+            fi
+          done
+          exit "$status"
 
       - name: Collect Callgrind summaries
         if: always()
@@ -332,7 +364,6 @@ jobs:
             printf 'flamegraphs=%s\n' "${INPUT_FLAMEGRAPHS:-false}"
             printf 'dhat=%s\n' "${INPUT_DHAT:-false}"
             printf 'callgrind_args=%s\n' '${{ steps.investigation.outputs.callgrind-args }}'
-            printf 'tools=%s\n' '${{ steps.investigation.outputs.tools }}'
           } > performance-artifacts/callgrind-refs.env
 
       - name: Upload Callgrind artifacts
@@ -345,6 +376,18 @@ jobs:
           path: |
             target/gungraun/**
             performance-artifacts/callgrind-summary.json
+            performance-artifacts/callgrind-refs.env
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload DHAT artifacts
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.dhat
+        # actions/upload-artifact v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: packet-loop-dhat-${{ github.run_id }}
+          path: |
+            target/gungraun-dhat/**
             performance-artifacts/callgrind-refs.env
           if-no-files-found: warn
           retention-days: 14

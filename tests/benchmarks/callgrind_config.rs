@@ -3,7 +3,7 @@
 //! every target wants the same measurement setup and differs only in how much
 //! drift it tolerates, so the soft limit is the one parameter left to the caller
 
-use gungraun::{Callgrind, EventKind, LibraryBenchmarkConfig};
+use gungraun::{Callgrind, EventKind, LibraryBenchmarkConfig, ValgrindTool};
 
 const CALLGRIND_CACHE_SIM: &str = "--cache-sim=yes";
 
@@ -21,6 +21,11 @@ pub fn callgrind_config(soft_limit: f64) -> LibraryBenchmarkConfig {
     callgrind.fail_fast(false);
 
     let mut config = LibraryBenchmarkConfig::default();
-    config.tool(callgrind);
+    // A configured Callgrind tool would also run when DHAT is the default tool.
+    if cfg!(feature = "dhat") {
+        config.default_tool(ValgrindTool::DHAT);
+    } else {
+        config.tool(callgrind);
+    }
     config
 }

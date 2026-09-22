@@ -42,6 +42,8 @@
 //!
 //! Each bandwidth plateau lasts through the 750 ms dwell. Injected time makes
 //! pressure and upgrade eligibility deterministic.
+//! Bandwidth maps and speaker observations are prepared before measurement.
+//! The worker applies route effects without unrelated media-quality sampling.
 
 use std::{
     collections::BTreeMap,
@@ -72,18 +74,16 @@ use o_sfu_core::{
         session::{UserId, UserPermissions, VideoLayoutIntent},
         transport::{
             ActiveSpeakerSource, MediaTransport, MediaTransportConfig, MediaTransportDeps,
-            ReceiverBandwidthSnapshot, TransportSessionKey, test_support::test_rtc_port_range,
+            ReceiverBandwidthSnapshot, test_support::test_rtc_port_range,
         },
     },
 };
 use o_sfu_router::test_support::rtp_samples;
-use o_sfu_telemetry::{
-    DEFAULT_MEDIA_QUALITY_INTERVAL, diagnostics::types::DiagnosticsPolicyPauseReason,
-};
+use o_sfu_telemetry::diagnostics::types::DiagnosticsPolicyPauseReason;
 use tokio::runtime::{Builder, Runtime};
 
 const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
-const WORKER_COUNT: usize = 4;
+const WORKER_COUNT: usize = 1;
 const OUTBOUND_QUEUE_CAPACITY: usize = 1024;
 
 /// participants in the modelled room, matching the packet-loop scenario
@@ -106,12 +106,23 @@ const POLICY_TURNS: usize = 24;
 /// The hard limit admits three routes with a combined 450 kbps floor. The
 /// 400 kbps plateau forces a pause after the dwell and later plateaus recover.
 const BANDWIDTH_TRACE_BPS: [u64; 12] = [
-    2_500_000, 2_500_000, 2_500_000, 2_500_000, 400_000, 400_000, 400_000, 400_000, 900_000,
-    900_000, 900_000, 900_000,
+    RELAXED_BANDWIDTH_BPS,
+    RELAXED_BANDWIDTH_BPS,
+    RELAXED_BANDWIDTH_BPS,
+    RELAXED_BANDWIDTH_BPS,
+    PRESSURED_BANDWIDTH_BPS,
+    PRESSURED_BANDWIDTH_BPS,
+    PRESSURED_BANDWIDTH_BPS,
+    PRESSURED_BANDWIDTH_BPS,
+    RECOVERING_BANDWIDTH_BPS,
+    RECOVERING_BANDWIDTH_BPS,
+    RECOVERING_BANDWIDTH_BPS,
+    RECOVERING_BANDWIDTH_BPS,
 ];
 /// bandwidth pair used by the out-of-window differential observation
 const RELAXED_BANDWIDTH_BPS: u64 = 2_500_000;
 const PRESSURED_BANDWIDTH_BPS: u64 = 400_000;
+const RECOVERING_BANDWIDTH_BPS: u64 = 900_000;
 /// turns driven at each bandwidth before observing, so the 750 ms dwell expires
 const OBSERVATION_TURNS: usize = 4;
 /// top layer of the three-layer simulcast ladder the publishers offer
@@ -188,7 +199,7 @@ impl SourcePolicyFixture {
 
     /// Checks admitted audio and featured output against the mixed speaker snapshot.
     pub fn assert_speaker_selection(&self) {
-        assert!(self.scenario.speaker_snapshot.is_some());
+        assert!(!self.scenario.speaker_snapshot.is_empty());
         self.runtime.block_on(async {
             let receiver = user(raw_user_id(PARTICIPANTS - 1));
             let audio = stream_id_for_source(TestSourceKind::AudioDetector);
@@ -297,10 +308,10 @@ struct SourcePolicyScenario {
     receivers: BTreeMap<RawUserId, UserOutboundReceiver>,
     room: Arc<Room>,
     now: Instant,
-    session_keys: Vec<TransportSessionKey>,
+    bandwidth_snapshots: BTreeMap<u64, ReceiverBandwidthSnapshot>,
     stats: SourcePolicyStats,
     user_sessions: BTreeMap<RawUserId, MediaSession>,
-    speaker_snapshot: Option<Vec<ActiveSpeakerSource>>,
+    speaker_snapshot: Vec<ActiveSpeakerSource>,
 }
 
 impl SourcePolicyScenario {
@@ -323,10 +334,10 @@ impl SourcePolicyScenario {
             receivers: BTreeMap::new(),
             room,
             now: Instant::now(),
-            session_keys: Vec::with_capacity(PARTICIPANTS),
+            bandwidth_snapshots: BTreeMap::new(),
             stats: SourcePolicyStats::default(),
             user_sessions: BTreeMap::new(),
-            speaker_snapshot: None,
+            speaker_snapshot: Vec::new(),
         };
         scenario.build_room(&core).await?;
         scenario.now = Instant::now();
@@ -420,7 +431,7 @@ impl SourcePolicyScenario {
         self.now += Duration::from_millis(u64::try_from(PARTICIPANTS + 2)?);
         sources.push(ActiveSpeakerSource::new(foreign_media, self.now));
         self.receivers.insert(foreign_user, receiver);
-        self.speaker_snapshot = Some(sources);
+        self.speaker_snapshot = sources;
         self.run_turn(BANDWIDTH_TRACE_BPS[0]).await?;
         self.stats = SourcePolicyStats::default();
         Ok(())
@@ -439,19 +450,17 @@ impl SourcePolicyScenario {
     }
 
     async fn run_turn(&mut self, bandwidth_bps: u64) -> Result<()> {
-        let bandwidth = ReceiverBandwidthSnapshot {
-            per_session: self
-                .session_keys
-                .iter()
-                .cloned()
-                .map(|session_key| (session_key, Bitrate::from_bps(bandwidth_bps)))
-                .collect(),
-        };
+        let bandwidth = self
+            .bandwidth_snapshots
+            .get(&bandwidth_bps)
+            .ok_or_else(|| {
+                anyhow!("bandwidth snapshot for {bandwidth_bps} bps was not prepared")
+            })?;
         let produced_work = run_source_policy_turn_for_benchmark(
             &self.room,
             &self.media_transport,
-            &bandwidth,
-            self.speaker_snapshot.as_deref(),
+            bandwidth,
+            Some(&self.speaker_snapshot),
             self.now,
         )
         .await;
@@ -517,7 +526,7 @@ impl SourcePolicyScenario {
         }
         self.subscribe_all_audio().await?;
         self.subscribe_video().await?;
-        self.collect_session_keys().await?;
+        self.collect_bandwidth_snapshots().await?;
         Ok(())
     }
 
@@ -653,22 +662,23 @@ impl SourcePolicyScenario {
         Ok(())
     }
 
-    async fn collect_session_keys(&mut self) -> Result<()> {
+    async fn collect_bandwidth_snapshots(&mut self) -> Result<()> {
+        let mut session_keys = Vec::with_capacity(PARTICIPANTS);
         for (raw_user_id, session) in &self.user_sessions {
             let session_key = self
                 .room
                 .transport_user_key(&user(*raw_user_id), session.connection_id())
                 .await;
-            self.session_keys.push(session_key);
+            session_keys.push(session_key);
         }
-        if self.session_keys.len() != PARTICIPANTS {
+        if session_keys.len() != PARTICIPANTS {
             return Err(anyhow!(
                 "expected {PARTICIPANTS} transport session keys, got {}",
-                self.session_keys.len()
+                session_keys.len()
             ));
         }
-        if !self.session_keys.first().is_some_and(|first| {
-            self.session_keys
+        if !session_keys.first().is_some_and(|first| {
+            session_keys
                 .iter()
                 .all(|key| key.media_worker_id() == first.media_worker_id())
         }) {
@@ -676,6 +686,23 @@ impl SourcePolicyScenario {
                 "source-policy benchmark sessions must share one worker"
             ));
         }
+        self.bandwidth_snapshots = [
+            RELAXED_BANDWIDTH_BPS,
+            PRESSURED_BANDWIDTH_BPS,
+            RECOVERING_BANDWIDTH_BPS,
+        ]
+        .into_iter()
+        .map(|bandwidth_bps| {
+            let snapshot = ReceiverBandwidthSnapshot {
+                per_session: session_keys
+                    .iter()
+                    .cloned()
+                    .map(|session_key| (session_key, Bitrate::from_bps(bandwidth_bps)))
+                    .collect(),
+            };
+            (bandwidth_bps, snapshot)
+        })
+        .collect();
         Ok(())
     }
 
@@ -693,7 +720,7 @@ impl SourcePolicyScenario {
     }
 }
 
-/// Retains four transport workers and normal media-quality sampling.
+/// Applies room route effects on one worker without periodic quality sampling.
 fn media_transport() -> Result<MediaTransport> {
     let rtc_port_range = test_rtc_port_range();
     let config = MediaTransportConfig {
@@ -705,7 +732,7 @@ fn media_transport() -> Result<MediaTransport> {
         rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
         codec_flags: MediaCodecFlags::default(),
         codec_preferences: CodecPreferences::default(),
-        media_quality_interval: Some(DEFAULT_MEDIA_QUALITY_INTERVAL),
+        media_quality_interval: None,
     };
     let deps = MediaTransportDeps {
         packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
