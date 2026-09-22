@@ -539,6 +539,7 @@ room and user limits:
 | `USER_OUTBOUND_QUEUE_CAPACITY` | `128` | per-user WebSocket room-event queue depth |
 | `USER_OUTBOUND_QUEUE_BYTE_CAPACITY` | `2097152` | per-user WebSocket queued-byte budget |
 | `ROOM_RESERVATION_TTL` | `60` | time-to-live for unjoined rooms in seconds |
+| `ROOM_DEPARTURE_GRACE` | `60` | empty room grace period before removal (seconds) |
 
 RTC transport:
 

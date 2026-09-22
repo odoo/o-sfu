@@ -19,6 +19,8 @@ mod protocol_flow;
 mod relay_spillover;
 #[path = "full_stack/replacement_flow.rs"]
 mod replacement_flow;
+#[path = "full_stack/room_lifecycle.rs"]
+mod room_lifecycle;
 #[path = "full_stack/support.rs"]
 mod support;
 #[path = "full_stack/video_routing.rs"]

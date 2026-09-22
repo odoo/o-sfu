@@ -148,6 +148,15 @@ async fn manager_leave_user_removes_empty_room() -> Result<()> {
             .await
             .is_none()
     );
+    // the last departure hands the empty room to the grace, so removal waits
+    // for that deadline rather than this call
+    assert!(manager.has_room_departure_grace_for_test(room_id).await);
+    assert!(
+        manager
+            .expire_room_departure_grace_now_for_test(room_id)
+            .await
+    );
+    manager.check_expired_room_reservations().await;
     assert!(manager.get_by_uuid(room_id).await.is_none());
     Ok(())
 }

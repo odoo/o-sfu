@@ -16,6 +16,7 @@ use crate::{
 
 const DEFAULT_TEST_MAX_SESSIONS: usize = 100;
 const DEFAULT_TEST_RESERVATION_TTL: Duration = Duration::from_mins(1);
+const DEFAULT_TEST_DEPARTURE_GRACE: Duration = Duration::from_mins(1);
 
 impl RoomManager {
     #[must_use]
@@ -75,6 +76,21 @@ impl RoomManager {
             runtime_policy,
             Arc::new(RuntimeMetrics::default()),
             reservation_ttl,
+            DEFAULT_TEST_DEPARTURE_GRACE,
+        )
+    }
+
+    /// builds a manager whose emptied rooms wait `departure_grace` for a rejoin
+    ///
+    /// [`Duration::ZERO`] restores removal by the departure that empties the
+    /// room, which lets tests exercise that path without touching a clock
+    #[must_use]
+    pub fn for_test_with_departure_grace(departure_grace: Duration) -> Self {
+        Self::new(
+            test_runtime_policy(RoomAdmissionPolicy::new(DEFAULT_TEST_MAX_SESSIONS)),
+            Arc::new(RuntimeMetrics::default()),
+            DEFAULT_TEST_RESERVATION_TTL,
+            departure_grace,
         )
     }
 
@@ -90,6 +106,19 @@ impl RoomManager {
         self.entry(room_id)
             .await
             .is_some_and(|entry| entry.lifecycle.has_reservation_deadline_for_test())
+    }
+
+    pub async fn has_room_departure_grace_for_test(&self, room_id: &str) -> bool {
+        self.entry(room_id)
+            .await
+            .is_some_and(|entry| entry.lifecycle.has_departure_grace_for_test())
+    }
+
+    pub async fn expire_room_departure_grace_now_for_test(&self, room_id: &str) -> bool {
+        let Some(entry) = self.entry(room_id).await else {
+            return false;
+        };
+        entry.lifecycle.expire_departure_grace_now_for_test()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]

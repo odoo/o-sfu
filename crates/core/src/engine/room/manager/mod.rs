@@ -30,7 +30,10 @@ use crate::engine::{
     ConnectionId, RoomInstanceId, UserId,
     media_transport::{MediaTransport, TransportSessionKey},
     metrics::{RoomGaugeValues, RuntimeMetrics},
-    room::instance::RoomManagerServeError,
+    room::{
+        directory::{ExpiryReason, RoomRemovalPolicy},
+        instance::RoomManagerServeError,
+    },
 };
 
 #[cfg(any(test, feature = "testing-transport"))]
@@ -104,6 +107,7 @@ pub struct RoomManager {
     directory: RwLock<RoomDirectory>,
     factory: RoomFactory,
     reservation_ttl: Duration,
+    departure_grace: Duration,
     #[cfg(any(test, feature = "testing-transport"))]
     join_placement_gate: Mutex<Option<Arc<JoinPlacementTestGate>>>,
 }
@@ -116,12 +120,14 @@ impl RoomManager {
         runtime_policy: RoomRuntimePolicy,
         metrics: Arc<RuntimeMetrics>,
         reservation_ttl: Duration,
+        departure_grace: Duration,
     ) -> Self {
         let factory = RoomFactory::new(runtime_policy, metrics);
         Self {
             directory: RwLock::new(RoomDirectory::default()),
             factory,
             reservation_ttl,
+            departure_grace,
             #[cfg(any(test, feature = "testing-transport"))]
             join_placement_gate: Mutex::new(None),
         }
@@ -155,7 +161,12 @@ impl RoomManager {
             return Ok(room);
         }
         let room = self.factory.create(issuer, key, config);
-        directory.insert(Arc::clone(&room), remote_address, self.reservation_ttl);
+        directory.insert(
+            Arc::clone(&room),
+            remote_address,
+            self.reservation_ttl,
+            self.departure_grace,
+        );
         drop(directory);
         info!(
             event = telemetry_event::ROOM_CREATED,
@@ -294,7 +305,7 @@ impl RoomManager {
         {
             Ok(commit) => commit,
             Err(err) => {
-                self.finish_session_mutation(room_id, mutation, false).await;
+                self.finish_session_mutation(room_id, mutation, None).await;
                 return Err(match err {
                     RoomJoinError::RoomFull => RoomManagerJoinError::RoomFull,
                     RoomJoinError::RouterState => RoomManagerJoinError::RouterState,
@@ -308,7 +319,7 @@ impl RoomManager {
             .finalize_admission(join_commit, RoomEffectContext::runtime(media_transport))
             .await;
 
-        self.finish_session_mutation(room_id, mutation, false).await;
+        self.finish_session_mutation(room_id, mutation, None).await;
         Ok(RoomUserAdmission {
             room,
             connection_id: receipt.transport_session_key.connection_id(),
@@ -335,7 +346,7 @@ impl RoomManager {
                     room.remove_user(user_id, connection_id, media_transport)
                         .await
                 },
-                true,
+                Some(RoomRemovalPolicy::AfterGrace),
             )
             .await
         else {
@@ -358,7 +369,7 @@ impl RoomManager {
             .run_current_room_mutation(
                 room_id,
                 |room| async move { room.disconnect_users(user_ids, media_transport).await },
-                true,
+                Some(RoomRemovalPolicy::Immediately),
             )
             .await;
         let (disconnected_session_count, outcome) =
@@ -377,13 +388,25 @@ impl RoomManager {
     pub async fn check_expired_room_reservations(&self) {
         let mut directory = self.directory.write().await;
         for entry in directory.entries() {
-            if entry.lifecycle.claim_expired_reservation() {
-                directory.remove_if_current(entry.room.uuid(), &entry.room);
-                info!(
-                    event = telemetry_event::ROOM_RESERVATION_EXPIRED,
-                    room_id = entry.room.uuid(),
-                    "room reservation expired"
-                );
+            if let Some(expiry_reason) = entry.lifecycle.claim_expired_room()
+                && directory.remove_if_current(entry.room.uuid(), &entry.room)
+            {
+                match expiry_reason {
+                    ExpiryReason::ReservationLapsed => {
+                        info!(
+                            event = telemetry_event::ROOM_RESERVATION_EXPIRED,
+                            room_id = entry.room.uuid(),
+                            "room reservation expired"
+                        );
+                    }
+                    ExpiryReason::GraceElapsed => {
+                        info!(
+                            event = telemetry_event::ROOM_DESTROYED,
+                            room_id = entry.room.uuid(),
+                            "room destroyed"
+                        );
+                    }
+                }
             }
         }
         drop(directory);
@@ -395,14 +418,14 @@ impl RoomManager {
         F: FnOnce(Arc<Room>) -> Fut,
         Fut: Future<Output = T>,
     {
-        self.run_current_room_mutation(room_id, action, false).await
+        self.run_current_room_mutation(room_id, action, None).await
     }
 
     async fn run_current_room_mutation<T, F, Fut>(
         &self,
         room_id: &str,
         action: F,
-        remove_if_empty: bool,
+        on_empty: Option<RoomRemovalPolicy>,
     ) -> Option<T>
     where
         F: FnOnce(Arc<Room>) -> Fut,
@@ -410,7 +433,7 @@ impl RoomManager {
     {
         let mutation = self.begin_current_room_mutation(room_id).await?;
         let output = action(Arc::clone(&mutation.room)).await;
-        self.finish_session_mutation(room_id, mutation, remove_if_empty)
+        self.finish_session_mutation(room_id, mutation, on_empty)
             .await;
         Some(output)
     }
@@ -419,13 +442,13 @@ impl RoomManager {
         &self,
         room_id: &str,
         mutation: CurrentRoomMutation,
-        remove_if_empty: bool,
+        on_empty: Option<RoomRemovalPolicy>,
     ) {
         let CurrentRoomMutation { room, lease } = mutation;
         // Read emptiness after this mutation. A later accepted mutation can
         // supply the final removal proof. Dropping the final lease supplies no
         // proof and cancels the pending claim.
-        if lease.finish(remove_if_empty, room.is_empty().await)
+        if lease.finish(on_empty, room.is_empty().await)
             && self
                 .directory
                 .write()

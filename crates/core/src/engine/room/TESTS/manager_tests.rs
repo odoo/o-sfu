@@ -13,7 +13,7 @@ use super::{
     super::{RoomManagerJoinError, RoomManagerServeError, manager::JoinPlacementTestGate},
     api::NegotiatedPublish,
     fixtures::*,
-    tracing::{assert_exact, assert_user_exact, capture},
+    tracing::{assert_exact, assert_no_event, assert_user_exact, capture},
 };
 use crate::{RoomWorkerPolicy, RuntimeFeatureFlags, engine::metrics::RoomGaugeValues};
 
@@ -335,6 +335,15 @@ async fn manager_lifecycle_future_does_not_block_empty_cleanup() {
         .expect("lifecycle holder should finish")
         .expect("lifecycle holder task should not panic");
     assert!(held_room.is_some());
+    // the parked future released the last lease, so the close's pending removal
+    // was consumed rather than dropped
+    assert!(manager.has_room_departure_grace_for_test(&room_id).await);
+    assert!(
+        manager
+            .expire_room_departure_grace_now_for_test(&room_id)
+            .await
+    );
+    manager.check_expired_room_reservations().await;
     assert!(manager.get_by_uuid(&room_id).await.is_none());
 }
 
@@ -666,8 +675,18 @@ async fn a_joined_room_has_no_reservation_deadline() {
             .await
     );
     assert!(
+        manager.has_room_departure_grace_for_test(room.uuid()).await,
+        "last-user cleanup should hold the room in the departure grace"
+    );
+    assert!(
+        manager
+            .expire_room_departure_grace_now_for_test(room.uuid())
+            .await
+    );
+    manager.check_expired_room_reservations().await;
+    assert!(
         manager.get_by_uuid(room.uuid()).await.is_none(),
-        "last-user cleanup should stay unchanged by reservations"
+        "an elapsed grace should retire the room the reservation never reaped"
     );
 }
 
@@ -878,5 +897,207 @@ async fn room_reservation_conflict_event_preserves_contract_fields() {
             ("issuer", Value::from("issuer-reservation-conflict-events")),
             ("config", Value::from(format!("{conflicting_config:?}"))),
         ],
+    );
+}
+
+#[tokio::test]
+async fn a_rejoin_during_the_departure_grace_keeps_the_room() {
+    let manager = RoomManager::for_test_with_reservation_ttl(LONG_EXPIRATION);
+    let media_transport = real_adapter();
+    let room = serve_test_room(&manager, "issuer-grace-rejoin").await;
+    let connection_id = manager_join_user(&manager, &room, 1, &media_transport).await;
+
+    assert!(
+        manager
+            .close_session(
+                room.uuid(),
+                &UserId::Integer(1),
+                connection_id,
+                &media_transport,
+            )
+            .await
+    );
+    assert!(
+        manager.has_room_departure_grace_for_test(room.uuid()).await,
+        "the last departure should hand the empty room to the grace"
+    );
+
+    // the reconnecting client presents the uuid it left, which is still current
+    assert!(
+        try_manager_join_user(&manager, room.uuid(), 1, &media_transport)
+            .await
+            .is_ok(),
+        "a room inside its departure grace should still admit its user"
+    );
+    assert!(
+        !manager.has_room_departure_grace_for_test(room.uuid()).await,
+        "a successful rejoin should clear the idle deadline"
+    );
+
+    manager.check_expired_room_reservations().await;
+
+    assert!(
+        manager.get_by_uuid(room.uuid()).await.is_some(),
+        "a reaper pass after the rejoin must leave the occupied room alone"
+    );
+    assert_eq!(
+        manager.room_gauges().await,
+        RoomGaugeValues {
+            rooms: 1,
+            users: 1,
+            ..RoomGaugeValues::default()
+        }
+    );
+}
+
+#[tokio::test]
+async fn serving_a_room_in_its_departure_grace_restores_its_reservation() {
+    const ISSUER: &str = "issuer-grace-renewal";
+
+    let manager = RoomManager::for_test_with_reservation_ttl(LONG_EXPIRATION);
+    let media_transport = real_adapter();
+    let room = serve_test_room(&manager, ISSUER).await;
+    let connection_id = manager_join_user(&manager, &room, 1, &media_transport).await;
+    assert!(
+        manager
+            .close_session(
+                room.uuid(),
+                &UserId::Integer(1),
+                connection_id,
+                &media_transport,
+            )
+            .await
+    );
+
+    assert_eq!(
+        serve_test_room(&manager, ISSUER).await.uuid(),
+        room.uuid(),
+        "a matching `/v1/channel` request should return the room it reserved"
+    );
+    assert!(
+        !manager.has_room_departure_grace_for_test(room.uuid()).await,
+        "provisioning should replace the departure grace it found"
+    );
+    assert!(
+        manager
+            .has_room_reservation_deadline_for_test(room.uuid())
+            .await,
+        "the replacement deadline should be a fresh reservation"
+    );
+
+    // the grace the room entered is gone, so only the reservation can reap it
+    manager.check_expired_room_reservations().await;
+    assert!(manager.get_by_uuid(room.uuid()).await.is_some());
+
+    manager_join_user(&manager, &room, 1, &media_transport).await;
+
+    assert!(
+        !manager
+            .has_room_reservation_deadline_for_test(room.uuid())
+            .await,
+        "the join that follows renewal should clear the restored deadline"
+    );
+}
+
+#[tokio::test]
+async fn a_zero_departure_grace_removes_the_empty_room_immediately() {
+    let manager = RoomManager::for_test_with_departure_grace(Duration::ZERO);
+    let media_transport = real_adapter();
+    let room = serve_test_room(&manager, "issuer-zero-grace").await;
+    let connection_id = manager_join_user(&manager, &room, 1, &media_transport).await;
+
+    assert!(
+        manager
+            .close_session(
+                room.uuid(),
+                &UserId::Integer(1),
+                connection_id,
+                &media_transport,
+            )
+            .await
+    );
+
+    assert!(
+        manager.get_by_uuid(room.uuid()).await.is_none(),
+        "a zero grace should restore removal by the departure that empties the room"
+    );
+    assert_eq!(manager.room_gauges().await, RoomGaugeValues::default());
+}
+
+#[tokio::test]
+async fn an_administrative_disconnect_removes_a_room_awaiting_collection() {
+    let manager = RoomManager::for_test_with_reservation_ttl(LONG_EXPIRATION);
+    let media_transport = real_adapter();
+    let room = serve_test_room(&manager, "issuer-grace-disconnect").await;
+    let connection_id = manager_join_user(&manager, &room, 1, &media_transport).await;
+    assert!(
+        manager
+            .close_session(
+                room.uuid(),
+                &UserId::Integer(1),
+                connection_id,
+                &media_transport,
+            )
+            .await
+    );
+    assert!(manager.has_room_departure_grace_for_test(room.uuid()).await);
+
+    // the departed user has no session left, so this disconnect only confirms
+    // that the room is empty
+    manager
+        .disconnect_users(
+            room.uuid(),
+            slice::from_ref(&UserId::Integer(1)),
+            &media_transport,
+        )
+        .await;
+
+    assert!(
+        manager.get_by_uuid(room.uuid()).await.is_none(),
+        "an administrative disconnect should bypass a grace already awaiting collection"
+    );
+    assert_eq!(manager.room_gauges().await, RoomGaugeValues::default());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn room_destroyed_event_waits_for_collection_after_the_departure_grace() {
+    let _guard = capture().await;
+    let manager = RoomManager::for_test_with_reservation_ttl(LONG_EXPIRATION);
+    let media_transport = real_adapter();
+    let room = serve_test_room(&manager, "issuer-grace-events").await;
+    let connection_id = manager_join_user(&manager, &room, 1, &media_transport).await;
+
+    assert!(
+        manager
+            .close_session(
+                room.uuid(),
+                &UserId::Integer(1),
+                connection_id,
+                &media_transport,
+            )
+            .await
+    );
+    assert_no_event(
+        telemetry_event::ROOM_DESTROYED,
+        &[("room_id", Value::from(room.uuid()))],
+    );
+
+    assert!(
+        manager
+            .expire_room_departure_grace_now_for_test(room.uuid())
+            .await
+    );
+    // `assert_exact` requires exactly one matching event, so a reaper that
+    // re-logged every tick would fail here
+    manager.check_expired_room_reservations().await;
+    manager.check_expired_room_reservations().await;
+
+    assert_exact(
+        telemetry_event::ROOM_DESTROYED,
+        &[("room_id", Value::from(room.uuid()))],
+    );
+    assert_no_event(
+        telemetry_event::ROOM_RESERVATION_EXPIRED,
+        &[("room_id", Value::from(room.uuid()))],
     );
 }
