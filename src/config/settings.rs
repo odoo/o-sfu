@@ -65,6 +65,7 @@ pub struct UserConfig {
     pub outbound_queue_capacity: usize,
     pub outbound_queue_byte_capacity: usize,
     pub room_reservation_ttl: Duration,
+    pub departure_grace: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

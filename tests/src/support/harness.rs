@@ -115,6 +115,18 @@ impl TestServer {
         wait_for_test_predicate(|| async { self.room_absent(room_id).await.then_some(()) }).await
     }
 
+    /// waits until `room_id` is still current but holds no sessions or sources
+    ///
+    /// an emptied room stays in the directory for its departure grace, so room
+    /// absence cannot prove that session and media cleanup already ran
+    pub async fn wait_for_vacated_room(&self, room_id: &str) -> bool {
+        wait_for_test_predicate(|| async {
+            let room = self.room_detail(room_id).await?;
+            (room.users.is_empty() && room.sources.is_empty()).then_some(())
+        })
+        .await
+    }
+
     pub async fn wait_for_consumer_route_active(
         &self,
         room_id: &str,
@@ -446,6 +458,9 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
             outbound_queue_byte_capacity: DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
             // this window must stay open far longer than the slowest room-create-to-first-join path
             room_reservation_ttl: Duration::from_hours(1),
+            // the end-to-end suite has no clock control so a grace here would only
+            // make room teardown assertions slow and flaky
+            departure_grace: Duration::ZERO,
         },
         transport: TransportConfig {
             announced_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),

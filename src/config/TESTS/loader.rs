@@ -112,6 +112,7 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY
     );
     assert_eq!(config.user.room_reservation_ttl, Duration::from_mins(1));
+    assert_eq!(config.user.departure_grace, Duration::from_mins(1));
     assert!(!config.http.trust_proxy_headers);
     assert_eq!(config.features, RuntimeFeatureFlags::default());
     assert_eq!(config.codecs.flags, MediaCodecFlags::default());
@@ -137,6 +138,7 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
         ("USER_OUTBOUND_QUEUE_CAPACITY", "16"),
         ("USER_OUTBOUND_QUEUE_BYTE_CAPACITY", "8192"),
         ("ROOM_RESERVATION_TTL", "120"),
+        ("ROOM_DEPARTURE_GRACE", "0"),
     ])?;
     assert_eq!(config.http.bind_address.to_string(), "127.0.0.1:9000");
     assert_eq!(config.http.shutdown_timeout_ms, 2500);
@@ -150,7 +152,36 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     assert_eq!(config.user.outbound_queue_capacity, 16);
     assert_eq!(config.user.outbound_queue_byte_capacity, 8192);
     assert_eq!(config.user.room_reservation_ttl, Duration::from_mins(2));
+    // zero is a supported setting: it restores immediate empty-room removal
+    assert_eq!(config.user.departure_grace, Duration::ZERO);
     Ok(())
+}
+
+#[test]
+fn config_rejects_invalid_room_lifecycle_durations() {
+    for key in ["ROOM_RESERVATION_TTL", "ROOM_DEPARTURE_GRACE"] {
+        let error = config_error_from(&[(key, "1m")]);
+        assert_eq!(
+            error.as_deref(),
+            Some(format!("{key} must be a valid duration in seconds").as_str()),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn config_rejects_room_lifecycle_durations_above_the_maximum() {
+    for key in ["ROOM_RESERVATION_TTL", "ROOM_DEPARTURE_GRACE"] {
+        // the second value would overflow the deadline computed from `Instant::now()`
+        for raw in ["86401", "10000000000000000000"] {
+            let error = config_error_from(&[(key, raw)]);
+            assert_eq!(
+                error.as_deref(),
+                Some(format!("{key} must not exceed 86400 seconds").as_str()),
+                "{key}={raw}"
+            );
+        }
+    }
 }
 
 #[test]

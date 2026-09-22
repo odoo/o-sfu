@@ -65,6 +65,7 @@ impl RuntimeTestBuilder {
                     outbound_queue_capacity: DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
                     outbound_queue_byte_capacity: DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
                     room_reservation_ttl: Duration::from_secs(5),
+                    departure_grace: Duration::from_mins(1),
                 },
                 transport: TransportConfig {
                     announced_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
@@ -148,6 +149,7 @@ impl RuntimeTestBuilder {
             build_room_runtime_policy(&self.config, &media_transport),
             &services,
             self.config.user.room_reservation_ttl,
+            self.config.user.departure_grace,
         );
         let runtime_config = RuntimeConfig::from_config(&self.config);
         let state = RuntimeState::from_parts(

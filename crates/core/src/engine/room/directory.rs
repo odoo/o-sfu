@@ -39,14 +39,27 @@ pub(crate) struct RoomDirectoryEntry {
 }
 
 impl RoomDirectoryEntry {
-    fn new(room: Arc<Room>, remote_address: Option<&str>, reservation_ttl: Duration) -> Self {
+    fn new(
+        room: Arc<Room>,
+        remote_address: Option<&str>,
+        reservation_ttl: Duration,
+        departure_grace: Duration,
+    ) -> Self {
         Self {
             room,
-            lifecycle: RoomLifecycle::new(reservation_ttl),
+            lifecycle: RoomLifecycle::new(reservation_ttl, departure_grace),
             create_date: rfc3339_now(),
             remote_address: remote_address.unwrap_or(UNKNOWN_REMOTE_ADDRESS).to_owned(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoomLifecyclePhase {
+    Reservation { expires_at: Instant },
+    Alive,
+    Grace { expires_at: Instant },
+    Closing,
 }
 
 /// mutable state behind one directory entry's lifecycle lease gate
@@ -60,25 +73,34 @@ struct RoomLifecycleState {
     /// accepted room work that has not finished or been dropped
     active_mutations: usize,
     /// empty-room removal request waiting for accepted work to drain
-    remove_when_idle: bool,
-    /// terminal marker set once one finisher wins directory removal
-    closing: bool,
-    /// reservation deadline, or `None` once a successful join retired it
-    expires_at: Option<Instant>,
+    pending_removal: Option<RoomRemovalPolicy>,
     /// lease length this reservation was published with and is renewed by
     reservation_ttl: Duration,
+    /// grace duration this reservation was published with and is renewed by
+    departure_grace: Duration,
+    phase: RoomLifecyclePhase,
 }
 
 impl RoomLifecycleState {
-    fn new(reservation_ttl: Duration) -> Self {
+    fn new(reservation_ttl: Duration, departure_grace: Duration) -> Self {
         Self {
             active_mutations: 0,
-            remove_when_idle: false,
-            closing: false,
-            expires_at: Some(Instant::now() + reservation_ttl),
+            pending_removal: None,
             reservation_ttl,
+            departure_grace,
+            phase: RoomLifecyclePhase::Reservation {
+                expires_at: Instant::now() + reservation_ttl,
+            },
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExpiryReason {
+    /// reservation lapsed before any join succeeded
+    ReservationLapsed,
+    /// room went empty and the departure grace ran out
+    GraceElapsed,
 }
 
 /// cloneable admission gate for the current room stored in one directory row
@@ -92,44 +114,91 @@ pub(crate) struct RoomLifecycle {
 }
 
 impl RoomLifecycle {
-    pub(crate) fn new(reservation_ttl: Duration) -> Self {
+    pub(crate) fn new(reservation_ttl: Duration, departure_grace: Duration) -> Self {
         Self {
-            state: Arc::new(Mutex::new(RoomLifecycleState::new(reservation_ttl))),
+            state: Arc::new(Mutex::new(RoomLifecycleState::new(
+                reservation_ttl,
+                departure_grace,
+            ))),
         }
     }
 
-    /// atomically claims cleanup responsibility for an expired, idle reservation.
-    pub(crate) fn claim_expired_reservation(&self) -> bool {
+    /// atomically claims cleanup responsibility for an expired grace/reservation period
+    pub(crate) fn claim_expired_room(&self) -> Option<ExpiryReason> {
         let mut state = lock_unpoisoned(&self.state);
-        let is_expired = state.expires_at.is_some_and(|t| Instant::now() >= t);
-        if !state.closing && state.active_mutations == 0 && is_expired {
-            state.closing = true;
+        let expiry_reason = match state.phase {
+            RoomLifecyclePhase::Reservation { expires_at } if expires_at <= Instant::now() => {
+                Some(ExpiryReason::ReservationLapsed)
+            }
+            RoomLifecyclePhase::Grace { expires_at } if expires_at <= Instant::now() => {
+                Some(ExpiryReason::GraceElapsed)
+            }
+            _ => None,
+        };
+        if state.active_mutations == 0 && expiry_reason.is_some() {
+            state.phase = RoomLifecyclePhase::Closing;
             drop(state);
-            return true;
+            return expiry_reason;
         }
-        false
+        None
     }
 
-    /// extends a room reservation without rearming it
+    /// extends a room reservation; rearms it if coming from a grace period
     pub(crate) fn renew_reservation(&self) {
         let mut state = lock_unpoisoned(&self.state);
-        if state.expires_at.is_some() {
-            state.expires_at = Some(Instant::now() + state.reservation_ttl);
+        if matches!(
+            state.phase,
+            RoomLifecyclePhase::Reservation { .. } | RoomLifecyclePhase::Grace { .. }
+        ) {
+            state.phase = RoomLifecyclePhase::Reservation {
+                expires_at: Instant::now() + state.reservation_ttl,
+            }
         }
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
     pub(crate) fn expire_reservation_now_for_test(&self) {
-        lock_unpoisoned(&self.state).expires_at = Some(Instant::now());
+        lock_unpoisoned(&self.state).phase = RoomLifecyclePhase::Reservation {
+            expires_at: Instant::now(),
+        };
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
     #[must_use]
     pub(crate) fn has_reservation_deadline_for_test(&self) -> bool {
-        lock_unpoisoned(&self.state).expires_at.is_some()
+        matches!(
+            lock_unpoisoned(&self.state).phase,
+            RoomLifecyclePhase::Reservation { .. }
+        )
     }
 
-    /// Accepts a lease unless removal is pending or already claimed.
+    #[cfg(any(test, feature = "testing-transport"))]
+    #[must_use]
+    pub(crate) fn has_departure_grace_for_test(&self) -> bool {
+        matches!(
+            lock_unpoisoned(&self.state).phase,
+            RoomLifecyclePhase::Grace { .. }
+        )
+    }
+
+    /// expires an armed departure grace, and reports whether one was armed
+    ///
+    /// this never arms a grace, so a test cannot expire a phase the room never
+    /// reached
+    #[cfg(any(test, feature = "testing-transport"))]
+    #[must_use]
+    pub(crate) fn expire_departure_grace_now_for_test(&self) -> bool {
+        let mut state = lock_unpoisoned(&self.state);
+        if !matches!(state.phase, RoomLifecyclePhase::Grace { .. }) {
+            return false;
+        }
+        state.phase = RoomLifecyclePhase::Grace {
+            expires_at: Instant::now(),
+        };
+        true
+    }
+
+    /// Accepts a lease unless immediate removal is pending or already claimed.
     ///
     /// Returns `None` when removal is pending or claimed or the lease count
     /// cannot increase. Directory callers must retain their read guard through
@@ -137,7 +206,9 @@ impl RoomLifecycle {
     #[must_use]
     pub(crate) fn begin(&self) -> Option<RoomLifecycleLease> {
         let mut state = lock_unpoisoned(&self.state);
-        if state.closing || state.remove_when_idle {
+        if matches!(state.phase, RoomLifecyclePhase::Closing)
+            || matches!(state.pending_removal, Some(RoomRemovalPolicy::Immediately))
+        {
             return None;
         }
         state.active_mutations = state.active_mutations.checked_add(1)?;
@@ -148,6 +219,12 @@ impl RoomLifecycle {
         drop(state);
         Some(lease)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RoomRemovalPolicy {
+    AfterGrace,
+    Immediately,
 }
 
 /// cancellation-safe permit for work accepted against a directory entry
@@ -166,44 +243,68 @@ pub(crate) struct RoomLifecycleLease {
 impl RoomLifecycleLease {
     /// Releases the lease and returns whether this caller claimed directory removal.
     #[must_use]
-    pub(crate) fn finish(mut self, remove_if_empty: bool, room_can_be_removed: bool) -> bool {
-        self.release(remove_if_empty, room_can_be_removed)
+    pub(crate) fn finish(
+        mut self,
+        on_empty: Option<RoomRemovalPolicy>,
+        room_can_be_removed: bool,
+    ) -> bool {
+        self.release(on_empty, room_can_be_removed)
     }
 
     #[must_use]
-    fn release(&mut self, remove_if_empty: bool, room_can_be_removed: bool) -> bool {
+    fn release(&mut self, on_empty: Option<RoomRemovalPolicy>, room_can_be_removed: bool) -> bool {
         if self.finished {
             return false;
         }
         self.finished = true;
         let mut state = lock_unpoisoned(&self.state);
+        // Keep the strongest policy; promote 0 seconds grace to immediate removal.
+        let removal_policy = match state.pending_removal.max(on_empty) {
+            Some(RoomRemovalPolicy::AfterGrace) if state.departure_grace.is_zero() => {
+                Some(RoomRemovalPolicy::Immediately)
+            }
+            policy => policy,
+        };
+
+        state.active_mutations = state.active_mutations.saturating_sub(1);
         if state.active_mutations > 0 {
-            state.active_mutations -= 1;
+            if on_empty.is_some() && room_can_be_removed {
+                state.pending_removal = removal_policy;
+            }
+            return false;
         }
-        if remove_if_empty && room_can_be_removed {
-            state.remove_when_idle = true;
+        // The last lease consumes the policy below or voids it here, and a
+        // `None` policy means nothing was pending.
+        state.pending_removal = None;
+        if !room_can_be_removed {
+            return false;
         }
-        let idle_pending_removal = state.active_mutations == 0 && state.remove_when_idle;
-        let should_remove = idle_pending_removal && room_can_be_removed;
-        if should_remove {
-            state.closing = true;
-        } else if idle_pending_removal {
-            // The final lease either found the room non-empty or supplied no
-            // emptiness proof, so an earlier removal request cannot close it.
-            state.remove_when_idle = false;
+
+        match removal_policy {
+            Some(RoomRemovalPolicy::Immediately) => {
+                state.phase = RoomLifecyclePhase::Closing;
+                true
+            }
+            Some(RoomRemovalPolicy::AfterGrace) => {
+                if matches!(state.phase, RoomLifecyclePhase::Alive) {
+                    state.phase = RoomLifecyclePhase::Grace {
+                        expires_at: Instant::now() + state.departure_grace,
+                    };
+                }
+                false
+            }
+            None => false,
         }
-        drop(state);
-        should_remove
     }
 
     pub(crate) fn clear_expiration(&self) {
-        lock_unpoisoned(&self.state).expires_at = None;
+        lock_unpoisoned(&self.state).phase = RoomLifecyclePhase::Alive;
     }
 }
 
 impl Drop for RoomLifecycleLease {
     fn drop(&mut self) {
-        let _ = self.release(false, false);
+        let _ = self.release(None, false);
     }
 }
 
@@ -255,6 +356,7 @@ impl RoomDirectory {
         room: Arc<Room>,
         remote_address: Option<&str>,
         reservation_ttl: Duration,
+        departure_grace: Duration,
     ) {
         let room_id = room.uuid().to_owned();
         self.uuid_by_issuer
@@ -263,7 +365,7 @@ impl RoomDirectory {
             .insert(room.instance_id(), room_id.clone());
         self.by_uuid.insert(
             room_id,
-            RoomDirectoryEntry::new(room, remote_address, reservation_ttl),
+            RoomDirectoryEntry::new(room, remote_address, reservation_ttl, departure_grace),
         );
     }
 

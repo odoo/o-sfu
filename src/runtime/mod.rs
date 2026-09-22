@@ -123,6 +123,7 @@ impl Runtime {
             room_runtime_policy,
             &services,
             config.user.room_reservation_ttl,
+            config.user.departure_grace,
         );
         Ok(Self {
             config: runtime_config,
@@ -400,11 +401,13 @@ fn build_room_manager(
     runtime_policy: RoomRuntimePolicy,
     services: &RuntimeServices,
     reservation_ttl: Duration,
+    departure_grace: Duration,
 ) -> Arc<RoomManager> {
     Arc::new(RoomManager::new(
         runtime_policy,
         Arc::clone(&services.metrics),
         reservation_ttl,
+        departure_grace,
     ))
 }
 
