@@ -2,17 +2,16 @@ import { createSocket } from "node:dgram";
 import { once } from "node:events";
 
 import { expect, test } from "@playwright/test";
+import { WS_CLOSE_CODE } from "../dist/protocol_contract.js";
 
 import {
     broadcast,
-    cameraPublicationActive,
     cameraSubscriptionRid,
     connectPeer,
     createChannel,
     createConnectToken,
     createPeerPage,
     disconnectPeer,
-    forceRecoverableClose,
     latestBroadcastUpdate,
     latestInfoUpdate,
     latestTrackUpdate,
@@ -400,108 +399,143 @@ test("broadcast and info fanout through the browser bundle", async ({ context })
         });
 });
 
-test("live recovery replays sticky publish subscribe and info intents", async ({ context }) => {
-    test.setTimeout(45_000);
-    const channelUuid = await createChannel();
-    const publisher = await createPeerPage(context);
-    const subscriber = await createPeerPage(context);
-
-    await connectPeer(publisher, {
-        channelUuid,
-        jwt: createConnectToken(channelUuid, PUBLISHER_SESSION_ID)
+test("server queue overflow recovers sticky publish subscribe and info intents", async ({
+    browserName,
+    context
+}) => {
+    test.setTimeout(60_000);
+    const server = await spawnLiveServer({
+        bindPort: browserName === "firefox" ? 18090 : 18089,
+        rtcMinPort: browserName === "firefox" ? 58456 : 58424,
+        rtcMaxPort: browserName === "firefox" ? 58487 : 58455,
+        outboundQueueByteCapacity: 8 * 1024
     });
-    await connectPeer(subscriber, {
-        channelUuid,
-        jwt: createConnectToken(channelUuid, SUBSCRIBER_SESSION_ID)
-    });
-
-    await expect.poll(async () => (await peerSnapshot(publisher)).state).toBe("connected");
-    await expect.poll(async () => (await peerSnapshot(subscriber)).state).toBe("connected");
-
-    await publishSyntheticCamera(publisher, "recovery-publisher-camera");
-    await publishSyntheticCamera(subscriber, "recovery-subscriber-camera");
-    await setStreamDownload(publisher, SUBSCRIBER_SESSION_ID, "camera", true, "featured");
-    await updateInfo(
-        publisher,
-        {
-            isCameraOn: true,
-            isRaisingHand: true
-        },
-        { needRefresh: true }
-    );
-
-    await expect
-        .poll(() =>
-            cameraPublicationActive({ roomId: channelUuid, sessionId: PUBLISHER_SESSION_ID })
-        )
-        .toBeTruthy();
-    await expect
-        .poll(() =>
-            cameraSubscriptionRid({
-                consumerSessionId: PUBLISHER_SESSION_ID,
-                producerSessionId: SUBSCRIBER_SESSION_ID,
-                roomId: channelUuid
-            })
-        )
-        .toBe("hi");
-    await expect
-        .poll(() => roomUserInfo({ roomId: channelUuid, sessionId: PUBLISHER_SESSION_ID }))
-        .toMatchObject({
-            isCameraOn: true,
-            isRaisingHand: true
+    const { httpBaseUrl } = server;
+    try {
+        const channelUuid = await createChannel({ httpBaseUrl });
+        const publisher = await createPeerPage(context);
+        const subscriber = await createPeerPage(context);
+        await connectPeer(publisher, {
+            channelUuid,
+            jwt: createConnectToken(channelUuid, PUBLISHER_SESSION_ID),
+            url: server.wsUrl
         });
-
-    await forceRecoverableClose(publisher);
-
-    await expect
-        .poll(async () => {
-            const snapshot = await peerSnapshot(publisher);
-            return snapshot.stateChanges.some((change) => change.state === "recovering");
-        })
-        .toBeTruthy();
-    await expect.poll(async () => (await peerSnapshot(publisher)).state).toBe("connected");
-
-    await expect
-        .poll(
-            () =>
-                cameraPublicationActive({
-                    roomId: channelUuid,
-                    sessionId: PUBLISHER_SESSION_ID
-                }),
-            { timeout: 15_000 }
-        )
-        .toBeTruthy();
-    await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "camera", true, "featured");
-    await expect
-        .poll(
-            () =>
-                cameraSubscriptionRid({
-                    consumerSessionId: SUBSCRIBER_SESSION_ID,
-                    producerSessionId: PUBLISHER_SESSION_ID,
-                    roomId: channelUuid
-                }),
-            { timeout: 15_000 }
-        )
-        .toBe("hi");
-    await expect
-        .poll(
-            () =>
-                cameraSubscriptionRid({
+        await connectPeer(subscriber, {
+            channelUuid,
+            jwt: createConnectToken(channelUuid, SUBSCRIBER_SESSION_ID),
+            url: server.wsUrl
+        });
+        await expect.poll(async () => (await peerSnapshot(publisher)).state).toBe("connected");
+        await expect.poll(async () => (await peerSnapshot(subscriber)).state).toBe("connected");
+        await publishSyntheticCamera(publisher, "recovery-publisher-camera", {
+            width: 640,
+            height: 360
+        });
+        await expectCameraTrackUpdate(subscriber, PUBLISHER_SESSION_ID, true);
+        await publishSyntheticCamera(subscriber, "recovery-subscriber-camera", {
+            width: 640,
+            height: 360
+        });
+        await expectCameraTrackUpdate(publisher, SUBSCRIBER_SESSION_ID, true);
+        await setStreamDownload(publisher, SUBSCRIBER_SESSION_ID, "camera", true, "featured");
+        await updateInfo(
+            publisher,
+            {
+                isCameraOn: true,
+                isRaisingHand: true
+            },
+            { needRefresh: true }
+        );
+        await expect
+            .poll(() =>
+                streamDiagnostics({
+                    httpBaseUrl,
                     consumerSessionId: PUBLISHER_SESSION_ID,
                     producerSessionId: SUBSCRIBER_SESSION_ID,
-                    roomId: channelUuid
-                }),
-            { timeout: 15_000 }
-        )
-        .toBe("hi");
-    await expect
-        .poll(() => roomUserInfo({ roomId: channelUuid, sessionId: PUBLISHER_SESSION_ID }), {
-            timeout: 15_000
-        })
-        .toMatchObject({
-            isCameraOn: true,
-            isRaisingHand: true
+                    roomId: channelUuid,
+                    streamType: "camera"
+                })
+            )
+            .toMatchObject({ subscription: { layoutRole: "featured", state: "active" } });
+        await Promise.all([
+            waitForDecodedRemoteVideoFrame(publisher, SUBSCRIBER_SESSION_ID, "camera"),
+            waitForDecodedRemoteVideoFrame(subscriber, PUBLISHER_SESSION_ID, "camera")
+        ]);
+        await publisher.evaluate(() => {
+            const harness = globalThis.__liveHarness;
+            const socket = harness.client._runtime._socketSession._activeSocket;
+            socket.addEventListener(
+                "close",
+                ({ code }) => {
+                    harness.closeCode = code;
+                },
+                { once: true }
+            );
         });
+        // One valid broadcast exceeds the queue budget without depending on socket timing.
+        await broadcast(subscriber, { payload: "x".repeat(12 * 1024) });
+        await expect
+            .poll(() => publisher.evaluate(() => globalThis.__liveHarness.closeCode))
+            .toBe(WS_CLOSE_CODE.OVERLOADED);
+        await expect
+            .poll(async () => (await fetch(`${httpBaseUrl}/metrics`)).text())
+            .toContain('osfu_ws_user_loop_exits_total{reason="outbound_queue_overflow"} 1\n');
+        await expect
+            .poll(async () => {
+                const snapshot = await peerSnapshot(publisher);
+                return snapshot.stateChanges.some((change) => change.state === "recovering");
+            })
+            .toBeTruthy();
+        await expect.poll(async () => (await peerSnapshot(publisher)).state).toBe("connected");
+        await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "camera", true, "featured");
+        await expect
+            .poll(
+                () =>
+                    streamDiagnostics({
+                        httpBaseUrl,
+                        consumerSessionId: PUBLISHER_SESSION_ID,
+                        producerSessionId: SUBSCRIBER_SESSION_ID,
+                        roomId: channelUuid,
+                        streamType: "camera"
+                    }),
+                { timeout: 15_000 }
+            )
+            .toMatchObject({ subscription: { layoutRole: "featured", state: "active" } });
+        await expect
+            .poll(
+                () =>
+                    roomUserInfo({
+                        httpBaseUrl,
+                        roomId: channelUuid,
+                        sessionId: PUBLISHER_SESSION_ID
+                    }),
+                {
+                    timeout: 15_000
+                }
+            )
+            .toMatchObject({
+                isCameraOn: true,
+                isRaisingHand: true
+            });
+        await expect
+            .poll(() => streamState(channelUuid, "camera", httpBaseUrl))
+            .toMatchObject({
+                publication: { active: true },
+                subscription: { state: "active" }
+            });
+        await expect
+            .poll(async () => (await peerSnapshot(publisher)).consumers["42"]?.camera)
+            .toMatchObject({ readyState: "live" });
+        await expect
+            .poll(async () => (await peerSnapshot(subscriber)).consumers["41"]?.camera)
+            .toMatchObject({ readyState: "live" });
+        await Promise.all([
+            waitForDecodedRemoteVideoFrame(publisher, SUBSCRIBER_SESSION_ID, "camera"),
+            waitForDecodedRemoteVideoFrame(subscriber, PUBLISHER_SESSION_ID, "camera")
+        ]);
+    } finally {
+        await server.stop();
+    }
 });
 
 test("H264-only live publish applies RID simulcast and renders when supported", async ({

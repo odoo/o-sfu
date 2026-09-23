@@ -170,7 +170,8 @@ impl RuntimeMetrics {
                 WebSocketCloseCode::Error
                 | WebSocketCloseCode::Clean
                 | WebSocketCloseCode::Leaving
-                | WebSocketCloseCode::Kicked,
+                | WebSocketCloseCode::Kicked
+                | WebSocketCloseCode::Overloaded,
             )
             | None => self.ws_handshake_rejections_other.increment(),
         }
