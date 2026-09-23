@@ -57,6 +57,8 @@ impl RuntimeTestBuilder {
                     bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
                     trust_proxy_headers: false,
                     trusted_proxies: Vec::new(),
+                    max_http_connections: 4096,
+                    header_read_timeout: Duration::from_secs(10),
                     shutdown_timeout_ms: 10_000,
                 },
                 user: UserConfig {

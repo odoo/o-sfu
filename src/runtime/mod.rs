@@ -100,7 +100,8 @@ impl Runtime {
     ///
     /// Returns [`anyhow::Error`] when the authentication key is malformed or
     /// shorter than the HS256 minimum, the diagnostics token is invalid, proxy
-    /// mode lacks trusted proxies or the media transport cannot be built.
+    /// mode lacks trusted proxies, listener limits are outside their supported
+    /// ranges or the media transport cannot be built.
     pub fn new(config: &Config) -> AnyResult<Self> {
         Self::from_services(config, RuntimeServices::default())
     }

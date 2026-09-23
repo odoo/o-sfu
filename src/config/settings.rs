@@ -43,6 +43,12 @@ pub struct HttpConfig {
     pub trust_proxy_headers: bool,
     /// TCP peers permitted to supply forwarded request metadata when proxy mode is enabled.
     pub trusted_proxies: Vec<IpNet>,
+    /// Maximum accepted HTTP sockets, including upgraded WebSocket connections.
+    /// Must be positive and no greater than [`tokio::sync::Semaphore::MAX_PERMITS`].
+    pub max_http_connections: usize,
+    /// Acceptance-to-first-header and subsequent HTTP/1 header deadline.
+    /// Must be between one second and one day.
+    pub header_read_timeout: Duration,
     /// Positive deadline in milliseconds for listener, session, background and RTC worker drainage.
     /// Loaded from `SHUTDOWN_TIMEOUT_MS` with a `10_000` default.
     pub shutdown_timeout_ms: u64,
