@@ -1363,6 +1363,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "str0m",
+ "subtle",
  "thiserror",
  "tikv-jemallocator",
  "tokio",
