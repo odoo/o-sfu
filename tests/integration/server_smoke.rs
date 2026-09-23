@@ -242,8 +242,7 @@ async fn websocket_offer_advertises_configured_public_ip_in_rtc_mode() -> TestRe
 }
 
 #[tokio::test]
-async fn websocket_slow_consumer_overflow_closes_only_slow_socket_from_integration_test()
--> TestResult {
+async fn websocket_slow_consumer_overflow_allows_reconnection() -> TestResult {
     let (server, room) = server_with_configured_room(
         slow_consumer_overflow_config(),
         "issuer-slow-consumer-overflow",
@@ -251,7 +250,7 @@ async fn websocket_slow_consumer_overflow_closes_only_slow_socket_from_integrati
     .await?;
     let (mut slow, mut driver) =
         protocol_pair(&server, &room, UserId::Integer(31), UserId::Integer(32)).await?;
-    let witness_token = token(&room, UserId::Integer(33))?;
+    let reconnect_token = token(&room, UserId::Integer(31))?;
 
     require_some(
         driver.send_messages(slow_consumer_broadcast_batch()).await,
@@ -262,7 +261,7 @@ async fn websocket_slow_consumer_overflow_closes_only_slow_socket_from_integrati
         .await
         .ok()
         .flatten();
-    assert_eq!(slow_close, Some(CloseCode::Library(4108)));
+    assert_eq!(slow_close, Some(CloseCode::Library(4110)));
 
     let departed = read_until_server_message(&mut driver, Duration::from_secs(1), |message| {
         matches!(message, ServerMessage::PeerLeft(payload) if payload.user_id == UserId::Integer(31))
@@ -270,15 +269,15 @@ async fn websocket_slow_consumer_overflow_closes_only_slow_socket_from_integrati
     .await;
     require_some(departed, "driver should observe slow peer departure")?;
 
-    let witness =
-        ProtocolWebSocketClient::authenticate_and_negotiate(&server, &witness_token).await;
-    let (witness, _welcome) = require_some(witness, "witness should reconnect")?;
+    let reconnected =
+        ProtocolWebSocketClient::authenticate_and_negotiate(&server, &reconnect_token).await;
+    let (reconnected, _welcome) = require_some(reconnected, "slow peer should reconnect")?;
     let rejoined = read_until_server_message(&mut driver, Duration::from_secs(1), |message| {
-        matches!(message, ServerMessage::PeerJoined(payload) if payload.user_id == UserId::Integer(33))
+        matches!(message, ServerMessage::PeerJoined(payload) if payload.user_id == UserId::Integer(31))
     })
     .await;
-    require_some(rejoined, "driver should observe witness join")?;
-    require_some(witness.close().await, "witness should close")?;
+    require_some(rejoined, "driver should observe slow peer rejoin")?;
+    require_some(reconnected.close().await, "reconnected peer should close")?;
 
     let metrics = metrics_text(&server).await;
     let metrics = require_some(metrics, "metrics text should be exposed")?;

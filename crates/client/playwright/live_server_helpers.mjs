@@ -9,7 +9,6 @@ const TEST_SFU_HTTP_BASE_URL = "http://127.0.0.1:18080";
 export const TEST_SFU_WS_URL = "ws://127.0.0.1:18080/";
 const DIAGNOSTICS_ROOM_PATH = "/internal/diagnostics/rooms";
 const AUDIO_OPERATION_TIMEOUT_MS = 250;
-const RECOVERABLE_BROWSER_CLOSE_CODE = 4000;
 const HARNESS_URL = "/playwright/fixtures/harness.html";
 const STREAM_TYPES = new Set(["audio", "camera", "screen"]);
 
@@ -380,16 +379,6 @@ export async function updateInfo(page, info, options = { needRefresh: true }) {
     );
 }
 
-export async function forceRecoverableClose(page) {
-    await page.evaluate((closeCode) => {
-        const websocket = globalThis.__liveHarness.client?._runtime?._socketSession?._activeSocket;
-        if (!websocket || websocket.readyState >= WebSocket.CLOSING) {
-            throw new Error("browser harness websocket is not open");
-        }
-        websocket.close(closeCode);
-    }, RECOVERABLE_BROWSER_CLOSE_CODE);
-}
-
 export async function peerSnapshot(page) {
     return page.evaluate(() => {
         const serializeTrack = (track) =>
@@ -425,6 +414,27 @@ export async function peerSnapshot(page) {
             updates: [...harness.updates]
         };
     });
+}
+
+export async function peerMediaDiagnostics(page) {
+    const [snapshot, media] = await Promise.all([
+        peerSnapshot(page),
+        page.evaluate(async () => {
+            const peer = globalThis.__liveHarness.client?._runtime?._peerSession?._activePeer;
+            return {
+                visibilityState: document.visibilityState,
+                transceivers:
+                    peer?.getTransceivers().map((transceiver) => ({
+                        mid: transceiver.mid,
+                        direction: transceiver.currentDirection,
+                        senderTrackId: transceiver.sender.track?.id ?? null,
+                        receiverTrackId: transceiver.receiver.track?.id ?? null
+                    })) ?? [],
+                stats: peer ? [...(await peer.getStats()).values()] : []
+            };
+        })
+    ]);
+    return { snapshot, media };
 }
 
 export async function latestBroadcastUpdate(page, senderId) {
@@ -483,20 +493,6 @@ export async function cameraSubscriptionRid({
         return null;
     }
     return subscription.selection?.selectedRid ?? null;
-}
-
-export async function cameraPublicationActive({
-    httpBaseUrl = TEST_SFU_HTTP_BASE_URL,
-    roomId,
-    sessionId
-}) {
-    const room = await fetchRoomDiagnostics(httpBaseUrl, roomId);
-    const user = room?.users.find((candidate) => userIdsMatch(candidate.userId, sessionId));
-    return (
-        user?.publications.some(
-            (publication) => publication.streamId === "camera" && publication.active === true
-        ) ?? false
-    );
 }
 
 export async function roomUserInfo({ httpBaseUrl = TEST_SFU_HTTP_BASE_URL, roomId, sessionId }) {
@@ -739,6 +735,7 @@ export async function spawnLiveServer({
     rtcMinPort,
     maxBitrateOut,
     maxVideoBitrate,
+    outboundQueueByteCapacity,
     codecFlags = {}
 }) {
     const env = {
@@ -759,6 +756,9 @@ export async function spawnLiveServer({
     }
     if (maxVideoBitrate !== undefined) {
         env.MAX_VIDEO_BITRATE = String(maxVideoBitrate);
+    }
+    if (outboundQueueByteCapacity !== undefined) {
+        env.USER_OUTBOUND_QUEUE_BYTE_CAPACITY = String(outboundQueueByteCapacity);
     }
     const child = spawn(
         "cargo",
