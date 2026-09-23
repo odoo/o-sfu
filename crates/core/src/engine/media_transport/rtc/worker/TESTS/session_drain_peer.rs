@@ -11,7 +11,7 @@ use o_sfu_rfc::{
 use str0m::{
     Candidate, Event, Input, Output, Rtc,
     net::{Protocol, Receive, Transmit},
-    rtp::{RawPacket, Ssrc, rtcp::Rtcp},
+    rtp::{RawPacket, RtpHeader, Ssrc, rtcp::Rtcp},
 };
 
 pub(super) struct TestDatagram {
@@ -111,6 +111,54 @@ pub(super) fn take_written_rtp(
         return Err("written RTP should have one matching transmit");
     }
     Ok(packet)
+}
+
+/// Captures one encrypted transmit together with str0m's transmitted RTP header.
+///
+/// Raw-packet reporting must be enabled on the sender. The captured header
+/// reflects str0m's final MID/RID decisions before SRTP protection.
+pub(super) fn take_written_rtp_with_header(
+    rtc: &mut Rtc,
+    now: Instant,
+    ssrc: Ssrc,
+    sequence_number: u16,
+) -> Result<(TestDatagram, RtpHeader), &'static str> {
+    let mut datagram = None;
+    let mut header = None;
+    loop {
+        match rtc
+            .poll_output()
+            .map_err(|_error| "sender output should poll")?
+        {
+            Output::Transmit(transmit) => {
+                let packet = TestDatagram::from(transmit);
+                if packet.is_rtp(ssrc, sequence_number) && datagram.replace(packet).is_some() {
+                    return Err("written RTP should have one matching transmit");
+                }
+            }
+            Output::Event(Event::RawPacket(packet)) => {
+                if let RawPacket::RtpTx(raw_header, _) = packet.as_ref()
+                    && raw_header.ssrc == ssrc
+                    && raw_header.sequence_number == sequence_number
+                    && header.replace(raw_header.clone()).is_some()
+                {
+                    return Err("written RTP should have one matching raw header");
+                }
+            }
+            Output::Event(_) => {}
+            Output::Timeout(deadline) => {
+                if deadline > now {
+                    break;
+                }
+                rtc.handle_input(Input::Timeout(now))
+                    .map_err(|_error| "sender timeout should apply")?;
+            }
+        }
+    }
+    Ok((
+        datagram.ok_or("written RTP should be transmitted")?,
+        header.ok_or("written RTP should expose its transmitted header")?,
+    ))
 }
 
 pub(super) fn deliver_rtp(

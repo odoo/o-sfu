@@ -20,11 +20,14 @@ use tracing::{trace, warn};
 use super::{
     super::{
         control::{SessionCloseDisposition, worker_close_session},
-        packet_loop::event_observation::{RtcEventContext, log_rtc_event, observe_rtc_event},
+        packet_loop::{
+            event_observation::{RtcEventContext, log_rtc_event, observe_rtc_event},
+            forwarded_packet::ForwardedPacket,
+        },
         recovery::PendingKeyframeRequest,
         state::{
             PacketLoopState, RtcSessionState, RtcSnapshotState, bitrate::BitrateRegistry,
-            slots::SessionHandle,
+            media_registry::ProducerStreamBinding, slots::SessionHandle,
         },
     },
     buffers::PacketLoopBuffers,
@@ -207,19 +210,34 @@ fn drain_single_session(
                 );
             }
             Ok(Output::Event(Event::RtpPacket(packet))) => {
+                let (mid, binding) = {
+                    let mut api = session_state.rtc.direct_api();
+                    let Some(stream) = api.stream_rx(&packet.header.ssrc) else {
+                        // Admission requires the receive stream's MID, RID and SSRC bindings.
+                        continue;
+                    };
+                    let binding = ProducerStreamBinding {
+                        rid: stream.rid(),
+                        primary: stream.ssrc(),
+                        repair: stream.rtx(),
+                    };
+                    (stream.mid(), binding)
+                };
                 let was_repair = session_state.take_rtp_repair(packet.header.ssrc);
                 if was_repair {
                     context
                         .rtc_metrics
                         .record_rtc_rtx_received_from_publisher(packet.payload.len());
                 }
-                buffers.pending_packets.push(
-                    super::super::packet_loop::forwarded_packet::ForwardedPacket::from_rtp_packet(
+                buffers
+                    .pending_packets
+                    .push(ForwardedPacket::from_rtp_packet(
                         session_handle,
                         packet,
                         was_repair,
-                    ),
-                );
+                        mid,
+                        binding,
+                    ));
             }
             Ok(Output::Event(Event::KeyframeRequest(request))) => {
                 // Consumer MID/RID names the receiving leg. Preserve `session_key`

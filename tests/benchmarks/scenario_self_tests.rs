@@ -13,8 +13,9 @@
 mod source_policy;
 
 use o_sfu_core::server::transport::benchmark_support::{
-    MeetingFlowBenchFixture, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture,
-    RemoteGateRetryBenchFixture,
+    IncomingObservationBenchFixture, MeetingFlowBenchFixture, RELAY_MAILBOX_ATTEMPTS,
+    ROUTE_PLANNING_TURNS, RelayDrainBenchFixture, RelayFanoutBenchFixture,
+    RelayPressureBenchFixture, RemoteGateRetryBenchFixture, RidReadinessBenchFixture,
 };
 use source_policy::SourcePolicyFixture;
 
@@ -40,6 +41,41 @@ fn relay_planning_scenario_applies_target_gates() {
     let mut fixture = RelayFanoutBenchFixture::mixed_gates();
     assert_eq!(fixture.plan_route_turns(), ROUTE_PLANNING_TURNS * 2);
     fixture.assert_gate_selection();
+}
+
+#[test]
+fn incoming_observation_scenarios_learn_and_reuse_ssrc() {
+    for mut fixture in [
+        IncomingObservationBenchFixture::mid_rid_then_ssrc(),
+        IncomingObservationBenchFixture::negotiated_vp8(),
+    ] {
+        let _ = fixture.observe_turns();
+        fixture.assert_observation_coverage();
+    }
+}
+
+#[test]
+fn relay_mailbox_scenarios_reach_expected_pressure() {
+    for fixture in [
+        RelayPressureBenchFixture::open_mailbox(),
+        RelayPressureBenchFixture::full_mailbox(),
+    ] {
+        assert_eq!(fixture.run_attempts(), RELAY_MAILBOX_ATTEMPTS);
+    }
+}
+
+#[test]
+fn relay_drain_scenario_consumes_only_queued_packets() {
+    let mut fixture = RelayDrainBenchFixture::new();
+    assert_eq!(fixture.drain_relay(), 256);
+    assert_eq!(fixture.drain_relay(), 0);
+}
+
+#[test]
+fn rid_readiness_scenario_activates_pending_gates_once() {
+    let mut fixture = RidReadinessBenchFixture::pending_selected_rid();
+    assert_eq!(fixture.activate_selected_rid(), 2);
+    assert_eq!(fixture.activate_selected_rid(), 0);
 }
 
 /// the meeting scenario must keep exercising the branches it was built for

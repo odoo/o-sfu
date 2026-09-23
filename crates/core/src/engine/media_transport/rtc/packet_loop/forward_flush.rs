@@ -24,7 +24,8 @@ use super::{
             request_kf_for_target,
         },
         state::{
-            PacketLoopState, media_registry::RegisteredMediaHandle,
+            PacketLoopState,
+            media_registry::{ProducerSsrcUpdate, RegisteredMediaHandle},
             relay_registry::RelayEnqueueOutcome,
         },
     },
@@ -36,9 +37,9 @@ use crate::engine::{
     RoomInstanceId,
     media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
     metrics::{
-        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcRouteControlOutcome,
-        RtpDecoderRefreshScope, RtpForwardDestinationKind, RtpMetricsRecorder, RtpRelayDropKind,
-        RuntimeMetrics,
+        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcProducerSsrcBindingOutcome,
+        RtcRouteControlOutcome, RtpDecoderRefreshScope, RtpForwardDestinationKind,
+        RtpMetricsRecorder, RtpRelayDropKind, RuntimeMetrics,
     },
     packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
@@ -202,45 +203,51 @@ impl PacketForwarder {
     }
 }
 
-fn learn_producer_packet_binding(
+fn admit_producer_packet(
     state: &mut PacketLoopState,
-    packet: &ForwardedPacket,
-    transport_media_id: TransportMediaId,
-) {
-    if packet.route_control_mid().is_none() {
-        return;
-    }
-    // RFC 9143 associates an unknown SSRC through MID. RFC 8852 scopes RID and
-    // repaired RID to that media section. Persist the session-checked binding
-    // so later packets may omit those header extensions.
-    // https://www.rfc-editor.org/rfc/rfc9143.html#section-9.2
-    // https://www.rfc-editor.org/rfc/rfc8852.html#section-3
-    let ssrc = packet.route_control_ssrc();
-    let learned = state.learn_producer_ssrc_from_pkt(
-        packet.source(),
-        transport_media_id,
-        ssrc,
-        packet.route_control_rid_extension(),
-    );
-    if !learned || state.routes.source_is_active(transport_media_id) {
-        return;
-    }
-    let ForwardedPacketSource::Local(session_handle) = packet.source() else {
-        return;
+    metrics: &RtcMetricsRecorder,
+    packet: &mut ForwardedPacket,
+) -> bool {
+    let Some(update) = packet.admit_source(state) else {
+        return false;
     };
-    let Some(session_state) = state.users.get_mut_by_handle(*session_handle) else {
-        return;
+    let metric = match update {
+        ProducerSsrcUpdate::Unchanged => return true,
+        ProducerSsrcUpdate::Learned => RtcProducerSsrcBindingOutcome::Learned,
+        ProducerSsrcUpdate::Replaced => RtcProducerSsrcBindingOutcome::Replaced,
+        ProducerSsrcUpdate::Rejected => RtcProducerSsrcBindingOutcome::Rejected,
     };
-    let mut api = session_state.rtc.direct_api();
-    if let Some(stream_rx) = api.stream_rx(&ssrc) {
-        stream_rx.suppress_nack(true);
+    metrics.record_rtc_producer_ssrc_binding(metric);
+    let Some(session_key) = packet.src_key(state).cloned() else {
+        return false;
+    };
+    if update == ProducerSsrcUpdate::Rejected {
+        let Some(binding) = packet.source_binding() else {
+            return false;
+        };
+        // Remove a resurrected old stream only when it did not retain an index.
+        // Otherwise a collision could retire the legitimate current owner.
+        let indexed = state
+            .src_media_for_ssrc(&session_key, binding.primary)
+            .is_some();
+        if !indexed && let Some(session) = state.users.get_mut(&session_key) {
+            session.rtc.direct_api().remove_stream_rx(binding.primary);
+        }
+        return false;
     }
+    if let Some(transport_media_id) = packet.resolve_src_media(state)
+        && !state.routes.source_is_active(transport_media_id)
+    {
+        state.apply_producer_nack_policy(&session_key, transport_media_id);
+    }
+    true
 }
 
 /// Records source identity, activity, decoder readiness and bitrate for one
 /// incoming packet.
 ///
-/// Borrows cached facts for planning or returns `None` when source resolution fails.
+/// Borrows cached facts for planning. Returns `None` when source resolution
+/// fails or the authenticated SSRC binding is rejected.
 /// `forwarder` stages policy wakeups and broad recovery while RID recovery may be
 /// requested immediately.
 pub(in super::super) fn record_incoming_packet<'a>(
@@ -250,12 +257,13 @@ pub(in super::super) fn record_incoming_packet<'a>(
     forwarder: &mut PacketForwarder,
     packet: &'a mut ForwardedPacket,
 ) -> Option<&'a PacketFacts> {
-    let _ = packet.resolve_facts(state);
+    if !admit_producer_packet(state, control, packet) {
+        return None;
+    }
     let facts = packet.cached_facts()?;
     let payload_len = packet.payload().len();
     let transport_media_id = facts.src_media;
     let decoder_refresh = facts.codec.decoder_refresh();
-    learn_producer_packet_binding(state, packet, transport_media_id);
     let audio_policy_changed = state.routes.observe_audio_activity(
         transport_media_id,
         facts.voice_activity,

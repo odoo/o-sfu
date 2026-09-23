@@ -87,17 +87,24 @@ impl FanoutBenchTopology {
 
     fn warm_route_facts(&mut self) {
         for packet in &mut self.pending_packets {
-            let _ = packet.resolve_facts(&self.state);
+            assert!(
+                packet.resolve_facts(&self.state).is_some(),
+                "route-plan benchmark source facts must resolve"
+            );
         }
     }
 
     #[inline(never)]
+    #[expect(
+        clippy::expect_used,
+        reason = "setup verifies that every packet has cached route facts"
+    )]
     fn plan_single_turn(&mut self) -> usize {
         for packet in &mut self.pending_packets {
             let visits_origin = packet.visits_origin_sinks();
-            let Some(facts) = packet.resolve_facts(&self.state) else {
-                continue;
-            };
+            let facts = packet
+                .cached_facts()
+                .expect("route-plan benchmark source facts must remain cached");
             if let Some(decision) = plan_forwards(
                 facts,
                 visits_origin,

@@ -40,8 +40,8 @@ pub(super) use o_sfu_tests::support::{
     },
     metrics_text,
     protocol_full_stack::{
-        ProtocolFakePeer, connect_fake_peer, connect_ridless_video_fake_peer,
-        connect_two_fake_peers, connect_two_rtc_ready_fake_peers,
+        ProtocolFakePeer, connect_fake_peer, connect_mid_only_fake_peer,
+        connect_ridless_video_fake_peer, connect_two_fake_peers, connect_two_rtc_ready_fake_peers,
     },
     require_some, spawn_room_server_with_config, spawn_test_server, stats, test_config,
 };

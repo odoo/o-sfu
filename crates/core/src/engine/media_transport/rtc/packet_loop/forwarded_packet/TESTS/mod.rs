@@ -91,7 +91,8 @@ fn stale_local_forwarded_packet_does_not_resolve_through_reused_slot() {
         mid: Mid::from("aud-up"),
     });
     let mut packet = sample_local_forwarded_packet(stale_handle, "aud-up", b"payload");
-
+    packet.src_media = Some(TransportMediaId::new(99));
+    assert_eq!(packet.admit_source(&mut state), None);
     assert!(packet.src_key(&state).is_none());
     assert!(packet.resolve_facts(&state).is_none());
     assert!(
@@ -99,6 +100,45 @@ fn stale_local_forwarded_packet_does_not_resolve_through_reused_slot() {
             .share_for_relay(&state, TransportMediaId::new(99))
             .is_none()
     );
+}
+
+#[test]
+fn cached_local_packet_rejects_a_reused_session_slot() -> Result<(), &'static str> {
+    let session_key = test_transport_session_key(52, 0, 20, UserId::Integer(18));
+    let replacement_key = test_transport_session_key(52, 0, 21, UserId::Integer(19));
+    let mut state = PacketLoopState::default();
+    let handle = install_test_session(&mut state, &session_key).ok_or("missing session")?;
+    let mid = Mid::from("aud-up");
+    let media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session_key.clone(),
+        mid,
+    });
+    state.refresh_producer_ssrcs(
+        &session_key,
+        mid,
+        &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_ssrc(4321)]),
+    );
+    let mut packet = sample_local_forwarded_packet(handle, "aud-up", b"payload");
+    packet.header.ssrc = 4321.into();
+    assert_eq!(
+        packet.admit_source(&mut state),
+        Some(ProducerSsrcUpdate::Unchanged)
+    );
+    assert_eq!(
+        packet.resolve_facts(&state).map(|facts| facts.src_media),
+        Some(media)
+    );
+    state.users.remove(&session_key);
+    install_test_session(&mut state, &replacement_key).ok_or("missing replacement session")?;
+    assert_eq!(
+        packet.admit_source(&mut state),
+        Some(ProducerSsrcUpdate::Rejected)
+    );
+    assert_eq!(
+        packet.cached_facts().map(|facts| facts.src_media),
+        Some(media)
+    );
+    Ok(())
 }
 
 #[test]
@@ -341,6 +381,123 @@ fn forwarded_packet_recovers_rid_from_ssrc_binding_when_extension_is_absent() {
         relay_facts.map(|facts| project_codec_packet(&facts.codec)),
         Some(expected)
     );
+}
+
+#[test]
+fn local_packet_prefers_negotiated_rid_including_ridless() {
+    for negotiated_rid in [None, Some("hi")] {
+        let session_key = test_transport_session_key(47, 0, 15, UserId::Integer(13));
+        let producer_mid = Mid::from("cam-up");
+        let producer_ssrc = 76_543_u32;
+        let mut state = PacketLoopState::default();
+        let session_handle = install_test_session(&mut state, &session_key);
+        assert!(session_handle.is_some());
+        let Some(session_handle) = session_handle else {
+            return;
+        };
+        let src_media = state.register_media_handle(RegisteredMediaHandle::Producer {
+            session_key: session_key.clone(),
+            mid: producer_mid,
+        });
+        let mut encoding = StreamBinding::new().with_ssrc(producer_ssrc);
+        if let Some(rid) = negotiated_rid {
+            encoding = encoding.with_rid(rid);
+        }
+        let parameters = RouterRtpParameters::new(
+            vec![video_format(CodecName::Vp8, 96)],
+            vec![],
+            vec![encoding],
+        );
+        state.refresh_producer_ssrcs(&session_key, producer_mid, &parameters);
+        let mut packet = sample_local_forwarded_packet(session_handle, "cam-up", b"payload");
+        packet.header.ssrc = producer_ssrc.into();
+        packet.header.ext_vals.rid = Some(Rid::from("old"));
+        let expected_rid = negotiated_rid.map(Rid::from);
+        assert_eq!(
+            packet.admit_source(&mut state),
+            Some(ProducerSsrcUpdate::Unchanged)
+        );
+        let facts = packet.resolve_facts(&state);
+        assert!(
+            facts.is_some_and(|facts| facts.src_media == src_media && facts.rid == expected_rid)
+        );
+        assert_eq!(
+            packet.source_binding().map(|binding| binding.rid),
+            Some(expected_rid)
+        );
+        assert_eq!(packet.header.ext_vals.rid, expected_rid);
+        state.refresh_producer_ssrcs(
+            &session_key,
+            producer_mid,
+            &RouterRtpParameters::new(
+                vec![],
+                vec![],
+                vec![
+                    StreamBinding::new()
+                        .with_ssrc(producer_ssrc)
+                        .with_rid("new"),
+                ],
+            ),
+        );
+        assert_eq!(
+            packet.admit_source(&mut state),
+            Some(ProducerSsrcUpdate::Rejected)
+        );
+        assert_eq!(
+            packet.cached_facts().map(|facts| facts.rid),
+            Some(expected_rid)
+        );
+        assert_eq!(
+            state.producer_binding_for_ssrc(&session_key, producer_ssrc.into()),
+            Some((src_media, Some("new".into()))),
+        );
+        assert_eq!(packet.header.ext_vals.rid, expected_rid);
+    }
+}
+
+#[test]
+fn local_packet_keeps_mid_owner_when_ssrc_collides() -> Result<(), &'static str> {
+    let session_key = test_transport_session_key(48, 0, 16, UserId::Integer(14));
+    let mut state = PacketLoopState::default();
+    let handle = install_test_session(&mut state, &session_key).ok_or("missing session")?;
+    let first_mid = Mid::from("first");
+    let first = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session_key.clone(),
+        mid: first_mid,
+    });
+    state.refresh_producer_ssrcs(
+        &session_key,
+        first_mid,
+        &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_rid("lo")]),
+    );
+    let second_mid = Mid::from("second");
+    let second = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session_key.clone(),
+        mid: second_mid,
+    });
+    state.refresh_producer_ssrcs(
+        &session_key,
+        second_mid,
+        &RouterRtpParameters::new(
+            vec![],
+            vec![],
+            vec![StreamBinding::new().with_ssrc(4321).with_rid("hi")],
+        ),
+    );
+    let mut packet = sample_local_forwarded_packet(handle, "first", b"payload");
+    packet.header.ssrc = 4321.into();
+    packet.header.ext_vals.rid = Some("lo".into());
+    assert_eq!(
+        packet.admit_source(&mut state),
+        Some(ProducerSsrcUpdate::Rejected)
+    );
+    assert_eq!(packet.src_media, Some(first));
+    assert_eq!(packet.header.ext_vals.rid, Some("lo".into()));
+    assert_eq!(
+        state.producer_binding_for_ssrc(&session_key, 4321.into()),
+        Some((second, Some("hi".into()))),
+    );
+    Ok(())
 }
 
 #[test]

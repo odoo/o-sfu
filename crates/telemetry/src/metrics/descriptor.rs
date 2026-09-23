@@ -766,6 +766,16 @@ metric_catalog! {
         kind: Counter,
         samples: |metrics, capture, output| output.counter(&[], capture.rtc.output_budget_session_closes())
     },
+    RtcProducerSsrcBindingsTotal {
+        name: "osfu_rtc_producer_ssrc_bindings_total",
+        help: "Total packet-triggered producer SSRC binding changes and rejections by outcome.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_snapshot_counters(output,
+            &capture.rtc,
+            "outcome",
+            RtcMetricsSnapshot::producer_ssrc_bindings
+        )
+    },
     RtcRouteControlTotal {
         name: "osfu_rtc_route_control_total",
         help: "Total RTC route-control decisions observed at the transport boundary.",
