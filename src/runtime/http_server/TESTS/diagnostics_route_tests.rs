@@ -181,21 +181,23 @@ async fn diagnostics_routes_are_forbidden_without_token_on_public_listener() -> 
 async fn diagnostics_routes_require_the_configured_bearer_token() -> TestResult {
     let mut state = test_state();
     state.config.http.bind_address = SocketAddr::from(([0, 0, 0, 0], 8070));
-    state.config.diagnostics.auth_token = Some(String::from("operator-secret"));
+    state.config.diagnostics.auth_token = Some(secrecy::SecretString::from(
+        "operator-secret-with-at-least-32-bytes",
+    ));
 
     for path in diagnostics_route_paths() {
         diagnostics_status(&state, &path, None, StatusCode::UNAUTHORIZED).await?;
         diagnostics_status(
             &state,
             &path,
-            Some("Basic operator-secret"),
+            Some("Basic operator-secret-with-at-least-32-bytes"),
             StatusCode::UNAUTHORIZED,
         )
         .await?;
         diagnostics_status(
             &state,
             &path,
-            Some("jwt operator-secret"),
+            Some("jwt operator-secret-with-at-least-32-bytes"),
             StatusCode::UNAUTHORIZED,
         )
         .await?;
@@ -204,7 +206,7 @@ async fn diagnostics_routes_require_the_configured_bearer_token() -> TestResult 
     diagnostics_status(
         &state,
         route::diagnostics::SUMMARY,
-        Some("Bearer operator-secret"),
+        Some("Bearer operator-secret-with-at-least-32-bytes"),
         StatusCode::OK,
     )
     .await
