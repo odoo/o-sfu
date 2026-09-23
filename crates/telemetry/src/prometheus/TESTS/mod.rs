@@ -214,7 +214,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 82);
+    assert_eq!(METRIC_FAMILY_COUNT, 83);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered

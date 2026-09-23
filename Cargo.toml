@@ -153,6 +153,8 @@ axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 futures-util.workspace = true
 hmac = { version = "0.13", features = ["zeroize"] }
+hyper = { version = "1.10", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 ipnet = "2.12"
 o-sfu-protocol = { path = "crates/protocol", default-features = false }
 o-sfu-core.workspace = true
@@ -167,6 +169,7 @@ subtle = "2.6.1"
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+tower = { version = "0.5", features = ["util"] }
 thiserror.workspace = true
 zeroize = "1.9.0"
 
@@ -184,4 +187,3 @@ o-sfu-router = { workspace = true, features = ["test-support"] }
 str0m.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
-tower = { version = "0.5", features = ["util"] }

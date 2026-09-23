@@ -242,3 +242,38 @@ fn proxy_mode_requires_an_explicit_trusted_proxy_network() -> anyhow::Result<()>
     assert_eq!(config.auth.authentication_timeout_ms, 10_000);
     Ok(())
 }
+
+#[test]
+fn http_listener_limits_are_bounded() -> anyhow::Result<()> {
+    let defaults = config_from(&[])?;
+    assert_eq!(defaults.http.max_http_connections, 4096);
+    assert_eq!(defaults.http.header_read_timeout, Duration::from_secs(10));
+    for timeout in ["1", "86400"] {
+        assert!(config_from(&[("HEADER_READ_TIMEOUT", timeout)]).is_ok());
+    }
+    for timeout in ["0", "86401", "18446744073709551615"] {
+        assert_eq!(
+            config_error_from(&[("HEADER_READ_TIMEOUT", timeout)]).as_deref(),
+            Some("HEADER_READ_TIMEOUT must be between 1 and 86400 seconds")
+        );
+    }
+    for limit in ["0".to_owned(), usize::MAX.to_string()] {
+        assert!(
+            config_error_from(&[("MAX_HTTP_CONNECTIONS", &limit)])
+                .is_some_and(|error| error.starts_with("MAX_HTTP_CONNECTIONS must be between"))
+        );
+    }
+    let explicit = config_from(&[
+        ("MAX_HTTP_CONNECTIONS", "123"),
+        ("HEADER_READ_TIMEOUT", "7"),
+    ])?;
+    assert_eq!(explicit.http.max_http_connections, 123);
+    assert_eq!(explicit.http.header_read_timeout, Duration::from_secs(7));
+    let mut http = defaults.http;
+    http.max_http_connections = 0;
+    assert!(http.validate().is_err());
+    http.max_http_connections = 1;
+    http.header_read_timeout = Duration::MAX;
+    assert!(http.validate().is_err());
+    Ok(())
+}

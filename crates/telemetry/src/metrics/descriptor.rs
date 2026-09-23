@@ -277,6 +277,12 @@ fn gauge_count(value: usize) -> i64 {
 }
 
 metric_catalog! {
+    HttpConnectionRejectionsTotal {
+        name: "osfu_http_connection_rejections_total",
+        help: "Total TCP connections rejected at the HTTP listener connection cap.",
+        kind: Counter,
+        samples: |metrics, capture, output| output.counter(&[], metrics.http_connection_rejections.load())
+    },
     HttpNoopRequestsTotal {
         name: "osfu_http_noop_requests_total",
         help: "Total HTTP requests served by /v1/noop.",

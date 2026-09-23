@@ -530,9 +530,14 @@ HTTP and operator access:
 | variable | default | description |
 | --- | --- | --- |
 | `BIND_ADDRESS` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
+| `MAX_HTTP_CONNECTIONS` | `4096` | concurrent accepted sockets per process, including authenticated WebSockets until they close |
+| `HEADER_READ_TIMEOUT` | `10` | seconds from acceptance to first headers and for subsequent HTTP/1 headers, including keep-alive idle time, from `1` to `86400` |
 | `PROXY` | `false` | when `true`, requires nonempty `TRUSTED_PROXIES` IP CIDRs and trusts forwarded metadata only from matching TCP peers |
 | `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token of at least 32 bytes after trimming whitespace for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
+
+Set `RLIMIT_NOFILE` above `MAX_HTTP_CONNECTIONS` with headroom for UDP sockets,
+logs and other process descriptors. The HTTP cap also limits concurrent WebSocket users.
 
 authentication and websocket admission:
 

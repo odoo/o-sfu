@@ -25,6 +25,7 @@ use super::{
 
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
+    pub(super) http_connection_rejections: Counter,
     pub(super) http_requests: CounterFamily<HttpRoute>,
     pub(super) http_room_responses: CounterFamily<HttpRoomResponseStatus>,
     pub(super) http_disconnect_responses: CounterFamily<HttpDisconnectResponseStatus>,
@@ -97,6 +98,11 @@ impl RuntimeMetrics {
     /// Counts absent publisher targets evicted from bounded receiver intent.
     pub fn record_subscription_intent_evictions(&self, targets: usize) {
         self.subscription_intent_evictions.add(targets);
+    }
+
+    /// Records a socket closed because the HTTP listener reached its connection cap.
+    pub fn record_http_connection_rejection(&self) {
+        self.http_connection_rejections.increment();
     }
 
     /// counts one HTTP request then records duration and releases inflight state on drop
