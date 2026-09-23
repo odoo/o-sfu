@@ -135,6 +135,11 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    groups:
+      codeql-action:
+        # CodeQL init and analyze must use the same action version.
+        patterns:
+          - "github/codeql-action/*"
     schedule:
       interval: "weekly"
     cooldown:
