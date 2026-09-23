@@ -19,7 +19,7 @@ use super::{
     session,
 };
 use crate::{
-    config::UserConfig,
+    config::{DeadlineDuration, UserConfig},
     core::prelude::SfuCore,
     runtime::{
         RuntimeMetrics, RuntimeState,
@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub(crate) struct WebSocketServices {
-    pub(super) authentication_timeout_ms: u64,
+    pub(super) authentication_timeout: DeadlineDuration,
     max_pre_auth_websocket_sessions: usize,
     max_pre_auth_websocket_sessions_per_origin: usize,
     pub(super) user: UserConfig,
@@ -45,7 +45,7 @@ pub(crate) struct WebSocketServices {
 impl FromRef<RuntimeState> for WebSocketServices {
     fn from_ref(state: &RuntimeState) -> Self {
         Self {
-            authentication_timeout_ms: state.config.auth.authentication_timeout_ms,
+            authentication_timeout: state.config.auth.authentication_timeout,
             max_pre_auth_websocket_sessions: state.config.auth.max_pre_auth_websocket_sessions,
             max_pre_auth_websocket_sessions_per_origin: state
                 .config

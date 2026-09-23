@@ -534,7 +534,7 @@ HTTP and operator access:
 | `HEADER_READ_TIMEOUT` | `10` | seconds from acceptance to first headers and for subsequent HTTP/1 headers, including keep-alive idle time, from `1` to `86400` |
 | `PROXY` | `false` | when `true`, requires nonempty `TRUSTED_PROXIES` IP CIDRs and trusts forwarded metadata only from matching TCP peers |
 | `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token of at least 32 bytes after trimming whitespace for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
-| `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage, from `1` to `86400000` |
 
 Set `RLIMIT_NOFILE` above `MAX_HTTP_CONNECTIONS` with headroom for UDP sockets,
 logs and other process descriptors. The HTTP cap also limits concurrent WebSocket users.
@@ -543,7 +543,7 @@ authentication and websocket admission:
 
 | variable | default | description |
 | --- | --- | --- |
-| `AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds |
+| `AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds, from `1` to `86400000` |
 | `MAX_PRE_AUTH_WEBSOCKET_SESSIONS` | `512` | process-wide cap for upgraded WebSockets waiting for authentication |
 | `MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN` | `16` | per IPv4 address or IPv6 /64 cap for upgraded WebSockets waiting for authentication |
 
@@ -552,8 +552,8 @@ room and user limits:
 | variable | default | description |
 | --- | --- | --- |
 | `ROOM_SIZE` | `100` | maximum concurrent users per room |
-| `USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds |
-| `PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds |
+| `USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds, from `1` to `86400000` |
+| `PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds, from `1` to `86400000` |
 | `USER_OUTBOUND_QUEUE_CAPACITY` | `128` | per-user WebSocket room-event queue depth |
 | `USER_OUTBOUND_QUEUE_BYTE_CAPACITY` | `2097152` | per-user WebSocket queued-byte budget |
 | `ROOM_RESERVATION_TTL` | `60` | time-to-live for unjoined rooms in seconds |
@@ -626,7 +626,7 @@ telemetry:
 | `TELEMETRY_SERVICE_NAME` | `o-sfu` | service name in telemetry resource metadata |
 | `TELEMETRY_DEPLOYMENT_ENVIRONMENT` | `local` | deployment environment in telemetry resource metadata |
 | `TELEMETRY_SERVICE_INSTANCE_ID` | `pid-<pid>` | stable service instance id override |
-| `TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval, with `0` disabling sampling |
+| `TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval in milliseconds, from `0` to `86400000`, with `0` disabling sampling |
 | `TELEMETRY_OTLP_ENDPOINT` | disabled | optional OTLP HTTP traces endpoint, normalized to `/v1/traces` |
 
 feature flags:

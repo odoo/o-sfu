@@ -9,6 +9,9 @@ pub struct TelemetryConfig {
     pub log_format: TelemetryLogFormat,
     pub resource: TelemetryResource,
     pub trace_export: TraceExportConfig,
+    /// Sampling interval of at most 24 hours. `None` or zero disables sampling.
+    ///
+    /// The media transport validates programmatic values before starting workers.
     pub media_quality_interval: Option<Duration>,
 }
 

@@ -171,7 +171,7 @@ impl Runtime {
         HttpServer: Future<Output = io::Result<()>>,
         Shutdown: Future<Output = io::Result<()>>,
     {
-        let timeout = Duration::from_millis(self.config.http.shutdown_timeout_ms);
+        let timeout = self.config.http.shutdown_timeout.as_duration();
         let tasks = RuntimeTasks::spawn(Arc::clone(&self.room_manager), self.media_transport);
         let state = RuntimeState::from_parts(
             self.config,

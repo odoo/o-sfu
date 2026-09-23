@@ -3,7 +3,7 @@ use secrecy::SecretString;
 
 use super::{
     AuthConfig, DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
-    DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
+    DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DeadlineDuration,
     env::{Env, positive},
 };
 use crate::runtime::auth::decode_signing_key;
@@ -16,10 +16,9 @@ impl AuthConfig {
                 .or_load_from_file("AUTH_KEY_FILE")
                 .check(validate_auth_key)
                 .required()?,
-            authentication_timeout_ms: env
-                .var("AUTHENTICATION_TIMEOUT_MS")
-                .check(positive)
-                .default(DEFAULT_AUTHENTICATION_TIMEOUT_MS)?,
+            authentication_timeout: env.var("AUTHENTICATION_TIMEOUT_MS").default(
+                DeadlineDuration::from_millis(DEFAULT_AUTHENTICATION_TIMEOUT_MS)?,
+            )?,
             max_pre_auth_websocket_sessions: env
                 .var("MAX_PRE_AUTH_WEBSOCKET_SESSIONS")
                 .check(positive)

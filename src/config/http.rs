@@ -4,10 +4,7 @@ use anyhow::{Context, Result, ensure};
 use ipnet::IpNet;
 use tokio::sync::Semaphore;
 
-use super::{
-    HttpConfig,
-    env::{Env, positive},
-};
+use super::{DeadlineDuration, HttpConfig, env::Env};
 
 impl HttpConfig {
     /// Validates proxy policy and listener limits before runtime startup.
@@ -59,10 +56,9 @@ impl HttpConfig {
             header_read_timeout: env
                 .var("HEADER_READ_TIMEOUT")
                 .default(Duration::from_secs(10))?,
-            shutdown_timeout_ms: env
+            shutdown_timeout: env
                 .var("SHUTDOWN_TIMEOUT_MS")
-                .check(positive)
-                .default(10_000)?,
+                .default(DeadlineDuration::from_millis(10_000)?)?,
         };
         config.validate()?;
         Ok(config)

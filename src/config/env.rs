@@ -12,6 +12,8 @@ use o_sfu_core::prelude::Bitrate;
 use secrecy::SecretString;
 use zeroize::Zeroize;
 
+use super::DeadlineDuration;
+
 type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 type ReadFile<'a> = dyn Fn(&Path) -> io::Result<String> + 'a;
 
@@ -239,6 +241,13 @@ impl EnvParse for bool {
 impl EnvParse for String {
     fn parse(value: EnvValue) -> Result<Self> {
         Ok(value.raw)
+    }
+}
+
+impl EnvParse for DeadlineDuration {
+    fn parse(value: EnvValue) -> Result<Self> {
+        let key = value.key;
+        Self::from_millis(u64::parse(value)?).map_err(|error| anyhow!("{key} {error}"))
     }
 }
 
