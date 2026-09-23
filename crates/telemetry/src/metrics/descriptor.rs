@@ -337,6 +337,12 @@ metric_catalog! {
         kind: Counter,
         samples: |metrics, capture, output| write_counter_family(output, &metrics.ws_connections, "stage")
     },
+    WsPreAuthRejectionsTotal {
+        name: "osfu_ws_pre_auth_rejections_total",
+        help: "Total websocket upgrades rejected by pre-auth admission limit.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_counter_family(output, &metrics.ws_pre_auth_rejections, "limit")
+    },
     WsHandshakeRejectionsTotal {
         name: "osfu_ws_handshake_rejections_total",
         help: "Total websocket handshake rejections by close code bucket.",

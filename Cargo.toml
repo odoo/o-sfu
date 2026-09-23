@@ -153,6 +153,7 @@ axum = { version = "0.8", features = ["ws"] }
 base64.workspace = true
 futures-util.workspace = true
 hmac = { version = "0.13", features = ["zeroize"] }
+ipnet = "2.12"
 o-sfu-protocol = { path = "crates/protocol", default-features = false }
 o-sfu-core.workspace = true
 o-sfu-rfc.workspace = true
