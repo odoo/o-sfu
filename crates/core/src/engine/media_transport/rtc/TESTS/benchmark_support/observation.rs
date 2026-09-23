@@ -1,13 +1,16 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use o_sfu_rfc::rtp::CodecName;
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
-    rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType},
+    rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType, StreamBinding},
 };
 use str0m::{
-    media::{Mid, Pt},
-    rtp::Vp8Descriptor,
+    media::{Mid, Pt, Rid},
+    rtp::{Ssrc, Vp8Descriptor},
 };
 
 use super::super::{
@@ -15,9 +18,10 @@ use super::super::{
     packet_loop::{PacketForwarder, record_incoming_stats_for_benchmark},
     state::{PacketLoopState, bitrate::BitrateRegistry},
     test_support::{
-        MediaWorkerScenario, reset_packet_resolution,
-        sample_forwarded_packet_with_rid_and_audio_activity, sample_forwarded_packet_without_mid,
-        test_transport_session_key,
+        BenchmarkPacketStaging, BenchmarkStreamIdentity, prepare_source_session_with_rid,
+        reset_packet_resolution, restage_packet_for_benchmark,
+        sample_local_forwarded_packet_for_benchmark,
+        sample_local_forwarded_packet_without_mid_for_benchmark, test_transport_session_key,
     },
     worker::PacketLoopBuffers,
 };
@@ -36,9 +40,10 @@ const VP8_INTERFRAME: &[u8] = &[0x90, 0xe0, 0x80, 0x03, 0x0a, 0x20, 0x01, 0x00, 
 
 /// fixed packet-observation fixture for packet-loop ingress benchmarks
 ///
-/// setup registers one producer, one incoming bitrate counter and two reusable
-/// RTP packets. the first packet carries MID, RID and audio metadata while the
-/// second relies on the SSRC binding learned from the first packet
+/// Setup declares one local RTC producer with a RID-only negotiated encoding,
+/// one incoming bitrate counter and two reusable RTP packets. The first packet
+/// learns the encoding's SSRC from authenticated MID and RID metadata. The
+/// second omits both extensions and resolves through that learned SSRC.
 pub struct IncomingObservationBenchFixture {
     state: PacketLoopState,
     buffers: PacketLoopBuffers,
@@ -52,7 +57,11 @@ pub struct IncomingObservationBenchFixture {
 impl IncomingObservationBenchFixture {
     #[must_use]
     pub fn mid_rid_then_ssrc() -> Self {
-        Self::build(b"observed-payload", b"steady-payload", None)
+        Self::build(
+            b"observed-payload",
+            b"steady-payload",
+            &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_rid("hi")]),
+        )
     }
 
     /// # Panics
@@ -68,29 +77,45 @@ impl IncomingObservationBenchFixture {
                 90_000,
             )],
             vec![],
-            vec![],
+            vec![StreamBinding::new().with_rid("hi")],
         );
         assert!(
             negotiated_vp8_payloads_are_valid(&parameters),
             "negotiated VP8 benchmark payloads must be valid"
         );
-        Self::build(VP8_KEYFRAME, VP8_INTERFRAME, Some(parameters))
+        Self::build(VP8_KEYFRAME, VP8_INTERFRAME, &parameters)
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "the fixed benchmark fixture must fail if RTC setup is incomplete"
+    )]
     fn build(
         first_payload: &[u8],
         second_payload: &[u8],
-        parameters: Option<RouterRtpParameters>,
+        parameters: &RouterRtpParameters,
     ) -> Self {
         let source_session = test_transport_session_key(101, 0, 102, UserId::Integer(103));
+        let mid = Mid::from("cam-up");
         let mut state = PacketLoopState::default();
-        let mut scenario = MediaWorkerScenario::new(&mut state);
-        let src_media = scenario.source(source_session.clone(), Mid::from("cam-up"));
-        if let Some(parameters) = parameters {
+        let src_media = prepare_source_session_with_rid(
+            &mut state,
+            &source_session,
+            mid,
+            4321,
+            Some(Rid::from("hi")),
+        );
+        state.refresh_producer_ssrcs(&source_session, mid, parameters);
+        assert!(
             state
-                .routes
-                .refresh_packet_inspector(src_media, &parameters);
-        }
+                .producer_binding_for_ssrc(&source_session, Ssrc::from(4321))
+                .is_none(),
+            "observation benchmark must learn the SSRC from its first packet"
+        );
+        let session_handle = state
+            .users
+            .handle_for_key(&source_session)
+            .expect("observation benchmark session must have a local handle");
 
         let now = Instant::now();
         let mut bitrate_registry = BitrateRegistry::default();
@@ -104,23 +129,48 @@ impl IncomingObservationBenchFixture {
         let source_policy_signal = SourcePolicySignal::default();
         let source_policy_updates = source_policy_signal.subscribe();
         let mut buffers = PacketLoopBuffers::new();
-        buffers
-            .pending_packets
-            .push(sample_forwarded_packet_with_rid_and_audio_activity(
-                source_session.clone(),
-                "cam-up",
-                Some("hi"),
-                Some(true),
-                Some(-24),
-                first_payload,
-            ));
-        buffers
-            .pending_packets
-            .push(sample_forwarded_packet_without_mid(
-                source_session,
-                4321,
-                second_payload,
-            ));
+        let identity = BenchmarkStreamIdentity {
+            ssrc: 4321,
+            payload_type: 111,
+        };
+        let mut first_packet = sample_local_forwarded_packet_for_benchmark(
+            session_handle,
+            "cam-up",
+            Some("hi"),
+            identity,
+            Arc::from(first_payload),
+        );
+        restage_packet_for_benchmark(
+            &mut first_packet,
+            BenchmarkPacketStaging {
+                sequence_number: 1,
+                rtp_timestamp: 1234,
+                voice_activity: Some(true),
+                audio_level: Some(-24),
+                ..BenchmarkPacketStaging::default()
+            },
+            None,
+            now,
+        );
+        buffers.pending_packets.push(first_packet);
+        let mut second_packet = sample_local_forwarded_packet_without_mid_for_benchmark(
+            session_handle,
+            "cam-up",
+            Some("hi"),
+            identity,
+            Arc::from(second_payload),
+        );
+        restage_packet_for_benchmark(
+            &mut second_packet,
+            BenchmarkPacketStaging {
+                sequence_number: 2,
+                rtp_timestamp: 4234,
+                ..BenchmarkPacketStaging::default()
+            },
+            None,
+            now + Duration::from_millis(1),
+        );
+        buffers.pending_packets.push(second_packet);
 
         Self {
             state,
@@ -149,6 +199,42 @@ impl IncomingObservationBenchFixture {
             );
         }
         self.source_policy_updates.take_pending_updates().len()
+    }
+
+    /// # Panics
+    ///
+    /// Panics if the first packet did not learn its SSRC or the second packet
+    /// did not resolve through that learned binding.
+    #[expect(
+        clippy::expect_used,
+        clippy::panic,
+        reason = "fixture validation must fail when the observation path is skipped"
+    )]
+    pub fn assert_observation_coverage(&self) {
+        let [first, second] = self.buffers.pending_packets.as_slice() else {
+            panic!("observation fixture must contain two packets");
+        };
+        let source_key = first
+            .src_key(&self.state)
+            .expect("first packet must have a source session");
+        let first_media = first
+            .cached_facts()
+            .expect("first packet must have observed source facts")
+            .src_media;
+        assert_eq!(
+            self.state
+                .producer_binding_for_ssrc(source_key, Ssrc::from(4321)),
+            Some((first_media, Some("hi".into()))),
+            "first packet must learn the negotiated RID and SSRC"
+        );
+        assert_eq!(
+            self.state
+                .incoming_bitrate_counters
+                .get(&first_media)
+                .and_then(|counter| counter.last_observed_age(second.received_at())),
+            Some(Duration::ZERO),
+            "SSRC-only packet must reach the incoming bitrate observer"
+        );
     }
 }
 

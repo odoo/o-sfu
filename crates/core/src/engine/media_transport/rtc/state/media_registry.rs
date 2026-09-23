@@ -15,11 +15,12 @@ use str0m::{
     media::{Mid, Rid},
     rtp::Ssrc,
 };
-use tracing::{debug, warn};
 
 use super::{
     super::{codec, packet_loop::forwarded_packet::ForwardedPacketSource},
     PacketLoopState,
+    route_table::RouteTable,
+    slots::SessionHandle,
     source_route::DestinationKeyframeTarget,
 };
 use crate::engine::{
@@ -57,6 +58,41 @@ struct ConsumerMidBinding {
 struct ProducerSsrcBinding {
     transport_media_id: TransportMediaId,
     rid: Option<Rid>,
+    role: ProducerSsrcRole,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProducerSsrcRole {
+    Primary,
+    Repair,
+}
+
+/// One authenticated str0m receive stream after RTX normalization.
+///
+/// The exact stream selected by `Event::RtpPacket` supplies both SSRCs. RID
+/// resolves against the current negotiated binding before admission because
+/// str0m can retain an earlier SDP-declared RID for the same primary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProducerStreamBinding {
+    pub rid: Option<Rid>,
+    pub primary: Ssrc,
+    pub repair: Option<Ssrc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProducerSsrcUpdate {
+    Unchanged,
+    Learned,
+    Replaced,
+    Rejected,
+}
+
+#[derive(Debug, Clone)]
+struct ProducerEncoding {
+    rid: Option<Rid>,
+    primary: Option<Ssrc>,
+    repair: Option<Ssrc>,
+    previous_primary: Option<Ssrc>,
 }
 
 impl RegisteredMediaHandle {
@@ -73,7 +109,23 @@ impl RegisteredMediaHandle {
     }
 }
 
-pub(in super::super) type MediaStore = BTreeMap<TransportMediaId, RegisteredMediaHandle>;
+/// Registration and receive-stream state for one media id.
+#[derive(Debug, Clone)]
+pub(in super::super) struct RegisteredMedia {
+    handle: RegisteredMediaHandle,
+    producer_encodings: Vec<ProducerEncoding>,
+}
+
+impl RegisteredMedia {
+    fn is_producer_for(&self, session_key: &TransportSessionKey) -> bool {
+        matches!(
+            &self.handle,
+            RegisteredMediaHandle::Producer { session_key: owner, .. } if owner == session_key
+        )
+    }
+}
+
+pub(in super::super) type MediaStore = BTreeMap<TransportMediaId, RegisteredMedia>;
 pub(in super::super) type SessionMediaRegistry = BTreeMap<TransportSessionKey, SessionMediaLookup>;
 
 #[derive(Debug, Default, Clone)]
@@ -125,72 +177,91 @@ impl SessionMediaLookup {
     }
 }
 
-fn bind_producer_ssrc(
-    mid_registry: &MediaStore,
-    session_media: &mut SessionMediaRegistry,
+fn bind_producer_stream(
+    mid_registry: &mut MediaStore,
+    lookup: &mut SessionMediaLookup,
+    routes: &mut RouteTable,
     session_key: &TransportSessionKey,
     transport_media_id: TransportMediaId,
-    ssrc: Ssrc,
-    rid: Option<Rid>,
-) -> Option<bool> {
-    let Some(RegisteredMediaHandle::Producer {
-        session_key: registered_session_key,
-        mid,
-    }) = mid_registry.get(&transport_media_id)
+    binding: ProducerStreamBinding,
+) -> ProducerSsrcUpdate {
+    let Some(registered) = mid_registry
+        .get_mut(&transport_media_id)
+        .filter(|registered| registered.is_producer_for(session_key))
     else {
-        return None;
+        return ProducerSsrcUpdate::Rejected;
     };
-    if registered_session_key != session_key {
-        return None;
+    if binding.repair == Some(binding.primary) {
+        return ProducerSsrcUpdate::Rejected;
     }
-    let mid = *mid;
-
-    let Some(session_lookup) = session_media.get_mut(session_key) else {
-        debug_assert!(
-            session_media.contains_key(session_key),
-            "producer SSRC binding missing session media index for registered producer"
-        );
-        return None;
+    let encodings = &mut registered.producer_encodings;
+    let Some(encoding) = encodings
+        .iter_mut()
+        .find(|encoding| encoding.rid == binding.rid)
+    else {
+        return ProducerSsrcUpdate::Rejected;
     };
-    let previous = session_lookup.producer_ssrcs.get(&ssrc);
-    if let Some(binding) = previous
-        && binding.transport_media_id != transport_media_id
-    {
-        let existing_transport_media_id = binding.transport_media_id;
-        warn!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            ?transport_media_id,
-            ?existing_transport_media_id,
-            ?mid,
-            ?ssrc,
-            ?rid,
-            "ignored producer SSRC binding because SSRC already belongs to another media"
-        );
-        return None;
+    if encoding.primary == Some(binding.primary) && encoding.repair == binding.repair {
+        return ProducerSsrcUpdate::Unchanged;
     }
-    let inserted = previous.is_none();
-    let previous_rid = previous.and_then(|binding| binding.rid);
-    session_lookup.producer_ssrcs.insert(
-        ssrc,
-        ProducerSsrcBinding {
-            transport_media_id,
-            // Publishers can omit RID after the first packet establishes the SSRC.
-            rid: rid.or(previous_rid),
-        },
+    // str0m 0.23.1 can recreate a refused preceding SSRC in
+    // map_dynamic_finish. Keep its intended anti-flap rule even when the
+    // delayed packet is emitted as a second authenticated receive stream.
+    // https://docs.rs/str0m/0.23.1/src/str0m/streams/mod.rs.html
+    if encoding.previous_primary == Some(binding.primary) {
+        return ProducerSsrcUpdate::Rejected;
+    }
+    for (ssrc, role) in [
+        (Some(binding.primary), ProducerSsrcRole::Primary),
+        (binding.repair, ProducerSsrcRole::Repair),
+    ] {
+        if let Some(previous) = ssrc.and_then(|ssrc| lookup.producer_ssrcs.get(&ssrc))
+            && previous
+                != (ProducerSsrcBinding {
+                    transport_media_id,
+                    rid: binding.rid,
+                    role,
+                })
+        {
+            return ProducerSsrcUpdate::Rejected;
+        }
+    }
+    let outcome = match (encoding.primary, encoding.repair) {
+        (Some(primary), _) if primary != binding.primary => ProducerSsrcUpdate::Replaced,
+        (_, Some(_)) => ProducerSsrcUpdate::Replaced,
+        _ => ProducerSsrcUpdate::Learned,
+    };
+    for previous in [encoding.primary, encoding.repair].into_iter().flatten() {
+        lookup.producer_ssrcs.remove(&previous);
+    }
+    if encoding.primary != Some(binding.primary) {
+        encoding.previous_primary = encoding.primary;
+    }
+    encoding.primary = Some(binding.primary);
+    encoding.repair = binding.repair;
+    for (ssrc, role) in [
+        (Some(binding.primary), ProducerSsrcRole::Primary),
+        (binding.repair, ProducerSsrcRole::Repair),
+    ] {
+        if let Some(ssrc) = ssrc {
+            lookup.producer_ssrcs.insert(
+                ssrc,
+                ProducerSsrcBinding {
+                    transport_media_id,
+                    rid: binding.rid,
+                    role,
+                },
+            );
+        }
+    }
+    routes.replace_producer_ssrcs(
+        transport_media_id,
+        encodings
+            .iter()
+            .flat_map(|encoding| [encoding.primary, encoding.repair])
+            .flatten(),
     );
-    if inserted || rid.is_some_and(|rid| Some(rid) != previous_rid) {
-        debug!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            ?transport_media_id,
-            ?mid,
-            ?ssrc,
-            ?rid,
-            "learned dynamic producer SSRC binding from RTP header extensions"
-        );
-    }
-    Some(inserted)
+    outcome
 }
 
 #[derive(Debug, Clone)]
@@ -277,7 +348,13 @@ impl PacketLoopState {
                 },
             );
         }
-        self.mid_registry.insert(transport_media_id, handle);
+        self.mid_registry.insert(
+            transport_media_id,
+            RegisteredMedia {
+                handle,
+                producer_encodings: Vec::new(),
+            },
+        );
         transport_media_id
     }
 
@@ -287,14 +364,16 @@ impl PacketLoopState {
     ) -> Option<Mid> {
         self.mid_registry
             .get(&transport_media_id)
-            .map(RegisteredMediaHandle::mid)
+            .map(|registered| registered.handle.mid())
     }
 
     pub(in super::super) fn media_handle(
         &self,
         transport_media_id: TransportMediaId,
     ) -> Option<&RegisteredMediaHandle> {
-        self.mid_registry.get(&transport_media_id)
+        self.mid_registry
+            .get(&transport_media_id)
+            .map(|registered| &registered.handle)
     }
 
     pub(in super::super) fn producer_media_snapshot(
@@ -347,7 +426,7 @@ impl PacketLoopState {
                             && self
                                 .mid_registry
                                 .get(&transport_media_id)
-                                .is_some_and(|handle| handle.mid() == mid)
+                                .is_some_and(|registered| registered.handle.mid() == mid)
                     })
             })
     }
@@ -362,7 +441,7 @@ impl PacketLoopState {
         &mut self,
         transport_media_id: TransportMediaId,
     ) -> Option<RegisteredMediaHandle> {
-        let handle = self.mid_registry.remove(&transport_media_id)?;
+        let handle = self.media_handle(transport_media_id)?.clone();
         let owner_session_key = handle.session_key().clone();
         match &handle {
             RegisteredMediaHandle::Producer { session_key, mid } => {
@@ -383,6 +462,7 @@ impl PacketLoopState {
                 }
             }
         }
+        self.mid_registry.remove(&transport_media_id);
         self.prune_empty_session_media(&owner_session_key);
         Some(handle)
     }
@@ -432,10 +512,19 @@ impl PacketLoopState {
         src_key: &TransportSessionKey,
         source_ssrc: Ssrc,
     ) -> Option<TransportMediaId> {
+        self.producer_binding_for_ssrc(src_key, source_ssrc)
+            .map(|(media, _rid)| media)
+    }
+
+    pub fn producer_binding_for_ssrc(
+        &self,
+        src_key: &TransportSessionKey,
+        source_ssrc: Ssrc,
+    ) -> Option<(TransportMediaId, Option<Rid>)> {
         self.session_media
             .get(src_key)
             .and_then(|source_lookup| source_lookup.producer_ssrcs.get(&source_ssrc))
-            .map(|binding| binding.transport_media_id)
+            .map(|binding| (binding.transport_media_id, binding.rid))
     }
 
     pub(in super::super) fn source_rid_for_ssrc(
@@ -443,54 +532,82 @@ impl PacketLoopState {
         src_key: &TransportSessionKey,
         source_ssrc: Ssrc,
     ) -> Option<Rid> {
-        self.session_media
-            .get(src_key)
-            .and_then(|source_lookup| source_lookup.producer_ssrcs.get(&source_ssrc))
-            .and_then(|binding| binding.rid)
+        self.producer_binding_for_ssrc(src_key, source_ssrc)
+            .and_then(|(_media, rid)| rid)
     }
 
-    /// learn the SSRC chosen by a RID-only publisher from RTP header metadata
+    /// Resolves and admits one authenticated local packet in the session's media index.
     ///
-    /// chrome can answer simulcast offers with RIDs but no SSRC attributes
-    /// str0m can still demux the first packets through MID/RID header
-    /// extensions
-    /// the adapter must persist that discovery here because later packets may
-    /// only carry the SSRC
-    /// without this late binding, packet routing, RID gate metadata and bitrate
-    /// accounting lose the producer as soon as the browser stops repeating
-    /// mid/rid extensions
+    /// Cached media precedes MID and SSRC. An indexed binding for that media
+    /// supplies the current RID, including RID-less after renegotiation.
+    pub(in super::super) fn bind_producer_packet(
+        &mut self,
+        session_handle: SessionHandle,
+        cached_media: Option<TransportMediaId>,
+        mid: Option<Mid>,
+        binding: &mut ProducerStreamBinding,
+    ) -> Option<(TransportMediaId, RoomInstanceId, ProducerSsrcUpdate)> {
+        let session_key = self.users.key_for_handle(session_handle)?;
+        let Some(lookup) = self.session_media.get_mut(session_key) else {
+            return cached_media.map(|media| {
+                (
+                    media,
+                    session_key.room_instance_id(),
+                    ProducerSsrcUpdate::Rejected,
+                )
+            });
+        };
+        let indexed = lookup.producer_ssrcs.get(&binding.primary);
+        let media = cached_media
+            .or_else(|| lookup.producer_mids.get(&mid?))
+            .or_else(|| indexed.map(|indexed| indexed.transport_media_id))?;
+        // str0m can retain an earlier SDP-declared RID for the same primary.
+        if let Some(indexed) = indexed.filter(|indexed| indexed.transport_media_id == media) {
+            binding.rid = indexed.rid;
+        }
+        let update = bind_producer_stream(
+            &mut self.mid_registry,
+            lookup,
+            &mut self.routes,
+            session_key,
+            media,
+            *binding,
+        );
+        Some((media, session_key.room_instance_id(), update))
+    }
+
+    /// Commits the current primary and repair identities for one negotiated encoding.
     ///
-    /// the binding is accepted only for the already resolved producer media id
-    /// a same-session SSRC collision with a different media id is treated as a
-    /// suspicious transport fact and ignored rather than stealing ownership
-    pub(in super::super) fn learn_producer_ssrc_from_pkt(
+    /// Both indexes retain at most two SSRCs per encoding. The previous primary
+    /// is only a bounded rejection tombstone, never a demultiplexing binding.
+    /// A collision, unknown RID or preceding primary returns Rejected without
+    /// changing either index. Callers must not forward rejected packets.
+    pub fn bind_producer_stream(
         &mut self,
         source: &ForwardedPacketSource,
         transport_media_id: TransportMediaId,
-        ssrc: Ssrc,
-        rid: Option<Rid>,
-    ) -> bool {
+        binding: ProducerStreamBinding,
+    ) -> ProducerSsrcUpdate {
         let session_key = match source {
-            ForwardedPacketSource::Relayed(session_key) => session_key,
-            ForwardedPacketSource::Local(session_handle) => {
-                let Some(session_key) = self.users.key_for_handle(*session_handle) else {
-                    return false;
+            ForwardedPacketSource::Local { session_handle, .. } => {
+                let Some(key) = self.users.key_for_handle(*session_handle) else {
+                    return ProducerSsrcUpdate::Rejected;
                 };
-                session_key
+                key
             }
+            ForwardedPacketSource::Relayed(key) => key,
         };
-        let Some(inserted) = bind_producer_ssrc(
-            &self.mid_registry,
-            &mut self.session_media,
+        let Some(lookup) = self.session_media.get_mut(session_key) else {
+            return ProducerSsrcUpdate::Rejected;
+        };
+        bind_producer_stream(
+            &mut self.mid_registry,
+            lookup,
+            &mut self.routes,
             session_key,
             transport_media_id,
-            ssrc,
-            rid,
-        ) else {
-            return false;
-        };
-        self.routes.remember_producer_ssrc(transport_media_id, ssrc);
-        inserted
+            binding,
+        )
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
@@ -593,60 +710,131 @@ impl PacketLoopState {
         &mut self,
         session_key: &TransportSessionKey,
     ) -> Vec<TransportMediaId> {
-        let mut removed_ids = self.session_media.get(session_key).map_or_else(
-            || {
-                debug_assert!(
-                    self.mid_registry
-                        .iter()
-                        .all(|(_transport_media_id, handle)| handle.session_key() != session_key),
-                    "session media index missing handles for session"
-                );
-                Vec::new()
-            },
-            |session_lookup| session_lookup.owned_media.clone(),
-        );
+        let mut removed_ids =
+            self.session_media.get(session_key).map_or_else(
+                || {
+                    debug_assert!(
+                        self.mid_registry.iter().all(
+                            |(_transport_media_id, registered)| registered.handle.session_key()
+                                != session_key
+                        ),
+                        "session media index missing handles for session"
+                    );
+                    Vec::new()
+                },
+                |session_lookup| session_lookup.owned_media.clone(),
+            );
         removed_ids
             .retain(|transport_media_id| self.remove_media_handle(*transport_media_id).is_some());
         removed_ids
     }
 
-    pub(in super::super) fn refresh_producer_ssrcs(
+    pub(in super::super) fn refresh_answer_producer_ssrcs(
         &mut self,
         session_key: &TransportSessionKey,
-        mid: Mid,
-        parameters: &MediaStream,
+        producer_mids: &[Mid],
+        refreshed_parameters: &[(Mid, MediaStream)],
     ) {
-        let Some(transport_media_id) = self
-            .session_media
-            .get(session_key)
-            .and_then(|producer_lookup| producer_lookup.producer_mids.get(&mid))
-        else {
-            return;
-        };
-        self.clear_producer_ssrcs(session_key, transport_media_id);
-        self.routes
-            .refresh_packet_inspector(transport_media_id, parameters);
-        let accepted_ssrcs = parameters
-            .bindings()
-            .filter_map(|binding| {
-                binding
-                    .ssrc()
-                    .map(|ssrc| (Ssrc::from(ssrc), binding.rid().map(Rid::from)))
-            })
-            .filter_map(|(ssrc, rid)| {
-                bind_producer_ssrc(
-                    &self.mid_registry,
-                    &mut self.session_media,
-                    session_key,
-                    transport_media_id,
-                    ssrc,
-                    rid,
-                )
-                .map(|_| ssrc)
+        let previous_encodings = producer_mids
+            .iter()
+            .filter_map(|mid| {
+                let lookup = self.session_media.get(session_key)?;
+                let media = lookup.producer_mids.get(mid)?;
+                let registered = self
+                    .mid_registry
+                    .get(&media)
+                    .filter(|registered| registered.is_producer_for(session_key))?;
+                Some((*mid, media, registered.producer_encodings.clone()))
             })
             .collect::<Vec<_>>();
+        for mid in producer_mids {
+            self.clear_producer_ssrcs_for_mid(session_key, *mid);
+        }
+        for (mid, parameters) in refreshed_parameters {
+            if let Some((_, media, previous)) = previous_encodings
+                .iter()
+                .find(|(previous_mid, _, _)| previous_mid == mid)
+            {
+                self.refresh_producer_ssrcs_with_previous(
+                    session_key,
+                    *media,
+                    parameters,
+                    previous,
+                );
+            }
+        }
+    }
+
+    fn refresh_producer_ssrcs_with_previous(
+        &mut self,
+        session_key: &TransportSessionKey,
+        transport_media_id: TransportMediaId,
+        parameters: &MediaStream,
+        previous_encodings: &[ProducerEncoding],
+    ) {
+        if !self
+            .mid_registry
+            .get(&transport_media_id)
+            .is_some_and(|registered| registered.is_producer_for(session_key))
+        {
+            return;
+        }
         self.routes
-            .replace_producer_ssrcs(transport_media_id, accepted_ssrcs);
+            .refresh_packet_inspector(transport_media_id, parameters);
+        let mut encodings = Vec::new();
+        for binding in parameters.bindings().take(codec::MAX_SEND_STREAMS) {
+            let rid = binding.rid().map(Rid::from);
+            if encodings
+                .iter()
+                .any(|encoding: &ProducerEncoding| encoding.rid == rid)
+            {
+                continue;
+            }
+            encodings.push(ProducerEncoding {
+                rid,
+                primary: None,
+                repair: None,
+                previous_primary: None,
+            });
+        }
+        if let Some(registered) = self.mid_registry.get_mut(&transport_media_id) {
+            registered.producer_encodings = encodings;
+        }
+        for binding in parameters.bindings().take(codec::MAX_SEND_STREAMS) {
+            let Some(primary) = binding.ssrc() else {
+                continue;
+            };
+            let Some(lookup) = self.session_media.get_mut(session_key) else {
+                continue;
+            };
+            let _outcome = bind_producer_stream(
+                &mut self.mid_registry,
+                lookup,
+                &mut self.routes,
+                session_key,
+                transport_media_id,
+                ProducerStreamBinding {
+                    rid: binding.rid().map(Rid::from),
+                    primary: primary.into(),
+                    repair: binding.repair_ssrc().map(Into::into),
+                },
+            );
+        }
+        if let Some(registered) = self.mid_registry.get_mut(&transport_media_id) {
+            for encoding in &mut registered.producer_encodings {
+                if let Some(previous) = previous_encodings
+                    .iter()
+                    .find(|previous| previous.rid == encoding.rid)
+                    && encoding.primary.is_some()
+                {
+                    encoding.previous_primary = if previous.primary == encoding.primary {
+                        previous.previous_primary
+                    } else {
+                        previous.primary
+                    };
+                }
+            }
+        }
         self.apply_producer_nack_policy(session_key, transport_media_id);
     }
 
@@ -667,7 +855,7 @@ impl PacketLoopState {
         let Some(session_lookup) = session_media.get(session_key) else {
             return;
         };
-        // SSRC rotation retains demux history but maps each RID to one receive stream.
+        // Primary and repair bindings share one receive stream per negotiated RID.
         let mut rids = Vec::new();
         for ssrc in ssrcs {
             let rid = session_lookup
@@ -708,10 +896,16 @@ impl PacketLoopState {
         else {
             return;
         };
+        if !self
+            .mid_registry
+            .get(&transport_media_id)
+            .is_some_and(|registered| registered.is_producer_for(session_key))
+        {
+            return;
+        }
         self.clear_producer_ssrcs(session_key, transport_media_id);
         self.routes.clear_packet_inspector(transport_media_id);
-        self.routes
-            .replace_producer_ssrcs(transport_media_id, Vec::new());
+        self.routes.replace_producer_ssrcs(transport_media_id, []);
     }
 
     fn clear_producer_ssrcs(
@@ -719,9 +913,17 @@ impl PacketLoopState {
         session_key: &TransportSessionKey,
         transport_media_id: TransportMediaId,
     ) {
+        let Some(registered) = self
+            .mid_registry
+            .get_mut(&transport_media_id)
+            .filter(|registered| registered.is_producer_for(session_key))
+        else {
+            return;
+        };
         let Some(ssrcs) = self.routes.clear_producer_ssrcs(transport_media_id) else {
             return;
         };
+        registered.producer_encodings.clear();
         let Some(session_lookup) = self.session_media.get_mut(session_key) else {
             return;
         };

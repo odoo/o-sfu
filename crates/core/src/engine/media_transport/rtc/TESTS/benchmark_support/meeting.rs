@@ -91,7 +91,7 @@ use std::{
 use o_sfu_rfc::rtp::{CodecName, vp8};
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
-    rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType},
+    rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType, StreamBinding},
 };
 use str0m::{
     Event,
@@ -1274,6 +1274,21 @@ impl MeetingFlowBenchFixture {
                 session_key: session_key.clone(),
                 mid,
             });
+        let bindings = streams
+            .iter()
+            .map(|(ssrc, rid)| {
+                let binding = StreamBinding::new().with_ssrc(*ssrc);
+                match rid {
+                    Some(rid) => binding.with_rid(rid.to_string()),
+                    None => binding,
+                }
+            })
+            .collect();
+        self.state.refresh_producer_ssrcs(
+            session_key,
+            mid,
+            &RouterRtpParameters::new(vec![], vec![], bindings),
+        );
         let counter = self
             .bitrate_registry
             .lock()

@@ -1,7 +1,7 @@
 //! Shared packet representation for observation, planning and fanout.
 //!
 //! Local RTP starts with a generation-checked session handle.
-//! [`ForwardedPacket::resolve_facts`] binds it to source media and caches
+//! [`ForwardedPacket::admit_source`] binds it to source media and caches
 //! [`PacketFacts`] for planning and receiver codec rewriting. Unresolved packets
 //! are omitted from the current turn's observations and fanout.
 //!
@@ -22,7 +22,11 @@ use str0m::{
 use super::super::{
     codec,
     consumer_egress::LocalForwardedRtp,
-    state::{PacketLoopState, slots::SessionHandle},
+    state::{
+        PacketLoopState,
+        media_registry::{ProducerSsrcUpdate, ProducerStreamBinding},
+        slots::SessionHandle,
+    },
 };
 use crate::engine::{
     RoomInstanceId,
@@ -73,11 +77,14 @@ pub struct ForwardedPacket {
 
 /// source identity for one staged forwarded packet
 ///
-/// local packets carry only a worker-local generation-checked handle while
-/// relayed packets carry the stable public key needed to cross worker mailboxes
+/// Local packets carry a generation-checked handle and authenticated repair SSRC.
+/// Relayed packets carry the public key needed to cross worker mailboxes.
 #[derive(Debug, Clone)]
 pub(in super::super) enum ForwardedPacketSource {
-    Local(SessionHandle),
+    Local {
+        session_handle: SessionHandle,
+        repair_ssrc: Option<Ssrc>,
+    },
     Relayed(TransportSessionKey),
 }
 
@@ -87,7 +94,7 @@ impl ForwardedPacketSource {
         state: &'a PacketLoopState,
     ) -> Option<&'a TransportSessionKey> {
         match self {
-            Self::Local(session_handle) => state.users.key_for_handle(*session_handle),
+            Self::Local { session_handle, .. } => state.users.key_for_handle(*session_handle),
             Self::Relayed(session_key) => Some(session_key),
         }
     }
@@ -120,11 +127,22 @@ impl ForwardedPacket {
     /// and arrival time. Moving the payload preserves shared storage for fanout.
     pub(in super::super) fn from_rtp_packet(
         source_session_handle: SessionHandle,
-        rtp_packet: RtpPacket,
+        mut rtp_packet: RtpPacket,
         was_repair: bool,
+        mid: Mid,
+        binding: ProducerStreamBinding,
     ) -> Self {
+        // Keep the authenticated stream identity in the header so queued and
+        // relayed packets do not carry a second copy of primary SSRC and RID.
+        rtp_packet.header.ssrc = binding.primary;
+        rtp_packet.header.ext_vals.mid = Some(mid);
+        rtp_packet.header.ext_vals.rid = binding.rid.or(rtp_packet.header.ext_vals.rid);
+        rtp_packet.header.ext_vals.rid_repair = None;
         Self {
-            source: ForwardedPacketSource::Local(source_session_handle),
+            source: ForwardedPacketSource::Local {
+                session_handle: source_session_handle,
+                repair_ssrc: binding.repair,
+            },
             src_media: None,
             facts: None,
             visits_origin_sinks: true,
@@ -153,7 +171,7 @@ impl ForwardedPacket {
     #[must_use]
     pub fn stable_src_key(&self) -> Option<&TransportSessionKey> {
         match &self.source {
-            ForwardedPacketSource::Local(_) => None,
+            ForwardedPacketSource::Local { .. } => None,
             ForwardedPacketSource::Relayed(session_key) => Some(session_key),
         }
     }
@@ -179,6 +197,8 @@ impl ForwardedPacket {
 
     /// Caches one source view for local and relay fanout.
     ///
+    /// Local packets must pass `admit_source` before observation or forwarding.
+    ///
     /// `None` means the packet cannot currently be attached to a source
     /// transport media id
     /// callers should treat that as a best-effort ingress miss and drop the
@@ -195,7 +215,22 @@ impl ForwardedPacket {
             return self.facts.as_ref();
         }
         let src_media = self.resolve_src_media(state)?;
-        let rid = self.compute_route_control_rid(state);
+        let rid = match self.source {
+            ForwardedPacketSource::Local { .. } => self.header.ext_vals.rid,
+            ForwardedPacketSource::Relayed(_) => self.compute_route_control_rid(state),
+        };
+        let room_instance_id = self.src_key(state)?.room_instance_id();
+        self.cache_facts(state, src_media, rid, room_instance_id);
+        self.facts.as_ref()
+    }
+
+    fn cache_facts(
+        &mut self,
+        state: &PacketLoopState,
+        src_media: TransportMediaId,
+        rid: Option<Rid>,
+        room_instance_id: RoomInstanceId,
+    ) {
         let codec = state.routes.inspect_packet(
             src_media,
             self.header.payload_type,
@@ -206,13 +241,12 @@ impl ForwardedPacket {
         let facts = PacketFacts {
             src_media,
             rid,
-            room_instance_id: self.src_key(state)?.room_instance_id(),
+            room_instance_id,
             voice_activity: extensions.voice_activity,
             audio_level: extensions.audio_level,
             codec,
         };
         self.facts = Some(facts);
-        self.facts.as_ref()
     }
 
     /// Borrows the resolved source view without changing packet state.
@@ -239,17 +273,53 @@ impl ForwardedPacket {
             .or_else(|| self.route_control_rid_from_ssrc(state))
     }
 
-    pub(in super::super) fn route_control_ssrc(&self) -> Ssrc {
-        self.header.ssrc
+    /// Admits the source and caches facts before observation or fanout.
+    ///
+    /// Relay copies were admitted by their origin. Cached local facts retain
+    /// their original identity but must still pass the current binding guards.
+    pub(in super::super) fn admit_source(
+        &mut self,
+        state: &mut PacketLoopState,
+    ) -> Option<ProducerSsrcUpdate> {
+        let ForwardedPacketSource::Local {
+            session_handle,
+            repair_ssrc,
+        } = self.source
+        else {
+            self.resolve_facts(state)?;
+            return Some(ProducerSsrcUpdate::Unchanged);
+        };
+        let mut binding = ProducerStreamBinding {
+            rid: self.header.ext_vals.rid,
+            primary: self.header.ssrc,
+            repair: repair_ssrc,
+        };
+        if let Some(facts) = self.facts.as_ref() {
+            return Some(state.bind_producer_stream(&self.source, facts.src_media, binding));
+        }
+        let (media, room_instance_id, update) = state.bind_producer_packet(
+            session_handle,
+            self.src_media,
+            self.header.ext_vals.mid,
+            &mut binding,
+        )?;
+        self.src_media = Some(media);
+        self.header.ext_vals.rid = binding.rid;
+        if update != ProducerSsrcUpdate::Rejected {
+            self.cache_facts(state, media, binding.rid, room_instance_id);
+        }
+        Some(update)
     }
 
-    pub(in super::super) fn route_control_mid(&self) -> Option<Mid> {
-        self.header.ext_vals.mid
-    }
-
-    pub(in super::super) fn route_control_rid_extension(&self) -> Option<Rid> {
-        let extensions = &self.header.ext_vals;
-        extensions.rid.or(extensions.rid_repair)
+    pub(in super::super) const fn source_binding(&self) -> Option<ProducerStreamBinding> {
+        match &self.source {
+            ForwardedPacketSource::Local { repair_ssrc, .. } => Some(ProducerStreamBinding {
+                rid: self.header.ext_vals.rid,
+                primary: self.header.ssrc,
+                repair: *repair_ssrc,
+            }),
+            ForwardedPacketSource::Relayed(_) => None,
+        }
     }
 
     /// creates a relay-owned view that shares this packet payload
