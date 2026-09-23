@@ -43,8 +43,15 @@ pub struct MediaTransportConfig {
     pub codec_flags: MediaCodecFlags,
     /// Codec preference order preserved while constructing router capabilities.
     pub codec_preferences: CodecPreferences,
-    /// str0m stats interval used for sampled transport-quality events.
+    /// str0m stats interval for transport-quality events, at most 24 hours.
+    ///
+    /// `None` or zero disables sampling. Construction rejects larger intervals.
     pub media_quality_interval: Option<Duration>,
+}
+
+impl MediaTransportConfig {
+    /// Largest sampling interval accepted before constructing str0m timers.
+    pub const MAX_MEDIA_QUALITY_INTERVAL: Duration = Duration::from_hours(24);
 }
 
 /// Long-lived services injected into media transport construction.

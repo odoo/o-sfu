@@ -8,9 +8,9 @@ use o_sfu_core::prelude::Bitrate;
 use secrecy::SecretString;
 
 use super::{
-    CodecPreferences, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange,
-    RtcUdpIoBackend, VideoAdaptationTuning, VideoBitrateLimits, diagnostics::DiagnosticsConfig,
-    feature_flags::RuntimeFeatureFlags, telemetry::TelemetryConfig,
+    CodecPreferences, DeadlineDuration, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy,
+    RtcPortRange, RtcUdpIoBackend, VideoAdaptationTuning, VideoBitrateLimits,
+    diagnostics::DiagnosticsConfig, feature_flags::RuntimeFeatureFlags, telemetry::TelemetryConfig,
 };
 
 pub const DEFAULT_AUTHENTICATION_TIMEOUT_MS: u64 = 10_000;
@@ -32,7 +32,7 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub key: SecretString,
-    pub authentication_timeout_ms: u64,
+    pub authentication_timeout: DeadlineDuration,
     pub max_pre_auth_websocket_sessions: usize,
     pub max_pre_auth_websocket_sessions_per_origin: usize,
 }
@@ -49,16 +49,16 @@ pub struct HttpConfig {
     /// Acceptance-to-first-header and subsequent HTTP/1 header deadline.
     /// Must be between one second and one day.
     pub header_read_timeout: Duration,
-    /// Positive deadline in milliseconds for listener, session, background and RTC worker drainage.
+    /// Deadline for listener, session, background and RTC worker drainage.
     /// Loaded from `SHUTDOWN_TIMEOUT_MS` with a `10_000` default.
-    pub shutdown_timeout_ms: u64,
+    pub shutdown_timeout: DeadlineDuration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserConfig {
     pub room_size: usize,
-    pub timeout_ms: u64,
-    pub ping_interval_ms: u64,
+    pub timeout: DeadlineDuration,
+    pub ping_interval: DeadlineDuration,
     pub outbound_queue_capacity: usize,
     pub outbound_queue_byte_capacity: usize,
     pub room_reservation_ttl: Duration,

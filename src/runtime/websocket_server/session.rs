@@ -1,4 +1,4 @@
-use std::{str, sync::Arc, time::Duration};
+use std::{str, sync::Arc};
 
 use axum::{
     Error as AxumError,
@@ -333,8 +333,8 @@ impl AuthenticatedSession {
         reason = "all session wake sources stay in one owner loop"
     )]
     async fn run_loop(&mut self) -> SessionExit {
-        let ping_interval = Duration::from_millis(self.user_config.ping_interval_ms);
-        let ping_timeout = Duration::from_millis(self.user_config.timeout_ms);
+        let ping_interval = self.user_config.ping_interval.as_duration();
+        let ping_timeout = self.user_config.timeout.as_duration();
         let mut next_ping_at = Instant::now() + ping_interval;
         let mut next_health_at = next_ping_at;
         let mut pong = None;

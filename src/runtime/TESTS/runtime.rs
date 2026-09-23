@@ -1,5 +1,3 @@
-use secrecy::SecretString;
-
 #[cfg(unix)]
 use std::{
     env,
@@ -15,6 +13,7 @@ use std::{
 
 use anyhow::anyhow;
 use o_sfu_core::server::room::RoomConfig;
+use secrecy::SecretString;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::oneshot,
@@ -28,7 +27,10 @@ use super::{
     serve_http_on,
     test_support::{RuntimeTestBuilder, test_room_key},
 };
-use crate::runtime::{auth::AuthenticationError, metrics::RoomGaugeValues};
+use crate::{
+    config::DeadlineDuration,
+    runtime::{auth::AuthenticationError, metrics::RoomGaugeValues},
+};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -176,7 +178,7 @@ async fn runtime_shutdown_cancels_drains_and_preserves_errors() -> AnyResult<()>
         Err(ServeError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
     ));
 
-    config.http.shutdown_timeout_ms = 20;
+    config.http.shutdown_timeout = DeadlineDuration::from_millis(20)?;
     let runtime = Runtime::new(&config)?;
     let (task_tx, task_rx) = oneshot::channel();
     let server = tokio::spawn(runtime.serve(
@@ -235,7 +237,7 @@ async fn tracked_runtime(
     SocketAddr,
 )> {
     let mut config = RuntimeTestBuilder::new().config().clone();
-    config.http.shutdown_timeout_ms = shutdown_timeout_ms;
+    config.http.shutdown_timeout = DeadlineDuration::from_millis(shutdown_timeout_ms)?;
     let services = RuntimeServices::default();
     let worker_resources = Arc::downgrade(&services.packet_sink_registry);
     let runtime = Runtime::from_services(&config, services)?;

@@ -28,9 +28,10 @@ impl MediaTransport {
     ///
     /// returns [`MediaTransportBuildError`] when worker topology or the
     /// code-controlled RTP profile is invalid, the selected UDP backend is
-    /// unavailable or a worker cannot start
+    /// unavailable, the media-quality interval exceeds 24 hours or a worker
+    /// cannot start
     pub fn build(
-        config: MediaTransportConfig,
+        mut config: MediaTransportConfig,
         deps: MediaTransportDeps,
     ) -> Result<Self, MediaTransportBuildError> {
         if config.rtc_udp_io_backend == RtcUdpIoBackend::IoUring && !cfg!(target_os = "linux") {
@@ -41,6 +42,16 @@ impl MediaTransport {
         if config.worker_count == 0 {
             return Err(MediaTransportBuildError::InvalidWorkerCount);
         }
+        // str0m adds the stats interval to Instant, so validate before starting workers.
+        if config
+            .media_quality_interval
+            .is_some_and(|interval| interval > MediaTransportConfig::MAX_MEDIA_QUALITY_INTERVAL)
+        {
+            return Err(MediaTransportBuildError::InvalidMediaQualityInterval);
+        }
+        config.media_quality_interval = config
+            .media_quality_interval
+            .filter(|value| !value.is_zero());
         let worker_ranges = config
             .rtc_port_range
             .split_for_workers(config.worker_count)
@@ -99,6 +110,9 @@ pub enum MediaTransportBuildError {
         worker_count: usize,
         port_count: u16,
     },
+    /// the sampling interval exceeds the operational deadline bound
+    #[error("media-quality interval must not exceed 24 hours")]
+    InvalidMediaQualityInterval,
     /// the selected UDP I/O backend is not available on this build target
     #[error("rtc UDP I/O backend `{backend}` is not supported on this target")]
     UnsupportedUdpIoBackend { backend: RtcUdpIoBackend },

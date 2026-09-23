@@ -4,7 +4,7 @@
 //! claims select only a candidate room and become trusted after verification
 //! with that room's key.
 
-use std::{borrow::Cow, fmt::Display, str, sync::Arc, time::Duration};
+use std::{borrow::Cow, fmt::Display, str, sync::Arc};
 
 use axum::extract::ws::{Message, WebSocket};
 use o_sfu_protocol::wire::{AuthPayload, ClientEnvelope, ClientMessage, WebSocketCloseCode};
@@ -85,7 +85,7 @@ async fn receive_auth(
         biased;
         () = state.shutdown.cancelled() => Err(HandshakeError::Shutdown),
         result = timeout(
-            Duration::from_millis(state.authentication_timeout_ms),
+            state.authentication_timeout.as_duration(),
             socket.recv(),
         ) => match result {
             Err(_) => Err(HandshakeError::Rejected(WebSocketCloseCode::AuthTimeout)),
