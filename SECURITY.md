@@ -25,6 +25,16 @@ https://www.odoo.com/security-report
 
 Only latest. Version support is at the Odoo layer.
 
+### Authentication Secrets
+
+`o-sfu` uses secret containers for server and room keys, key seeds and JWTs.
+These containers redact their contents from debug output and overwrite them
+when dropped, reducing accidental disclosure and secret data left in memory.
+
+`AUTH_KEY_FILE` supports loading the server key from a mounted secret,
+keeping its value out of the process environment. Leave `AUTH_KEY` unset
+when using this option. See [Deployment](DEPLOYMENT.md) for configuration.
+
 ### Security Tooling & Verification
 (see badges above for status)
 
