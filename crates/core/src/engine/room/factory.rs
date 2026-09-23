@@ -38,6 +38,9 @@ pub struct RoomAdmissionPolicy {
     ///
     /// replaced connections still consume this budget until the room transition
     /// finishes and the old live user has been removed
+    ///
+    /// Also bounds absent publisher targets retained per receiver. Present
+    /// members do not consume this pending-intent allowance.
     pub max_sessions: usize,
 }
 

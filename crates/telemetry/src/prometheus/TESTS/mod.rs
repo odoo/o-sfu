@@ -41,6 +41,7 @@ fn assert_live_and_recording_metrics(rendered: &str) {
         "# HELP osfu_users_active Current number of active room users owned by this runtime.\n# TYPE osfu_users_active gauge\nosfu_users_active 2\n",
         "# HELP osfu_publications_active Current number of committed or pending published media entries owned by this runtime.\n# TYPE osfu_publications_active gauge\nosfu_publications_active 3\n",
         "# HELP osfu_subscriptions_active Current number of committed or pending consumer subscriptions owned by this runtime.\n# TYPE osfu_subscriptions_active gauge\nosfu_subscriptions_active 4\n",
+        "# HELP osfu_subscription_intent_evictions_total Total absent publisher targets evicted from bounded receiver subscription intent.\n# TYPE osfu_subscription_intent_evictions_total counter\nosfu_subscription_intent_evictions_total 5\n",
         "# HELP osfu_recording_rooms_active Current number of rooms with an active recording user.\n# TYPE osfu_recording_rooms_active gauge\nosfu_recording_rooms_active 1\n",
     ] {
         assert_eq!(rendered.matches(family).count(), 1);
@@ -50,6 +51,7 @@ fn assert_live_and_recording_metrics(rendered: &str) {
         "osfu_users_active",
         "osfu_publications_active",
         "osfu_subscriptions_active",
+        "osfu_subscription_intent_evictions_total",
         "osfu_recording_rooms_active",
     ] {
         assert_eq!(rendered.matches(&format!("\n{name}")).count(), 1);
@@ -128,6 +130,8 @@ fn sample_metrics() -> RuntimeMetrics {
     metrics.record_ws_user_loop_exit(WsSessionLoopExitReason::TransportDisconnected);
     metrics.record_ws_bus_batch_received(2);
     metrics.record_ws_bus_send_failure();
+    metrics.record_subscription_intent_evictions(3);
+    metrics.record_subscription_intent_evictions(2);
     drop(metrics.track_ws_handshake());
     drop(metrics.track_ws_authentication());
     drop(metrics.track_ws_user_initialization());
@@ -205,7 +209,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 80);
+    assert_eq!(METRIC_FAMILY_COUNT, 81);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered

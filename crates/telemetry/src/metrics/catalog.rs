@@ -69,6 +69,7 @@ pub struct RuntimeMetrics {
     pub(super) media_quality_jitter_rtp_timestamp_units_observed: Counter,
     pub(super) media_quality_jitter_observations: Counter,
     pub(super) transport_cleanup_failures: Counter,
+    pub(super) subscription_intent_evictions: Counter,
     pub(super) source_selection_updates: CounterFamily<SourceSelectionKind>,
     pub(super) budget_solver_outcomes: CounterFamily<BudgetSolverOutcome>,
 }
@@ -92,6 +93,11 @@ where
 }
 
 impl RuntimeMetrics {
+    /// Counts absent publisher targets evicted from bounded receiver intent.
+    pub fn record_subscription_intent_evictions(&self, targets: usize) {
+        self.subscription_intent_evictions.add(targets);
+    }
+
     /// counts one HTTP request then records duration and releases inflight state on drop
     #[must_use = "keep the guard until the HTTP request finishes"]
     pub fn track_http_request(&self, route: HttpRoute) -> impl Drop + '_ {

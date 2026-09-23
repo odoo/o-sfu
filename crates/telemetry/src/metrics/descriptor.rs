@@ -457,6 +457,12 @@ metric_catalog! {
         kind: Gauge,
         samples: |metrics, capture, output| output.gauge(&[], gauge_count(capture.room_gauges.publications))
     },
+    SubscriptionIntentEvictionsTotal {
+        name: "osfu_subscription_intent_evictions_total",
+        help: "Total absent publisher targets evicted from bounded receiver subscription intent.",
+        kind: Counter,
+        samples: |metrics, capture, output| output.counter(&[], metrics.subscription_intent_evictions.load())
+    },
     SubscriptionsActive {
         name: "osfu_subscriptions_active",
         help: "Current number of committed or pending consumer subscriptions owned by this runtime.",

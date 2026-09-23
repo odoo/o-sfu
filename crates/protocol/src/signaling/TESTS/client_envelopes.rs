@@ -90,3 +90,54 @@ fn protocol_publish_message_uses_stream_type_field() -> serde_json::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn protocol_subscribe_rejects_oversized_target_identity() {
+    assert!(matches!(
+        ClientEnvelope::decode(Envelope::message(
+            "subscribe",
+            Some(json!({
+                "sessionId": "a".repeat(257),
+                "audio": true,
+            })),
+        )),
+        Err(super::super::EnvelopeDecodeError::InvalidPayload(_))
+    ));
+}
+
+#[test]
+fn protocol_subscribe_keeps_only_supported_download_states() {
+    for payload in [
+        json!({"sessionId": 7}),
+        json!({"sessionId": 7, "unsupportedStream": true}),
+    ] {
+        assert_eq!(
+            ClientEnvelope::decode(Envelope::message("subscribe", Some(payload))),
+            Ok(ClientEnvelope::Message(ClientMessage::Subscribe(
+                SubscribePayload {
+                    user_id: UserId::Integer(7),
+                    states: DownloadStates::default(),
+                }
+            )))
+        );
+    }
+    assert_eq!(
+        ClientEnvelope::decode(Envelope::message(
+            "subscribe",
+            Some(json!({
+                "sessionId": 7,
+                "audio": true,
+                "unsupportedStream": true,
+            })),
+        )),
+        Ok(ClientEnvelope::Message(ClientMessage::Subscribe(
+            SubscribePayload {
+                user_id: UserId::Integer(7),
+                states: DownloadStates {
+                    audio: Some(true),
+                    ..DownloadStates::default()
+                },
+            }
+        )))
+    );
+}

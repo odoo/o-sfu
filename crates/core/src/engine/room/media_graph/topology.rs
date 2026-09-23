@@ -95,6 +95,7 @@ pub struct SessionPlacementCommit {
 pub(in crate::engine::room) struct ConsumerActivityCommit {
     pub(super) update: Option<ReceiverRouteActivity>,
     pub(super) relay_effects: Vec<TransportRelayRouteEffect>,
+    pub(super) evictions: usize,
 }
 
 #[derive(Debug)]
@@ -107,6 +108,7 @@ impl RoomTopology {
     pub fn new(
         runtime_context: &RoomRuntimeContext,
         router_rtp_capabilities: MediaCapabilities,
+        pending_target_limit: usize,
     ) -> Self {
         let router = match runtime_context.initial_router_placements() {
             Some(placements) => {
@@ -117,7 +119,7 @@ impl RoomTopology {
         Self {
             instance: runtime_context.instance(),
             sources: PublishedSources::default(),
-            route_graph: RouteGraph::default(),
+            route_graph: RouteGraph::new(pending_target_limit),
             router,
             next_producer_id: 1,
             video_allocation_revision: 0,
@@ -696,6 +698,7 @@ impl RoomTopology {
             .router
             .commit_session_placement(user_id, connection_id, home_placement)
             .map_err(SessionPlacementRejection::Router)?;
+        self.route_graph.publisher_joined(user_id);
         let session_key =
             self.transport_session_key(user_id.clone().into(), connection_id, media_worker);
         let receipt = CommittedTransportReceipt {
@@ -729,15 +732,19 @@ impl RoomTopology {
     }
 
     /// Returns the cleanup plan even if router removal fails.
-    pub fn remove_session(&mut self, user_id: &UserId) -> RoomTransportPlan {
+    pub fn remove_session(&mut self, user_id: &UserId) -> (RoomTransportPlan, usize) {
         let (sources, mut removed) = self.detach_user_sources(user_id);
         removed.extend(self.route_graph.remove_receiver(user_id));
+        let evictions = self.route_graph.publisher_left(user_id);
         self.invalidate_video_allocation();
         let teardown = Self::media_teardowns(sources, removed.routes);
         if let Some(error) = self.router.remove_session(user_id).err() {
             error!(?user_id, ?error, "failed to remove user from room router");
         }
-        RoomTransportPlan::from_relays_and_teardown(removed.relays, teardown)
+        (
+            RoomTransportPlan::from_relays_and_teardown(removed.relays, teardown),
+            evictions,
+        )
     }
 
     /// Selects MID from the transport declaration, negotiated RTP MID then the
@@ -857,14 +864,26 @@ impl RoomTopology {
         connection_id: ConnectionId,
         intent: SourceSubscriptionIntent,
         receiver_deafened: bool,
-    ) -> Option<ConsumerActivityCommit> {
+        publisher_present: bool,
+    ) -> ConsumerActivityCommit {
+        let mut commit = ConsumerActivityCommit {
+            update: None,
+            relay_effects: Vec::new(),
+            evictions: 0,
+        };
         if intent.is_empty() {
-            return None;
+            return commit;
         }
-        self.route_graph.merge_intent(key.clone(), intent);
+        commit.evictions = self
+            .route_graph
+            .merge_intent(key, intent, publisher_present);
         self.invalidate_video_allocation();
-        let active = intent.active()?;
-        let source_id = self.source_id_for_owner_stream(&key.publisher, &key.stream)?;
+        let Some(active) = intent.active() else {
+            return commit;
+        };
+        let Some(source_id) = self.source_id_for_owner_stream(&key.publisher, &key.stream) else {
+            return commit;
+        };
         // Deafening pauses audio delivery without replacing explicit receiver intent.
         let policy_pause_reason = (active
             && receiver_deafened
@@ -872,22 +891,23 @@ impl RoomTopology {
                 .source_descriptor(source_id)
                 .is_some_and(|source| source.media_kind() == MediaKind::Audio))
         .then_some(PolicyPauseReason::ReceiverDeafened);
-        let relay_effects = self.route_graph.set_activity(
+        let Some(relay_effects) = self.route_graph.set_activity(
             key,
             source_id,
             connection_id,
             active,
             policy_pause_reason,
-        )?;
+        ) else {
+            return commit;
+        };
         let update = self
             .committed_consumer_route_for_key(key)
             .filter(|route| route.route.consumer_session_key().connection_id() == connection_id)
             .map(|route| {
                 ReceiverRouteActivity::new(route.target(), route.selection.delivery_active())
             });
-        Some(ConsumerActivityCommit {
-            update,
-            relay_effects,
-        })
+        commit.update = update;
+        commit.relay_effects = relay_effects;
+        commit
     }
 }

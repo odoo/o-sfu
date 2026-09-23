@@ -91,6 +91,12 @@ pub mod host {
 /// WebSocket
 /// browser and native hosts should share these types instead of duplicating
 /// envelope names or request payload shapes
+///
+/// String user identities are limited to 256 decoded UTF-8 bytes by
+/// [`crate::wire::UserId::MAX_STRING_BYTES`]. This limit applies to native clients as well
+/// as browser clients, including authentication claims and subscription
+/// targets. Numeric strings retain their wire representation until runtime
+/// normalization, so the limit applies before that normalization.
 pub mod wire {
     pub use crate::{shared::*, signaling::*};
 }

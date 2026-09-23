@@ -3496,6 +3496,7 @@ async fn inactive_sources_and_subscriptions_cancel_route_and_receiver_holds() {
                     receiver_connection_id,
                     SourceSubscriptionIntent::new(Some(false), None),
                     false,
+                    true,
                 );
             }
             state
