@@ -7,11 +7,8 @@
 use std::{str, sync::Arc, time::Duration};
 
 use axum::extract::ws::{Message, WebSocket};
-use o_sfu_protocol::wire::{
-    AuthPayload, ClientEnvelope, ClientMessage, UserId, UserPermissions, WebSocketCloseCode,
-};
+use o_sfu_protocol::wire::{AuthPayload, ClientEnvelope, ClientMessage, WebSocketCloseCode};
 use secrecy::SecretString;
-use serde::Deserialize;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
@@ -19,22 +16,11 @@ use super::{WsWriter, controller::WebSocketServices, io::close_writer_bounded};
 use crate::{
     core::server::room::Room,
     runtime::{
-        auth::{self, AuthProof, RegisteredJwtClaims, WebSocketConnectClaims},
+        auth::{self, AuthProof, WebSocketConnectClaims, WebSocketWireClaims},
         telemetry::schema::event as telemetry_event,
         websocket_server::{MAX_CLIENT_FRAME_BYTES, decode_client_batch},
     },
 };
-
-/// Legacy Odoo claims use [`AuthPayload::channel`] instead of a room-id claim.
-#[derive(Deserialize)]
-struct RoomScopedConnectClaims {
-    #[serde(flatten)]
-    registered: RegisteredJwtClaims,
-    #[serde(rename = "user_id", alias = "session_id")]
-    user_id: UserId,
-    label: Option<String>,
-    permissions: Option<UserPermissions>,
-}
 
 /// Proves the selected room authenticated this WebSocket join.
 pub(super) struct WebSocketAuth(AuthProof);
@@ -55,7 +41,6 @@ pub(super) enum HandshakeError {
 pub(super) async fn authenticate(
     state: &WebSocketServices,
     socket: &mut WebSocket,
-    remote_address: &str,
 ) -> Result<AuthenticatedJoin, HandshakeError> {
     let auth = receive_auth(state, socket).await;
     if state.shutdown.is_cancelled() {
@@ -63,7 +48,7 @@ pub(super) async fn authenticate(
     }
     let auth = auth?;
     state.metrics.record_ws_handshake_credentials_received();
-    let auth = verify_auth_payload(state, &auth, remote_address).await;
+    let auth = verify_auth_payload(state, &auth).await;
     if state.shutdown.is_cancelled() {
         return Err(HandshakeError::Shutdown);
     }
@@ -134,11 +119,10 @@ pub fn decode_auth_payload_text(payload: &str) -> Result<AuthPayload, WebSocketC
 async fn verify_auth_payload(
     state: &WebSocketServices,
     auth_payload: &AuthPayload,
-    remote_address: &str,
 ) -> Result<AuthenticatedJoin, WebSocketCloseCode> {
     let token = &auth_payload.jwt;
     let room = resolve_handshake_room(state, auth_payload, token).await?;
-    let (claims, proof) = authenticate_room_scoped_claims(token, &room, remote_address)?;
+    let (claims, proof) = authenticate_room_scoped_claims(token, &room)?;
     Ok(AuthenticatedJoin {
         room,
         claims,
@@ -154,12 +138,15 @@ async fn resolve_handshake_room(
 ) -> Result<Arc<Room>, WebSocketCloseCode> {
     let Some(explicit_room_id) = auth_payload.channel.as_deref() else {
         // The decoded room id is only a lookup hint until room-key verification.
-        let unverified_claims = auth::decode_unverified_claims::<WebSocketConnectClaims>(token)
+        let unverified_claims = auth::decode_unverified_claims::<WebSocketWireClaims>(token)
             .map_err(|_error| {
                 debug!("authentication payload did not select a room");
                 WebSocketCloseCode::AuthFailed
             })?;
-        return resolve_room_by_id(state, &unverified_claims.room_id).await;
+        let room_id = unverified_claims
+            .room_id
+            .ok_or(WebSocketCloseCode::AuthFailed)?;
+        return resolve_room_by_id(state, &room_id).await;
     };
     resolve_room_by_id(state, explicit_room_id).await
 }
@@ -184,38 +171,24 @@ async fn resolve_room_by_id(
 fn authenticate_room_scoped_claims(
     token: &SecretString,
     room: &Room,
-    remote_address: &str,
 ) -> Result<(WebSocketConnectClaims, AuthProof), WebSocketCloseCode> {
-    if let Ok((mut claims, proof)) =
-        auth::verify_with_proof::<WebSocketConnectClaims>(token, room.key())
+    let (claims, proof) = auth::verify_with_proof::<WebSocketWireClaims>(token, room.key())
+        .map_err(|_error| WebSocketCloseCode::AuthFailed)?;
+    if claims
+        .room_id
+        .as_deref()
+        .is_some_and(|room_id| room_id != room.uuid())
     {
-        if claims.room_id != room.uuid() {
-            debug!(
-                expected_room_id = room.uuid(),
-                claimed_room_id = claims.room_id,
-                "room-scoped websocket token targeted the wrong room"
-            );
-            return Err(WebSocketCloseCode::AuthFailed);
-        }
-        claims.normalize_runtime_user_id();
-        return Ok((claims, proof));
+        debug!(
+            expected_room_id = room.uuid(),
+            claimed_room_id = claims.room_id,
+            "room-scoped websocket token targeted the wrong room"
+        );
+        return Err(WebSocketCloseCode::AuthFailed);
     }
-
-    let (claims, proof) = auth::verify_with_proof::<RoomScopedConnectClaims>(token, room.key())
-        .map_err(|_error| {
-            warn!(
-                remote_address,
-                "failed to verify websocket auth token against the room-scoped key"
-            );
-            WebSocketCloseCode::AuthFailed
-        })?;
-    let mut claims = WebSocketConnectClaims {
-        registered: claims.registered,
-        room_id: room.uuid().to_owned(),
-        user_id: claims.user_id,
-        label: claims.label,
-        permissions: claims.permissions,
-    };
+    let mut claims = claims
+        .into_claims(room.uuid().to_owned())
+        .map_err(|_error| WebSocketCloseCode::AuthFailed)?;
     claims.normalize_runtime_user_id();
     Ok((claims, proof))
 }

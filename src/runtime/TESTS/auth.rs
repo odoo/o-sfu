@@ -9,8 +9,9 @@ use serde_json::json;
 
 use super::{
     AuthenticationError, HttpDisconnectClaims, HttpRoomClaims, MAX_JWT_TOKEN_BYTES,
-    RegisteredJwtClaims, WebSocketConnectClaims, decode_key, derive_key_from_seed,
-    duration_since_epoch, sign, sign_hs256, validate_registered_claims_at, verify,
+    RegisteredJwtClaims, WebSocketConnectClaims, WebSocketWireClaims, decode_key,
+    derive_key_from_seed, duration_since_epoch, sign, sign_hs256, validate_registered_claims_at,
+    verify,
 };
 use crate::runtime::test_support::TestHttpRoomClaims;
 
@@ -130,6 +131,18 @@ fn jwt_claims_round_trip_websocket() -> serde_json::Result<()> {
         websocket_claims
     );
 
+    Ok(())
+}
+
+#[test]
+fn websocket_claims_report_missing_participant_id() -> serde_json::Result<()> {
+    let wire = serde_json::from_value::<WebSocketWireClaims>(json!({
+        "room_id": "room-1"
+    }))?;
+    assert_eq!(
+        wire.into_claims("room-1".to_owned()).err(),
+        Some(AuthenticationError::MissingParticipantId)
+    );
     Ok(())
 }
 
@@ -550,4 +563,24 @@ fn derive_key_from_seed_rejects_invalid_base64() {
         derived_key,
         Some(AuthenticationError::InvalidBase64Encoding)
     );
+}
+
+#[test]
+fn websocket_claims_prefer_session_identity() -> serde_json::Result<()> {
+    let claims: WebSocketConnectClaims = serde_json::from_value(json!({
+        "sfu_channel_uuid": "room",
+        "session_id": "170",
+        "user_id": 42,
+        "exp": 4_000_000_000_u64,
+    }))?;
+    assert_eq!(claims.user_id.runtime_normalized(), UserId::Integer(170));
+    assert!(claims.registered.iat.is_none());
+    for raw in [
+        json!({"room_id": "room"}),
+        json!({"room_id": "room", "session_id": []}),
+        json!({"room_id": 42, "user_id": 170}),
+    ] {
+        assert!(serde_json::from_value::<WebSocketConnectClaims>(raw).is_err());
+    }
+    Ok(())
 }

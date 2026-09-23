@@ -93,7 +93,7 @@ async fn establish(
     let _guard = services.metrics.track_ws_handshake();
     let auth = {
         let _guard = services.metrics.track_ws_authentication();
-        handshake::authenticate(&services, &mut socket, remote.as_ref()).await
+        handshake::authenticate(&services, &mut socket).await
     };
     let (mut writer, reader) = socket.split();
     let join = match auth {
