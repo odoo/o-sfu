@@ -24,11 +24,31 @@ use tokio_util::{sync::CancellationToken, task::task_tracker::TaskTrackerToken};
 use super::{
     AnyResult, RoomManager, RoomPacketSinkRegistry, Runtime, RuntimeServices, ServeError,
     serve_http_on,
-    test_support::{RuntimeTestBuilder, TEST_ROOM_KEY},
+    test_support::{RuntimeTestBuilder, test_room_key},
 };
-use crate::runtime::metrics::RoomGaugeValues;
+use crate::runtime::{auth::AuthenticationError, metrics::RoomGaugeValues};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[test]
+fn runtime_rejects_invalid_programmatic_auth_keys() -> AnyResult<()> {
+    let mut config = RuntimeTestBuilder::new().config().clone();
+    for (key, expected) in [
+        (
+            "invalid-base64!",
+            AuthenticationError::InvalidBase64Encoding,
+        ),
+        ("", AuthenticationError::KeyTooShort),
+        ("YQ==", AuthenticationError::KeyTooShort),
+    ] {
+        config.auth.key = key.into();
+        let error = Runtime::new(&config)
+            .err()
+            .ok_or_else(|| anyhow!("invalid authentication key must fail runtime construction"))?;
+        assert_eq!(error.downcast_ref::<AuthenticationError>(), Some(&expected));
+    }
+    Ok(())
+}
 
 #[tokio::test]
 async fn runtime_shutdown_cancels_drains_and_preserves_errors() -> AnyResult<()> {
@@ -200,7 +220,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     let config = RoomConfig::default();
 
     let room = rooms
-        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
+        .serve_room("issuer", test_room_key(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
     sleep(RESERVATION_TTL * 2).await;
@@ -211,7 +231,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     );
     assert_eq!(rooms.room_gauges().await, RoomGaugeValues::default());
     let room_again = rooms
-        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
+        .serve_room("issuer", test_room_key(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
 

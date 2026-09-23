@@ -7,7 +7,7 @@ use std::{
     collections::BTreeMap,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Result, anyhow};
@@ -55,7 +55,7 @@ pub type TestWebSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 pub const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
-pub const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub const TEST_ROOM_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 pub type TestResult<T = ()> = Result<T>;
 
@@ -484,11 +484,19 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
     }
 }
 
+fn expiring_registered_claims() -> Option<RegisteredJwtClaims> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    Some(RegisteredJwtClaims {
+        exp: Some(now.saturating_add(Duration::from_hours(1)).as_secs().into()),
+        ..RegisteredJwtClaims::default()
+    })
+}
+
 #[must_use]
 pub fn signed_connect_claims(key: &str, room_id: &str, user_id: UserId) -> Option<String> {
     sign(
         &WebSocketConnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: expiring_registered_claims()?,
             room_id: room_id.to_owned(),
             user_id,
             label: Some("Alice".to_owned()),
@@ -506,7 +514,7 @@ pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
         &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: Some(issuer.to_owned()),
-                ..RegisteredJwtClaims::default()
+                ..expiring_registered_claims()?
             },
             key: Some(key),
             key_seed: None,
@@ -521,7 +529,7 @@ pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
 pub fn signed_disconnect_claims(user_ids_by_room: BTreeMap<String, Vec<UserId>>) -> Option<String> {
     sign(
         &HttpDisconnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: expiring_registered_claims()?,
             user_ids_by_room,
         },
         &SecretString::from(TEST_AUTH_KEY),

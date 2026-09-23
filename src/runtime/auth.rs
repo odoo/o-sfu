@@ -9,7 +9,7 @@ use base64::{
 };
 use hmac::{Hmac, KeyInit, Mac};
 use o_sfu_protocol::wire::{UserId, UserPermissions};
-use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
+use o_sfu_rfc::jwt::{ALGORITHM_HS256, HS256_MIN_KEY_BYTES, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 pub use o_sfu_rfc::jwt::{NumericDate, RegisteredJwtClaims};
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use serde::{
@@ -43,6 +43,10 @@ pub enum AuthenticationError {
     UnsupportedAlgorithm(String),
     #[error("invalid JWT signature")]
     InvalidSignature,
+    #[error("token has no expiration")]
+    MissingExpiry,
+    #[error("HS256 key must contain at least {HS256_MIN_KEY_BYTES} decoded bytes")]
+    KeyTooShort,
     #[error("token expired")]
     TokenExpired,
     #[error("token not valid yet")]
@@ -183,8 +187,10 @@ where
 
 /// # Errors
 ///
-/// Returns an error when the token format, segment encoding, signature, or registered claims are
-/// invalid.
+/// Returns [`AuthenticationError`] for invalid token format, base64 encoding,
+/// JSON, algorithm or signature. [`AuthenticationError::MissingExpiry`] rejects
+/// absent `exp`, [`AuthenticationError::TokenExpired`] rejects elapsed expiry
+/// and the `nbf` and optional `iat` guards retain their time errors.
 ///
 /// This verifier decodes JWT header, payload, and signature segments with the JOSE base64url
 /// alphabet without padding, as required by RFC 7515 / RFC 7519.
@@ -192,9 +198,17 @@ pub fn verify<T>(token: &SecretString, key_b64: &SecretString) -> Result<T, Auth
 where
     T: DeserializeOwned,
 {
+    validate_token_length(token.expose_secret())?;
+    verify_claims(token, &decode_key(key_b64)?)
+}
+
+/// Applies the same JWT policy as [`verify`] with a decoded signing key.
+pub(super) fn verify_claims<T: DeserializeOwned>(
+    token: &SecretString,
+    key: &SecretSlice<u8>,
+) -> Result<T, AuthenticationError> {
     let token = token.expose_secret();
     validate_token_length(token)?;
-    let key = decode_key(key_b64)?;
     let (header_b64, claims_b64, signature_b64) = split_token(token)?;
     let header_bytes = decode_jwt_segment(header_b64)?;
     let header: JwtHeader = serde_json::from_slice(&header_bytes)
@@ -206,7 +220,7 @@ where
     // This avoids copying the token data, and uses the token which is already protected by
     // `SecretString` to avoid exposing the signed data in memory.
     let signed_data = &token[..token.len() - signature_b64.len() - 1];
-    verify_hs256(signed_data.as_bytes(), &key, &actual_signature)?;
+    verify_hs256(signed_data.as_bytes(), key, &actual_signature)?;
     let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
     let registered_claims: RegisteredJwtClaims =
         serde_json::from_slice(claims_bytes.expose_secret())
@@ -219,9 +233,9 @@ where
 /// Returns verified claims with proof or the [`AuthenticationError`] from [`verify`].
 pub(super) fn verify_with_proof<T: DeserializeOwned>(
     token: &SecretString,
-    key_b64: &SecretString,
+    key: &SecretSlice<u8>,
 ) -> Result<(T, AuthProof), AuthenticationError> {
-    verify(token, key_b64).map(|claims| (claims, AuthProof(())))
+    verify_claims(token, key).map(|claims| (claims, AuthProof(())))
 }
 
 /// decode untrusted JWT claims for candidate room selection only
@@ -260,7 +274,10 @@ fn validate_registered_claims_at(
 ) -> Result<(), AuthenticationError> {
     let iat_limit = NumericDate::from(now.saturating_add(MAX_IAT_FUTURE_SKEW));
     let now = NumericDate::from(now);
-    if claims.exp.is_some_and(|exp| exp <= now) {
+    // Odoo issues exp without iat. Expiry is mandatory application policy,
+    // while RFC 7519 leaves registered-claim presence to the application.
+    let exp = claims.exp.ok_or(AuthenticationError::MissingExpiry)?;
+    if exp <= now {
         return Err(AuthenticationError::TokenExpired);
     }
     if claims.nbf.is_some_and(|nbf| nbf > now) {
@@ -330,6 +347,20 @@ pub(crate) fn decode_key(input: &SecretString) -> Result<SecretSlice<u8>, Authen
     Ok(SecretSlice::from(buffer))
 }
 
+/// Decodes boundary key material and enforces the RFC 7518 HS256 minimum.
+///
+/// Returns [`AuthenticationError::InvalidBase64Encoding`] for malformed input
+/// or [`AuthenticationError::KeyTooShort`] below `HS256_MIN_KEY_BYTES`.
+pub(crate) fn decode_signing_key(
+    input: &SecretString,
+) -> Result<SecretSlice<u8>, AuthenticationError> {
+    let key = decode_key(input)?;
+    if key.expose_secret().len() < HS256_MIN_KEY_BYTES {
+        return Err(AuthenticationError::KeyTooShort);
+    }
+    Ok(key)
+}
+
 fn decode_jwt_segment(input: &str) -> Result<Vec<u8>, AuthenticationError> {
     URL_SAFE_NO_PAD
         .decode(input.as_bytes())
@@ -345,15 +376,14 @@ fn pad_base64(input: &str) -> String {
 }
 
 pub(crate) fn derive_key_from_seed(
-    key: &SecretString,
+    key: &SecretSlice<u8>,
     seed: &SecretString,
-) -> Result<SecretString, AuthenticationError> {
-    let key_bytes = decode_key(key)?;
+) -> Result<SecretSlice<u8>, AuthenticationError> {
     let seed_bytes = decode_key(seed)?;
-    let mut derived_key = sign_hs256(seed_bytes.expose_secret(), &key_bytes)?;
-    let encoded = STANDARD.encode(derived_key);
+    let mut derived_key = sign_hs256(seed_bytes.expose_secret(), key)?;
+    let secret = SecretSlice::from(derived_key.to_vec());
     derived_key.zeroize();
-    Ok(SecretString::from(encoded))
+    Ok(secret)
 }
 
 /// Plaintext mirror of [`HttpRoomClaims`] for test assertions.

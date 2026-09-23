@@ -168,6 +168,7 @@ fn sign_and_verify_round_trip() {
     let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             iss: Some("https://odoo.example.com".to_owned()),
+            exp: Some(4_000_000_000_u64.into()),
             ..RegisteredJwtClaims::default()
         },
         key: Some("Y2hhbm5lbC1rZXk="),
@@ -191,6 +192,7 @@ fn sign_and_verify_round_trip_with_uuid_like_channel_key() {
     let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {
             iss: Some("https://odoo.example.com".to_owned()),
+            exp: Some(4_000_000_000_u64.into()),
             ..RegisteredJwtClaims::default()
         },
         key: Some("123e4567-e89b-12d3-a456-426614174000"),
@@ -282,14 +284,14 @@ fn registered_claims_use_subsecond_time() -> serde_json::Result<()> {
             Err(AuthenticationError::TokenExpired),
         ),
         (r#"{"exp":1744000000.6}"#, Ok(())),
-        (r#"{"nbf":1744000000.5}"#, Ok(())),
+        (r#"{"exp":4000000000,"nbf":1744000000.5}"#, Ok(())),
         (
-            r#"{"nbf":1744000000.6}"#,
+            r#"{"exp":4000000000,"nbf":1744000000.6}"#,
             Err(AuthenticationError::TokenNotYetValid),
         ),
-        (r#"{"iat":1744000060.5}"#, Ok(())),
+        (r#"{"exp":4000000000,"iat":1744000060.5}"#, Ok(())),
         (
-            r#"{"iat":1744000060.6}"#,
+            r#"{"exp":4000000000,"iat":1744000060.6}"#,
             Err(AuthenticationError::TokenIssuedInFuture),
         ),
     ];
@@ -325,7 +327,10 @@ fn verify_handles_fractional_expiration() {
 #[test]
 fn sign_emits_jose_base64url_segments() {
     let claims = TestHttpRoomClaims {
-        registered: RegisteredJwtClaims::default(),
+        registered: RegisteredJwtClaims {
+            exp: Some(4_000_000_000_u64.into()),
+            ..RegisteredJwtClaims::default()
+        },
         key: Some("Y2hhbm5lbC1rZXk="),
         key_seed: None,
     };
@@ -347,7 +352,10 @@ fn sign_emits_jose_base64url_segments() {
 #[test]
 fn verify_accepts_jose_base64url_token_without_typ_header() {
     let claims = TestHttpRoomClaims {
-        registered: RegisteredJwtClaims::default(),
+        registered: RegisteredJwtClaims {
+            exp: Some(4_000_000_000_u64.into()),
+            ..RegisteredJwtClaims::default()
+        },
         key: Some("Y2hhbm5lbC1rZXk="),
         key_seed: None,
     };
@@ -372,7 +380,10 @@ fn verify_accepts_jose_base64url_token_without_typ_header() {
 #[test]
 fn verify_accepts_jose_base64url_token_with_typ_header() {
     let claims = TestHttpRoomClaims {
-        registered: RegisteredJwtClaims::default(),
+        registered: RegisteredJwtClaims {
+            exp: Some(4_000_000_000_u64.into()),
+            ..RegisteredJwtClaims::default()
+        },
         key: Some("Y2hhbm5lbC1rZXk="),
         key_seed: None,
     };
@@ -435,7 +446,10 @@ fn verify_rejects_oversized_token_before_jwt_parsing() {
 #[test]
 fn verify_does_not_parse_claims_before_signature_verification() {
     let claims = TestHttpRoomClaims {
-        registered: RegisteredJwtClaims::default(),
+        registered: RegisteredJwtClaims {
+            exp: Some(4_000_000_000_u64.into()),
+            ..RegisteredJwtClaims::default()
+        },
         key: None,
         key_seed: None,
     };
@@ -521,65 +535,54 @@ fn replace_token_segment(token: &str, segment_index: usize, replacement: &str) -
 }
 
 #[test]
-fn derive_key_from_seed_produces_deterministic_key() {
-    let key_b64 = TEST_AUTH_KEY;
-    let seed = "Y2hhbm5lbC1rZXk=";
-    let derived_key =
-        derive_key_from_seed(&SecretString::from(key_b64), &SecretString::from(seed)).ok();
-    assert!(derived_key.is_some());
-    let Some(derived_key) = derived_key else {
-        return;
-    };
-    assert_ne!(derived_key.expose_secret(), key_b64);
-    let derived_key_again =
-        derive_key_from_seed(&SecretString::from(key_b64), &SecretString::from(seed)).ok();
-    assert!(derived_key_again.is_some());
-    if let Some(derived_key_again) = derived_key_again {
-        assert_eq!(
-            derived_key_again.expose_secret(),
-            derived_key.expose_secret()
-        );
-    }
-}
-
-#[test]
-fn derive_key_from_seed_works_with_unpadded_seed() {
-    let key_b64 = TEST_AUTH_KEY;
-    let seed = "Y2hhbm5lbC1rZXk=";
-    let seed_unpadded = seed.trim_end_matches('=');
-    let derived_key = derive_key_from_seed(
-        &SecretString::from(key_b64),
-        &SecretString::from(seed_unpadded),
-    )
-    .ok();
-    assert!(derived_key.is_some());
-    let Some(derived_key) = derived_key else {
-        return;
-    };
-    let derived_key_padded =
-        derive_key_from_seed(&SecretString::from(key_b64), &SecretString::from(seed)).ok();
-    assert!(derived_key_padded.is_some());
-    if let Some(derived_key_padded) = derived_key_padded {
-        assert_eq!(
-            derived_key_padded.expose_secret(),
-            derived_key.expose_secret()
-        );
-    }
-}
-
-#[test]
-fn derive_key_from_seed_rejects_invalid_base64() {
-    let key_b64 = TEST_AUTH_KEY;
-    let invalid_seed = "invalid-base64!";
-    let derived_key = derive_key_from_seed(
-        &SecretString::from(key_b64),
-        &SecretString::from(invalid_seed),
-    )
-    .err();
+fn derive_key_from_seed_produces_deterministic_key() -> Result<(), AuthenticationError> {
+    let key = decode_key(&SecretString::from(TEST_AUTH_KEY))?;
+    let seed = SecretString::from("Y2hhbm5lbC1rZXk=");
+    let derived_key = derive_key_from_seed(&key, &seed)?;
+    let derived_key_again = derive_key_from_seed(&key, &seed)?;
+    assert_ne!(derived_key.expose_secret(), key.expose_secret());
     assert_eq!(
-        derived_key,
+        derived_key.expose_secret(),
+        derived_key_again.expose_secret()
+    );
+    assert_eq!(
+        derived_key.expose_secret(),
+        &[
+            212, 73, 157, 91, 167, 41, 188, 66, 87, 10, 251, 171, 193, 154, 29, 80, 125, 197, 35,
+            88, 162, 140, 224, 79, 228, 16, 85, 73, 38, 74, 72, 77
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn derive_key_from_seed_works_with_unpadded_seed() -> Result<(), AuthenticationError> {
+    let key = decode_key(&SecretString::from(TEST_AUTH_KEY))?;
+    let padded = derive_key_from_seed(&key, &SecretString::from("Y2hhbm5lbC1rZXk="))?;
+    let unpadded = derive_key_from_seed(&key, &SecretString::from("Y2hhbm5lbC1rZXk"))?;
+    assert_eq!(padded.expose_secret(), unpadded.expose_secret());
+    Ok(())
+}
+
+#[test]
+fn derive_key_from_seed_rejects_invalid_base64() -> Result<(), AuthenticationError> {
+    let key = decode_key(&SecretString::from(TEST_AUTH_KEY))?;
+    assert_eq!(
+        derive_key_from_seed(&key, &SecretString::from("invalid-base64!")).err(),
         Some(AuthenticationError::InvalidBase64Encoding)
     );
+    Ok(())
+}
+
+#[test]
+fn verify_reports_missing_expiry() -> Result<(), AuthenticationError> {
+    let key = SecretString::from(TEST_AUTH_KEY);
+    let token = sign(&json!({ "iss": "native-without-expiry" }), &key)?;
+    assert_eq!(
+        verify::<HttpRoomClaims>(&token, &key).err(),
+        Some(AuthenticationError::MissingExpiry)
+    );
+    Ok(())
 }
 
 #[test]

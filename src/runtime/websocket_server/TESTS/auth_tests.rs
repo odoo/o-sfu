@@ -748,3 +748,35 @@ fn large_user_id(index: usize) -> UserId {
     value.extend(repeat_n('x', SLOW_READER_USER_ID_BYTES));
     UserId::String(value)
 }
+
+#[tokio::test]
+async fn websocket_requires_unexpired_credentials() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "expiry-policy", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    for exp in [None, Some(0_u64)] {
+        let mut claims = serde_json::json!({ "sfu_channel_uuid": room.uuid(), "session_id": 170 });
+        if let Some(exp) = exp {
+            require_some(
+                claims.as_object_mut(),
+                "credential claims should be an object",
+            )?
+            .insert("exp".to_owned(), serde_json::json!(exp));
+        }
+        let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+        let mut websocket = require_some(
+            authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+            "websocket should connect before auth rejection",
+        )?;
+        assert_eq!(
+            read_close_code_promptly(&mut websocket).await,
+            Some(CloseCode::Library(u16::from(
+                WebSocketCloseCode::AuthFailed
+            )))
+        );
+    }
+    assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    Ok(())
+}

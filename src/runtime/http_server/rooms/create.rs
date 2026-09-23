@@ -10,7 +10,7 @@ use axum::{
 };
 use o_sfu_core::server::room::RoomManagerServeError;
 use o_sfu_rfc::jwt::RegisteredJwtClaims;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::{ExposeSecret, SecretSlice, SecretString};
 use tracing::Instrument;
 
 use super::super::{
@@ -55,13 +55,14 @@ impl FromRef<RuntimeState> for Services {
 ///
 /// Extraction returns a [`StatusCode`] and records its room rejection counter:
 /// `400 Bad Request` for invalid query parameters, absent key claims or failed
-/// seed resolution, `401 Unauthorized` for missing or unsupported authorization
-/// headers or failed JWT verification and `403 Forbidden` for a missing issuer.
+/// seed resolution or room key validation, `401 Unauthorized` for missing or
+/// unsupported authorization headers or failed JWT verification and
+/// `403 Forbidden` for a missing issuer.
 /// Query rejection takes precedence over credential rejection.
 #[derive(Debug, Clone)]
 struct VerifiedRoomRequest {
     issuer: String,
-    room_key: SecretString,
+    room_key: SecretSlice<u8>,
     config: RoomConfig,
     origin: RequestOrigin,
 }
@@ -124,7 +125,7 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
             registered: RegisteredJwtClaims { iss, .. },
             key,
             key_seed,
-        } = auth::verify::<HttpRoomClaims>(&token, &state.config.auth.key)
+        } = auth::verify_claims::<HttpRoomClaims>(&token, &state.config.auth.key)
             .map_err(|_error| record_rejection(state, StatusCode::UNAUTHORIZED))?;
         let Some(issuer) = iss else {
             return Err(record_rejection(state, StatusCode::FORBIDDEN));
@@ -133,7 +134,8 @@ impl FromRequestParts<RuntimeState> for VerifiedRoomRequest {
             (None, None) => {
                 return Err(record_rejection(state, StatusCode::BAD_REQUEST));
             }
-            (Some(key), None) => key,
+            (Some(key), None) => auth::decode_signing_key(&key)
+                .map_err(|_error| record_rejection(state, StatusCode::BAD_REQUEST))?,
             (_, Some(seed)) if seed.expose_secret().is_empty() => {
                 return Err(record_rejection(state, StatusCode::BAD_REQUEST));
             }

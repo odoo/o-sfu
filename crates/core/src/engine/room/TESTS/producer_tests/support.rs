@@ -326,7 +326,7 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )

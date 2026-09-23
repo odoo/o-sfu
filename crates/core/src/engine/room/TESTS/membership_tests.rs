@@ -6,7 +6,7 @@ async fn join_user_enforces_capacity() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -33,7 +33,7 @@ async fn reconnection_bypasses_capacity_and_replaces_existing_connection() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -98,7 +98,7 @@ async fn leave_user_sends_departure_to_remaining_peers() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -132,7 +132,7 @@ async fn mismatched_stale_close_keeps_other_user_routing() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -173,7 +173,7 @@ async fn replacement_join_closes_displaced_transport_user() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )

@@ -180,7 +180,7 @@ async fn late_join_receives_remote_track_snapshot_from_route_state() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
