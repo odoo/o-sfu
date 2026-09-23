@@ -311,7 +311,8 @@ pub mod test_support {
 /// `/v1/stats`, `/metrics` and diagnostics require the configured
 /// [`crate::config::DiagnosticsConfig::auth_token`] on every listener. Without
 /// one, the actual listener must be loopback. Missing or invalid tokens return
-/// `401 Unauthorized`. Tokenless non-loopback access returns `403 Forbidden`.
+/// `401 Unauthorized` with `WWW-Authenticate: Bearer realm="o-sfu"`.
+/// Tokenless non-loopback access returns `403 Forbidden`.
 pub mod http {
     pub use crate::runtime::{
         http_server::contract::{

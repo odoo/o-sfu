@@ -23,39 +23,51 @@ async fn stats_and_metrics_preserve_method_not_allowed() -> TestResult {
 }
 
 #[tokio::test]
-async fn stats_and_metrics_require_configured_token_on_loopback_listener() -> TestResult {
+async fn operator_routes_require_token_and_challenge_rejected_requests() -> TestResult {
+    const TOKEN: &str = "operator-secret-with-at-least-32-bytes";
     let mut state = test_state();
-    state.config.diagnostics.auth_token = Some(String::from("operator-secret"));
-
-    for path in OPERATOR_ROUTES {
-        route_status(
-            &state,
-            Request::get(path),
-            Body::empty(),
+    state.config.diagnostics.auth_token =
+        Some(secrecy::SecretString::from(format!("  {TOKEN} \n")));
+    let cases = [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(format!("Basic {TOKEN}")), StatusCode::UNAUTHORIZED),
+        (Some("Bearer short".to_owned()), StatusCode::UNAUTHORIZED),
+        (Some(format!("Bearer x{TOKEN}")), StatusCode::UNAUTHORIZED),
+        (
+            Some(format!("Bearer {}x", &TOKEN[..TOKEN.len() - 1])),
             StatusCode::UNAUTHORIZED,
-            path,
-        )
-        .await?;
-        route_status(
-            &state,
-            Request::get(path).header(header::AUTHORIZATION, "Bearer wrong-secret"),
-            Body::empty(),
-            StatusCode::UNAUTHORIZED,
-            path,
-        )
-        .await?;
-        route_status(
-            &state,
-            Request::get(path).header(header::AUTHORIZATION, "Bearer operator-secret"),
-            Body::empty(),
-            StatusCode::OK,
-            path,
-        )
-        .await?;
+        ),
+        (Some(format!("Bearer {TOKEN}")), StatusCode::OK),
+        (Some(format!("bEaReR {TOKEN}")), StatusCode::OK),
+    ];
+    for path in [
+        route::v1::STATS,
+        route::METRICS,
+        route::diagnostics::SUMMARY,
+    ] {
+        for (authorization, expected) in &cases {
+            let mut request = Request::get(path);
+            if let Some(authorization) = authorization {
+                request = request.header(header::AUTHORIZATION, authorization);
+            }
+            let response = route_response(&state, request, Body::empty(), *expected, path).await?;
+            let challenge = response.headers().get(header::WWW_AUTHENTICATE);
+            if *expected == StatusCode::UNAUTHORIZED {
+                assert_eq!(
+                    challenge.and_then(|value| value.to_str().ok()),
+                    Some("Bearer realm=\"o-sfu\"")
+                );
+            } else {
+                assert!(challenge.is_none());
+            }
+        }
     }
     let snapshot = state.metrics.snapshot();
-    assert_eq!(snapshot.http_stats_requests(), 3);
-    assert_eq!(snapshot.http_metrics_requests(), 3);
+    assert_eq!(snapshot.http_stats_requests(), u64::try_from(cases.len())?);
+    assert_eq!(
+        snapshot.http_metrics_requests(),
+        u64::try_from(cases.len())?
+    );
     Ok(())
 }
 
@@ -63,7 +75,9 @@ async fn stats_and_metrics_require_configured_token_on_loopback_listener() -> Te
 async fn operator_head_requests_require_authorization_and_omit_response_bodies() -> TestResult {
     let mut state = test_state();
     state.config.http.bind_address = SocketAddr::from(([0, 0, 0, 0], 8070));
-    state.config.diagnostics.auth_token = Some(String::from("operator-secret"));
+    state.config.diagnostics.auth_token = Some(secrecy::SecretString::from(
+        "operator-secret-with-at-least-32-bytes",
+    ));
     for path in [
         route::v1::STATS,
         route::METRICS,
@@ -71,7 +85,10 @@ async fn operator_head_requests_require_authorization_and_omit_response_bodies()
     ] {
         for (authorization, expected_status) in [
             (None, StatusCode::UNAUTHORIZED),
-            (Some("Bearer operator-secret"), StatusCode::OK),
+            (
+                Some("Bearer operator-secret-with-at-least-32-bytes"),
+                StatusCode::OK,
+            ),
         ] {
             let mut builder = Request::head(path);
             if let Some(authorization) = authorization {
@@ -93,7 +110,12 @@ async fn operator_head_requests_require_authorization_and_omit_response_bodies()
 
 #[tokio::test]
 async fn unknown_operator_paths_remain_not_found_under_restrictive_access_policies() -> TestResult {
-    for auth_token in [None, Some(String::from("operator-secret"))] {
+    for auth_token in [
+        None,
+        Some(secrecy::SecretString::from(
+            "operator-secret-with-at-least-32-bytes",
+        )),
+    ] {
         let mut state = test_state();
         state.config.http.bind_address = SocketAddr::from(([0, 0, 0, 0], 8070));
         state.config.diagnostics.auth_token = auth_token;
@@ -119,12 +141,14 @@ async fn unknown_operator_paths_remain_not_found_under_restrictive_access_polici
 #[tokio::test]
 async fn diagnostics_authorizes_unsupported_methods() -> TestResult {
     let mut state = test_state();
-    state.config.diagnostics.auth_token = Some(String::from("operator-secret"));
+    state.config.diagnostics.auth_token = Some(secrecy::SecretString::from(
+        "operator-secret-with-at-least-32-bytes",
+    ));
     for (authorization, expected_status) in [
         (None, StatusCode::UNAUTHORIZED),
         (Some("Bearer wrong-secret"), StatusCode::UNAUTHORIZED),
         (
-            Some("Bearer operator-secret"),
+            Some("Bearer operator-secret-with-at-least-32-bytes"),
             StatusCode::METHOD_NOT_ALLOWED,
         ),
     ] {
@@ -152,5 +176,6 @@ async fn diagnostics_rejects_unsupported_methods_on_public_listener() -> TestRes
         .oneshot(request)
         .await?;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
     Ok(())
 }

@@ -162,6 +162,7 @@ secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = { version = "0.11.0", features = ["zeroize"] }
+subtle = "2.6.1"
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

@@ -84,7 +84,7 @@ client-supplied forwarded headers. Use `$proxy_add_x_forwarded_for` only when a
 trusted upstream has already stripped client input
 
 `/v1/stats`, `/metrics` and `/internal/diagnostics/...` require
-`DIAGNOSTICS_AUTH_TOKEN` on every request when configured. Without it, the
+the configured diagnostics token on every request. Without one, the
 actual listener must use loopback. A same-host reverse proxy can reach that
 fallback, so configure the token and block these routes at every public edge
 
@@ -409,7 +409,7 @@ use the telemetry reference for exact queries and response shapes:
 - [HTTP diagnostics](https://odoo.github.io/o-sfu/o_sfu/http/telemetry/diagnostics/index.html)
 
 remote Prometheus scrape through a private TLS endpoint when
-`DIAGNOSTICS_AUTH_TOKEN` is configured:
+a diagnostics token is configured:
 
 ```yaml
 scrape_configs:
@@ -518,7 +518,7 @@ HTTP and operator access:
 | --- | --- | --- |
 | `BIND_ADDRESS` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
 | `PROXY` | `false` | trusts proxy-provided request metadata when `true` |
-| `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
+| `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token of at least 32 bytes after trimming whitespace for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
 
 authentication and websocket admission:

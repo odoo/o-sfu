@@ -15,6 +15,11 @@ use zeroize::Zeroize;
 type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 type ReadFile<'a> = dyn Fn(&Path) -> io::Result<String> + 'a;
 
+enum FileSource {
+    Fallback(&'static str),
+    Exclusive(&'static str),
+}
+
 pub(super) struct EnvValue {
     pub(super) key: &'static str,
     pub(super) raw: String,
@@ -43,7 +48,7 @@ impl<'a> Env<'a> {
             key,
             check: |_key, value| Ok(value),
             aliases: Vec::new(),
-            file_alias: None,
+            file_source: None,
             value: PhantomData,
         }
     }
@@ -60,7 +65,7 @@ pub(super) struct Var<'env, 'lookup, T, C = fn(&'static str, T) -> Result<T>> {
     key: &'static str,
     check: C,
     aliases: Vec<&'static str>,
-    file_alias: Option<&'static str>,
+    file_source: Option<FileSource>,
     value: PhantomData<fn(T) -> T>,
 }
 
@@ -80,7 +85,7 @@ where
             key: self.key,
             check: move |key, value| check(key, (self.check)(key, value)?),
             aliases: self.aliases,
-            file_alias: self.file_alias,
+            file_source: self.file_source,
             value: PhantomData,
         }
     }
@@ -91,7 +96,16 @@ where
     }
 
     pub(super) fn or_load_from_file(mut self, alias: &'static str) -> Self {
-        self.file_alias = Some(alias);
+        self.file_source = Some(FileSource::Fallback(alias));
+        self
+    }
+
+    /// Loads the file only when no direct source is configured.
+    ///
+    /// Reading a direct source together with this file source returns an
+    /// `anyhow::Error` without reading the file or disclosing the direct value.
+    pub(super) fn exclusive_file(mut self, alias: &'static str) -> Self {
+        self.file_source = Some(FileSource::Exclusive(alias));
         self
     }
 
@@ -128,11 +142,20 @@ where
 
     fn load(&self) -> Result<Option<EnvValue>> {
         for key in iter::once(self.key).chain(self.aliases.iter().copied()) {
-            if let Some(raw) = (self.lookup)(key) {
+            if let Some(mut raw) = (self.lookup)(key) {
+                if let Some(FileSource::Exclusive(file_key)) = self.file_source
+                    && (self.lookup)(file_key).is_some()
+                {
+                    // A conflicting secret never reaches EnvParse's zeroizing container.
+                    raw.zeroize();
+                    return Err(anyhow!("{key} conflicts with {file_key}"));
+                }
                 return Ok(Some(EnvValue { key, raw }));
             }
         }
-        let Some(file_key) = self.file_alias else {
+        let Some(FileSource::Fallback(file_key) | FileSource::Exclusive(file_key)) =
+            self.file_source
+        else {
             return Ok(None);
         };
         match (self.lookup)(file_key) {

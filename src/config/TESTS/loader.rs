@@ -10,8 +10,8 @@ use crate::{
     config::{
         CodecPreferences, Config, DEFAULT_AUTHENTICATION_TIMEOUT_MS,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
-        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DiagnosticsConfig, MediaCodecFlags,
-        RuntimeFeatureFlags, TelemetryConfig,
+        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, MediaCodecFlags, RuntimeFeatureFlags,
+        TelemetryConfig,
     },
     core::server::room::{
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
@@ -117,7 +117,7 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     assert_eq!(config.features, RuntimeFeatureFlags::default());
     assert_eq!(config.codecs.flags, MediaCodecFlags::default());
     assert_eq!(config.codecs.preferences, CodecPreferences::default());
-    assert_eq!(config.diagnostics, DiagnosticsConfig::default());
+    assert!(config.diagnostics.auth_token.is_none());
     assert_eq!(config.telemetry, TelemetryConfig::default());
     assert_eq!(config.transport.announced_ip.to_string(), "127.0.0.1");
     Ok(())
