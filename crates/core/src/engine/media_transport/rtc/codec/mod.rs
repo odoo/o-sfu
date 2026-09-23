@@ -31,7 +31,8 @@ pub(super) use retransmission::{
     RepairSummary, primary_payload_type, repair_enabled, validate_answer_sdp,
 };
 pub(super) use rid::{
-    NegotiatedRid, ParsedAnswerRids, initial_packet_gate as initial_consumer_packet_gate,
+    MAX_SEND_STREAMS, NegotiatedRid, ParsedAnswerRids,
+    initial_packet_gate as initial_consumer_packet_gate,
 };
 use str0m::{
     format::Codec,

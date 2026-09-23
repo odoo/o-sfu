@@ -20,6 +20,64 @@ async fn fake_rtc_peers_forward_vp8_high_rid_keyframe_without_browsers() -> s::T
 }
 
 #[tokio::test]
+async fn fake_rtc_mid_only_ridless_publisher_forwards_authenticated_rtp() -> s::TestResult {
+    let _guard = st::full_stack_test_guard().await;
+    let publisher_id = s::UserId::Integer(96);
+    let (server, room) = st::room_parts("issuer-mid-only-ridless").await?;
+    let mut publisher = s::require_some(
+        s::connect_mid_only_fake_peer(&server, &room, publisher_id.clone(), s::TEST_ROOM_KEY).await,
+        "publisher should connect without signaled SSRC",
+    )?;
+    let mut subscriber = s::require_some(
+        s::connect_fake_peer(&server, &room, s::UserId::Integer(97), s::TEST_ROOM_KEY).await,
+        "subscriber should connect",
+    )?;
+    s::require_some(
+        publisher
+            .rtc()
+            .wait_until_connected(s::Duration::from_secs(5))
+            .await,
+        "publisher should reach ready state",
+    )?;
+    s::require_some(
+        subscriber
+            .rtc()
+            .wait_until_connected(s::Duration::from_secs(5))
+            .await,
+        "subscriber should reach ready state",
+    )?;
+    let mut source = s::FakeMediaSource::new(s::SyntheticVp8Stream::new(None));
+    m::publish_video_source(&mut publisher, &mut subscriber, &publisher_id, &source).await;
+    let mut clock = s::FakeClock::default();
+    let mut forwarded = false;
+    for _ in 0..60 {
+        let expected_payload = s::require_some(
+            publisher
+                .rtc()
+                .send_rtp_packet(&mut source, &mut clock)
+                .await,
+            "MID-only publisher should send RTP",
+        )?;
+        if m::read_expected_rtp_payload(
+            &mut publisher,
+            &mut subscriber,
+            &expected_payload,
+            s::Duration::from_millis(50),
+        )
+        .await
+        {
+            forwarded = true;
+            break;
+        }
+    }
+    assert!(
+        forwarded,
+        "authenticated MID-only RTP should reach the subscriber"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn fake_rtc_vp8_ssrc_switch_rewrites_serialized_descriptor() -> s::TestResult {
     let _guard = st::full_stack_test_guard().await;
     let publisher_id = s::UserId::Integer(74);

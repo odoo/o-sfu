@@ -64,7 +64,10 @@ pub fn sample_local_forwarded_packet(
     payload: &[u8],
 ) -> ForwardedPacket {
     sample_forwarded_packet_with_source(
-        ForwardedPacketSource::Local(source_session_handle),
+        ForwardedPacketSource::Local {
+            session_handle: source_session_handle,
+            repair_ssrc: None,
+        },
         mid,
         None,
         ExtensionValues::default(),
@@ -179,7 +182,10 @@ pub fn sample_local_forwarded_packet_for_benchmark(
 ) -> ForwardedPacket {
     let received_at = Instant::now();
     ForwardedPacket {
-        source: ForwardedPacketSource::Local(source_session_handle),
+        source: ForwardedPacketSource::Local {
+            session_handle: source_session_handle,
+            repair_ssrc: None,
+        },
         src_media: None,
         facts: None,
         visits_origin_sinks: true,
@@ -206,6 +212,27 @@ pub fn sample_local_forwarded_packet_for_benchmark(
             header_len: 12,
         },
     }
+}
+
+#[cfg(feature = "internal-benchmarks")]
+#[must_use]
+pub fn sample_local_forwarded_packet_without_mid_for_benchmark(
+    source_session_handle: SessionHandle,
+    mid: &str,
+    rid: Option<&str>,
+    identity: BenchmarkStreamIdentity,
+    payload: Arc<[u8]>,
+) -> ForwardedPacket {
+    let mut packet = sample_local_forwarded_packet_for_benchmark(
+        source_session_handle,
+        mid,
+        rid,
+        identity,
+        payload,
+    );
+    packet.header.ext_vals.mid = None;
+    packet.header.ext_vals.rid = None;
+    packet
 }
 
 fn sample_forwarded_packet_with_extensions(
@@ -262,7 +289,7 @@ fn sample_forwarded_packet_with_source(
     }
 }
 
-#[cfg(any(test, feature = "internal-benchmarks"))]
+#[cfg(test)]
 #[must_use]
 pub fn sample_forwarded_packet_without_mid(
     src_key: TransportSessionKey,

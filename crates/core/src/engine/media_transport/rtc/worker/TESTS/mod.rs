@@ -75,9 +75,8 @@ use super::{
             prepare_source_session_with_rid, sample_already_relayed_audio_packet_at,
             sample_already_relayed_packet, sample_forwarded_packet,
             sample_forwarded_packet_with_audio_activity, sample_forwarded_packet_with_rid,
-            sample_forwarded_packet_without_mid, sample_local_forwarded_packet,
-            sample_local_repaired_packet, sample_rtp_packet, serialize_stun_message,
-            test_transport_session_key,
+            sample_local_forwarded_packet, sample_local_repaired_packet, sample_rtp_packet,
+            serialize_stun_message, test_transport_session_key,
         },
     },
     buffers::{MAX_RELAY_PACKETS_PER_ITERATION, PacketLoopBuffers},
@@ -109,7 +108,7 @@ use crate::{
     },
 };
 
-struct CountingSink {
+pub(super) struct CountingSink {
     packets: AtomicUsize,
     last_packet: Mutex<(Option<TransportSessionKey>, Vec<u8>)>,
 }
@@ -118,14 +117,18 @@ const TEST_REMOTE_ICE_UFRAG: &str = "remote-ufrag";
 const TEST_REMOTE_ICE_PASSWORD: &str = "remote-password";
 
 impl CountingSink {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             packets: AtomicUsize::new(0),
             last_packet: Mutex::new((None, Vec::new())),
         }
     }
 
-    fn last_packet(&self) -> (Option<TransportSessionKey>, Vec<u8>) {
+    pub(super) fn packet_count(&self) -> usize {
+        self.packets.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn last_packet(&self) -> (Option<TransportSessionKey>, Vec<u8>) {
         self.last_packet
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1195,48 +1198,6 @@ fn recording_forward_destination_captures_packets_without_bypassing_the_contract
     let snapshot = harness.metrics.snapshot();
     assert_eq!(snapshot.rtp_payload_bytes_egress(), 0);
     assert_eq!(snapshot.rtp_forwarded_packets_recording(), 1);
-}
-
-#[test]
-fn record_incoming_stats_learns_dynamic_rid_ssrc_bindings_from_rtp_extensions() {
-    let producer_session = test_transport_session_key(88, 0, 89, UserId::Integer(90));
-    let mut state = PacketLoopState::default();
-    let src_media = register_producer_media(&mut state, &producer_session, "cam-up");
-    let metrics = RuntimeMetrics::default();
-    let packet_recorder = metrics.register_rtp_worker();
-    let control_recorder = metrics.register_rtc_worker();
-    let mut buffers = PacketLoopBuffers::new();
-    let mut forwarder = PacketForwarder::default();
-
-    buffers
-        .pending_packets
-        .push(sample_forwarded_packet_with_rid(
-            producer_session.clone(),
-            "cam-up",
-            Some("hi"),
-            b"payload",
-        ));
-    record_incoming_stats(
-        &mut state,
-        &SourcePolicySignal::default(),
-        &control_recorder,
-        &packet_recorder,
-        &mut forwarder,
-        &mut buffers.pending_packets,
-    );
-
-    let mut packet_without_extensions =
-        sample_forwarded_packet_without_mid(producer_session, 4321, b"payload");
-    assert_eq!(
-        packet_without_extensions.resolve_src_media(&state),
-        Some(src_media)
-    );
-    assert_eq!(
-        packet_without_extensions
-            .resolve_facts(&state)
-            .and_then(|facts| facts.rid),
-        Some(Rid::from("hi"))
-    );
 }
 
 #[test]

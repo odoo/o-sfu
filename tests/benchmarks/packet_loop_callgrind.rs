@@ -85,13 +85,14 @@ fn fingerprint_packet(packet_len: usize) -> Vec<u8> {
 // real work, so the useful info is if buffer reuse and route lookup stay
 // proportional to the required fanout rather than adding allocator churn or
 // unrelated scans
-#[library_benchmark(config = callgrind_config(0.5))]
+#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
 #[bench::fanout_1(args = (1usize), setup = fanout_topology)]
 #[bench::fanout_8(args = (8usize), setup = fanout_topology)]
 #[bench::fanout_32(args = (32usize), setup = fanout_topology)]
 #[bench::fanout_64(args = (64usize), setup = fanout_topology)]
-fn route_plan_1024(mut topology: FanoutBenchTopology) -> usize {
-    black_box(topology.plan_route_turns())
+fn route_plan_1024(mut topology: FanoutBenchTopology) -> FanoutBenchTopology {
+    black_box(topology.plan_route_turns());
+    black_box(topology)
 }
 
 fn validate_relay_gates(mut fixture: RelayFanoutBenchFixture) {
@@ -112,11 +113,18 @@ fn relay_route_plan_1024(mut fixture: RelayFanoutBenchFixture) -> RelayFanoutBen
 // this protects the packet-loop phase that learns source metadata, updates
 // active-speaker state, tracks RID liveness and records incoming bitrate before
 // route planning starts
-#[library_benchmark(config = callgrind_config(1.0))]
+fn validate_incoming_observation(fixture: IncomingObservationBenchFixture) {
+    fixture.assert_observation_coverage();
+}
+
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_incoming_observation)]
 #[bench::mid_rid_then_ssrc(IncomingObservationBenchFixture::mid_rid_then_ssrc())]
 #[bench::negotiated_vp8(IncomingObservationBenchFixture::negotiated_vp8())]
-fn incoming_observation_512(mut fixture: IncomingObservationBenchFixture) -> usize {
-    black_box(fixture.observe_turns())
+fn incoming_observation_512(
+    mut fixture: IncomingObservationBenchFixture,
+) -> IncomingObservationBenchFixture {
+    black_box(fixture.observe_turns());
+    black_box(fixture)
 }
 
 // measures relay enqueue pressure at the production non-blocking mailbox
@@ -125,11 +133,12 @@ fn incoming_observation_512(mut fixture: IncomingObservationBenchFixture) -> usi
 // the open and overloaded cases have different expected outcomes but both are
 // packet-loop work that can run for every relayed packet
 // keeping them cheap preserves cross-worker forwarding under bursty rooms
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::enqueue(RelayPressureBenchFixture::open_mailbox())]
 #[bench::overloaded(RelayPressureBenchFixture::full_mailbox())]
-fn relay_mailbox_256(fixture: RelayPressureBenchFixture) -> usize {
-    black_box(fixture.run_attempts())
+fn relay_mailbox_256(fixture: RelayPressureBenchFixture) -> RelayPressureBenchFixture {
+    black_box(fixture.run_attempts());
+    black_box(fixture)
 }
 
 // measures UDP ingress demux for the indexed happy path and the defensive
@@ -234,10 +243,11 @@ fn remote_gate_retry(mut fixture: RemoteGateRetryBenchFixture) -> usize {
 // this protects video route-control updates from becoming proportional to
 // repeated packets or duplicate readiness events instead of the unique source
 // and destination work that must actually change
-#[library_benchmark(config = callgrind_config(0.5))]
+#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
 #[bench::selected(RidReadinessBenchFixture::pending_selected_rid())]
-fn rid_readiness_256(mut fixture: RidReadinessBenchFixture) -> usize {
-    black_box(fixture.activate_selected_rid())
+fn rid_readiness_256(mut fixture: RidReadinessBenchFixture) -> RidReadinessBenchFixture {
+    black_box(fixture.activate_selected_rid());
+    black_box(fixture)
 }
 
 // measures local RTP identity projection for steady and switching simulcast

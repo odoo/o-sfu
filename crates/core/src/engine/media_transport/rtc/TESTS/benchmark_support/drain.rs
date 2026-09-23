@@ -26,7 +26,7 @@ use crate::{
     Bitrate,
     engine::{
         UserId,
-        media_transport::{SourcePolicySignal, TransportSessionKey},
+        media_transport::SourcePolicySignal,
         metrics::{RtcMetricsRecorder, RuntimeMetrics},
     },
 };
@@ -107,10 +107,9 @@ impl Default for SessionDrainBenchFixture {
 
 pub struct RelayDrainBenchFixture {
     rx: mpsc::Receiver<ForwardedPacket>,
-    tx: mpsc::Sender<ForwardedPacket>,
+    _tx: mpsc::Sender<ForwardedPacket>,
     buffers: PacketLoopBuffers,
     rtc_metrics: Arc<RtcMetricsRecorder>,
-    source_session: TransportSessionKey,
 }
 
 impl RelayDrainBenchFixture {
@@ -120,27 +119,24 @@ impl RelayDrainBenchFixture {
         let source_session = test_transport_session_key(2, 0, 3, UserId::Integer(4));
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
-
-        Self {
-            rx,
-            tx,
-            buffers: PacketLoopBuffers::new(),
-            rtc_metrics,
-            source_session,
-        }
-    }
-
-    pub fn drain_relay(&mut self) -> usize {
-        while self
-            .tx
+        while tx
             .try_send(sample_forwarded_packet(
-                self.source_session.clone(),
+                source_session.clone(),
                 "cam-up",
                 b"payload",
             ))
             .is_ok()
         {}
 
+        Self {
+            rx,
+            _tx: tx,
+            buffers: PacketLoopBuffers::new(),
+            rtc_metrics,
+        }
+    }
+
+    pub fn drain_relay(&mut self) -> usize {
         self.buffers.clear();
         drain_relay_packets(
             &mut self.rx,

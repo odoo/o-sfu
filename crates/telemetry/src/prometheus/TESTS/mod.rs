@@ -6,9 +6,10 @@ use super::{PROMETHEUS_CONTENT_TYPE, render_prometheus};
 use crate::metrics::{
     BudgetSolverOutcome, HttpRoute, METRIC_FAMILY_COUNT, RoomGaugeValues, RtcDatagramDropReason,
     RtcDatagramRoutePath, RtcKeyframeRequestOutcome, RtcNackDirection, RtcOutputBudgetLimit,
-    RtcRelayEnqueueResult, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
-    RtcRouteControlOutcome, RtpDecoderRefreshScope, RtpForwardDestinationKind, RuntimeMetrics,
-    SourceSelectionKind, TransportHealthState, TransportIceState, WsSessionLoopExitReason,
+    RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
+    RtcRemotePacketGateConvergence, RtcRouteControlOutcome, RtpDecoderRefreshScope,
+    RtpForwardDestinationKind, RuntimeMetrics, SourceSelectionKind, TransportHealthState,
+    TransportIceState, WsSessionLoopExitReason,
 };
 
 fn assert_http_and_websocket_metrics(rendered: &str) {
@@ -204,7 +205,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 79);
+    assert_eq!(METRIC_FAMILY_COUNT, 80);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered
@@ -221,6 +222,30 @@ fn prometheus_export_renders_existing_metric_families() {
     assert_http_and_websocket_metrics(&rendered);
     assert_live_and_recording_metrics(&rendered);
     assert_transport_lifecycle_metrics(&rendered);
+}
+
+#[test]
+fn producer_ssrc_binding_metrics_aggregate_workers_with_bounded_outcomes() {
+    let metrics = RuntimeMetrics::default();
+    let first_worker = metrics.register_rtc_worker();
+    let second_worker = metrics.register_rtc_worker();
+    first_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Learned);
+    second_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Learned);
+    first_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Replaced);
+    second_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Rejected);
+    let rendered = render_prometheus(&metrics, RoomGaugeValues::default());
+    let samples = rendered
+        .lines()
+        .filter(|line| line.starts_with("osfu_rtc_producer_ssrc_bindings_total"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        samples,
+        [
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"learned\"} 2",
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"replaced\"} 1",
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"rejected\"} 1",
+        ]
+    );
 }
 
 #[test]

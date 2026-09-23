@@ -435,7 +435,7 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
         .insert(source_mid, parameters);
     state
         .routes
-        .replace_producer_ssrcs(source_media, vec![primary_ssrc]);
+        .replace_producer_ssrcs(source_media, [primary_ssrc]);
 
     assert!(
         worker_remove_media(&mut state, &Arc::default(), &source_session, source_media,).is_ok()

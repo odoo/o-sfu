@@ -100,6 +100,13 @@ pub struct RtcPeerTrace {
     pub keyframe_requests: usize,
 }
 
+#[derive(Clone, Copy)]
+pub enum VideoAnswer {
+    Simulcast,
+    Ridless,
+    MidOnly,
+}
+
 pub struct FakeRtcPeer {
     rtc: Rtc,
     socket: UdpSocket,
@@ -107,7 +114,7 @@ pub struct FakeRtcPeer {
     media_mids: Vec<Mid>,
     transport_sequence_extension_id: Option<u8>,
     send_paths: BTreeMap<MediaKind, ProtocolSendPath>,
-    ridless_video_fid: bool,
+    video_answer: VideoAnswer,
     pending_keyframe_requests: Vec<KeyframeRequest>,
     connected: bool,
     start_wallclock: Instant,
@@ -185,7 +192,7 @@ impl FakeRtcPeer {
             media_mids: Vec::new(),
             transport_sequence_extension_id: None,
             send_paths: BTreeMap::new(),
-            ridless_video_fid: false,
+            video_answer: VideoAnswer::Simulcast,
             pending_keyframe_requests: Vec::new(),
             connected: false,
             start_wallclock: Instant::now(),
@@ -200,8 +207,7 @@ impl FakeRtcPeer {
     }
 
     pub fn answer_offer(&mut self, offer_sdp: &str) -> Option<SessionDescriptionPayload> {
-        let ridless_offer = self
-            .ridless_video_fid
+        let ridless_offer = (!matches!(self.video_answer, VideoAnswer::Simulcast))
             .then(|| offer_without_rid_simulcast(offer_sdp));
         let offer_sdp = ridless_offer.as_deref().unwrap_or(offer_sdp);
         let offer = SdpOffer::from_sdp_string(offer_sdp).ok()?;
@@ -210,6 +216,14 @@ impl FakeRtcPeer {
         self.send_paths = collect_protocol_send_paths(offer_sdp);
         let answer = self.rtc.sdp_api().accept_offer(offer).ok()?;
         let answer_sdp = answer_with_simulcast_send_rids(&answer.to_sdp_string(), &self.send_paths);
+        let answer_sdp = if matches!(self.video_answer, VideoAnswer::MidOnly) {
+            answer_sdp
+                .split_inclusive(sdp::LF)
+                .filter(|line| !line.starts_with("a=ssrc"))
+                .collect()
+        } else {
+            answer_sdp
+        };
         self.rtc.handle_input(Input::Timeout(Instant::now())).ok()?;
         Some(SessionDescriptionPayload {
             sdp: answer_sdp,
@@ -217,8 +231,8 @@ impl FakeRtcPeer {
         })
     }
 
-    pub fn answer_video_with_ridless_fid(&mut self) {
-        self.ridless_video_fid = true;
+    pub fn set_video_answer(&mut self, video_answer: VideoAnswer) {
+        self.video_answer = video_answer;
     }
 
     pub fn answer_offer_without_candidates(
