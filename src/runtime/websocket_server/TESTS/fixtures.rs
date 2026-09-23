@@ -31,6 +31,7 @@ pub(super) use tokio_tungstenite::{
     },
 };
 
+use crate::runtime::{auth::duration_since_epoch, test_support::test_room_key};
 pub(super) use crate::{
     application::stream_catalog::{
         source_publish_intent_for_stream_type, stream_id_for_stream_type,
@@ -49,8 +50,8 @@ pub(super) use crate::{
     },
 };
 
-pub(super) const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
-pub(super) const OTHER_ROOM_KEY: &str = "b3RoZXItcm9vbS1rZXk=";
+pub(super) const TEST_ROOM_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+pub(super) const OTHER_ROOM_KEY: &str = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=";
 static NEXT_WEBSOCKET_TEST_PEER_PORT: AtomicU16 = AtomicU16::new(58_000);
 pub(super) type TestWebSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
@@ -311,7 +312,10 @@ pub(super) fn signed_connect_claims_with_permissions(
 ) -> Option<String> {
     sign(
         &WebSocketConnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: RegisteredJwtClaims {
+                exp: Some((duration_since_epoch().as_secs() + 8 * 60 * 60).into()),
+                ..RegisteredJwtClaims::default()
+            },
             room_id: room_id.to_owned(),
             user_id,
             label: Some("Alice".to_owned()),
@@ -342,7 +346,10 @@ pub(super) fn signed_legacy_channel_scoped_connect_claims(
 
     sign(
         &LegacyClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: RegisteredJwtClaims {
+                exp: Some((duration_since_epoch().as_secs() + 8 * 60 * 60).into()),
+                ..RegisteredJwtClaims::default()
+            },
             user_id,
             label: Some("Alice".to_owned()),
             permissions,
@@ -360,7 +367,7 @@ pub(super) async fn create_room(
 ) -> Option<Arc<Room>> {
     server
         .room_manager
-        .serve_room(issuer, TEST_ROOM_KEY.into(), &config, None)
+        .serve_room(issuer, test_room_key(), &config, None)
         .await
         .ok()
 }

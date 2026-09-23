@@ -41,7 +41,7 @@ pub(super) async fn refresh_source_policy(room: &Room, adapter: &MediaTransport)
         .await;
 }
 
-pub(super) const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub(super) const TEST_ROOM_KEY: &[u8] = b"channel-key";
 const DEFAULT_ACTIVE_SPEAKER_AUDIO_LEVEL_DBOV: i8 = -20;
 
 pub(super) fn test_client_rtp_capabilities() -> MediaCapabilities {
@@ -254,7 +254,7 @@ async fn setup_joined_users_with_ready_publisher(adapter: MediaTransport) -> Joi
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -348,7 +348,7 @@ async fn setup_ready_users_with_manager(
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -375,7 +375,7 @@ pub(super) async fn setup_ready_users_with_transport_receivers(
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )

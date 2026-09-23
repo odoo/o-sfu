@@ -17,7 +17,7 @@
 use std::sync::{Arc, Mutex};
 
 use o_sfu_router::{RouterId, rtp::MediaCapabilities};
-use secrecy::SecretString;
+use secrecy::SecretSlice;
 
 use super::{Room, RoomRuntimeContext};
 use crate::{
@@ -141,7 +141,7 @@ pub(super) struct RoomInit {
     /// compatibility-facing issuer captured at room creation
     pub(super) issuer: String,
     /// room key captured from the first create request
-    pub(super) key: SecretString,
+    pub(super) key: SecretSlice<u8>,
     /// room-level compatibility configuration
     pub(super) config: RoomConfig,
     /// process metric catalog used by room observers
@@ -206,7 +206,12 @@ impl RoomFactory {
     /// The room emits no creation diagnostics. `RoomManager` publishes it
     /// before emitting its creation event
     #[must_use]
-    pub(crate) fn create(&self, issuer: &str, key: SecretString, config: &RoomConfig) -> Arc<Room> {
+    pub(crate) fn create(
+        &self,
+        issuer: &str,
+        key: SecretSlice<u8>,
+        config: &RoomConfig,
+    ) -> Arc<Room> {
         Arc::new(Room::new(RoomInit {
             runtime_context: self.allocate_runtime_context(),
             runtime_policy: self.runtime_policy.clone(),

@@ -25,6 +25,7 @@ o-sfu-telemetry.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 str0m.workspace = true
+subtle = "2.6"
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true

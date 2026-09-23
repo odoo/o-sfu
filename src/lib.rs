@@ -107,8 +107,10 @@
 //! ## JWT Admission
 //!
 //! Tokens are `HS256` only. [`auth::verify`] rejects any other `alg`, checks the
-//! HMAC in constant time and validates `exp`, `nbf` and the `iat` future-skew
-//! bound when those claims are present. It caps token size at
+//! HMAC in constant time and requires an unexpired `exp`. It validates `nbf`
+//! and the `iat` future-skew bound when present. Current Odoo does not issue
+//! `iat`. Tokens without `exp` fail with [`auth::AuthenticationError::MissingExpiry`].
+//! It caps token size at
 //! [`auth::MAX_JWT_TOKEN_BYTES`].
 //!
 //! There are two different keys:
@@ -117,7 +119,8 @@
 //!   the HTTP [`http::CreateRoomQuery`] path through [`auth::HttpRoomClaims`] and
 //!   [`auth::HttpDisconnectClaims`]. See [`config`].
 //! - **Per-room key**: the request that creates the current room pins the signing
-//!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. For more
+//!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. A direct
+//!   key must decode to at least 32 bytes or room creation returns `400`. For more
 //!   security, prefer the `keySeed` claim, which derives a per-room key with the
 //!   `AUTH_KEY` and provided seed using the following KDF:
 //!   ```text
@@ -127,7 +130,9 @@
 //!   ))
 //!   ```
 //!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
-//!   never against `AUTH_KEY`.
+//!   never against `AUTH_KEY`. Runtime construction decodes the global key once.
+//!   Room creation retains decoded secret bytes, so verification does not decode
+//!   stored keys and equivalent base64 encodings match the same reservation.
 //!
 //! HTTP room creation uses the
 //! `Authorization` header, HTTP disconnect uses the request body and the

@@ -131,7 +131,11 @@ async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
 
     let factory = test_factory();
     let mut directory = RoomDirectory::default();
-    let stale = factory.create(ISSUER, TEST_ROOM_KEY.into(), &RoomConfig::default());
+    let stale = factory.create(
+        ISSUER,
+        TEST_ROOM_KEY.to_vec().into(),
+        &RoomConfig::default(),
+    );
     directory.insert(
         Arc::clone(&stale),
         None,
@@ -148,7 +152,11 @@ async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
 
     // a reaper pass keeps its cloned entries while `/v1/channel` republishes the
     // issuer, so removal must be re-validated against the current row
-    let current = factory.create(ISSUER, TEST_ROOM_KEY.into(), &RoomConfig::default());
+    let current = factory.create(
+        ISSUER,
+        TEST_ROOM_KEY.to_vec().into(),
+        &RoomConfig::default(),
+    );
     directory.insert(
         Arc::clone(&current),
         None,

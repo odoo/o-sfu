@@ -9,6 +9,8 @@ const TEST_SFU_HTTP_BASE_URL = "http://127.0.0.1:18080";
 export const TEST_SFU_WS_URL = "ws://127.0.0.1:18080/";
 const DIAGNOSTICS_ROOM_PATH = "/internal/diagnostics/rooms";
 const AUDIO_OPERATION_TIMEOUT_MS = 250;
+const ROOM_TOKEN_TTL_SECONDS = 30;
+const CONNECT_TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const HARNESS_URL = "/playwright/fixtures/harness.html";
 const STREAM_TYPES = new Set(["audio", "camera", "screen"]);
 
@@ -22,7 +24,8 @@ export async function createChannel({
             Authorization: `Bearer ${signJwt(
                 {
                     iss: `playwright-${randomUUID()}`,
-                    key: roomKey
+                    key: roomKey,
+                    exp: Math.floor(Date.now() / 1000) + ROOM_TOKEN_TTL_SECONDS
                 },
                 authKey
             )}`
@@ -39,7 +42,8 @@ export function createConnectToken(channelUuid, sessionId, roomKey = TEST_ROOM_K
     return signJwt(
         {
             sfu_channel_uuid: channelUuid,
-            session_id: sessionId
+            session_id: sessionId,
+            exp: Math.floor(Date.now() / 1000) + CONNECT_TOKEN_TTL_SECONDS
         },
         roomKey
     );

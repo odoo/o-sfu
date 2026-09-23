@@ -41,7 +41,7 @@ use o_sfu_router::{
     },
 };
 
-pub const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub const TEST_ROOM_KEY: &[u8] = b"channel-key";
 const DEFAULT_MAX_SESSIONS: usize = 100;
 
 pub fn test_sender() -> (UserOutboundSender, UserOutboundReceiver) {
@@ -92,7 +92,12 @@ pub fn spillover_policy(max_local_routers: usize) -> Result<RoomWorkerPolicy> {
 
 pub async fn serve_room(manager: &RoomManager, issuer: &str) -> Result<Arc<Room>> {
     Ok(manager
-        .serve_room(issuer, TEST_ROOM_KEY.into(), &RoomConfig::default(), None)
+        .serve_room(
+            issuer,
+            TEST_ROOM_KEY.to_vec().into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await?)
 }
 

@@ -80,7 +80,12 @@ fn manager_with_room_worker_policy(room_worker_policy: RoomWorkerPolicy) -> Room
 
 async fn serve_test_room(manager: &RoomManager, issuer: &str) -> Arc<TestRoom> {
     manager
-        .serve_room(issuer, TEST_ROOM_KEY.into(), &RoomConfig::default(), None)
+        .serve_room(
+            issuer,
+            TEST_ROOM_KEY.to_vec().into(),
+            &RoomConfig::default(),
+            None,
+        )
         .await
         .expect("test room should be served")
 }
@@ -114,7 +119,7 @@ async fn room_and_user_lifecycle_events_preserve_contract_fields() {
     let room = manager
         .serve_room(
             "issuer-lifecycle-events",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             Some("203.0.113.1"),
         )
@@ -196,7 +201,7 @@ async fn users_bulk_disconnected_event_preserves_contract_fields() {
     let room = manager
         .serve_room(
             "issuer-bulk-disconnect",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             Some("203.0.113.1"),
         )
@@ -237,8 +242,8 @@ async fn room_manager_concurrent_create_and_cleanup_are_idempotent() {
     let config = RoomConfig::default();
 
     let (first, second) = tokio::join!(
-        manager.serve_room("issuer-a", TEST_ROOM_KEY.into(), &config, None),
-        manager.serve_room("issuer-a", TEST_ROOM_KEY.into(), &config, None),
+        manager.serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None),
+        manager.serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None),
     );
 
     let first = first.expect("test room should be served");
@@ -266,7 +271,7 @@ async fn manager_lifecycle_future_does_not_block_empty_cleanup() {
     let room = manager
         .serve_room(
             "issuer-a",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )
@@ -847,7 +852,7 @@ async fn a_conflicting_reservation_leaves_the_current_room_in_place() {
         manager
             .serve_room(
                 "issuer-conflicting-reservation",
-                "other-key".into(),
+                b"other-key".to_vec().into(),
                 &RoomConfig::default(),
                 None,
             )
@@ -882,7 +887,7 @@ async fn room_reservation_conflict_event_preserves_contract_fields() {
         manager
             .serve_room(
                 "issuer-reservation-conflict-events",
-                TEST_ROOM_KEY.into(),
+                TEST_ROOM_KEY.to_vec().into(),
                 &conflicting_config,
                 None,
             )

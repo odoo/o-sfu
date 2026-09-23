@@ -1,13 +1,12 @@
-use anyhow::{Result, anyhow, ensure};
-use o_sfu_rfc::jwt::HS256_MIN_KEY_BYTES;
-use secrecy::{ExposeSecret, SecretString};
+use anyhow::{Result, anyhow};
+use secrecy::SecretString;
 
 use super::{
     AuthConfig, DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
     DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
     env::{Env, positive},
 };
-use crate::runtime::auth::decode_key;
+use crate::runtime::auth::decode_signing_key;
 
 impl AuthConfig {
     pub(super) fn from_env(env: &Env<'_>) -> Result<Self> {
@@ -34,13 +33,6 @@ impl AuthConfig {
 }
 
 fn validate_auth_key(key: &'static str, value: SecretString) -> Result<SecretString> {
-    let key_len = decode_key(&value)
-        .map_err(|_error| anyhow!("{key} must be valid base64"))?
-        .expose_secret()
-        .len();
-    ensure!(
-        key_len >= HS256_MIN_KEY_BYTES,
-        "{key} must decode to at least {HS256_MIN_KEY_BYTES} bytes"
-    );
+    decode_signing_key(&value).map_err(|error| anyhow!("{key}: {error}"))?;
     Ok(value)
 }

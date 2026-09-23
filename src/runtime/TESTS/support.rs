@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub(super) const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
-pub(super) const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub(super) const TEST_ROOM_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 pub(super) struct RuntimeTestState {
     pub(super) state: RuntimeState,
@@ -151,7 +151,10 @@ impl RuntimeTestBuilder {
             self.config.user.room_reservation_ttl,
             self.config.user.departure_grace,
         );
-        let runtime_config = RuntimeConfig::from_config(&self.config);
+        let runtime_config = match RuntimeConfig::from_config(&self.config) {
+            Ok(config) => config,
+            Err(error) => panic!("runtime test auth config should be valid: {error}"),
+        };
         let state = RuntimeState::from_parts(
             runtime_config,
             Arc::clone(&room_manager),
@@ -179,4 +182,13 @@ pub(super) fn test_outbound_sender(
         state.config.user.outbound_queue_capacity,
         Arc::clone(&state.metrics),
     )
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "the shared room fixture key is valid HS256 material"
+)]
+pub(super) fn test_room_key() -> secrecy::SecretSlice<u8> {
+    super::auth::decode_signing_key(&TEST_ROOM_KEY.into())
+        .expect("shared test room key should be valid")
 }

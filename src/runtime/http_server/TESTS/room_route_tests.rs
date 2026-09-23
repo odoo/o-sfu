@@ -1,6 +1,10 @@
 use std::net::SocketAddr;
 
 use axum::extract::ConnectInfo;
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE},
+};
 use secrecy::{ExposeSecret, SecretString};
 
 use super::fixtures::*;
@@ -58,7 +62,7 @@ async fn room_rejects_unknown_authorization_scheme() -> TestResult {
 
 #[tokio::test]
 async fn room_accepts_legacy_jwt_authorization_scheme() -> TestResult {
-    let token = room_token(Some("issuer-a"), Some("Y2hhbm5lbC1rZXk="), None)?;
+    let token = room_token(Some("issuer-a"), Some(TEST_ROOM_KEY), None)?;
     assert_room_status(room_builder(&token, "jwt"), StatusCode::OK).await
 }
 
@@ -100,7 +104,7 @@ async fn room_rejects_malformed_seed_with_key() -> TestResult {
 
 #[tokio::test]
 async fn room_returns_uuid_and_request_base_url() -> TestResult {
-    let token = room_token(Some("issuer-a"), Some("Y2hhbm5lbC1rZXk="), None)?;
+    let token = room_token(Some("issuer-a"), Some(TEST_ROOM_KEY), None)?;
     let payload: RoomResponse = route_json(
         &test_state(),
         room_builder(&token, "Bearer"),
@@ -250,7 +254,7 @@ async fn room_route_supports_key_seed_claim() -> TestResult {
     )?;
     let expected_key = require_some(
         auth::derive_key_from_seed(
-            &SecretString::from(TEST_AUTH_KEY),
+            &auth::decode_signing_key(&SecretString::from(TEST_AUTH_KEY))?,
             &SecretString::from("c2VlZC1rZXk="),
         )
         .ok(),
@@ -278,7 +282,7 @@ async fn room_route_key_seed_claim_takes_precedence_over_key_claim() -> TestResu
     )?;
     let expected_key = require_some(
         auth::derive_key_from_seed(
-            &SecretString::from(TEST_AUTH_KEY),
+            &auth::decode_signing_key(&SecretString::from(TEST_AUTH_KEY))?,
             &SecretString::from("c2VlZC1rZXk="),
         )
         .ok(),
@@ -394,5 +398,72 @@ async fn malformed_room_route_query_counts_as_bad_request() -> TestResult {
     let metrics = state.metrics.snapshot();
     assert_eq!(metrics.http_room_requests(), 1);
     assert_eq!(metrics.http_room_bad_request(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn room_rejects_invalid_key_material() -> TestResult {
+    let below_minimum = STANDARD.encode([0_u8; 31]);
+    for key in [
+        "",
+        "Y2hhbm5lbC1rZXk=",
+        below_minimum.as_str(),
+        "invalid-base64!",
+    ] {
+        let token = room_token(Some("invalid-key"), Some(key), None)?;
+        assert_room_status(room_builder(&token, "Bearer"), StatusCode::BAD_REQUEST).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn room_reservation_matches_equivalent_base64_keys() -> TestResult {
+    let state = test_state();
+    let standard = STANDARD.encode([251_u8; 32]);
+    let url_safe = URL_SAFE.encode([251_u8; 32]);
+    let mut uuid = None;
+    for key in [
+        standard.as_str(),
+        standard.trim_end_matches('='),
+        url_safe.as_str(),
+        url_safe.trim_end_matches('='),
+    ] {
+        let token = room_token(Some("equivalent-key"), Some(key), None)?;
+        let room: RoomResponse = route_json(
+            &state,
+            room_builder(&token, "Bearer"),
+            Body::empty(),
+            StatusCode::OK,
+            "equivalent keys should reserve one room",
+        )
+        .await?;
+        if let Some(expected) = &uuid {
+            assert_eq!(expected, &room.uuid);
+        } else {
+            uuid = Some(room.uuid);
+        }
+    }
+    assert_eq!(state.metrics.snapshot().http_room_conflict(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn room_requires_unexpired_credentials() -> TestResult {
+    for exp in [None, Some(0_u64)] {
+        let mut claims = serde_json::json!({ "iss": "expiry-policy", "key": TEST_ROOM_KEY });
+        if let Some(exp) = exp {
+            require_some(
+                claims.as_object_mut(),
+                "credential claims should be an object",
+            )?
+            .insert("exp".to_owned(), serde_json::json!(exp));
+        }
+        let token = auth::sign(&claims, &SecretString::from(TEST_AUTH_KEY))?;
+        assert_room_status(
+            room_builder(token.expose_secret(), "Bearer"),
+            StatusCode::UNAUTHORIZED,
+        )
+        .await?;
+    }
     Ok(())
 }
