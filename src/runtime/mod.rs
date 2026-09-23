@@ -99,8 +99,8 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`anyhow::Error`] when the authentication key is malformed or
-    /// shorter than the HS256 minimum, the diagnostics token is invalid or
-    /// the media transport cannot be built.
+    /// shorter than the HS256 minimum, the diagnostics token is invalid, proxy
+    /// mode lacks trusted proxies or the media transport cannot be built.
     pub fn new(config: &Config) -> AnyResult<Self> {
         Self::from_services(config, RuntimeServices::default())
     }
@@ -113,6 +113,7 @@ impl Runtime {
     }
 
     fn from_services(config: &Config, services: RuntimeServices) -> AnyResult<Self> {
+        config.http.validate()?;
         config.diagnostics.validate()?;
         let runtime_config = RuntimeConfig::from_config(config)?;
         let media_transport = build_media_transport(config, &services)?;

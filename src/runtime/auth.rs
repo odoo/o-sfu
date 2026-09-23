@@ -22,7 +22,7 @@ use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Proves [`verify`] accepted a JWT under the supplied key.
+/// Proves [`verify_websocket_claims`] accepted the token for the selected room.
 pub(super) struct AuthProof(());
 
 pub const MAX_JWT_TOKEN_BYTES: usize = 16 * 1024;
@@ -39,8 +39,12 @@ pub enum AuthenticationError {
     InvalidJsonPayload,
     #[error("token has no participant ID")]
     MissingParticipantId,
-    #[error("unsupported JWT algorithm: {0}")]
-    UnsupportedAlgorithm(String),
+    #[error("token has no room ID")]
+    MissingRoomId,
+    #[error("token targets a different room")]
+    RoomMismatch,
+    #[error("unsupported JWT algorithm")]
+    UnsupportedAlgorithm,
     #[error("invalid JWT signature")]
     InvalidSignature,
     #[error("token has no expiration")]
@@ -104,11 +108,11 @@ pub struct WebSocketConnectClaims {
 /// Wire identities remain separate because Odoo internal users send both keys.
 /// The RTC session identifies the participant, while the account does not.
 #[derive(Deserialize)]
-pub(super) struct WebSocketWireClaims {
+struct WebSocketWireClaims {
     #[serde(flatten)]
     registered: RegisteredJwtClaims,
     #[serde(rename = "room_id", alias = "sfu_channel_uuid")]
-    pub(super) room_id: Option<String>,
+    room_id: Option<String>,
     session_id: Option<UserId>,
     user_id: Option<UserId>,
     label: Option<String>,
@@ -116,10 +120,14 @@ pub(super) struct WebSocketWireClaims {
 }
 
 impl WebSocketWireClaims {
-    pub(super) fn into_claims(
-        self,
-        room_id: String,
-    ) -> Result<WebSocketConnectClaims, AuthenticationError> {
+    fn into_claims(self, room_id: String) -> Result<WebSocketConnectClaims, AuthenticationError> {
+        if self
+            .room_id
+            .as_ref()
+            .is_some_and(|claimed| claimed != &room_id)
+        {
+            return Err(AuthenticationError::RoomMismatch);
+        }
         let user_id = self
             .session_id
             .or(self.user_id)
@@ -214,7 +222,7 @@ pub(super) fn verify_claims<T: DeserializeOwned>(
     let header: JwtHeader = serde_json::from_slice(&header_bytes)
         .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
     if header.alg != ALGORITHM_HS256 {
-        return Err(AuthenticationError::UnsupportedAlgorithm(header.alg));
+        return Err(AuthenticationError::UnsupportedAlgorithm);
     }
     let actual_signature = decode_jwt_segment(signature_b64)?;
     // This avoids copying the token data, and uses the token which is already protected by
@@ -230,28 +238,35 @@ pub(super) fn verify_claims<T: DeserializeOwned>(
         .map_err(|_error| AuthenticationError::InvalidJsonPayload)
 }
 
-/// Returns verified claims with proof or the [`AuthenticationError`] from [`verify`].
-pub(super) fn verify_with_proof<T: DeserializeOwned>(
+/// Verifies a room-scoped token and resolves its runtime participant identity.
+///
+/// Returns errors from JWT verification, [`AuthenticationError::RoomMismatch`]
+/// for a conflicting room claim or [`AuthenticationError::MissingParticipantId`].
+pub(super) fn verify_websocket_claims(
     token: &SecretString,
     key: &SecretSlice<u8>,
-) -> Result<(T, AuthProof), AuthenticationError> {
-    verify_claims(token, key).map(|claims| (claims, AuthProof(())))
+    room_id: &str,
+) -> Result<(WebSocketConnectClaims, AuthProof), AuthenticationError> {
+    let wire: WebSocketWireClaims = verify_claims(token, key)?;
+    let mut claims = wire.into_claims(room_id.to_owned())?;
+    claims.normalize_runtime_user_id();
+    Ok((claims, AuthProof(())))
 }
 
-/// decode untrusted JWT claims for candidate room selection only
+/// Extracts a candidate room ID without authenticating the token.
 ///
-/// callers must verify the same token with the selected room key before using
-/// the decoded claims as authenticated identity or permission data
-pub(crate) fn decode_unverified_claims<T>(token: &SecretString) -> Result<T, AuthenticationError>
-where
-    T: DeserializeOwned,
-{
+/// Returns `AuthenticationError` for malformed claims or a missing room ID.
+/// The caller must verify the same token with the selected room's key.
+pub(super) fn unverified_websocket_room(
+    token: &SecretString,
+) -> Result<String, AuthenticationError> {
     let token = token.expose_secret();
     validate_token_length(token)?;
     let (_header_b64, claims_b64, _signature_b64) = split_token(token)?;
     let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
-    serde_json::from_slice(claims_bytes.expose_secret())
-        .map_err(|_error| AuthenticationError::InvalidJsonPayload)
+    let claims: WebSocketWireClaims = serde_json::from_slice(claims_bytes.expose_secret())
+        .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
+    claims.room_id.ok_or(AuthenticationError::MissingRoomId)
 }
 
 fn validate_token_length(token: &str) -> Result<(), AuthenticationError> {

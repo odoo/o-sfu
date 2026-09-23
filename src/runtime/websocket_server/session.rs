@@ -99,19 +99,19 @@ async fn establish(
     let join = match auth {
         Ok(join) => join,
         Err(HandshakeError::PeerClosed) => return None,
-        Err(HandshakeError::Rejected(code)) => {
+        Err(HandshakeError::Shutdown) => {
+            close_writer_bounded(&mut writer, CloseCode::Leaving).await;
+            return None;
+        }
+        Err(error) => {
             handshake::reject(
                 &services,
                 &mut writer,
-                code,
+                error.close_code(),
                 remote.as_ref(),
-                "rejecting websocket during authentication",
+                error,
             )
             .await;
-            return None;
-        }
-        Err(HandshakeError::Shutdown) => {
-            close_writer_bounded(&mut writer, CloseCode::Leaving).await;
             return None;
         }
     };

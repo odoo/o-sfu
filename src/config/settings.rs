@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use ipnet::IpNet;
 use o_sfu_core::prelude::Bitrate;
 use secrecy::SecretString;
 
@@ -40,6 +41,8 @@ pub struct AuthConfig {
 pub struct HttpConfig {
     pub bind_address: SocketAddr,
     pub trust_proxy_headers: bool,
+    /// TCP peers permitted to supply forwarded request metadata when proxy mode is enabled.
+    pub trusted_proxies: Vec<IpNet>,
     /// Positive deadline in milliseconds for listener, session, background and RTC worker drainage.
     /// Loaded from `SHUTDOWN_TIMEOUT_MS` with a `10_000` default.
     pub shutdown_timeout_ms: u64,

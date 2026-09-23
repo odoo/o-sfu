@@ -164,6 +164,21 @@ fn websocket_claims_report_missing_participant_id() -> serde_json::Result<()> {
 }
 
 #[test]
+fn authentication_diagnostics_exclude_untrusted_algorithm() {
+    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"secret-algorithm"}"#);
+    let error = verify::<HttpRoomClaims>(
+        &SecretString::from(format!("{header}.e30.AA")),
+        &SecretString::from(TEST_AUTH_KEY),
+    )
+    .err();
+    assert_eq!(
+        error.as_ref().map(ToString::to_string).as_deref(),
+        Some("unsupported JWT algorithm")
+    );
+    assert!(!format!("{error:?}").contains("secret-algorithm"));
+}
+
+#[test]
 fn sign_and_verify_round_trip() {
     let claims = TestHttpRoomClaims {
         registered: RegisteredJwtClaims {

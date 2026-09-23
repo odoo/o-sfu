@@ -128,6 +128,7 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
         ("BIND_ADDRESS", "127.0.0.1:9000"),
         ("PROXY", "true"),
+        ("TRUSTED_PROXIES", "127.0.0.1/32, ::1/128"),
         ("SHUTDOWN_TIMEOUT_MS", "2500"),
         ("AUTHENTICATION_TIMEOUT_MS", "1500"),
         ("MAX_PRE_AUTH_WEBSOCKET_SESSIONS", "12"),
@@ -215,4 +216,29 @@ fn config_rejects_zero_runtime_limits() {
             "{key}"
         );
     }
+}
+
+#[test]
+fn proxy_mode_requires_an_explicit_trusted_proxy_network() -> anyhow::Result<()> {
+    assert!(config_error_from(&[("PROXY", "true")]).is_some());
+    for value in [
+        "",
+        " ",
+        "127.0.0.1",
+        "127.0.0.1/33",
+        "127.0.0.1/32,",
+        "localhost/32",
+    ] {
+        assert!(
+            config_error_from(&[("PROXY", "true"), ("TRUSTED_PROXIES", value)]).is_some(),
+            "{value}"
+        );
+    }
+    let config = config_from(&[
+        ("PROXY", "true"),
+        ("TRUSTED_PROXIES", "127.0.0.1/32, ::1/128"),
+    ])?;
+    assert_eq!(config.http.trusted_proxies.len(), 2);
+    assert_eq!(config.auth.authentication_timeout_ms, 10_000);
+    Ok(())
 }

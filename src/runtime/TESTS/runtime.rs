@@ -71,6 +71,33 @@ async fn runtime_accepts_absent_or_minimum_length_operator_token() -> AnyResult<
     Ok(())
 }
 
+#[tokio::test]
+async fn runtime_validates_programmatic_proxy_configuration() -> AnyResult<()> {
+    let mut config = RuntimeTestBuilder::new().config().clone();
+    config.http.trust_proxy_headers = true;
+    let result = Runtime::new(&config);
+    match result {
+        Ok(runtime) => {
+            runtime
+                .serve(|_state, _shutdown| async { Ok(()) }, async { Ok(()) })
+                .await?;
+            return Err(anyhow!("proxy mode without trusted proxies must fail"));
+        }
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "TRUSTED_PROXIES must contain at least one proxy CIDR when PROXY=true"
+        ),
+    }
+    for proxy in [None, Some("127.0.0.1/32")] {
+        config.http.trust_proxy_headers = proxy.is_some();
+        config.http.trusted_proxies = proxy.map(str::parse).transpose()?.into_iter().collect();
+        Runtime::new(&config)?
+            .serve(|_state, _shutdown| async { Ok(()) }, async { Ok(()) })
+            .await?;
+    }
+    Ok(())
+}
+
 #[test]
 fn runtime_rejects_invalid_programmatic_auth_keys() -> AnyResult<()> {
     let mut config = RuntimeTestBuilder::new().config().clone();

@@ -448,6 +448,7 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
         http: HttpConfig {
             bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
             trust_proxy_headers: true,
+            trusted_proxies: vec![IpAddr::V4(Ipv4Addr::LOCALHOST).into()],
             shutdown_timeout_ms: 10_000,
         },
         user: UserConfig {

@@ -72,13 +72,17 @@ struct VerifiedRoomRequest {
 /// [`VerifiedRoomRequest`] owns JWT verification and request-origin projection.
 async fn create(State(services): State<Services>, request: VerifiedRoomRequest) -> Response {
     async {
+        let remote_address = request
+            .origin
+            .remote_address
+            .map(|address| address.to_string());
         let serve_result = services
             .room_manager
             .serve_room(
                 &request.issuer,
                 request.room_key,
                 &request.config,
-                Some(request.origin.remote_address.as_str()),
+                remote_address.as_deref(),
             )
             .await;
         match serve_result {

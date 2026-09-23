@@ -112,6 +112,7 @@ const RAW_EXTENDED_64_BIT_LENGTH: u8 = 0x7f;
 /// This serves the Axum app over a local listener while keeping direct access to
 /// private room and media-transport state for server-crate tests. Full
 /// `Runtime::serve` startup coverage belongs to the integration test crate.
+/// Real TCP peer metadata must reach origin extraction for proxy trust tests.
 pub(super) struct TestServer {
     pub(super) addr: SocketAddr,
     pub(super) handle: JoinHandle<()>,
@@ -193,7 +194,11 @@ impl TestServerBuilder {
         )
         .ok()?;
         let handle = tokio::spawn(async move {
-            let result = axum::serve(listener, app(state_for_server, addr)).await;
+            let result = axum::serve(
+                listener,
+                app(state_for_server, addr).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
             assert!(
                 result.is_ok(),
                 "test server should stop cleanly: {result:?}"

@@ -17,7 +17,7 @@ use super::{
         MediaQualitySample, RecordingActionOutcome, RtpRelayDropKind, SourceSelectionKind,
         TransportHealthState, TransportHealthTransition, TransportIceState,
         TransportUserLifetimeBucket, WsBusClientFrameKind, WsBusDirection, WsBusFailureKind,
-        WsConnectionStage, WsSessionLoopExitReason, WsStartupFailureKind,
+        WsConnectionStage, WsPreAuthRejection, WsSessionLoopExitReason, WsStartupFailureKind,
     },
     rtc::{RtcMetrics, RtcMetricsRecorder},
     rtp::{RtpMetrics, RtpMetricsRecorder},
@@ -33,6 +33,7 @@ pub struct RuntimeMetrics {
     pub(super) ws_connections: CounterFamily<WsConnectionStage>,
     pub(super) ws_handshake_rejections: CounterFamily<WebSocketCloseCode>,
     pub(super) ws_handshake_rejections_other: Counter,
+    pub(super) ws_pre_auth_rejections: CounterFamily<WsPreAuthRejection>,
     pub(super) ws_startup_failures: CounterFamily<WsStartupFailureKind>,
     pub(super) ws_user_loops_started: Counter,
     pub(super) ws_user_loop_exits: CounterFamily<WsSessionLoopExitReason>,
@@ -175,6 +176,10 @@ impl RuntimeMetrics {
             )
             | None => self.ws_handshake_rejections_other.increment(),
         }
+    }
+
+    pub fn record_ws_pre_auth_rejection(&self, reason: WsPreAuthRejection) {
+        self.ws_pre_auth_rejections.increment(reason);
     }
 
     pub fn record_ws_user_joined(&self) {

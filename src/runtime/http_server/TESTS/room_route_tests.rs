@@ -188,15 +188,14 @@ async fn room_uses_forwarded_headers_when_proxy_trust_is_enabled() -> TestResult
     let token = room_token(Some("issuer-a"), Some(TEST_ROOM_KEY), None)?;
     let mut state = test_state();
     state.config.http.trust_proxy_headers = true;
+    state.config.http.trusted_proxies = vec!["127.0.0.1/32".parse()?, "10.0.0.0/8".parse()?];
     let payload: RoomResponse = route_json(
         &state,
         room_builder(&token, "Bearer")
-            .header(
-                "x-forwarded-host",
-                "proxy.example.com, internal.example.com",
-            )
-            .header("x-forwarded-proto", "https, http")
-            .header("x-forwarded-for", "198.51.100.24, 10.0.0.1"),
+            .header("x-forwarded-host", "proxy.example.com")
+            .header("x-forwarded-proto", "https")
+            .header("x-forwarded-for", "198.51.100.24, 10.0.0.1")
+            .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8070)))),
         Body::empty(),
         StatusCode::OK,
         "room request should complete",

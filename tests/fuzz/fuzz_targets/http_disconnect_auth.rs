@@ -72,10 +72,13 @@ fuzz_target!(|input: HttpRouteInput| {
         "x-forwarded-for",
         input.forwarded_for.as_deref(),
     );
+    let connect_info = input.connect_info.map(SocketAddrInput::into_socket_addr);
+    let trusted_proxy = connect_info.map(|peer| peer.ip().into());
     let _ = resolve_request_origin(
         &headers,
         input.trust_proxy_headers,
+        trusted_proxy.as_slice(),
         SocketAddr::from(([127, 0, 0, 1], 8070)),
-        input.connect_info.map(SocketAddrInput::into_socket_addr),
+        connect_info,
     );
 });
