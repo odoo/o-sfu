@@ -1,6 +1,7 @@
 mod auth;
 mod codec_flags;
 mod codec_preferences;
+mod deadline;
 mod diagnostics;
 mod env;
 mod feature_flags;
@@ -17,6 +18,7 @@ pub use o_sfu_core::prelude::{
 };
 
 pub use self::{
+    deadline::DeadlineDuration,
     diagnostics::DiagnosticsConfig,
     feature_flags::RuntimeFeatureFlags,
     settings::{

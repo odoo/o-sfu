@@ -32,6 +32,7 @@ use crate::{
     runtime::{
         RuntimeMetrics,
         telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+        test_support::RuntimeTestBuilder,
     },
 };
 
@@ -40,12 +41,9 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn config() -> HttpConfig {
     HttpConfig {
-        bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
-        trust_proxy_headers: false,
-        trusted_proxies: Vec::new(),
         max_http_connections: 1,
         header_read_timeout: HEADER_TIMEOUT,
-        shutdown_timeout_ms: 10_000,
+        ..RuntimeTestBuilder::new().config().http.clone()
     }
 }
 

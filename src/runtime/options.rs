@@ -1,7 +1,9 @@
 use secrecy::SecretSlice;
 
 use super::auth::{AuthenticationError, decode_signing_key};
-use crate::config::{Config, DiagnosticsConfig, HttpConfig, RuntimeFeatureFlags, UserConfig};
+use crate::config::{
+    Config, DeadlineDuration, DiagnosticsConfig, HttpConfig, RuntimeFeatureFlags, UserConfig,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeConfig {
@@ -15,7 +17,7 @@ pub(crate) struct RuntimeConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct RuntimeAuthConfig {
     pub(crate) key: SecretSlice<u8>,
-    pub(crate) authentication_timeout_ms: u64,
+    pub(crate) authentication_timeout: DeadlineDuration,
     pub(crate) max_pre_auth_websocket_sessions: usize,
     pub(crate) max_pre_auth_websocket_sessions_per_origin: usize,
 }
@@ -25,7 +27,7 @@ impl RuntimeConfig {
         Ok(Self {
             auth: RuntimeAuthConfig {
                 key: decode_signing_key(&config.auth.key)?,
-                authentication_timeout_ms: config.auth.authentication_timeout_ms,
+                authentication_timeout: config.auth.authentication_timeout,
                 max_pre_auth_websocket_sessions: config.auth.max_pre_auth_websocket_sessions,
                 max_pre_auth_websocket_sessions_per_origin: config
                     .auth

@@ -563,6 +563,34 @@ fn media_transport_build_rejects_invalid_worker_count() {
 }
 
 #[test]
+fn media_transport_build_bounds_programmatic_sampling_intervals()
+-> Result<(), MediaTransportBuildError> {
+    for interval in [
+        None,
+        Some(Duration::ZERO),
+        Some(Duration::from_millis(1)),
+        Some(Duration::from_hours(24)),
+    ] {
+        let mut config = test_media_transport_config(1, test_rtc_port_range());
+        config.media_quality_interval = interval;
+        let _transport = MediaTransport::build(config, test_media_transport_deps())?;
+    }
+    // Native callers bypass environment parsing but still reach str0m deadline arithmetic.
+    for interval in [
+        Duration::from_millis(86_400_001),
+        Duration::from_millis(u64::MAX),
+    ] {
+        let mut config = test_media_transport_config(1, test_rtc_port_range());
+        config.media_quality_interval = Some(interval);
+        assert_eq!(
+            MediaTransport::build(config, test_media_transport_deps()).err(),
+            Some(MediaTransportBuildError::InvalidMediaQualityInterval)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn media_transport_build_rejects_invalid_port_split() {
     let config = test_media_transport_config(3, RtcPortRange::new(46_220, 46_221));
     let result = MediaTransport::build(config, test_media_transport_deps());
