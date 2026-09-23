@@ -133,10 +133,12 @@
 //! `Authorization` header, HTTP disconnect uses the request body and the
 //! WebSocket client sends a first-frame auth envelope decoded by
 //! [`websocket::decode_auth_payload_text`]. An unverified room id selects only a
-//! candidate key, then the same token is re-verified against it. Modern
+//! candidate key, then the same token is verified once against it. Modern
 //! [`auth::WebSocketConnectClaims`] must name the selected room. Legacy Odoo
 //! tokens select it through the auth envelope's `channel` and are normalized
-//! only after verification with that room's key.
+//! only after verification with that room's key. Odoo may send both
+//! `session_id` and account `user_id`. The session takes precedence as the
+//! participant identity. Tokens without either identity are rejected.
 //!
 //! Admission establishes identity and room scope. It does not enforce the
 //! per-user `permissions` claim provided by each tenant.

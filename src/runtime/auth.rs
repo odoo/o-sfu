@@ -12,7 +12,10 @@ use o_sfu_protocol::wire::{UserId, UserPermissions};
 use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 pub use o_sfu_rfc::jwt::{NumericDate, RegisteredJwtClaims};
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, DeserializeOwned},
+};
 use sha2::Sha256;
 use thiserror::Error;
 use zeroize::Zeroize;
@@ -34,6 +37,8 @@ pub enum AuthenticationError {
     InvalidBase64Encoding,
     #[error("invalid JSON payload")]
     InvalidJsonPayload,
+    #[error("token has no participant ID")]
+    MissingParticipantId,
     #[error("unsupported JWT algorithm: {0}")]
     UnsupportedAlgorithm(String),
     #[error("invalid JWT signature")]
@@ -80,18 +85,60 @@ impl HttpDisconnectClaims {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WebSocketConnectClaims {
     #[serde(flatten)]
     pub registered: RegisteredJwtClaims,
-    #[serde(rename = "room_id", alias = "sfu_channel_uuid")]
     pub room_id: String,
-    #[serde(rename = "user_id", alias = "session_id")]
     pub user_id: UserId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permissions: Option<UserPermissions>,
+}
+
+/// Wire identities remain separate because Odoo internal users send both keys.
+/// The RTC session identifies the participant, while the account does not.
+#[derive(Deserialize)]
+pub(super) struct WebSocketWireClaims {
+    #[serde(flatten)]
+    registered: RegisteredJwtClaims,
+    #[serde(rename = "room_id", alias = "sfu_channel_uuid")]
+    pub(super) room_id: Option<String>,
+    session_id: Option<UserId>,
+    user_id: Option<UserId>,
+    label: Option<String>,
+    permissions: Option<UserPermissions>,
+}
+
+impl WebSocketWireClaims {
+    pub(super) fn into_claims(
+        self,
+        room_id: String,
+    ) -> Result<WebSocketConnectClaims, AuthenticationError> {
+        let user_id = self
+            .session_id
+            .or(self.user_id)
+            .ok_or(AuthenticationError::MissingParticipantId)?;
+        Ok(WebSocketConnectClaims {
+            registered: self.registered,
+            room_id,
+            user_id,
+            label: self.label,
+            permissions: self.permissions,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for WebSocketConnectClaims {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut wire = WebSocketWireClaims::deserialize(deserializer)?;
+        let room_id = wire
+            .room_id
+            .take()
+            .ok_or_else(|| de::Error::missing_field("room_id"))?;
+        wire.into_claims(room_id).map_err(de::Error::custom)
+    }
 }
 
 impl WebSocketConnectClaims {

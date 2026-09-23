@@ -5,7 +5,7 @@ use tokio::net::TcpSocket;
 use tungstenite::http::StatusCode;
 
 use super::fixtures::*;
-use crate::runtime::auth::MAX_JWT_TOKEN_BYTES;
+use crate::runtime::auth::{MAX_JWT_TOKEN_BYTES, duration_since_epoch};
 
 // deliberately creates a startup snapshot large enough to exercise outbound backpressure
 const SLOW_READER_PEER_COUNT: usize = 48;
@@ -421,6 +421,125 @@ async fn websocket_startup_send_timeout_releases_room_membership() {
     );
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_user_loops_started(), 0);
+}
+
+#[tokio::test]
+async fn websocket_authenticates_odoo_internal_session_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "odoo-internal", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    let claims = serde_json::json!({
+        "sfu_channel_uuid": room.uuid(),
+        "session_id": 170,
+        "user_id": 42,
+        "label": "Alice",
+        "ice_servers": [],
+        "permissions": { "audioRecording": true },
+        "exp": duration_since_epoch().as_secs() + 8 * 60 * 60,
+    });
+    let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+    let mut websocket = require_some(
+        authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+        "internal-user websocket should connect",
+    )?;
+    require_some(
+        read_welcome(&mut websocket).await,
+        "Odoo internal user should authenticate",
+    )?;
+    assert!(
+        server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(170))
+            .await
+    );
+    assert!(
+        !server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(42))
+            .await
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_authenticates_odoo_guest_session_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "odoo-guest", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    let token = sign(
+        &serde_json::json!({
+            "sfu_channel_uuid": room.uuid(),
+            "session_id": "171",
+            "label": "Guest",
+            "ice_servers": [],
+            "permissions": {},
+            "exp": duration_since_epoch().as_secs() + 8 * 60 * 60,
+        }),
+        &secrecy::SecretString::from(TEST_ROOM_KEY),
+    )?;
+    let mut websocket = require_some(
+        authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+        "guest websocket should connect",
+    )?;
+    require_some(
+        read_welcome(&mut websocket).await,
+        "Odoo guest should authenticate",
+    )?;
+    assert!(
+        server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(171))
+            .await
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_rejects_missing_or_malformed_participant_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "invalid-identity", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    for mut claims in [
+        serde_json::json!({}),
+        serde_json::json!({ "session_id": [] }),
+    ] {
+        let object = require_some(
+            claims.as_object_mut(),
+            "credential claims should be an object",
+        )?;
+        object.insert("room_id".to_owned(), serde_json::json!(room.uuid()));
+        object.insert(
+            "exp".to_owned(),
+            serde_json::json!(duration_since_epoch().as_secs() + 60),
+        );
+        let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+        let mut websocket = require_some(
+            authenticate_with_room(
+                &server,
+                secrecy::ExposeSecret::expose_secret(&token),
+                Some(room.uuid()),
+            )
+            .await,
+            "invalid-identity websocket should connect",
+        )?;
+        assert_eq!(
+            read_close_code_promptly(&mut websocket).await,
+            Some(CloseCode::Library(u16::from(
+                WebSocketCloseCode::AuthFailed
+            )))
+        );
+    }
+    assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    Ok(())
 }
 
 #[tokio::test]
