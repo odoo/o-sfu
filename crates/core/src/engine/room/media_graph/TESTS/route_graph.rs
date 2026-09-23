@@ -117,14 +117,15 @@ fn actions(effects: Vec<TransportRelayRouteEffect>) -> Vec<TransportRelayRouteAc
 
 #[test]
 fn intent_survives_detach_and_resets_source_selection() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let key = key(2);
     let target = target(2, 20, SOURCE_ONE);
     graph.merge_intent(
-        key.clone(),
+        &key,
         SourceSubscriptionIntent::new(Some(false), Some(VideoLayoutIntent::Pinned)),
+        true,
     );
-    graph.merge_intent(key.clone(), SourceSubscriptionIntent::default());
+    graph.merge_intent(&key, SourceSubscriptionIntent::default(), true);
     let reservation = reserve(
         &mut graph,
         &key,
@@ -161,7 +162,7 @@ fn intent_survives_detach_and_resets_source_selection() {
 
 #[test]
 fn receiver_reset_rejects_stale_reservation_for_same_publication() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let key = key(2);
     let target = target(2, 20, SOURCE_ONE);
     let stale = reserve(
@@ -204,7 +205,7 @@ fn receiver_reset_rejects_stale_reservation_for_same_publication() {
 
 #[test]
 fn detach_prunes_default_record_and_full_leave_deletes_intent() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let default_key = key(2);
     assert!(graph.attach_for_setup(default_key, SOURCE_ONE));
     graph.detach_source(SOURCE_ONE);
@@ -212,8 +213,9 @@ fn detach_prunes_default_record_and_full_leave_deletes_intent() {
 
     let explicit_key = key(3);
     graph.merge_intent(
-        explicit_key.clone(),
+        &explicit_key,
         SourceSubscriptionIntent::new(Some(false), None),
+        true,
     );
     assert!(graph.attach_for_setup(explicit_key, SOURCE_TWO));
     graph.remove_receiver(&UserId::Integer(3));
@@ -222,7 +224,7 @@ fn detach_prunes_default_record_and_full_leave_deletes_intent() {
 
 #[test]
 fn pending_and_committed_counts_follow_realization_state() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let pending_key = key(2);
     let committed_key = key(3);
     let pending = reserve(
@@ -261,13 +263,10 @@ fn pending_and_committed_counts_follow_realization_state() {
 
 #[test]
 fn receiver_reset_clears_realization_and_preserves_intent() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let key = key(2);
     let target = target(2, 20, SOURCE_ONE);
-    graph.merge_intent(
-        key.clone(),
-        SourceSubscriptionIntent::new(Some(false), None),
-    );
+    graph.merge_intent(&key, SourceSubscriptionIntent::new(Some(false), None), true);
     let reservation = reserve(
         &mut graph,
         &key,
@@ -296,7 +295,7 @@ fn receiver_reset_clears_realization_and_preserves_intent() {
 
 #[test]
 fn stale_source_or_route_cannot_commit_after_reattach() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let key = key(2);
     let old_target = target(2, 20, SOURCE_ONE);
     let stale = reserve(
@@ -358,7 +357,7 @@ fn stale_source_or_route_cannot_commit_after_reattach() {
 
 #[test]
 fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let key = key(2);
     let target = target(2, 20, SOURCE_ONE);
     let reservation = reserve(
@@ -412,7 +411,7 @@ fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
 
 #[test]
 fn rejected_route_preserves_selection_and_shared_relay() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let inactive_target = target(2, 20, SOURCE_ONE);
     let active_target = target(3, 30, SOURCE_ONE);
     let inactive_key = key(2);
@@ -469,7 +468,7 @@ fn rejected_route_preserves_selection_and_shared_relay() {
 
 #[test]
 fn source_activity_targets_pending_and_committed_relay_workers() {
-    let mut graph = RouteGraph::default();
+    let mut graph = RouteGraph::new(4);
     let target = target(2, 20, SOURCE_ONE);
     let key = key(2);
     let reservation = reserve(
