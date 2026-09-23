@@ -181,7 +181,7 @@ fn jwt_segment_failures_are_classified_semantically() {
             &SecretString::from(unsupported_algorithm),
             &SecretString::from(TEST_AUTH_KEY)
         ),
-        Err(AuthenticationError::UnsupportedAlgorithm("none".to_owned()))
+        Err(AuthenticationError::UnsupportedAlgorithm)
     );
 
     let invalid_signature = mutate_signature(valid_token.expose_secret());

@@ -9,7 +9,7 @@ use crate::metrics::{
     RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
     RtcRemotePacketGateConvergence, RtcRouteControlOutcome, RtpDecoderRefreshScope,
     RtpForwardDestinationKind, RuntimeMetrics, SourceSelectionKind, TransportHealthState,
-    TransportIceState, WsSessionLoopExitReason,
+    TransportIceState, WsPreAuthRejection, WsSessionLoopExitReason,
 };
 
 fn assert_http_and_websocket_metrics(rendered: &str) {
@@ -23,6 +23,9 @@ fn assert_http_and_websocket_metrics(rendered: &str) {
     assert!(
         rendered.contains("osfu_ws_handshake_rejections_total{close_code=\"protocol_error\"} 1")
     );
+    assert!(rendered.contains("osfu_ws_pre_auth_rejections_total{limit=\"global\"} 1"));
+    assert!(rendered.contains("osfu_ws_pre_auth_rejections_total{limit=\"origin\"} 1"));
+    assert!(rendered.contains("osfu_ws_handshake_rejections_total{close_code=\"error\"} 0"));
     assert!(rendered.contains("# TYPE osfu_ws_handshake_duration_seconds histogram"));
     assert!(rendered.contains("osfu_ws_handshake_duration_seconds_count 1"));
     assert!(rendered.contains("osfu_ws_auth_duration_seconds_count 1"));
@@ -126,6 +129,8 @@ fn sample_metrics() -> RuntimeMetrics {
     drop(metrics.track_http_request(HttpRoute::Noop));
     drop(metrics.track_http_request(HttpRoute::Metrics));
     metrics.record_ws_connection_accepted();
+    metrics.record_ws_pre_auth_rejection(WsPreAuthRejection::Global);
+    metrics.record_ws_pre_auth_rejection(WsPreAuthRejection::Origin);
     metrics.record_ws_handshake_rejection(Some(WebSocketCloseCode::ProtocolError));
     metrics.record_ws_user_loop_exit(WsSessionLoopExitReason::TransportDisconnected);
     metrics.record_ws_bus_batch_received(2);
@@ -209,7 +214,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 81);
+    assert_eq!(METRIC_FAMILY_COUNT, 82);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered

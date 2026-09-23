@@ -201,6 +201,11 @@ impl_exported_metric_label!(WebSocketCloseCode {
     Overloaded => (8, "overloaded"),
 });
 
+impl_exported_metric_label!(pub enum WsPreAuthRejection {
+    Global => (0, "global"),
+    Origin => (1, "origin"),
+});
+
 impl_exported_metric_label!(pub(super) enum WsStartupFailureKind {
     StartupSend => (0, "startup_send"),
     SessionInitialize => (1, "user_initialize"),

@@ -164,10 +164,10 @@
 //! ## Signaling Transport
 //!
 //! HTTPS and WSS are expected to be terminated by an external reverse proxy.
-//! Setting `PROXY=true` in [`config`] trusts forwarded headers for every request.
-//! It does not restrict trust to selected proxy addresses. Every request must
-//! then pass through a proxy that strips or overwrites client-supplied
-//! `x-forwarded-*` headers. See [`http::resolve_request_origin`] for origin
+//! Setting `PROXY=true` in [`config`] requires `TRUSTED_PROXIES` CIDRs.
+//! Forwarded headers are honored only when the TCP peer belongs to that set.
+//! The public edge must overwrite client-supplied forwarded host and protocol
+//! headers. See [`http::resolve_request_origin`] for origin
 //! resolution and [`http`] for operator route access.
 //!
 //! # Room and Router Ownership

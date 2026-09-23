@@ -56,6 +56,7 @@ impl RuntimeTestBuilder {
                 http: HttpConfig {
                     bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
                     trust_proxy_headers: false,
+                    trusted_proxies: Vec::new(),
                     shutdown_timeout_ms: 10_000,
                 },
                 user: UserConfig {
@@ -127,6 +128,7 @@ impl RuntimeTestBuilder {
 
     pub(super) fn trust_proxy_headers(mut self, value: bool) -> Self {
         self.config.http.trust_proxy_headers = value;
+        self.config.http.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST).into()];
         self
     }
 

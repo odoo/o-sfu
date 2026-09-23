@@ -32,7 +32,7 @@ pub use self::{
         RtcOutputBudgetLimit, RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult,
         RtcRemoteControlDropKind, RtcRemotePacketGateConvergence, RtcRouteControlOutcome,
         RtpDecoderRefreshScope, RtpForwardDestinationKind, RtpRelayDropKind, SourceSelectionKind,
-        TransportHealthState, TransportIceState, WsSessionLoopExitReason,
+        TransportHealthState, TransportIceState, WsPreAuthRejection, WsSessionLoopExitReason,
     },
     rtc::RtcMetricsRecorder,
     rtp::RtpMetricsRecorder,
