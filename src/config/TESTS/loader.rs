@@ -56,7 +56,7 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
     let error = config_error_from(&[("AUTH_KEY", &short)]);
     assert_eq!(
         error.as_deref(),
-        Some("AUTH_KEY must decode to at least 32 bytes")
+        Some("AUTH_KEY: HS256 key must contain at least 32 decoded bytes")
     );
 
     let standard = STANDARD.encode([0xff; 32]);
@@ -78,7 +78,7 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
     );
 
     let error = config_error_from(&[("AUTH_KEY", "not base64")]);
-    assert_eq!(error.as_deref(), Some("AUTH_KEY must be valid base64"));
+    assert_eq!(error.as_deref(), Some("AUTH_KEY: invalid base64 encoding"));
     Ok(())
 }
 

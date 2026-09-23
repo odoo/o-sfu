@@ -3,6 +3,8 @@
 //! translation
 //! serde, base64 and crypto internals are places we could catch UB with miri
 
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use o_sfu::{
     auth::{
@@ -25,8 +27,16 @@ use secrecy::{ExposeSecret, SecretString};
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 
 fn sample_websocket_claims() -> WebSocketConnectClaims {
+    let expiry = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .saturating_add(Duration::from_hours(1))
+        .as_secs();
     WebSocketConnectClaims {
-        registered: RegisteredJwtClaims::default(),
+        registered: RegisteredJwtClaims {
+            exp: Some(expiry.into()),
+            ..RegisteredJwtClaims::default()
+        },
         room_id: "room-1".to_owned(),
         user_id: UserId::String("peer-7".to_owned()),
         label: Some("Peer 7".to_owned()),
@@ -51,8 +61,9 @@ fn mutate_signature(token: &str) -> Option<String> {
     }
     let signature = parts.get_mut(2)?;
     let mut chars = signature.chars().collect::<Vec<_>>();
-    let last = chars.last_mut()?;
-    *last = if *last == 'A' { 'B' } else { 'A' };
+    // Keep the unused trailing Base64 bits valid while corrupting the signature.
+    let first = chars.first_mut()?;
+    *first = if *first == 'A' { 'B' } else { 'A' };
     *signature = chars.into_iter().collect();
     Some(parts.join("."))
 }

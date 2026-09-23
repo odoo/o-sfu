@@ -25,7 +25,7 @@ async fn disconnect_route_kicks_live_users() -> TestResult {
             .room_manager
             .serve_room(
                 "issuer-disconnect",
-                TEST_ROOM_KEY.into(),
+                test_room_key(),
                 &RoomConfig::default(),
                 None,
             )
@@ -127,5 +127,29 @@ async fn disconnect_route_updates_metrics_for_all_outcomes() -> TestResult {
     assert_eq!(metrics.http_disconnect_bad_request(), 1);
     assert_eq!(metrics.http_disconnect_unprocessable_entity(), 1);
     assert_eq!(metrics.http_disconnect_success(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn disconnect_requires_unexpired_credentials() -> TestResult {
+    for exp in [None, Some(0_u64)] {
+        let mut claims = serde_json::json!({ "sessionIdsByChannel": {} });
+        if let Some(exp) = exp {
+            require_some(
+                claims.as_object_mut(),
+                "credential claims should be an object",
+            )?
+            .insert("exp".to_owned(), serde_json::json!(exp));
+        }
+        let token = auth::sign(&claims, &secrecy::SecretString::from(TEST_AUTH_KEY))?;
+        route_status(
+            &test_state(),
+            Request::post(route::v1::DISCONNECT),
+            Body::from(secrecy::ExposeSecret::expose_secret(&token).to_owned()),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "disconnect requires expiry",
+        )
+        .await?;
+    }
     Ok(())
 }

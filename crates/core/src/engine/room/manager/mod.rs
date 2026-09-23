@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
 
 use o_sfu_telemetry::schema::event as telemetry_event;
-use secrecy::SecretString;
+use secrecy::SecretSlice;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -81,7 +81,7 @@ pub struct RuntimeRoomDirectorySnapshot {
 fn retrieve_room_reservation(
     directory: &RoomDirectory,
     issuer: &str,
-    key: &SecretString,
+    key: &SecretSlice<u8>,
     config: &RoomConfig,
 ) -> Result<Option<Arc<Room>>, RoomManagerServeError> {
     let Some(entry) = directory.entry_by_issuer(issuer) else {
@@ -135,7 +135,8 @@ impl RoomManager {
 
     /// Returns the current room for `issuer` or publishes a new reservation.
     ///
-    /// The first reservation fixes `key`, `config` and `remote_address`.
+    /// The first reservation fixes decoded key bytes, config and remote address.
+    /// The admitting runtime validates key encoding and strength before this call.
     /// Matching requests return the same room and renew an outstanding
     /// reservation without rearming one retired by a successful join.
     ///
@@ -146,7 +147,7 @@ impl RoomManager {
     pub async fn serve_room(
         &self,
         issuer: &str,
-        key: SecretString,
+        key: SecretSlice<u8>,
         config: &RoomConfig,
         remote_address: Option<&str>,
     ) -> Result<Arc<Room>, RoomManagerServeError> {

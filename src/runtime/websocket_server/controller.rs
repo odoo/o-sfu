@@ -15,16 +15,16 @@ use tracing::warn;
 
 use super::{admission::PreAuthWebSocketAdmissionRejection, io::MAX_CLIENT_FRAME_BYTES, session};
 use crate::{
-    config::{AuthConfig, UserConfig},
+    config::UserConfig,
     core::prelude::SfuCore,
     runtime::{
-        RuntimeMetrics, RuntimeState, request_origin::RequestOrigin, room::RoomManager,
-        telemetry::schema::event as telemetry_event,
+        RuntimeMetrics, RuntimeState, options::RuntimeAuthConfig, request_origin::RequestOrigin,
+        room::RoomManager, telemetry::schema::event as telemetry_event,
     },
 };
 
 pub(crate) struct WebSocketServices {
-    pub(super) auth: AuthConfig,
+    pub(super) auth: RuntimeAuthConfig,
     pub(super) user: UserConfig,
     pub(super) room_manager: Arc<RoomManager>,
     pub(super) sfu_core: SfuCore,

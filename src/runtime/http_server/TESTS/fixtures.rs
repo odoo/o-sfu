@@ -26,7 +26,7 @@ pub(super) use crate::runtime::{
     room::{Room, RoomConfig, UserOutboundReceiver},
     test_support::{
         RuntimeMetricsSnapshotTestExt, RuntimeTestBuilder, RuntimeTestState, TEST_AUTH_KEY,
-        TEST_ROOM_KEY, test_outbound_sender,
+        TEST_ROOM_KEY, test_outbound_sender, test_room_key,
     },
 };
 
@@ -60,6 +60,7 @@ pub(super) fn signed_room_claims(
         &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: issuer.map(str::to_owned),
+                exp: Some((auth::duration_since_epoch().as_secs() + 30).into()),
                 ..RegisteredJwtClaims::default()
             },
             key,
@@ -76,7 +77,10 @@ pub(super) fn signed_disconnect_claims(
 ) -> Option<String> {
     auth::sign(
         &HttpDisconnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: RegisteredJwtClaims {
+                exp: Some((auth::duration_since_epoch().as_secs() + 20).into()),
+                ..RegisteredJwtClaims::default()
+            },
             user_ids_by_room,
         },
         &SecretString::from(TEST_AUTH_KEY),
