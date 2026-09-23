@@ -63,7 +63,8 @@ see: https://github.com/odoo/o-sfu/releases
 
 ## Privacy & Data Handling
 
-`o-sfu` only operates in-memory, there is no persistent storage.
+The server routes media and maintains room state in memory. Deployment logs
+have their own storage and retention policies.
 
 ### 1. Data Processed
 
@@ -72,13 +73,13 @@ see: https://github.com/odoo/o-sfu/releases
 | **Network & IP Addresses** | Client IP addresses                                 | Real-time WebRTC media routing, connection rate-limiting (anti-abuse/DoS), and diagnostic logging. |
 | **User & Room Identity**   | Ephemeral user IDs and room IDs                     | Authenticating connections and routing media to the correct call participants.                     |
 | **Call Presence**          | Mute state, camera/screen status, speaking activity | Relayed in real time only to active participants within the same room.                             |
-| **Media Streams**          | Audio, video, and screen sharing                    | Encrypted in transit (DTLS-SRTP), routed in volatile memory, and never stored.                     |
+| **Media Streams**          | Audio, video, and screen sharing                    | Encrypted in transit (DTLS-SRTP) and routed in memory.                     |
 
 ### 2. Media Confidentiality & Storage
 
-- **In-Memory Forwarding**: Media streams are forwarded in volatile memory only. `o-sfu` does not record, transcode, inspect content, or write media payloads to disk.
+- **In-Memory Forwarding**: The forwarding path does not transcode or persist media. It parses RTP and codec metadata.
 - **Transport Encryption**: All WebRTC media streams are encrypted in transit over UDP using DTLS-SRTP (the crypto backend is [AWS libcrypto](https://github.com/aws/aws-lc-rs)).
-- **Zero Local Persistence**: `o-sfu` has no database or file storage. When a call ends or a participant leaves, all associated routing and session data are immediately erased from memory.
+- **State Retention**: Session and routing state are released through lifecycle cleanup. Empty-room grace periods can retain room state. Dropping ordinary allocations is not a guarantee that their memory is immediately overwritten.
 
 ### 3. Logging & Observability
 
