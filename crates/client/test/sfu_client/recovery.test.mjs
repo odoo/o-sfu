@@ -23,91 +23,93 @@ import {
     buildVideoRenegotiationFrame
 } from "../support/negotiation_fixtures.mjs";
 
-test("real protocol core replays sticky publish after recovery transport readiness", async () => {
-    const harness = createRecoveryHarness();
-    const { client, sockets, connect, emitMessage, open, peerConnections } = harness;
+for (const closeCode of [WS_CLOSE_CODE.ERROR, WS_CLOSE_CODE.OVERLOADED]) {
+    test(`real protocol core replays sticky intent after close ${closeCode}`, async () => {
+        const harness = createRecoveryHarness();
+        const { client, sockets, connect, emitMessage, open, peerConnections } = harness;
 
-    const cameraTrack = createCameraTrack("camera-track-1");
+        const cameraTrack = createCameraTrack("camera-track-1");
 
-    await connect("ws://example.test/ws", "jwt-token", {
-        channelUUID: "channel-a"
+        await connect("ws://example.test/ws", "jwt-token", {
+            channelUUID: "channel-a"
+        });
+
+        await open();
+        await emitMessage(buildWelcomeFrame());
+        await emitMessage(buildNegotiationFrame("offer", "server-initial", "1"));
+
+        client.publish("camera", cameraTrack);
+        await tick();
+        await emitMessage(buildNegotiationFrame("renegotiate", "server-publish", "2"));
+        client.subscribe(7, { audio: true, camera: false });
+        client.updateInfo({ isCameraOn: true, isRaisingHand: true });
+        await tick();
+
+        sockets[0].emitClose(closeCode);
+        await tick();
+        await authenticateRecovery(harness);
+
+        assert.deepEqual(decodeSentFrame(sockets[1], 0), [
+            {
+                t: "auth",
+                p: {
+                    jwt: "jwt-token",
+                    channel: "channel-a"
+                }
+            }
+        ]);
+        assert.deepEqual(decodeSentFrame(sockets[1], 1), [
+            {
+                t: "subscribe",
+                p: {
+                    sessionId: 7,
+                    audio: true,
+                    camera: false
+                }
+            },
+            {
+                t: "info",
+                p: {
+                    isCameraOn: true,
+                    isRaisingHand: true
+                }
+            }
+        ]);
+
+        await emitMessage(buildNegotiationFrame("offer", "server-0", "1"), 1);
+
+        assert.equal(
+            peerConnections
+                .at(-1)
+                .answerSnapshots.at(-1)
+                .some((section) => section.senderTrack === cameraTrack),
+            false
+        );
+        assert.deepEqual(decodeSentFrame(sockets[1], 3), [
+            {
+                t: "publish",
+                p: {
+                    type: "camera"
+                }
+            }
+        ]);
+
+        await emitMessage(buildNegotiationFrame("renegotiate", "server-republish", "2"), 1);
+
+        const replayTransceiver = peerConnections
+            .at(-1)
+            .transceivers.find((candidate) => candidate.mid === "2");
+        assert.ok(replayTransceiver);
+        assert.equal(replayTransceiver.sender.track, cameraTrack);
+        assert.equal(
+            peerConnections
+                .at(-1)
+                .answerSnapshots.at(-1)
+                .find((snapshot) => snapshot.mid === "2")?.senderTrack,
+            cameraTrack
+        );
     });
-
-    await open();
-    await emitMessage(buildWelcomeFrame());
-    await emitMessage(buildNegotiationFrame("offer", "server-initial", "1"));
-
-    client.publish("camera", cameraTrack);
-    await tick();
-    await emitMessage(buildNegotiationFrame("renegotiate", "server-publish", "2"));
-    client.subscribe(7, { audio: true, camera: false });
-    client.updateInfo({ isCameraOn: true, isRaisingHand: true });
-    await tick();
-
-    sockets[0].emitClose(1011);
-    await tick();
-    await authenticateRecovery(harness);
-
-    assert.deepEqual(decodeSentFrame(sockets[1], 0), [
-        {
-            t: "auth",
-            p: {
-                jwt: "jwt-token",
-                channel: "channel-a"
-            }
-        }
-    ]);
-    assert.deepEqual(decodeSentFrame(sockets[1], 1), [
-        {
-            t: "subscribe",
-            p: {
-                sessionId: 7,
-                audio: true,
-                camera: false
-            }
-        },
-        {
-            t: "info",
-            p: {
-                isCameraOn: true,
-                isRaisingHand: true
-            }
-        }
-    ]);
-
-    await emitMessage(buildNegotiationFrame("offer", "server-0", "1"), 1);
-
-    assert.equal(
-        peerConnections
-            .at(-1)
-            .answerSnapshots.at(-1)
-            .some((section) => section.senderTrack === cameraTrack),
-        false
-    );
-    assert.deepEqual(decodeSentFrame(sockets[1], 3), [
-        {
-            t: "publish",
-            p: {
-                type: "camera"
-            }
-        }
-    ]);
-
-    await emitMessage(buildNegotiationFrame("renegotiate", "server-republish", "2"), 1);
-
-    const replayTransceiver = peerConnections
-        .at(-1)
-        .transceivers.find((candidate) => candidate.mid === "2");
-    assert.ok(replayTransceiver);
-    assert.equal(replayTransceiver.sender.track, cameraTrack);
-    assert.equal(
-        peerConnections
-            .at(-1)
-            .answerSnapshots.at(-1)
-            .find((snapshot) => snapshot.mid === "2")?.senderTrack,
-        cameraTrack
-    );
-});
+}
 
 test("real protocol core waits for transport-ready replay before binding recovery publish", async () => {
     const harness = createRecoveryHarness();

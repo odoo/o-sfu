@@ -1,5 +1,11 @@
+use futures_util::FutureExt;
+use tokio::task::unconstrained;
+
 use super::fixtures::*;
-use crate::runtime::media_transport::TransportSessionHealth;
+use crate::runtime::{
+    media_transport::TransportSessionHealth,
+    metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+};
 
 #[tokio::test]
 async fn websocket_sends_ping_frames_and_accepts_pongs() -> TestResult {
@@ -288,6 +294,87 @@ async fn stale_replaced_socket_close_cleans_only_the_stale_transport_user() -> T
     assert!(
         wait_for_active_transport_users(&server, 0).await.is_some(),
         "closing the replacement socket should clean the final transport user"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn overflow_does_not_revive_a_replaced_session() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let metrics = &server.state.metrics;
+    let room = require_some(
+        create_room(
+            &server,
+            "issuer-overflow-replacement",
+            CreateRoomQuery::default(),
+        )
+        .await,
+        "test room should be served",
+    )?;
+    let user_id = UserId::Integer(261);
+    let token = room_token(&room, user_id.clone())?;
+    let (mut socket, _welcome) = require_some(
+        authenticate_and_read_welcome(&server, &token).await,
+        "user should authenticate",
+    )?;
+    require_some(
+        wait_for_protocol_server_request(&mut socket).await,
+        "initial offer should arrive",
+    )?;
+    let (sender, _receiver) = UserOutboundSender::channel(8, Arc::clone(metrics));
+    let driver = server
+        .state
+        .sfu_core
+        .admit_user(
+            room.uuid(),
+            JoinUserRequest {
+                user_id: UserId::Integer(262),
+                label: None,
+                permissions: UserPermissions::default(),
+                sender,
+            },
+        )
+        .await?;
+    let (replacement_sender, _replacement_receiver) =
+        UserOutboundSender::channel(8, Arc::clone(metrics));
+    // One poll latches overflow and replaces membership before the socket loop can run.
+    let replacement = require_some(
+        unconstrained(async {
+            for _ in 0..=server.state.config.user.outbound_queue_capacity {
+                require_ok(
+                    driver.broadcast(serde_json::json!({})).await,
+                    "driver should broadcast",
+                )?;
+            }
+            assert!(metrics.snapshot().ws_outbound_queue_overflows() > 0);
+            let connection_id = room
+                .test_api()
+                .join_user(
+                    user_id.clone(),
+                    None,
+                    UserPermissions::default(),
+                    replacement_sender,
+                )
+                .await?;
+            Ok::<_, anyhow::Error>(connection_id)
+        })
+        .now_or_never(),
+        "overflow and replacement must finish without yielding",
+    )??;
+    assert_eq!(
+        read_close_code_promptly(&mut socket).await,
+        Some(CloseCode::Library(4108))
+    );
+    assert_eq!(
+        metrics.snapshot().counter_value(
+            MetricName::WsUserLoopExitsTotal,
+            &[("reason", "outbound_queue_overflow")],
+        ),
+        1
+    );
+    assert_eq!(
+        room.test_api().user_connection_id(&user_id).await,
+        Some(replacement)
     );
     Ok(())
 }

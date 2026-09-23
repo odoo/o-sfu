@@ -560,10 +560,16 @@ impl AuthenticatedSession {
                     overflow_kind = ?overflow.kind(),
                     "closing websocket because the outbound queue overflowed"
                 );
-                Some(SessionExit::closing(
-                    LoopExit::OutboundQueueOverflow,
-                    CloseCode::Kicked,
-                ))
+                // Overflow can hide the close signal from replacement or explicit removal.
+                let code = if self.user.is_current_connection().await {
+                    CloseCode::Overloaded
+                } else {
+                    CloseCode::Kicked
+                };
+                Some(
+                    self.shutdown_exit()
+                        .unwrap_or(SessionExit::closing(LoopExit::OutboundQueueOverflow, code)),
+                )
             }
             UserOutboundEvent::Closed => {
                 debug!("user outbound room closed");

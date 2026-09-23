@@ -198,6 +198,7 @@ impl_exported_metric_label!(WebSocketCloseCode {
     Clean => (5, "clean"),
     Leaving => (6, "leaving"),
     Kicked => (7, "kicked"),
+    Overloaded => (8, "overloaded"),
 });
 
 impl_exported_metric_label!(pub(super) enum WsStartupFailureKind {

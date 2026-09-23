@@ -286,14 +286,16 @@ fn protocol_core_close_policy_is_stage_independent() {
             assert_eq!(connect_count(&reconnect), 1, "{stage:?} {close_code:?}");
         }
 
-        let mut core = core_at(stage);
-        let commands = core.on_ws_close(1011);
-        assert_eq!(core.state(), ConnectionState::Recovering, "{stage:?}");
-        assert_eq!(recovery_timer_count(&commands), 1, "{stage:?}");
-        assert_eq!(peer_close_count(&commands), 1, "{stage:?}");
-        let reconnect = core.on_timer(RECOVERY_TIMER_ID);
-        assert_eq!(core.state(), ConnectionState::Connecting, "{stage:?}");
-        assert_eq!(connect_count(&reconnect), 1, "{stage:?}");
+        for close_code in [1011, u16::from(WebSocketCloseCode::Overloaded), 4999] {
+            let mut core = core_at(stage);
+            let commands = core.on_ws_close(close_code);
+            assert_eq!(core.state(), ConnectionState::Recovering, "{stage:?}");
+            assert_eq!(recovery_timer_count(&commands), 1, "{stage:?}");
+            assert_eq!(peer_close_count(&commands), 1, "{stage:?}");
+            let reconnect = core.on_timer(RECOVERY_TIMER_ID);
+            assert_eq!(core.state(), ConnectionState::Connecting, "{stage:?}");
+            assert_eq!(connect_count(&reconnect), 1, "{stage:?}");
+        }
     }
 }
 
