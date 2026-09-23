@@ -39,6 +39,12 @@
 //! and router dependency acceptance. Source detach returns to `None` while
 //! retaining intent. `remove_receiver` deletes the record and its intent.
 //!
+//! Each receiver retains at most the room session limit of absent publisher
+//! targets. Sparse updates keep the target's original age. A new target evicts
+//! every stream preference of the oldest absent target. Present members do not
+//! consume this allowance, including members with no publications. Joining
+//! promotes existing intent and departure enters the allowance as a new target.
+//!
 //! Cross-worker relays are shared by subscriptions with the same source and
 //! target worker. A relay remains active while any owner has active receiver
 //! intent. An active first owner emits `Install` followed by
@@ -46,7 +52,7 @@
 //! Removing the last owner emits `Release`.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Entry},
     mem,
     time::Instant,
 };
@@ -69,13 +75,15 @@ use crate::engine::{
     },
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct RouteGraph {
     entries: BTreeMap<SubscriptionKey, Subscription>,
     by_receiver: BTreeMap<UserId, BTreeSet<SubscriptionKey>>,
     by_source: BTreeMap<PublishedSourceId, BTreeSet<SubscriptionKey>>,
     relays: BTreeMap<RelayRouteKey, RelayOwners>,
     next_reservation: RouteReservationId,
+    pending_targets: BTreeMap<UserId, VecDeque<UserId>>,
+    pending_target_limit: usize,
 }
 
 type RelayOwners = BTreeMap<SubscriptionKey, RelayRouteActivity>;
@@ -162,6 +170,76 @@ impl RemovedRoutes {
 }
 
 impl RouteGraph {
+    pub(super) fn new(pending_target_limit: usize) -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            by_receiver: BTreeMap::new(),
+            by_source: BTreeMap::new(),
+            relays: BTreeMap::new(),
+            next_reservation: RouteReservationId::default(),
+            pending_targets: BTreeMap::new(),
+            pending_target_limit,
+        }
+    }
+
+    /// Membership promotion preserves every stream preference and frees its
+    /// absent-target allowance without duplicating the logical subscriptions.
+    pub(super) fn publisher_joined(&mut self, publisher: &UserId) {
+        self.pending_targets.retain(|_, pending| {
+            pending.retain(|target| target != publisher);
+            !pending.is_empty()
+        });
+    }
+
+    /// Call after detaching every source and removing this user's receiver state.
+    /// A departed member becomes the newest absent target for each receiver
+    /// retaining explicit intent, even when it never published media.
+    pub(super) fn publisher_left(&mut self, publisher: &UserId) -> usize {
+        let receivers: Vec<_> = self
+            .by_receiver
+            .iter()
+            .filter(|(_, keys)| keys.iter().any(|key| &key.publisher == publisher))
+            .map(|(receiver, _)| receiver.clone())
+            .collect();
+        receivers
+            .iter()
+            .map(|receiver| self.retain_pending_target(receiver, publisher))
+            .sum()
+    }
+
+    fn retain_pending_target(&mut self, receiver: &UserId, publisher: &UserId) -> usize {
+        let pending = self.pending_targets.entry(receiver.clone()).or_default();
+        if pending.contains(publisher) {
+            return 0;
+        }
+        pending.push_back(publisher.clone());
+        if pending.len() <= self.pending_target_limit {
+            return 0;
+        }
+        let Some(evicted) = pending.pop_front() else {
+            return 0;
+        };
+        if pending.is_empty() {
+            self.pending_targets.remove(receiver);
+        }
+        // Only absent publishers enter this index. Their detached records have
+        // no transport or relay ownership, so eviction removes intent alone.
+        if let Some(keys) = self.by_receiver.get_mut(receiver) {
+            keys.retain(|key| {
+                if key.publisher != evicted {
+                    return true;
+                }
+                let removed = self.entries.remove(key);
+                debug_assert!(removed.is_none_or(|entry| entry.current.is_none()));
+                false
+            });
+            if keys.is_empty() {
+                self.by_receiver.remove(receiver);
+            }
+        }
+        1
+    }
+
     pub(super) fn subscription_count(&self) -> usize {
         self.entries
             .values()
@@ -181,14 +259,24 @@ impl RouteGraph {
         self.entries.len()
     }
 
-    pub(super) fn merge_intent(&mut self, key: SubscriptionKey, update: SourceSubscriptionIntent) {
+    pub(super) fn merge_intent(
+        &mut self,
+        key: &SubscriptionKey,
+        update: SourceSubscriptionIntent,
+        publisher_present: bool,
+    ) -> usize {
         if update.is_empty() {
-            return;
+            return 0;
         }
-        let entry = self.entry(key);
+        let entry = self.entry(key.clone());
         entry.intent.merge(update);
         if let (Some(active), Some(current)) = (update.active(), entry.current.as_mut()) {
             current.set_active(active);
+        }
+        if publisher_present {
+            0
+        } else {
+            self.retain_pending_target(&key.receiver, &key.publisher)
         }
     }
 
@@ -467,6 +555,7 @@ impl RouteGraph {
     }
 
     pub(super) fn remove_receiver(&mut self, receiver: &UserId) -> RemovedRoutes {
+        self.pending_targets.remove(receiver);
         let keys = self.by_receiver.remove(receiver).unwrap_or_default();
         let mut removed = RemovedRoutes::default();
         for key in keys {

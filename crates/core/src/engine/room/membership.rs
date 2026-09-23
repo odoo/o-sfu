@@ -113,13 +113,18 @@ impl Room {
         connection_id: ConnectionId,
         context: RoomEffectContext<'_>,
     ) -> bool {
-        let commit = {
-            let mut state = self.state.write().await;
-            state.close_connection(user_id, connection_id)
-        };
-        let Some(commit) = commit else {
+        let Some(commit) = self
+            .state
+            .write()
+            .await
+            .close_connection(user_id, connection_id)
+        else {
             return false;
         };
+        if let ConnectionCloseCommit::Current { evictions, .. } = &commit {
+            self.metrics
+                .record_subscription_intent_evictions(*evictions);
+        }
         let (removed_current_user, media_worker_id) = match &commit {
             ConnectionCloseCommit::Current {
                 session_teardown, ..
@@ -233,10 +238,9 @@ impl Room {
         user_ids: &[UserId],
         context: RoomEffectContext<'_>,
     ) -> usize {
-        let commit = {
-            let mut state = self.state.write().await;
-            state.apply_disconnect_users(user_ids)
-        };
+        let commit = self.state.write().await.apply_disconnect_users(user_ids);
+        self.metrics
+            .record_subscription_intent_evictions(commit.evictions);
         let sessions = commit
             .session_teardowns
             .iter()

@@ -121,6 +121,7 @@ impl RoomEffects {
                 session_teardown,
                 effects,
                 transport_plan,
+                ..
             } => {
                 batch.transport = transport_plan;
                 batch.output.lifecycle = effects;

@@ -59,11 +59,15 @@ impl RoomUserOperation<'_> {
         target_user_id: &UserId,
         intents: &BTreeMap<UserStreamId, SourceSubscriptionIntent>,
     ) -> Option<()> {
-        let commit = {
-            let mut state = self.room.state.write().await;
-            state.apply_receiver_intent(self.user_id, self.connection_id, target_user_id, intents)
-        };
-        let commit = commit?;
+        let commit = self.room.state.write().await.apply_receiver_intent(
+            self.user_id,
+            self.connection_id,
+            target_user_id,
+            intents,
+        )?;
+        self.room
+            .metrics
+            .record_subscription_intent_evictions(commit.work.evictions);
         RoomEffects::from_receiver_intent(commit)
             .execute(self.room, RoomEffectContext::runtime(self.media_transport))
             .await;

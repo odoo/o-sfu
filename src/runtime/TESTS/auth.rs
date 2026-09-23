@@ -5,7 +5,7 @@ use o_sfu_protocol::wire::{UserId, UserPermissions};
 use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtAudience, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use super::{
     AuthenticationError, HttpDisconnectClaims, HttpRoomClaims, MAX_JWT_TOKEN_BYTES,
@@ -16,6 +16,23 @@ use super::{
 use crate::runtime::test_support::TestHttpRoomClaims;
 
 const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
+
+#[test]
+fn websocket_claims_reject_oversized_string_identities() {
+    for field in ["session_id", "user_id"] {
+        for identity in [
+            "x".repeat(UserId::MAX_STRING_BYTES + 1),
+            "0".repeat(UserId::MAX_STRING_BYTES + 1),
+        ] {
+            let mut claims = Map::new();
+            claims.insert("room_id".to_owned(), json!("room"));
+            claims.insert(field.to_owned(), json!(identity));
+            assert!(
+                serde_json::from_value::<WebSocketConnectClaims>(Value::Object(claims)).is_err()
+            );
+        }
+    }
+}
 
 #[test]
 fn jwt_claims_round_trip_room() -> serde_json::Result<()> {

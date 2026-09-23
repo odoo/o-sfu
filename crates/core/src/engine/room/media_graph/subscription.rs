@@ -55,6 +55,7 @@ pub struct ReceiverRouteWork {
     pub(in crate::engine::room) setups: Vec<PendingConsumerSetup>,
     pub(in crate::engine::room) relays: Vec<TransportRelayRouteEffect>,
     pub(in crate::engine::room) teardown: Vec<TransportTeardown>,
+    pub(in crate::engine::room) evictions: usize,
 }
 
 #[derive(Debug)]
@@ -111,18 +112,19 @@ impl RoomState {
     ) -> ReceiverRouteWork {
         let mut activities = Vec::new();
         let mut relays = Vec::new();
+        let mut evictions = 0;
         let receiver_deafened = self
             .user_for_connection(user_id, connection_id)
             .is_some_and(ActiveUser::is_deaf);
         for (stream_id, intent) in intents {
-            let Some(commit) = self.topology.apply_subscription_intent(
+            let commit = self.topology.apply_subscription_intent(
                 &SubscriptionKey::new(user_id, target_user_id, stream_id),
                 connection_id,
                 *intent,
                 receiver_deafened,
-            ) else {
-                continue;
-            };
+                self.users.contains_key(target_user_id),
+            );
+            evictions += commit.evictions;
             relays.extend(commit.relay_effects);
             activities.extend(commit.update);
         }
@@ -133,6 +135,7 @@ impl RoomState {
             activities,
             setups,
             relays,
+            evictions,
             ..Default::default()
         }
     }

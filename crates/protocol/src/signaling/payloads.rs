@@ -107,6 +107,9 @@ pub struct StreamIntentPayload {
     pub stream_type: StreamType,
 }
 
+/// Sparse receiver preferences for the protocol's audio, camera and screen
+/// streams. Unknown fields are ignored and never become retained stream ids.
+/// An empty preference update leaves every existing stream preference unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribePayload {
