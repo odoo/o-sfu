@@ -1,3 +1,4 @@
+use futures_util::future::join_all;
 use o_sfu::http::route;
 use o_sfu_telemetry::diagnostics::{DiagnosticsRoomDetail, DiagnosticsRouteState};
 
@@ -65,7 +66,8 @@ async fn publish_video_routes(
     third_publisher: &s::UserId,
     capped_receiver: &s::UserId,
 ) -> s::FakeMediaSource {
-    let first_video = s::FakeMediaSource::vp8_camera_high();
+    // Keep this single-RID source at the floor through bandwidth fitting.
+    let first_video = s::FakeMediaSource::vp8_camera_with_rid("lo");
     publish_source(
         &peers.server,
         room,
@@ -90,7 +92,7 @@ async fn publish_video_routes(
         m::RouteState::Active,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     for receiver_index in 1..=3 {
         ready_video_subscription(
             &peers.server,
@@ -99,7 +101,7 @@ async fn publish_video_routes(
             first_publisher,
         )
         .await;
-        pump_surviving_receiver(peers).await;
+        pump_peers(peers).await;
     }
 
     let second_video = s::FakeMediaSource::vp8_camera_high();
@@ -111,7 +113,7 @@ async fn publish_video_routes(
         &second_video,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     ready_video_subscription(
         &peers.server,
         room,
@@ -119,7 +121,7 @@ async fn publish_video_routes(
         second_publisher,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
 
     let third_video = s::FakeMediaSource::vp8_camera_high();
     publish_source(
@@ -130,7 +132,7 @@ async fn publish_video_routes(
         &third_video,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     ready_video_subscription(
         &peers.server,
         room,
@@ -138,7 +140,7 @@ async fn publish_video_routes(
         third_publisher,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     wait_for_route_state_counts(
         &peers.server,
         room,
@@ -149,7 +151,7 @@ async fn publish_video_routes(
         1,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     first_video
 }
 
@@ -190,7 +192,7 @@ async fn publish_audio_routes(
         &first_audio,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     ready_audio_route(
         &peers.server,
         room,
@@ -198,7 +200,7 @@ async fn publish_audio_routes(
         first_publisher,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     publish_source(
         &peers.server,
         room,
@@ -207,7 +209,7 @@ async fn publish_audio_routes(
         &second_audio,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     ready_audio_route(
         &peers.server,
         room,
@@ -215,7 +217,7 @@ async fn publish_audio_routes(
         second_publisher,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     publish_source(
         &peers.server,
         room,
@@ -224,7 +226,7 @@ async fn publish_audio_routes(
         &third_audio,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     ready_audio_route(
         &peers.server,
         room,
@@ -232,7 +234,7 @@ async fn publish_audio_routes(
         third_publisher,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
     send_audio_activity(peer_mut(&mut peers.publishers, 0), &mut first_audio, clock).await;
     send_audio_activity(peer_mut(&mut peers.publishers, 1), &mut second_audio, clock).await;
     send_audio_activity(peer_mut(&mut peers.publishers, 2), &mut third_audio, clock).await;
@@ -246,7 +248,7 @@ async fn publish_audio_routes(
         1,
     )
     .await;
-    pump_surviving_receiver(peers).await;
+    pump_peers(peers).await;
 }
 
 async fn close_spillover_wave(
@@ -258,7 +260,7 @@ async fn close_spillover_wave(
     for receiver_index in [3, 2] {
         let cleanup_peer = remove_peer(&mut peers.receivers, receiver_index);
         s::require_some(cleanup_peer.close().await, "cleanup peer should close")?;
-        pump_surviving_receiver(peers).await;
+        pump_peers(peers).await;
     }
     for cleanup_receiver in cleanup_receivers {
         assert!(
@@ -272,22 +274,26 @@ async fn close_spillover_wave(
                 )
                 .await
         );
-        pump_surviving_receiver(peers).await;
+        pump_peers(peers).await;
     }
     Ok(())
 }
 
-async fn pump_surviving_receiver(peers: &mut sp::LargeRoomSpilloverFakePeers) {
-    // ProtocolFakePeer drives str0m only while polled. Refresh consent after
-    // each bounded operation so the ICE-lite SFU keeps receiving STUN requests.
+async fn pump_peers(peers: &mut sp::LargeRoomSpilloverFakePeers) {
+    // ProtocolFakePeer drives str0m only while polled. Service every peer after
+    // each bounded operation so ICE consent does not expire during setup.
     // https://www.rfc-editor.org/rfc/rfc7675.html#section-5.1
-    let pumped = peer_mut(&mut peers.receivers, 0)
-        .rtc()
-        .pump(s::Duration::from_millis(50))
-        .await;
+    let pumped = join_all(
+        peers
+            .publishers
+            .iter_mut()
+            .chain(&mut peers.receivers)
+            .map(|peer| peer.rtc().pump(s::Duration::from_millis(50))),
+    )
+    .await;
     assert!(
-        pumped.is_some(),
-        "surviving fake RTC should remain connected"
+        pumped.into_iter().all(|result| result.is_some()),
+        "fake RTC peers should remain connected"
     );
 }
 
