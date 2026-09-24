@@ -66,8 +66,15 @@
 //! [`SfuCore::admit_user`](core::prelude::SfuCore::admit_user). Both paths require
 //! JWT authentication before admission.
 //!
+//! Upgraded sockets retain their connection permits. Before authentication,
+//! they have a first-frame deadline and global plus per-origin caps
+//! (one bucket per IPv4 address or IPv6 /64).
+//!
 //! ```text
-//! Incoming HTTP / WebSocket I/O
+//! Incoming TCP connection
+//!     |
+//!     v
+//! connection cap + HTTP header deadline
 //!     |
 //!     v
 //! Axum Router
@@ -115,19 +122,18 @@
 //!
 //! There are two different keys:
 //!
-//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 bytes) verifies
+//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 decoded bytes) verifies
 //!   the HTTP [`http::CreateRoomQuery`] path through [`auth::HttpRoomClaims`] and
 //!   [`auth::HttpDisconnectClaims`]. See [`config`].
 //! - **Per-room key**: the request that creates the current room pins the signing
 //!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. A direct
-//!   key must decode to at least 32 bytes or room creation returns `400`. For more
-//!   security, prefer the `keySeed` claim, which derives a per-room key with the
-//!   `AUTH_KEY` and provided seed using the following KDF:
+//!   key must decode to at least 32 bytes or room creation returns `400`.
+//!   `keySeed` instead derives the room's signing bytes from `AUTH_KEY`:
 //!   ```text
-//!   room_key = Base64StdPad(HMAC-SHA256(
+//!   room_key = HMAC-SHA256(
 //!       key = Base64Decode(AUTH_KEY),
 //!       message = Base64Decode(keySeed)
-//!   ))
+//!   )
 //!   ```
 //!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
 //!   never against `AUTH_KEY`. Runtime construction decodes the global key once.
@@ -188,6 +194,9 @@
 //!
 //! [`o_sfu_router::Router`] owns exact user-to-connection placement. Receiver shadows are foreign local sessions derived from active consumer dependencies, disappearing with their final consumer.
 //!
+//! Absent subscription targets are capped per receiver. Eviction drops the
+//! oldest absent target's intent. Present members do not consume that allowance.
+//!
 //! # Signaling and Client Bundle
 //!
 //! Browsers use `SfuClient` for connection, publication, subscription and room
@@ -197,6 +206,9 @@
 //! browser `WebSocket`, `RTCPeerConnection` and timer APIs. Protocol events are
 //! mapped to Odoo bundle updates during command serialization. `BrowserRuntime`
 //! applies those updates to client state and notifies the application.
+//!
+//! Outbound overflow closes with `4110` (`Overloaded`), allowing reconnect and
+//! intent replay. Replacement or explicit removal uses terminal `4108` (`Kicked`).
 //!
 //! ```text
 //! SfuClient (public API)
