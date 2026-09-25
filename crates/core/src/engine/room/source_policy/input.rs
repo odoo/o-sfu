@@ -55,29 +55,14 @@ impl<'a> SourcePolicySnapshot<'a> {
             media_limits.max_active_audio_speakers(),
         );
         let deaf_receiver_connection_ids = deaf_receiver_connection_ids(room);
-        let mut featured_source_user_ids = BTreeSet::new();
-        let mut active_speaker_rank_by_user = BTreeMap::new();
-        let mut desired_featured_user_id = None;
-        for (index, user_id) in ranked_sources
-            .iter()
-            .filter_map(|source| {
-                room.topology
-                    .active_speaker_detector_owner(source.transport_media_id())
-            })
-            .enumerate()
-        {
-            if index == 0 {
-                desired_featured_user_id = Some(user_id.clone());
-            }
-            // The clear limit counts eligible sources before owner deduplication.
-            if index < ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT {
-                featured_source_user_ids.insert(user_id.clone());
-            }
-            let next_rank = active_speaker_rank_by_user.len();
-            active_speaker_rank_by_user
-                .entry(user_id)
-                .or_insert(next_rank);
-        }
+        let ActiveSpeakerFacts {
+            featured_source_user_ids,
+            active_speaker_rank_by_user,
+            desired_featured_user_id,
+        } = active_speaker_facts(
+            |media_id| featured_source_owner_for_active_speaker_source(room, media_id),
+            &ranked_sources,
+        );
         let featured_user_updates = featured_user_updates(room, desired_featured_user_id.as_ref());
         // Include policy-paused routes so later turns can resume them. Filtering
         // on `delivery_active()` would make a policy pause self-perpetuating.
@@ -240,6 +225,58 @@ fn deaf_receiver_connection_ids(room: &RoomState) -> BTreeSet<ConnectionId> {
         .collect()
 }
 
+/// Stores derived facts from active speaker sources.
+struct ActiveSpeakerFacts {
+    featured_source_user_ids: BTreeSet<UserId>,
+    active_speaker_rank_by_user: BTreeMap<UserId, usize>,
+    desired_featured_user_id: Option<UserId>,
+}
+
+/// Evaluates active speaker sources to derive featuring decisions and user rankings.
+///
+/// **Processing Logic:**
+/// 1. Filters out unowned sources by invoking `get_owner` for each [`ActiveSpeakerSource`].
+/// 2. Sets `desired_featured_user_id` to the owner of the very first eligible source.
+/// 3. Populates `featured_source_user_ids` with owners of eligible sources up to [`ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT`].
+/// 4. Computes `active_speaker_rank_by_user` where each user's rank is fixed by their first seen eligible source.
+fn active_speaker_facts(
+    get_owner: impl Fn(TransportMediaId) -> Option<UserId>,
+    ranked_sources: &[ActiveSpeakerSource],
+) -> ActiveSpeakerFacts {
+    let mut featured_source_user_ids = BTreeSet::new();
+    let mut active_speaker_rank_by_user = BTreeMap::new();
+    let mut desired_featured_user_id = None;
+    for (eligible_index, user_id) in ranked_sources
+        .iter()
+        .filter_map(|source| get_owner(source.transport_media_id()))
+        .enumerate()
+    {
+        if eligible_index == 0 {
+            desired_featured_user_id = Some(user_id.clone());
+        }
+        if eligible_index < ACTIVE_SPEAKER_FEATURED_CLEAR_LIMIT {
+            featured_source_user_ids.insert(user_id.clone());
+        }
+        let next_rank = active_speaker_rank_by_user.len();
+        active_speaker_rank_by_user
+            .entry(user_id)
+            .or_insert(next_rank);
+    }
+    ActiveSpeakerFacts {
+        featured_source_user_ids,
+        active_speaker_rank_by_user,
+        desired_featured_user_id,
+    }
+}
+
+fn featured_source_owner_for_active_speaker_source(
+    room: &RoomState,
+    transport_media_id: TransportMediaId,
+) -> Option<UserId> {
+    room.topology
+        .active_speaker_detector_owner(transport_media_id)
+}
+
 fn featured_user_updates(
     room: &RoomState,
     desired_featured_user_id: Option<&UserId>,
@@ -266,3 +303,7 @@ fn featured_user_updates(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "TESTS/input.rs"]
+mod tests;
