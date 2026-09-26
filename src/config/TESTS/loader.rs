@@ -126,7 +126,7 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
 #[test]
 fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
-        ("BIND_ADDRESS", "127.0.0.1:9000"),
+        ("HTTP_INTERFACE", "127.0.0.1:9000"),
         ("PROXY", "true"),
         ("SHUTDOWN_TIMEOUT_MS", "2500"),
         ("AUTHENTICATION_TIMEOUT_MS", "1500"),

@@ -744,7 +744,7 @@ export async function spawnLiveServer({
     const env = {
         ...process.env,
         AUTH_KEY: authKey,
-        BIND_ADDRESS: `${bindHost}:${bindPort}`,
+        HTTP_INTERFACE: `${bindHost}:${bindPort}`,
         ANNOUNCED_IP: announcedIp,
         RTC_MAX_PORT: String(rtcMaxPort),
         RTC_MIN_PORT: String(rtcMinPort),
