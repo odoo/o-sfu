@@ -1,6 +1,6 @@
 # Odoo SFU Dev Deployment Guide
 
-This document explains how to set up the SFU server for development to work with Odoo. It is not intended as a general deployment guide. For general deployment guide, see [DEPLOYMENT](/DEPLOYMENT.md).
+This document explains how to set up the SFU server for Odoo development. It is not intended as a general deployment guide. For general deployment instructions, see [DEPLOYMENT](/DEPLOYMENT.md).
 
 ## Prerequisites
 
@@ -54,19 +54,14 @@ This document explains how to set up the SFU server for development to work with
     npm run build:odoo
     ```
 
-4. Move the generated bundle (`crates/client/dist/odoo_sfu.js`) to the
-   corresponding directory in your Odoo source code
-   (`community/addons/mail/static/lib/odoo_sfu`). Keep
-   `crates/client/dist/odoo_sfu.d.ts` beside copies used by TypeScript tooling so
-   editor documentation resolves for the module.
+4. Move the generated bundle (`crates/client/dist/odoo_sfu.js`) to the corresponding directory in your Odoo source code (`community/addons/mail/static/lib/odoo_sfu`).
 
-   Checked JavaScript can type the bundle module and compatibility state
-   catalog as follows:
-
-    ```js
-    /** @typedef {typeof import("./odoo_sfu")} SfuModule */
-    /** @typedef {import("./odoo_sfu").SFU_CLIENT_STATE} SfuClientStateCatalog */
-    ```
+> [!TIP]
+> To enable full tooling capabilities, also move `crates/client/dist/odoo_sfu.d.ts` so your editor's LSP recognizes the SFU client's structure. You can then use JSDoc to enable typing:
+> ```js
+> /** @typedef {typeof import("./odoo_sfu")} SfuModule */
+> /** @typedef {import("./odoo_sfu").SFU_CLIENT_STATE} SfuClientStateCatalog */
+> ```
 
 ---
 
@@ -96,6 +91,9 @@ macOS:
 ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2; exit}')"
 ```
 
+> [!IMPORTANT]
+> Your machine's local address can change over time. You may want to avoid hardcoding it, otherwise you will have to update it manually.
+
 ### 3. Apply the Configurations
 
 Now that you have your `AUTH_KEY` and `ANNOUNCED_IP`, you need to configure both the SFU server and Odoo:
@@ -104,14 +102,14 @@ Now that you have your `AUTH_KEY` and `ANNOUNCED_IP`, you need to configure both
 
 2. For Odoo:
     - Navigate to **Settings**, locate the Discuss section, and check both **Custom Call Servers** and **Custom SFU Server**.
-    - Under **Custom SFU Server**, set the URL to `http://{ANNOUNCED_IP}:8070` (replacing `{ANNOUNCED_IP}` with your actual IP).
+    - Under **Custom SFU Server**, set the URL to `http://localhost:8070` (the default value of the `BIND_ADDRESS` environment variable).
     - Set the **Key** field to the value of your `AUTH_KEY`.
 
 > [!TIP]
 > Alternatively, you can provide these variables directly to Odoo via the environment variables `ODOO_SFU_KEY` and `ODOO_SFU_URL`.
 
 > [!NOTE]
-> By default, the SFU server binds to `0.0.0.0:8070`. Override it with a full socket address via `BIND_ADDRESS`, for example `BIND_ADDRESS=127.0.0.1:9000`.
+> By default, the SFU binds its HTTP and WebSocket server to `0.0.0.0:8070`. Override it with a full socket address via `BIND_ADDRESS` (for example, `BIND_ADDRESS=127.0.0.1:9000`).
 
 ---
 
