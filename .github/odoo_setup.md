@@ -102,14 +102,14 @@ Now that you have your `AUTH_KEY` and `ANNOUNCED_IP`, you need to configure both
 
 2. For Odoo:
     - Navigate to **Settings**, locate the Discuss section, and check both **Custom Call Servers** and **Custom SFU Server**.
-    - Under **Custom SFU Server**, set the URL to `http://localhost:8070` (the default value of the `BIND_ADDRESS` environment variable).
+    - Under **Custom SFU Server**, set the URL to `http://localhost:8070` (the default value of the `HTTP_INTERFACE` environment variable).
     - Set the **Key** field to the value of your `AUTH_KEY`.
 
 > [!TIP]
 > Alternatively, you can provide these variables directly to Odoo via the environment variables `ODOO_SFU_KEY` and `ODOO_SFU_URL`.
 
 > [!NOTE]
-> By default, the SFU binds its HTTP and WebSocket server to `0.0.0.0:8070`. Override it with a full socket address via `BIND_ADDRESS` (for example, `BIND_ADDRESS=127.0.0.1:9000`).
+> By default, the SFU binds its HTTP and WebSocket server to `0.0.0.0:8070`. Override it with a full socket address via `HTTP_INTERFACE` (for example, `HTTP_INTERFACE=127.0.0.1:9000`).
 
 ---
 

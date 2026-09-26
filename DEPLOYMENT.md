@@ -474,7 +474,7 @@ network:
 proxy:
 
 - NGINX terminates TLS for `<sfu-domain>`
-- NGINX proxies to the actual `BIND_ADDRESS`
+- NGINX proxies to the actual `HTTP_INTERFACE`
 - NGINX uses HTTP/1.1 upstream for WebSocket upgrade support
 - NGINX forwards `Upgrade` and `Connection`
 - NGINX overwrites `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` and `Host`
@@ -516,7 +516,7 @@ HTTP and operator access:
 
 | variable | default | description |
 | --- | --- | --- |
-| `BIND_ADDRESS` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
+| `HTTP_INTERFACE` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
 | `PROXY` | `false` | trusts proxy-provided request metadata when `true` |
 | `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |

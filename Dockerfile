@@ -25,7 +25,7 @@ WORKDIR /srv/o-sfu
 
 COPY --from=builder /app/target/release/o-sfu /usr/local/bin/o-sfu
 
-ENV BIND_ADDRESS=0.0.0.0:8070
+ENV HTTP_INTERFACE=0.0.0.0:8070
 ENV PROXY=false
 ENV RUST_LOG=info
 
