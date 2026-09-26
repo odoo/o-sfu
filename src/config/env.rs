@@ -1,5 +1,5 @@
 use std::{
-    io, iter,
+    fmt, io, iter,
     marker::PhantomData,
     net::{IpAddr, SocketAddr},
     num::{NonZeroU64, NonZeroUsize},
@@ -16,12 +16,25 @@ type Lookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 type ReadFile<'a> = dyn Fn(&Path) -> io::Result<String> + 'a;
 
 pub(super) struct EnvValue {
-    pub(super) key: &'static str,
+    pub(super) key: EnvKey,
     pub(super) raw: String,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct EnvKey {
+    pub(super) prefix: &'static str,
+    pub(super) name: &'static str,
+}
+
+impl fmt::Display for EnvKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.prefix, self.name)
+    }
 }
 
 pub(super) struct Env<'a> {
     lookup: Box<Lookup<'a>>,
+    prefix: &'static str,
     read_file: Box<ReadFile<'a>>,
 }
 
@@ -32,6 +45,7 @@ impl<'a> Env<'a> {
     ) -> Self {
         Self {
             lookup: Box::new(get_var),
+            prefix: "",
             read_file: Box::new(read_file),
         }
     }
@@ -41,11 +55,20 @@ impl<'a> Env<'a> {
             lookup: self.lookup.as_ref(),
             read_file: self.read_file.as_ref(),
             key,
+            prefix: self.prefix,
             check: |_key, value| Ok(value),
             aliases: Vec::new(),
             file_alias: None,
             value: PhantomData,
         }
+    }
+
+    /// Sets a prefix that should be prepended to all environment variables.
+    ///
+    /// This enables proper namespacing of the environment variables.
+    pub(super) fn with_prefix(mut self, prefix: &'static str) -> Self {
+        self.prefix = prefix;
+        self
     }
 }
 
@@ -54,10 +77,11 @@ impl<'a> Env<'a> {
 /// Checks may transform values and capture other settings. They receive the
 /// supplying key, including aliases. Defaults use the primary key and pass
 /// through the same checks. Missing optional values bypass parsing and checks.
-pub(super) struct Var<'env, 'lookup, T, C = fn(&'static str, T) -> Result<T>> {
+pub(super) struct Var<'env, 'lookup, T, C = fn(EnvKey, T) -> Result<T>> {
     lookup: &'lookup Lookup<'env>,
     read_file: &'lookup ReadFile<'env>,
     key: &'static str,
+    prefix: &'static str,
     check: C,
     aliases: Vec<&'static str>,
     file_alias: Option<&'static str>,
@@ -67,16 +91,17 @@ pub(super) struct Var<'env, 'lookup, T, C = fn(&'static str, T) -> Result<T>> {
 impl<'env, 'lookup, T, C> Var<'env, 'lookup, T, C>
 where
     T: EnvParse,
-    C: Fn(&'static str, T) -> Result<T>,
+    C: Fn(EnvKey, T) -> Result<T>,
 {
     /// Appends a check that runs only after all preceding checks succeed.
     pub(super) fn check(
         self,
-        check: impl Fn(&'static str, T) -> Result<T>,
-    ) -> Var<'env, 'lookup, T, impl Fn(&'static str, T) -> Result<T>> {
+        check: impl Fn(EnvKey, T) -> Result<T>,
+    ) -> Var<'env, 'lookup, T, impl Fn(EnvKey, T) -> Result<T>> {
         Var {
             lookup: self.lookup,
             read_file: self.read_file,
+            prefix: self.prefix,
             key: self.key,
             check: move |key, value| check(key, (self.check)(key, value)?),
             aliases: self.aliases,
@@ -102,7 +127,7 @@ where
     pub(super) fn required(self) -> Result<T> {
         let value = self
             .load()?
-            .with_context(|| format!("{} env variable is required", self.key))?;
+            .with_context(|| format!("{}{} env variable is required", self.prefix, self.key))?;
         self.parse(value)
     }
 
@@ -113,7 +138,13 @@ where
     /// of the default value.
     pub(super) fn default(self, default: T) -> Result<T> {
         let Some(value) = self.load()? else {
-            return (self.check)(self.key, default);
+            return (self.check)(
+                EnvKey {
+                    prefix: self.prefix,
+                    name: self.key,
+                },
+                default,
+            );
         };
         self.parse(value)
     }
@@ -128,8 +159,15 @@ where
 
     fn load(&self) -> Result<Option<EnvValue>> {
         for key in iter::once(self.key).chain(self.aliases.iter().copied()) {
-            if let Some(raw) = (self.lookup)(key) {
-                return Ok(Some(EnvValue { key, raw }));
+            let prefixed_key = format!("{}{}", self.prefix, key);
+            if let Some(raw) = (self.lookup)(&prefixed_key) {
+                return Ok(Some(EnvValue {
+                    key: EnvKey {
+                        prefix: self.prefix,
+                        name: key,
+                    },
+                    raw,
+                }));
             }
         }
         let Some(file_key) = self.file_alias else {
@@ -143,7 +181,10 @@ where
                 let raw_trimmed = raw.trim().to_owned();
                 raw.zeroize();
                 Ok(Some(EnvValue {
-                    key: file_key,
+                    key: EnvKey {
+                        prefix: self.prefix,
+                        name: file_key,
+                    },
                     raw: raw_trimmed,
                 }))
             }
@@ -240,7 +281,7 @@ impl EnvParse for SecretString {
 ///
 /// # Errors
 /// Returns [`anyhow::Error`] when the value is not greater than zero.
-pub(super) fn positive<T>(key: &'static str, value: T) -> Result<T>
+pub(super) fn positive<T>(key: EnvKey, value: T) -> Result<T>
 where
     T: Default + PartialOrd,
 {
@@ -248,7 +289,7 @@ where
     Ok(value)
 }
 
-pub(super) fn non_empty(key: &'static str, value: String) -> Result<String> {
+pub(super) fn non_empty(key: EnvKey, value: String) -> Result<String> {
     let trimmed = value.trim();
     ensure!(!trimmed.is_empty(), "{key} must not be empty");
     if trimmed.len() == value.len() {

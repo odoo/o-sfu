@@ -27,8 +27,8 @@ fn config_from(overrides: &[(&str, &str)]) -> anyhow::Result<Config> {
             .find(|(name, _value)| *name == key)
             .map(|(_name, value)| (*value).to_owned())
             .or_else(|| match key {
-                "AUTH_KEY" => Some(TEST_AUTH_KEY.to_owned()),
-                "ANNOUNCED_IP" => Some("127.0.0.1".to_owned()),
+                "OSFU_AUTH_KEY" => Some(TEST_AUTH_KEY.to_owned()),
+                "OSFU_ANNOUNCED_IP" => Some("127.0.0.1".to_owned()),
                 _ => None,
             })
     })
@@ -41,27 +41,30 @@ fn config_error_from(overrides: &[(&str, &str)]) -> Option<String> {
 #[test]
 fn config_requires_auth_key() {
     let error = Config::from_var_lookup(|key| match key {
-        "ANNOUNCED_IP" => Some("127.0.0.1".to_owned()),
+        "OSFU_ANNOUNCED_IP" => Some("127.0.0.1".to_owned()),
         _ => None,
     })
     .err()
     .map(|error| error.to_string());
 
-    assert_eq!(error.as_deref(), Some("AUTH_KEY env variable is required"));
+    assert_eq!(
+        error.as_deref(),
+        Some("OSFU_AUTH_KEY env variable is required")
+    );
 }
 
 #[test]
 fn config_validates_auth_key_material() -> anyhow::Result<()> {
     let short = STANDARD.encode([0xff; 31]);
-    let error = config_error_from(&[("AUTH_KEY", &short)]);
+    let error = config_error_from(&[("OSFU_AUTH_KEY", &short)]);
     assert_eq!(
         error.as_deref(),
-        Some("AUTH_KEY must decode to at least 32 bytes")
+        Some("OSFU_AUTH_KEY must decode to at least 32 bytes")
     );
 
     let standard = STANDARD.encode([0xff; 32]);
     assert_eq!(
-        config_from(&[("AUTH_KEY", &standard)])?
+        config_from(&[("OSFU_AUTH_KEY", &standard)])?
             .auth
             .key
             .expose_secret(),
@@ -70,15 +73,15 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
 
     let jose = URL_SAFE_NO_PAD.encode([0xff; 32]);
     assert_eq!(
-        config_from(&[("AUTH_KEY", &jose)])?
+        config_from(&[("OSFU_AUTH_KEY", &jose)])?
             .auth
             .key
             .expose_secret(),
         jose
     );
 
-    let error = config_error_from(&[("AUTH_KEY", "not base64")]);
-    assert_eq!(error.as_deref(), Some("AUTH_KEY must be valid base64"));
+    let error = config_error_from(&[("OSFU_AUTH_KEY", "not base64")]);
+    assert_eq!(error.as_deref(), Some("OSFU_AUTH_KEY must be valid base64"));
     Ok(())
 }
 
@@ -126,19 +129,19 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
 #[test]
 fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
-        ("HTTP_INTERFACE", "127.0.0.1:9000"),
-        ("PROXY", "true"),
-        ("SHUTDOWN_TIMEOUT_MS", "2500"),
-        ("AUTHENTICATION_TIMEOUT_MS", "1500"),
-        ("MAX_PRE_AUTH_WEBSOCKET_SESSIONS", "12"),
-        ("MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN", "3"),
-        ("ROOM_SIZE", "4"),
-        ("USER_TIMEOUT_MS", "5000"),
-        ("PING_INTERVAL_MS", "1000"),
-        ("USER_OUTBOUND_QUEUE_CAPACITY", "16"),
-        ("USER_OUTBOUND_QUEUE_BYTE_CAPACITY", "8192"),
-        ("ROOM_RESERVATION_TTL", "120"),
-        ("ROOM_DEPARTURE_GRACE", "0"),
+        ("OSFU_HTTP_INTERFACE", "127.0.0.1:9000"),
+        ("OSFU_PROXY", "true"),
+        ("OSFU_SHUTDOWN_TIMEOUT_MS", "2500"),
+        ("OSFU_AUTHENTICATION_TIMEOUT_MS", "1500"),
+        ("OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS", "12"),
+        ("OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN", "3"),
+        ("OSFU_ROOM_SIZE", "4"),
+        ("OSFU_USER_TIMEOUT_MS", "5000"),
+        ("OSFU_PING_INTERVAL_MS", "1000"),
+        ("OSFU_USER_OUTBOUND_QUEUE_CAPACITY", "16"),
+        ("OSFU_USER_OUTBOUND_QUEUE_BYTE_CAPACITY", "8192"),
+        ("OSFU_ROOM_RESERVATION_TTL", "120"),
+        ("OSFU_ROOM_DEPARTURE_GRACE", "0"),
     ])?;
     assert_eq!(config.http.bind_address.to_string(), "127.0.0.1:9000");
     assert_eq!(config.http.shutdown_timeout_ms, 2500);
@@ -159,7 +162,7 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
 
 #[test]
 fn config_rejects_invalid_room_lifecycle_durations() {
-    for key in ["ROOM_RESERVATION_TTL", "ROOM_DEPARTURE_GRACE"] {
+    for key in ["OSFU_ROOM_RESERVATION_TTL", "OSFU_ROOM_DEPARTURE_GRACE"] {
         let error = config_error_from(&[(key, "1m")]);
         assert_eq!(
             error.as_deref(),
@@ -171,7 +174,7 @@ fn config_rejects_invalid_room_lifecycle_durations() {
 
 #[test]
 fn config_rejects_room_lifecycle_durations_above_the_maximum() {
-    for key in ["ROOM_RESERVATION_TTL", "ROOM_DEPARTURE_GRACE"] {
+    for key in ["OSFU_ROOM_RESERVATION_TTL", "OSFU_ROOM_DEPARTURE_GRACE"] {
         // the second value would overflow the deadline computed from `Instant::now()`
         for raw in ["86401", "10000000000000000000"] {
             let error = config_error_from(&[(key, raw)]);
@@ -186,25 +189,25 @@ fn config_rejects_room_lifecycle_durations_above_the_maximum() {
 
 #[test]
 fn config_rejects_invalid_proxy_flag() {
-    let error = config_error_from(&[("PROXY", "maybe")]);
+    let error = config_error_from(&[("OSFU_PROXY", "maybe")]);
 
     assert_eq!(
         error.as_deref(),
-        Some("PROXY must be either `true` or `false`")
+        Some("OSFU_PROXY must be either `true` or `false`")
     );
 }
 
 #[test]
 fn config_rejects_zero_runtime_limits() {
     let cases = [
-        "SHUTDOWN_TIMEOUT_MS",
-        "ROOM_SIZE",
-        "USER_TIMEOUT_MS",
-        "PING_INTERVAL_MS",
-        "MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
-        "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",
-        "USER_OUTBOUND_QUEUE_CAPACITY",
-        "USER_OUTBOUND_QUEUE_BYTE_CAPACITY",
+        "OSFU_SHUTDOWN_TIMEOUT_MS",
+        "OSFU_ROOM_SIZE",
+        "OSFU_USER_TIMEOUT_MS",
+        "OSFU_PING_INTERVAL_MS",
+        "OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
+        "OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",
+        "OSFU_USER_OUTBOUND_QUEUE_CAPACITY",
+        "OSFU_USER_OUTBOUND_QUEUE_BYTE_CAPACITY",
     ];
 
     for key in cases {

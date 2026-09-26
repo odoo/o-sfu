@@ -67,15 +67,15 @@ This document explains how to set up the SFU server for Odoo development. It is 
 
 ## Configure The Environment
 
-The SFU uses meaningful defaults for almost everything. However, you must provide two specific configurations: `AUTH_KEY` and `ANNOUNCED_IP`. 
+The SFU uses meaningful defaults for almost everything. However, you must provide two specific configurations: `OSFU_AUTH_KEY` and `OSFU_ANNOUNCED_IP`. 
 
-### 1. Generate your `AUTH_KEY`
+### 1. Generate your authentication key (OSFU_AUTH_KEY)
 This key authenticates client requests to the SFU server. It must be valid base64 data that decodes to at least 32 bytes. Generate it from cryptographically secure randomness with:
 ```bash
 openssl rand -base64 32
 ```
 
-### 2. Determine the `ANNOUNCED_IP`
+### 2. Determine the announced IP (OSFU_ANNOUNCED_IP)
 
 This is the IP address where the SFU can be reached. It must be routable from the client's perspective and cannot be the loopback address (`127.0.0.1` aka localhost).
 
@@ -96,20 +96,20 @@ ipconfig getifaddr "$(route -n get default | awk '/interface:/{print $2; exit}')
 
 ### 3. Apply the Configurations
 
-Now that you have your `AUTH_KEY` and `ANNOUNCED_IP`, you need to configure both the SFU server and Odoo:
+Now that you have your authentication key and announced IP, you need to configure both the SFU server and Odoo:
 
-1. For the SFU Server: Define `AUTH_KEY` and `ANNOUNCED_IP` as environment variables before running the server.
+1. For the SFU Server: Define `OSFU_AUTH_KEY` and `OSFU_ANNOUNCED_IP` as environment variables before running the server.
 
 2. For Odoo:
     - Navigate to **Settings**, locate the Discuss section, and check both **Custom Call Servers** and **Custom SFU Server**.
-    - Under **Custom SFU Server**, set the URL to `http://localhost:8070` (the default value of the `HTTP_INTERFACE` environment variable).
-    - Set the **Key** field to the value of your `AUTH_KEY`.
+    - Under **Custom SFU Server**, set the URL to `http://localhost:8070` (the default value of the `OSFU_HTTP_INTERFACE` environment variable).
+    - Set the **Key** field to the value of your `OSFU_AUTH_KEY`.
 
 > [!TIP]
 > Alternatively, you can provide these variables directly to Odoo via the environment variables `ODOO_SFU_KEY` and `ODOO_SFU_URL`.
 
 > [!NOTE]
-> By default, the SFU binds its HTTP and WebSocket server to `0.0.0.0:8070`. Override it with a full socket address via `HTTP_INTERFACE` (for example, `HTTP_INTERFACE=127.0.0.1:9000`).
+> By default, the SFU binds its HTTP and WebSocket server to `0.0.0.0:8070`. Override it with a full socket address via `OSFU_HTTP_INTERFACE` (for example, `OSFU_HTTP_INTERFACE=127.0.0.1:9000`).
 
 ---
 

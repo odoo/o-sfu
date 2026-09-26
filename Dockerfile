@@ -25,8 +25,8 @@ WORKDIR /srv/o-sfu
 
 COPY --from=builder /app/target/release/o-sfu /usr/local/bin/o-sfu
 
-ENV HTTP_INTERFACE=0.0.0.0:8070
-ENV PROXY=false
+ENV OSFU_HTTP_INTERFACE=0.0.0.0:8070
+ENV OSFU_PROXY=false
 ENV RUST_LOG=info
 
 EXPOSE 8070

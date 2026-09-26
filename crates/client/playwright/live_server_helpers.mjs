@@ -743,22 +743,22 @@ export async function spawnLiveServer({
 }) {
     const env = {
         ...process.env,
-        AUTH_KEY: authKey,
-        HTTP_INTERFACE: `${bindHost}:${bindPort}`,
-        ANNOUNCED_IP: announcedIp,
-        RTC_MAX_PORT: String(rtcMaxPort),
-        RTC_MIN_PORT: String(rtcMinPort),
-        CODEC_H264: String(Boolean(codecFlags.h264)),
-        CODEC_VP9: String(Boolean(codecFlags.vp9))
+        OSFU_AUTH_KEY: authKey,
+        OSFU_HTTP_INTERFACE: `${bindHost}:${bindPort}`,
+        OSFU_ANNOUNCED_IP: announcedIp,
+        OSFU_RTC_MAX_PORT: String(rtcMaxPort),
+        OSFU_RTC_MIN_PORT: String(rtcMinPort),
+        OSFU_CODEC_H264: String(Boolean(codecFlags.h264)),
+        OSFU_CODEC_VP9: String(Boolean(codecFlags.vp9))
     };
     if (Object.hasOwn(codecFlags, "vp8")) {
-        env.CODEC_VP8 = String(Boolean(codecFlags.vp8));
+        env.OSFU_CODEC_VP8 = String(Boolean(codecFlags.vp8));
     }
     if (maxBitrateOut !== undefined) {
-        env.MAX_BITRATE_OUT = String(maxBitrateOut);
+        env.OSFU_MAX_BITRATE_OUT = String(maxBitrateOut);
     }
     if (maxVideoBitrate !== undefined) {
-        env.MAX_VIDEO_BITRATE = String(maxVideoBitrate);
+        env.OSFU_MAX_VIDEO_BITRATE = String(maxVideoBitrate);
     }
     const child = spawn(
         "cargo",

@@ -31,8 +31,8 @@ Only latest. Version support is at the Odoo layer.
 These containers redact their contents from debug output and overwrite them
 when dropped, reducing accidental disclosure and secret data left in memory.
 
-`AUTH_KEY_FILE` supports loading the server key from a mounted secret,
-keeping its value out of the process environment. Leave `AUTH_KEY` unset
+`OSFU_AUTH_KEY_FILE` supports loading the server key from a mounted secret,
+keeping its value out of the process environment. Leave `OSFU_AUTH_KEY` unset
 when using this option. See [Deployment](DEPLOYMENT.md) for configuration.
 
 ### Security Tooling & Verification

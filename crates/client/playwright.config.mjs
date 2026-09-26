@@ -41,7 +41,7 @@ export default defineConfig({
         },
         {
             command:
-                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= HTTP_INTERFACE=127.0.0.1:18080 ANNOUNCED_IP=127.0.0.1 RTC_MIN_PORT=58000 RTC_MAX_PORT=58031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
+                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= OSFU_HTTP_INTERFACE=127.0.0.1:18080 OSFU_ANNOUNCED_IP=127.0.0.1 OSFU_RTC_MIN_PORT=58000 OSFU_RTC_MAX_PORT=58031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
             reuseExistingServer: true,
             timeout: 360_000,
             url: "http://127.0.0.1:18080/v1/noop"

@@ -13,7 +13,7 @@ WebRTC UDP    -> public VM IP       -> o-sfu RTC UDP range
 
 the reverse proxy handles only HTTP and WebSocket traffic
 
-media UDP must reach the VM public address directly because `o-sfu` advertises `ANNOUNCED_IP` in ICE-lite SDP
+media UDP must reach the VM public address directly because `o-sfu` advertises `OSFU_ANNOUNCED_IP` in ICE-lite SDP
 
 ## Odoo binding
 
@@ -22,43 +22,43 @@ use the same public SFU URL and shared key on both sides
 on `o-sfu`:
 
 ```env
-AUTH_KEY=<base64-auth-key>
-ANNOUNCED_IP=<vm-public-ip>
+OSFU_AUTH_KEY=<base64-auth-key>
+OSFU_ANNOUNCED_IP=<vm-public-ip>
 ```
 
-or use the file option for the `AUTH_KEY` (recommended for extra security).
+or use the file option for the `OSFU_AUTH_KEY` (recommended for extra security).
 The file must be readable by the `o-sfu` process and contain only the base64 key (e.g. Docker secrets):
 
 ```env
-AUTH_KEY_FILE=/run/secrets/o_sfu_auth_key
-ANNOUNCED_IP=<vm-public-ip>
+OSFU_AUTH_KEY_FILE=/run/secrets/o_sfu_auth_key
+OSFU_ANNOUNCED_IP=<vm-public-ip>
 ```
 
 on Odoo Discuss settings:
 
 ```text
 RTC Server URL = https://<sfu-domain>
-RTC server KEY = <same value as AUTH_KEY>
+RTC server KEY = <same value as OSFU_AUTH_KEY>
 ```
 
 ## basic production environment
 
 ```env
-PROXY=true
-ANNOUNCED_IP=<vm-public-ip>
-AUTH_KEY=<base64-auth-key>
-DIAGNOSTICS_AUTH_TOKEN=<diagnostics-token>
-RTC_MIN_PORT=40000
-RTC_MAX_PORT=40099
-TELEMETRY_LOG_FORMAT=json
-TELEMETRY_DEPLOYMENT_ENVIRONMENT=production
+OSFU_PROXY=true
+OSFU_ANNOUNCED_IP=<vm-public-ip>
+OSFU_AUTH_KEY=<base64-auth-key>
+OSFU_DIAGNOSTICS_AUTH_TOKEN=<diagnostics-token>
+OSFU_RTC_MIN_PORT=40000
+OSFU_RTC_MAX_PORT=40099
+OSFU_TELEMETRY_LOG_FORMAT=json
+OSFU_TELEMETRY_DEPLOYMENT_ENVIRONMENT=production
 ```
 
-`RTC_MIN_PORT` and `RTC_MAX_PORT` must match the cloud firewall, host firewall and container or service binding
+`OSFU_RTC_MIN_PORT` and `OSFU_RTC_MAX_PORT` must match the cloud firewall, host firewall and container or service binding
 
-`TELEMETRY_DEPLOYMENT_ENVIRONMENT=production` setting it to `production` makes the tracing switch to ratio-based sampling so only a subset of traces is captured to reduce load on the tracing system
+`OSFU_TELEMETRY_DEPLOYMENT_ENVIRONMENT=production` setting it to `production` makes the tracing switch to ratio-based sampling so only a subset of traces is captured to reduce load on the tracing system
 
-`ROOM_MAX_LOCAL_ROUTERS` must be less than or equal to `RTC_MEDIA_WORKER_COUNT`
+`OSFU_ROOM_MAX_LOCAL_ROUTERS` must be less than or equal to `OSFU_RTC_MEDIA_WORKER_COUNT`
 
 ## security
 
@@ -66,8 +66,8 @@ see [SECURITY.md](SECURITY.md) for privacy and vulnerability reporting
 
 ### credentials
 
-`AUTH_KEY` must match Odoo and be valid base64 that decodes to at least 32
-cryptographically random bytes. Generate it and `DIAGNOSTICS_AUTH_TOKEN`
+`OSFU_AUTH_KEY` must match Odoo and be valid base64 that decodes to at least 32
+cryptographically random bytes. Generate it and `OSFU_DIAGNOSTICS_AUTH_TOKEN`
 independently by running this command for each:
 
 ```bash
@@ -79,12 +79,12 @@ openssl rand -base64 32
 keep port `8070` unreachable from untrusted networks. Bind it to loopback for a
 host proxy or expose it only on an isolated same-host container network
 
-set `PROXY=true` only when the trusted public proxy strips or overwrites
+set `OSFU_PROXY=true` only when the trusted public proxy strips or overwrites
 client-supplied forwarded headers. Use `$proxy_add_x_forwarded_for` only when a
 trusted upstream has already stripped client input
 
 `/v1/stats`, `/metrics` and `/internal/diagnostics/...` require
-`DIAGNOSTICS_AUTH_TOKEN` on every request when configured. Without it, the
+`OSFU_DIAGNOSTICS_AUTH_TOKEN` on every request when configured. Without it, the
 actual listener must use loopback. A same-host reverse proxy can reach that
 fallback, so configure the token and block these routes at every public edge
 
@@ -277,7 +277,7 @@ because the logging options include `labels: "com.odoo.sfu.component"`
 the reference `o-sfu-telemetry` VPS profile uses that label to ingest only SFU
 container logs from Docker's rotated `json-file` log store
 
-use `TELEMETRY_LOG_FORMAT=json` for structured `o-sfu` log bodies
+use `OSFU_TELEMETRY_LOG_FORMAT=json` for structured `o-sfu` log bodies
 
 with that setting, `o-sfu` writes one JSON object per stdout or stderr line
 
@@ -321,10 +321,10 @@ The decoded payload separates event fields from span context:
 | `timestamp` | string | RFC 3339 UTC timestamp generated when the event is formatted |
 | `level` | string | tracing level such as `INFO`, `WARN` or `ERROR` |
 | `target` | string | Rust tracing target that emitted the event |
-| `service.name` | string | `TELEMETRY_SERVICE_NAME` defaulting to `o-sfu` |
+| `service.name` | string | `OSFU_TELEMETRY_SERVICE_NAME` defaulting to `o-sfu` |
 | `service.version` | string | compiled `o-sfu` crate version |
-| `service.instance.id` | string | `TELEMETRY_SERVICE_INSTANCE_ID` defaulting to `pid-<pid>` |
-| `deployment.environment` | string | `TELEMETRY_DEPLOYMENT_ENVIRONMENT` defaulting to `local` |
+| `service.instance.id` | string | `OSFU_TELEMETRY_SERVICE_INSTANCE_ID` defaulting to `pid-<pid>` |
+| `deployment.environment` | string | `OSFU_TELEMETRY_DEPLOYMENT_ENVIRONMENT` defaulting to `local` |
 | `trace_id` | string | optional derived trace ID from the event's tracing context |
 | `fields` | object | values recorded on the event, including `event` and `message` when supplied |
 | `spans` | array | event parent scope from root to leaf, or an empty array outside a span |
@@ -409,7 +409,7 @@ use the telemetry reference for exact queries and response shapes:
 - [HTTP diagnostics](https://odoo.github.io/o-sfu/o_sfu/http/telemetry/diagnostics/index.html)
 
 remote Prometheus scrape through a private TLS endpoint when
-`DIAGNOSTICS_AUTH_TOKEN` is configured:
+`OSFU_DIAGNOSTICS_AUTH_TOKEN` is configured:
 
 ```yaml
 scrape_configs:
@@ -468,13 +468,13 @@ network:
 - Google Cloud firewall rule targets match the VM network tags when tags are used
 - the VM has the `sfu-server` network tag when the SFU firewall rule targets it
 - host firewall such as UFW allows the configured RTC UDP range
-- Docker or systemd exposes the same UDP range as `RTC_MIN_PORT` and `RTC_MAX_PORT`
+- Docker or systemd exposes the same UDP range as `OSFU_RTC_MIN_PORT` and `OSFU_RTC_MAX_PORT`
 - host NGINX deployments publish `o-sfu` HTTP only on `127.0.0.1:8070`
 
 proxy:
 
 - NGINX terminates TLS for `<sfu-domain>`
-- NGINX proxies to the actual `HTTP_INTERFACE`
+- NGINX proxies to the actual `OSFU_HTTP_INTERFACE`
 - NGINX uses HTTP/1.1 upstream for WebSocket upgrade support
 - NGINX forwards `Upgrade` and `Connection`
 - NGINX overwrites `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP` and `Host`
@@ -482,24 +482,24 @@ proxy:
 
 runtime:
 
-- `ANNOUNCED_IP` is the VM public IP
-- `ANNOUNCED_IP` is not the NGINX domain
-- `ANNOUNCED_IP` is not `0.0.0.0`
+- `OSFU_ANNOUNCED_IP` is the VM public IP
+- `OSFU_ANNOUNCED_IP` is not the NGINX domain
+- `OSFU_ANNOUNCED_IP` is not `0.0.0.0`
 - Docker Compose logging uses explicit `max-size` and `max-file` limits
 - Docker Compose logging uses `json-file` when `o-sfu-telemetry` ingests Docker logs
 - `o-sfu` has the `com.odoo.sfu.component=server` Docker label
-- `PROXY=true` is set only behind the trusted NGINX edge
-- `AUTH_KEY` matches the Odoo caller configuration
-- `AUTH_KEY` decodes to at least 32 bytes generated with cryptographically safe randomness
-- `DIAGNOSTICS_AUTH_TOKEN` is generated independently from at least 32 random bytes
-- `RTC_MEDIA_WORKER_COUNT` fits the VM capacity
-- `ROOM_MAX_LOCAL_ROUTERS` does not exceed `RTC_MEDIA_WORKER_COUNT`
+- `OSFU_PROXY=true` is set only behind the trusted NGINX edge
+- `OSFU_AUTH_KEY` matches the Odoo caller configuration
+- `OSFU_AUTH_KEY` decodes to at least 32 bytes generated with cryptographically safe randomness
+- `OSFU_DIAGNOSTICS_AUTH_TOKEN` is generated independently from at least 32 random bytes
+- `OSFU_RTC_MEDIA_WORKER_COUNT` fits the VM capacity
+- `OSFU_ROOM_MAX_LOCAL_ROUTERS` does not exceed `OSFU_RTC_MEDIA_WORKER_COUNT`
 
 validation:
 
 - `GET /v1/noop` succeeds through HTTPS
 - public `/v1/stats`, `/metrics` and `/internal/diagnostics/summary` return `404`
-- private operator requests send `DIAGNOSTICS_AUTH_TOKEN` over a confidential transport
+- private operator requests send `OSFU_DIAGNOSTICS_AUTH_TOKEN` over a confidential transport
 - browser join through Odoo succeeds
 - if HTTP succeeds but media fails, check UDP firewalls and the `sfu-server` tag first
 
@@ -509,56 +509,56 @@ required:
 
 | variable | default | description |
 | --- | --- | --- |
-| `ANNOUNCED_IP` | required | concrete advertised IP address used in ICE-lite SDP |
-| `AUTH_KEY` | required | base64 key with at least 32 decoded bytes used to sign and verify SFU JWTs |
+| `OSFU_ANNOUNCED_IP` | required | concrete advertised IP address used in ICE-lite SDP |
+| `OSFU_AUTH_KEY` | required | base64 key with at least 32 decoded bytes used to sign and verify SFU JWTs |
 
 HTTP and operator access:
 
 | variable | default | description |
 | --- | --- | --- |
-| `HTTP_INTERFACE` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
-| `PROXY` | `false` | trusts proxy-provided request metadata when `true` |
-| `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
-| `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
+| `OSFU_HTTP_INTERFACE` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
+| `OSFU_PROXY` | `false` | trusts proxy-provided request metadata when `true` |
+| `OSFU_DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
+| `OSFU_SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
 
 authentication and websocket admission:
 
 | variable | default | description |
 | --- | --- | --- |
-| `AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds |
-| `MAX_PRE_AUTH_WEBSOCKET_SESSIONS` | `512` | process-wide cap for upgraded WebSockets waiting for authentication |
-| `MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN` | `16` | per-origin cap for upgraded WebSockets waiting for authentication |
+| `OSFU_AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds |
+| `OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS` | `512` | process-wide cap for upgraded WebSockets waiting for authentication |
+| `OSFU_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN` | `16` | per-origin cap for upgraded WebSockets waiting for authentication |
 
 room and user limits:
 
 | variable | default | description |
 | --- | --- | --- |
-| `ROOM_SIZE` | `100` | maximum concurrent users per room |
-| `USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds |
-| `PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds |
-| `USER_OUTBOUND_QUEUE_CAPACITY` | `128` | per-user WebSocket room-event queue depth |
-| `USER_OUTBOUND_QUEUE_BYTE_CAPACITY` | `2097152` | per-user WebSocket queued-byte budget |
-| `ROOM_RESERVATION_TTL` | `60` | time-to-live for unjoined rooms in seconds |
-| `ROOM_DEPARTURE_GRACE` | `60` | empty room grace period before removal (seconds) |
+| `OSFU_ROOM_SIZE` | `100` | maximum concurrent users per room |
+| `OSFU_USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds |
+| `OSFU_PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds |
+| `OSFU_USER_OUTBOUND_QUEUE_CAPACITY` | `128` | per-user WebSocket room-event queue depth |
+| `OSFU_USER_OUTBOUND_QUEUE_BYTE_CAPACITY` | `2097152` | per-user WebSocket queued-byte budget |
+| `OSFU_ROOM_RESERVATION_TTL` | `60` | time-to-live for unjoined rooms in seconds |
+| `OSFU_ROOM_DEPARTURE_GRACE` | `60` | empty room grace period before removal (seconds) |
 
 RTC transport:
 
 | variable | default | description |
 | --- | --- | --- |
-| `RTC_MIN_PORT` | `40000` | lower bound for the RTC UDP port range |
-| `RTC_MAX_PORT` | `49999` | upper bound for the RTC UDP port range |
-| `RTC_UDP_IO_BACKEND` | `tokio` | UDP socket backend for RTC workers, either `tokio` or Linux-only `io_uring` |
-| `RTC_MEDIA_WORKER_COUNT` | available parallelism | number of RTC media workers, falling back to `1` when the host cannot report available parallelism |
-| `MAX_BITRATE_IN` | `8000000` | maximum incoming bitrate in bps per user |
-| `MAX_BITRATE_OUT` | `10000000` | receiver-side BWE ceiling in bps per user |
-| `MAX_VIDEO_BITRATE` | `4000000` | maximum bitrate in bps for the highest default simulcast video layer metadata |
+| `OSFU_RTC_MIN_PORT` | `40000` | lower bound for the RTC UDP port range |
+| `OSFU_RTC_MAX_PORT` | `49999` | upper bound for the RTC UDP port range |
+| `OSFU_RTC_UDP_IO_BACKEND` | `tokio` | UDP socket backend for RTC workers, either `tokio` or Linux-only `io_uring` |
+| `OSFU_RTC_MEDIA_WORKER_COUNT` | available parallelism | number of RTC media workers, falling back to `1` when the host cannot report available parallelism |
+| `OSFU_MAX_BITRATE_IN` | `8000000` | maximum incoming bitrate in bps per user |
+| `OSFU_MAX_BITRATE_OUT` | `10000000` | receiver-side BWE ceiling in bps per user |
+| `OSFU_MAX_VIDEO_BITRATE` | `4000000` | maximum bitrate in bps for the highest default simulcast video layer metadata |
 
 room worker placement:
 
 | variable | default | description |
 | --- | --- | --- |
-| `ROOM_MAX_LOCAL_ROUTERS` | `1` | maximum workers a room may use, with `1` disabling spillover |
-| `ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS` | `20` | packet-loop service delay that marks an assigned worker unhealthy after two consecutive observations |
+| `OSFU_ROOM_MAX_LOCAL_ROUTERS` | `1` | maximum workers a room may use, with `1` disabling spillover |
+| `OSFU_ROOM_SPILLOVER_PACKET_LOOP_DELAY_MS` | `20` | packet-loop service delay that marks an assigned worker unhealthy after two consecutive observations |
 
 Rooms remain on an assigned healthy worker. A join attaches an unused healthy
 worker only when every assigned worker is unhealthy and the router cap permits
@@ -569,32 +569,32 @@ media policy and codecs:
 
 | variable | default | description |
 | --- | --- | --- |
-| `ROOM_MAX_ACTIVE_AUDIO_SPEAKERS` | `4` | maximum active audio speakers forwarded by room media policy |
-| `ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER` | `10` | maximum active video source downloads per receiver |
-| `CODEC_OPUS` | `true` | enables Opus audio |
-| `CODEC_PCMU` | `false` | enables G.711 mu-law audio |
-| `CODEC_PCMA` | `false` | enables G.711 a-law audio |
-| `CODEC_VP8` | `true` | enables VP8 video |
-| `CODEC_H264` | `false` | enables H.264 video |
-| `CODEC_H265` | `false` | enables H.265 video |
-| `CODEC_VP9` | `false` | enables VP9 video |
-| `CODEC_AV1` | `false` | enables AV1 video |
-| `CODEC_AUDIO_PREFERENCE` | `opus,PCMU,PCMA` | optional comma-separated audio codec preference order |
-| `CODEC_VIDEO_PREFERENCE` | `VP8,H264,H265,VP9,AV1` | optional comma-separated video codec preference order. The first enabled entry selects layered upload eligibility |
+| `OSFU_ROOM_MAX_ACTIVE_AUDIO_SPEAKERS` | `4` | maximum active audio speakers forwarded by room media policy |
+| `OSFU_ROOM_MAX_VIDEO_DOWNLOADS_PER_RECEIVER` | `10` | maximum active video source downloads per receiver |
+| `OSFU_CODEC_OPUS` | `true` | enables Opus audio |
+| `OSFU_CODEC_PCMU` | `false` | enables G.711 mu-law audio |
+| `OSFU_CODEC_PCMA` | `false` | enables G.711 a-law audio |
+| `OSFU_CODEC_VP8` | `true` | enables VP8 video |
+| `OSFU_CODEC_H264` | `false` | enables H.264 video |
+| `OSFU_CODEC_H265` | `false` | enables H.265 video |
+| `OSFU_CODEC_VP9` | `false` | enables VP9 video |
+| `OSFU_CODEC_AV1` | `false` | enables AV1 video |
+| `OSFU_CODEC_AUDIO_PREFERENCE` | `opus,PCMU,PCMA` | optional comma-separated audio codec preference order |
+| `OSFU_CODEC_VIDEO_PREFERENCE` | `VP8,H264,H265,VP9,AV1` | optional comma-separated video codec preference order. The first enabled entry selects layered upload eligibility |
 
 receiver video adaptation tuning:
 
 | variable | default | description |
 | --- | --- | --- |
-| `ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD` | `3` | receiver count at or above which scalable video is layer-selected per receiver instead of forwarded at full quality |
-| `ROOM_THUMBNAIL_BUDGET_DIVISOR` | `2` | divisor applied to the per-source budget when a source is shown as a thumbnail |
-| `ROOM_SOFT_PAUSE_DWELL_MS` | `750` | positive duration of continuous receiver pressure before soft policy pauses |
-| `ROOM_UPGRADE_DWELL_MS` | `750` | positive duration of continuous eligibility for the exact post-fit upgrade or soft-resume target |
-| `ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT` | `0` | percent of the receiver bandwidth estimate held back from the video budget for RTP, RTX and FEC overhead, from `0` to `100` |
-| `ROOM_AUDIO_RESERVE_PER_SPEAKER_BPS` | `0` | fixed bitrate in bps held back from each receiver's video budget for every admitted audio speaker that receiver consumes; a receiver with audio disabled reserves nothing; `0` disables audio reservation |
+| `OSFU_ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD` | `3` | receiver count at or above which scalable video is layer-selected per receiver instead of forwarded at full quality |
+| `OSFU_ROOM_THUMBNAIL_BUDGET_DIVISOR` | `2` | divisor applied to the per-source budget when a source is shown as a thumbnail |
+| `OSFU_ROOM_SOFT_PAUSE_DWELL_MS` | `750` | positive duration of continuous receiver pressure before soft policy pauses |
+| `OSFU_ROOM_UPGRADE_DWELL_MS` | `750` | positive duration of continuous eligibility for the exact post-fit upgrade or soft-resume target |
+| `OSFU_ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT` | `0` | percent of the receiver bandwidth estimate held back from the video budget for RTP, RTX and FEC overhead, from `0` to `100` |
+| `OSFU_ROOM_AUDIO_RESERVE_PER_SPEAKER_BPS` | `0` | fixed bitrate in bps held back from each receiver's video budget for every admitted audio speaker that receiver consumes; a receiver with audio disabled reserves nothing; `0` disables audio reservation |
 
 Eligible layer downsteps are immediate. Soft pauses may keep the selected video
-bitrate above the receiver budget until `ROOM_SOFT_PAUSE_DWELL_MS` expires.
+bitrate above the receiver budget until `OSFU_ROOM_SOFT_PAUSE_DWELL_MS` expires.
 Hard media limits remain immediate. Both dwells are bounded to
 `3153600000000` ms to keep deadline addition within the portable `Instant`
 range.
@@ -604,17 +604,17 @@ telemetry:
 | variable | default | description |
 | --- | --- | --- |
 | `RUST_LOG` | `info` | `tracing-subscriber` env filter |
-| `TELEMETRY_LOG_FORMAT` | `compact` | log output format, either `compact` or `json` |
-| `TELEMETRY_SERVICE_NAME` | `o-sfu` | service name in telemetry resource metadata |
-| `TELEMETRY_DEPLOYMENT_ENVIRONMENT` | `local` | deployment environment in telemetry resource metadata |
-| `TELEMETRY_SERVICE_INSTANCE_ID` | `pid-<pid>` | stable service instance id override |
-| `TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval, with `0` disabling sampling |
-| `TELEMETRY_OTLP_ENDPOINT` | disabled | optional OTLP HTTP traces endpoint, normalized to `/v1/traces` |
+| `OSFU_TELEMETRY_LOG_FORMAT` | `compact` | log output format, either `compact` or `json` |
+| `OSFU_TELEMETRY_SERVICE_NAME` | `o-sfu` | service name in telemetry resource metadata |
+| `OSFU_TELEMETRY_DEPLOYMENT_ENVIRONMENT` | `local` | deployment environment in telemetry resource metadata |
+| `OSFU_TELEMETRY_SERVICE_INSTANCE_ID` | `pid-<pid>` | stable service instance id override |
+| `OSFU_TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval, with `0` disabling sampling |
+| `OSFU_TELEMETRY_OTLP_ENDPOINT` | disabled | optional OTLP HTTP traces endpoint, normalized to `/v1/traces` |
 
 feature flags:
 
 | variable | default | description |
 | --- | --- | --- |
-| `FEATURE_TRANSCRIPTION` | `false` | enables transcription intent flags, currently WIP |
-| `FEATURE_AUDIO_RECORDING` | `false` | enables audio recording intent flags, currently WIP |
-| `FEATURE_VIDEO_RECORDING` | `false` | enables video recording intent flags, currently WIP |
+| `OSFU_FEATURE_TRANSCRIPTION` | `false` | enables transcription intent flags, currently WIP |
+| `OSFU_FEATURE_AUDIO_RECORDING` | `false` | enables audio recording intent flags, currently WIP |
+| `OSFU_FEATURE_VIDEO_RECORDING` | `false` | enables video recording intent flags, currently WIP |

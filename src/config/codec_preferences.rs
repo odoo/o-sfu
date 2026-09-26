@@ -8,8 +8,8 @@ pub(super) fn load_codec_preferences(env: &Env<'_>) -> Result<CodecPreferences> 
         Some(value) => parse_codec_list(&value, "CODEC_AUDIO_PREFERENCE", audio_codec_preference)?,
         None => Vec::new(),
     };
-    let video = match env.var::<String>("CODEC_VIDEO_PREFERENCE").optional()? {
-        Some(value) => parse_codec_list(&value, "CODEC_VIDEO_PREFERENCE", video_codec_preference)?,
+    let video = match env.var::<String>("OSFU_CODEC_VIDEO_PREFERENCE").optional()? {
+        Some(value) => parse_codec_list(&value, "OSFU_CODEC_VIDEO_PREFERENCE", video_codec_preference)?,
         None => Vec::new(),
     };
     Ok(CodecPreferences::default()
