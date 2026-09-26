@@ -55,7 +55,7 @@ pub struct UserCloseRequest {
     pub reason: UserCloseReason,
 }
 
-type RuntimeUserRemoval = (ActiveUser, RoomTransportPlan);
+type RuntimeUserRemoval = (ActiveUser, RoomTransportPlan, usize);
 
 #[derive(Debug)]
 pub struct PresenceCommit {
@@ -79,6 +79,7 @@ pub enum ConnectionCloseCommit {
         session_teardown: Option<TransportTeardown>,
         effects: LifecycleEffects,
         transport_plan: RoomTransportPlan,
+        evictions: usize,
     },
     StalePlacement {
         session_teardown: TransportTeardown,
@@ -90,6 +91,7 @@ pub struct DisconnectCommit {
     pub session_teardowns: Vec<TransportTeardown>,
     pub effects: LifecycleEffects,
     pub transport_plan: RoomTransportPlan,
+    pub evictions: usize,
 }
 
 impl RoomState {
@@ -267,12 +269,12 @@ impl RoomState {
 
     fn remove_runtime_user(&mut self, user_id: &UserId) -> Option<RuntimeUserRemoval> {
         let user = self.users.remove(user_id)?;
-        let mut transport_plan = self.topology.remove_session(user_id);
+        let (mut transport_plan, evictions) = self.topology.remove_session(user_id);
         transport_plan.extend_teardown(
             self.staged_publishes
                 .take_teardowns_for_connection(user_id, user.connection_id),
         );
-        Some((user, transport_plan))
+        Some((user, transport_plan, evictions))
     }
 
     pub fn close_connection(
@@ -299,7 +301,7 @@ impl RoomState {
             .topology
             .committed_consumer_user_ids_for_owner_sources(user_id);
         source_recipients.remove(user_id);
-        let (user, transport_plan) = self.remove_runtime_user(user_id)?;
+        let (user, transport_plan, evictions) = self.remove_runtime_user(user_id)?;
         Some(ConnectionCloseCommit::Current {
             session_teardown,
             effects: LifecycleEffects {
@@ -313,6 +315,7 @@ impl RoomState {
                 track_snapshots: self.remote_track_snapshots_for_users(source_recipients, true),
             },
             transport_plan,
+            evictions,
         })
     }
 
@@ -382,6 +385,7 @@ impl RoomState {
         let mut session_teardowns = Vec::new();
         let mut fanouts = Vec::new();
         let mut transport_plan = RoomTransportPlan::default();
+        let mut evictions = 0;
         for user_id in user_ids {
             let Some(connection_id) = self.users.get(user_id).map(|user| user.connection_id) else {
                 continue;
@@ -389,10 +393,13 @@ impl RoomState {
             let session_teardown = TransportTeardown::CloseSession {
                 session_key: self.transport_user_key(user_id, connection_id),
             };
-            let Some((user, user_transport_plan)) = self.remove_runtime_user(user_id) else {
+            let Some((user, user_transport_plan, user_evictions)) =
+                self.remove_runtime_user(user_id)
+            else {
                 continue;
             };
             transport_plan.extend(user_transport_plan);
+            evictions += user_evictions;
             session_teardowns.push(session_teardown);
             close_requests.push(UserCloseRequest {
                 sender: user.sender,
@@ -410,6 +417,7 @@ impl RoomState {
                 track_snapshots: self.remote_track_snapshots_for_users(source_recipients, true),
             },
             transport_plan,
+            evictions,
         }
     }
 

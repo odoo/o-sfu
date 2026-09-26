@@ -1,3 +1,5 @@
+use o_sfu::config::VideoAdaptationTuning;
+
 use super::{
     media::{
         RouteState, assert_consumer_route, assert_packet_dropped,
@@ -13,6 +15,7 @@ const LARGE_ROOM_SIZE: usize = 64;
 const LARGE_ROOM_LOCAL_ROUTER_CAP: usize = 4;
 const LARGE_ROOM_USERS_PER_WORKER: usize = 2;
 const LARGE_ROOM_MEDIA_LIMIT: usize = 2;
+const LARGE_ROOM_SOFT_PAUSE_DWELL: Duration = Duration::from_mins(5);
 
 pub(crate) struct SpilloverRoomFakePeers {
     pub(crate) server: TestServer,
@@ -109,6 +112,19 @@ fn large_room_spillover_test_config() -> Config {
             Ok(limits) => limits,
             Err(error) => panic!("large-room media limits should be valid: {error}"),
         };
+    // Sparse synthetic media does not sustain BWE. Defer bandwidth soft pauses
+    // beyond this route-cap and cleanup scenario.
+    config.transport.video_adaptation_tuning = match VideoAdaptationTuning::try_new(
+        VideoAdaptationTuning::DEFAULT_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD,
+        VideoAdaptationTuning::DEFAULT_THUMBNAIL_BUDGET_DIVISOR,
+        LARGE_ROOM_SOFT_PAUSE_DWELL,
+        VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL,
+        VideoAdaptationTuning::DEFAULT_RECEIVER_BUDGET_HEADROOM_PERCENT,
+        VideoAdaptationTuning::DEFAULT_AUDIO_RESERVE_PER_SPEAKER,
+    ) {
+        Ok(tuning) => tuning,
+        Err(error) => panic!("large-room adaptation tuning should be valid: {error}"),
+    };
     config
 }
 

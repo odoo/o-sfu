@@ -9,17 +9,20 @@ use base64::{
 };
 use hmac::{Hmac, KeyInit, Mac};
 use o_sfu_protocol::wire::{UserId, UserPermissions};
-use o_sfu_rfc::jwt::{ALGORITHM_HS256, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
+use o_sfu_rfc::jwt::{ALGORITHM_HS256, HS256_MIN_KEY_BYTES, JwtHeader, TYPE_JWT, URL_SAFE_NO_PAD};
 pub use o_sfu_rfc::jwt::{NumericDate, RegisteredJwtClaims};
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, DeserializeOwned},
+};
 use sha2::Sha256;
 use thiserror::Error;
 use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Proves [`verify`] accepted a JWT under the supplied key.
+/// Proves [`verify_websocket_claims`] accepted the token for the selected room.
 pub(super) struct AuthProof(());
 
 pub const MAX_JWT_TOKEN_BYTES: usize = 16 * 1024;
@@ -34,10 +37,20 @@ pub enum AuthenticationError {
     InvalidBase64Encoding,
     #[error("invalid JSON payload")]
     InvalidJsonPayload,
-    #[error("unsupported JWT algorithm: {0}")]
-    UnsupportedAlgorithm(String),
+    #[error("token has no participant ID")]
+    MissingParticipantId,
+    #[error("token has no room ID")]
+    MissingRoomId,
+    #[error("token targets a different room")]
+    RoomMismatch,
+    #[error("unsupported JWT algorithm")]
+    UnsupportedAlgorithm,
     #[error("invalid JWT signature")]
     InvalidSignature,
+    #[error("token has no expiration")]
+    MissingExpiry,
+    #[error("HS256 key must contain at least {HS256_MIN_KEY_BYTES} decoded bytes")]
+    KeyTooShort,
     #[error("token expired")]
     TokenExpired,
     #[error("token not valid yet")]
@@ -80,18 +93,64 @@ impl HttpDisconnectClaims {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WebSocketConnectClaims {
     #[serde(flatten)]
     pub registered: RegisteredJwtClaims,
-    #[serde(rename = "room_id", alias = "sfu_channel_uuid")]
     pub room_id: String,
-    #[serde(rename = "user_id", alias = "session_id")]
     pub user_id: UserId,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permissions: Option<UserPermissions>,
+}
+
+/// Wire identities remain separate because Odoo internal users send both keys.
+/// The RTC session identifies the participant, while the account does not.
+#[derive(Deserialize)]
+struct WebSocketWireClaims {
+    #[serde(flatten)]
+    registered: RegisteredJwtClaims,
+    #[serde(rename = "room_id", alias = "sfu_channel_uuid")]
+    room_id: Option<String>,
+    session_id: Option<UserId>,
+    user_id: Option<UserId>,
+    label: Option<String>,
+    permissions: Option<UserPermissions>,
+}
+
+impl WebSocketWireClaims {
+    fn into_claims(self, room_id: String) -> Result<WebSocketConnectClaims, AuthenticationError> {
+        if self
+            .room_id
+            .as_ref()
+            .is_some_and(|claimed| claimed != &room_id)
+        {
+            return Err(AuthenticationError::RoomMismatch);
+        }
+        let user_id = self
+            .session_id
+            .or(self.user_id)
+            .ok_or(AuthenticationError::MissingParticipantId)?;
+        Ok(WebSocketConnectClaims {
+            registered: self.registered,
+            room_id,
+            user_id,
+            label: self.label,
+            permissions: self.permissions,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for WebSocketConnectClaims {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut wire = WebSocketWireClaims::deserialize(deserializer)?;
+        let room_id = wire
+            .room_id
+            .take()
+            .ok_or_else(|| de::Error::missing_field("room_id"))?;
+        wire.into_claims(room_id).map_err(de::Error::custom)
+    }
 }
 
 impl WebSocketConnectClaims {
@@ -136,8 +195,10 @@ where
 
 /// # Errors
 ///
-/// Returns an error when the token format, segment encoding, signature, or registered claims are
-/// invalid.
+/// Returns [`AuthenticationError`] for invalid token format, base64 encoding,
+/// JSON, algorithm or signature. [`AuthenticationError::MissingExpiry`] rejects
+/// absent `exp`, [`AuthenticationError::TokenExpired`] rejects elapsed expiry
+/// and the `nbf` and optional `iat` guards retain their time errors.
 ///
 /// This verifier decodes JWT header, payload, and signature segments with the JOSE base64url
 /// alphabet without padding, as required by RFC 7515 / RFC 7519.
@@ -145,21 +206,29 @@ pub fn verify<T>(token: &SecretString, key_b64: &SecretString) -> Result<T, Auth
 where
     T: DeserializeOwned,
 {
+    validate_token_length(token.expose_secret())?;
+    verify_claims(token, &decode_key(key_b64)?)
+}
+
+/// Applies the same JWT policy as [`verify`] with a decoded signing key.
+pub(super) fn verify_claims<T: DeserializeOwned>(
+    token: &SecretString,
+    key: &SecretSlice<u8>,
+) -> Result<T, AuthenticationError> {
     let token = token.expose_secret();
     validate_token_length(token)?;
-    let key = decode_key(key_b64)?;
     let (header_b64, claims_b64, signature_b64) = split_token(token)?;
     let header_bytes = decode_jwt_segment(header_b64)?;
     let header: JwtHeader = serde_json::from_slice(&header_bytes)
         .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
     if header.alg != ALGORITHM_HS256 {
-        return Err(AuthenticationError::UnsupportedAlgorithm(header.alg));
+        return Err(AuthenticationError::UnsupportedAlgorithm);
     }
     let actual_signature = decode_jwt_segment(signature_b64)?;
     // This avoids copying the token data, and uses the token which is already protected by
     // `SecretString` to avoid exposing the signed data in memory.
     let signed_data = &token[..token.len() - signature_b64.len() - 1];
-    verify_hs256(signed_data.as_bytes(), &key, &actual_signature)?;
+    verify_hs256(signed_data.as_bytes(), key, &actual_signature)?;
     let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
     let registered_claims: RegisteredJwtClaims =
         serde_json::from_slice(claims_bytes.expose_secret())
@@ -169,28 +238,35 @@ where
         .map_err(|_error| AuthenticationError::InvalidJsonPayload)
 }
 
-/// Returns verified claims with proof or the [`AuthenticationError`] from [`verify`].
-pub(super) fn verify_with_proof<T: DeserializeOwned>(
+/// Verifies a room-scoped token and resolves its runtime participant identity.
+///
+/// Returns errors from JWT verification, [`AuthenticationError::RoomMismatch`]
+/// for a conflicting room claim or [`AuthenticationError::MissingParticipantId`].
+pub(super) fn verify_websocket_claims(
     token: &SecretString,
-    key_b64: &SecretString,
-) -> Result<(T, AuthProof), AuthenticationError> {
-    verify(token, key_b64).map(|claims| (claims, AuthProof(())))
+    key: &SecretSlice<u8>,
+    room_id: &str,
+) -> Result<(WebSocketConnectClaims, AuthProof), AuthenticationError> {
+    let wire: WebSocketWireClaims = verify_claims(token, key)?;
+    let mut claims = wire.into_claims(room_id.to_owned())?;
+    claims.normalize_runtime_user_id();
+    Ok((claims, AuthProof(())))
 }
 
-/// decode untrusted JWT claims for candidate room selection only
+/// Extracts a candidate room ID without authenticating the token.
 ///
-/// callers must verify the same token with the selected room key before using
-/// the decoded claims as authenticated identity or permission data
-pub(crate) fn decode_unverified_claims<T>(token: &SecretString) -> Result<T, AuthenticationError>
-where
-    T: DeserializeOwned,
-{
+/// Returns `AuthenticationError` for malformed claims or a missing room ID.
+/// The caller must verify the same token with the selected room's key.
+pub(super) fn unverified_websocket_room(
+    token: &SecretString,
+) -> Result<String, AuthenticationError> {
     let token = token.expose_secret();
     validate_token_length(token)?;
     let (_header_b64, claims_b64, _signature_b64) = split_token(token)?;
     let claims_bytes: SecretSlice<u8> = decode_jwt_segment(claims_b64)?.into();
-    serde_json::from_slice(claims_bytes.expose_secret())
-        .map_err(|_error| AuthenticationError::InvalidJsonPayload)
+    let claims: WebSocketWireClaims = serde_json::from_slice(claims_bytes.expose_secret())
+        .map_err(|_error| AuthenticationError::InvalidJsonPayload)?;
+    claims.room_id.ok_or(AuthenticationError::MissingRoomId)
 }
 
 fn validate_token_length(token: &str) -> Result<(), AuthenticationError> {
@@ -213,7 +289,10 @@ fn validate_registered_claims_at(
 ) -> Result<(), AuthenticationError> {
     let iat_limit = NumericDate::from(now.saturating_add(MAX_IAT_FUTURE_SKEW));
     let now = NumericDate::from(now);
-    if claims.exp.is_some_and(|exp| exp <= now) {
+    // Odoo issues exp without iat. Expiry is mandatory application policy,
+    // while RFC 7519 leaves registered-claim presence to the application.
+    let exp = claims.exp.ok_or(AuthenticationError::MissingExpiry)?;
+    if exp <= now {
         return Err(AuthenticationError::TokenExpired);
     }
     if claims.nbf.is_some_and(|nbf| nbf > now) {
@@ -283,6 +362,20 @@ pub(crate) fn decode_key(input: &SecretString) -> Result<SecretSlice<u8>, Authen
     Ok(SecretSlice::from(buffer))
 }
 
+/// Decodes boundary key material and enforces the RFC 7518 HS256 minimum.
+///
+/// Returns [`AuthenticationError::InvalidBase64Encoding`] for malformed input
+/// or [`AuthenticationError::KeyTooShort`] below `HS256_MIN_KEY_BYTES`.
+pub(crate) fn decode_signing_key(
+    input: &SecretString,
+) -> Result<SecretSlice<u8>, AuthenticationError> {
+    let key = decode_key(input)?;
+    if key.expose_secret().len() < HS256_MIN_KEY_BYTES {
+        return Err(AuthenticationError::KeyTooShort);
+    }
+    Ok(key)
+}
+
 fn decode_jwt_segment(input: &str) -> Result<Vec<u8>, AuthenticationError> {
     URL_SAFE_NO_PAD
         .decode(input.as_bytes())
@@ -298,15 +391,14 @@ fn pad_base64(input: &str) -> String {
 }
 
 pub(crate) fn derive_key_from_seed(
-    key: &SecretString,
+    key: &SecretSlice<u8>,
     seed: &SecretString,
-) -> Result<SecretString, AuthenticationError> {
-    let key_bytes = decode_key(key)?;
+) -> Result<SecretSlice<u8>, AuthenticationError> {
     let seed_bytes = decode_key(seed)?;
-    let mut derived_key = sign_hs256(seed_bytes.expose_secret(), &key_bytes)?;
-    let encoded = STANDARD.encode(derived_key);
+    let mut derived_key = sign_hs256(seed_bytes.expose_secret(), key)?;
+    let secret = SecretSlice::from(derived_key.to_vec());
     derived_key.zeroize();
-    Ok(SecretString::from(encoded))
+    Ok(secret)
 }
 
 /// Plaintext mirror of [`HttpRoomClaims`] for test assertions.

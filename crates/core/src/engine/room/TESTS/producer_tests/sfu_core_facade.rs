@@ -495,7 +495,7 @@ async fn build_publisher_fixture_with(
     let room = manager
         .serve_room(
             "issuer-sfu-core",
-            TEST_ROOM_KEY.into(),
+            TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
             None,
         )

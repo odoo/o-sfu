@@ -433,3 +433,28 @@ fn env_reports_unreadable_file_instead_of_treating_it_as_missing() {
         "unreadable file must not be treated as an absent value, got: {message:?}"
     );
 }
+
+#[test]
+fn env_file_fallback_preserves_direct_value_precedence() {
+    let file_read = Cell::new(false);
+    let env = Env::new(
+        |key| match key {
+            "VALUE_ENV" => Some("direct value".to_owned()),
+            "FILE_ENV" => Some("secret.txt".to_owned()),
+            _ => None,
+        },
+        |_| {
+            file_read.set(true);
+            Ok("file value".to_owned())
+        },
+    );
+    assert_eq!(
+        env.var::<String>("VALUE_ENV")
+            .or_load_from_file("FILE_ENV")
+            .required()
+            .ok()
+            .as_deref(),
+        Some("direct value")
+    );
+    assert!(!file_read.get());
+}

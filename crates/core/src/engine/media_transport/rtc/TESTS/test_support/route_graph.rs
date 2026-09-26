@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use o_sfu_router::rtp::MediaStream;
 use str0m::{
     media::{MediaKind, Mid, Rid},
     rtp::Ssrc,
@@ -149,5 +150,16 @@ impl<'a> MediaWorkerScenario<'a> {
             Some(dst_idx),
         );
         transport_media_id
+    }
+}
+
+impl PacketLoopState {
+    pub fn refresh_producer_ssrcs(
+        &mut self,
+        session_key: &TransportSessionKey,
+        mid: Mid,
+        parameters: &MediaStream,
+    ) {
+        self.refresh_answer_producer_ssrcs(session_key, &[mid], &[(mid, parameters.clone())]);
     }
 }

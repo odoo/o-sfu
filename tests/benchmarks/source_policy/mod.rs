@@ -82,7 +82,7 @@ use o_sfu_router::test_support::rtp_samples;
 use o_sfu_telemetry::diagnostics::types::DiagnosticsPolicyPauseReason;
 use tokio::runtime::{Builder, Runtime};
 
-const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+const TEST_ROOM_KEY: &[u8] = b"channel-key";
 const WORKER_COUNT: usize = 1;
 const OUTBOUND_QUEUE_CAPACITY: usize = 1024;
 
@@ -321,7 +321,7 @@ impl SourcePolicyScenario {
         let room = manager
             .serve_room(
                 "source-policy-benchmark",
-                TEST_ROOM_KEY.into(),
+                TEST_ROOM_KEY.to_vec().into(),
                 &RoomConfig::default(),
                 Some("source-policy-benchmark"),
             )
@@ -390,7 +390,7 @@ impl SourcePolicyScenario {
             .manager
             .serve_room(
                 "foreign-speaker-benchmark",
-                TEST_ROOM_KEY.into(),
+                TEST_ROOM_KEY.to_vec().into(),
                 &RoomConfig::default(),
                 None,
             )

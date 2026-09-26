@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
+use o_sfu_core::server::transport::MediaTransportConfig;
 pub use o_sfu_telemetry::{
     DEFAULT_MEDIA_QUALITY_INTERVAL, DEFAULT_TELEMETRY_DEPLOYMENT_ENVIRONMENT,
     DEFAULT_TELEMETRY_SERVICE_NAME, TelemetryConfig, TelemetryLogFormat, TelemetryResource,
@@ -38,6 +39,13 @@ pub(super) fn load_telemetry_config(env: &Env<'_>) -> Result<TelemetryConfig> {
     }
     let media_quality_interval_ms = env
         .var(MEDIA_QUALITY_INTERVAL_ENV)
+        .check(|key, value| {
+            ensure!(
+                Duration::from_millis(value) <= MediaTransportConfig::MAX_MEDIA_QUALITY_INTERVAL,
+                "{key} must not exceed 86400000 milliseconds"
+            );
+            Ok(value)
+        })
         .default(u64::try_from(DEFAULT_MEDIA_QUALITY_INTERVAL.as_millis()).unwrap_or(5_000))?;
     let service_name = env
         .var("TELEMETRY_SERVICE_NAME")

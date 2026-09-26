@@ -12,6 +12,9 @@ use str0m::{
 };
 use tokio::sync::oneshot;
 
+#[path = "session_drain_ingress.rs"]
+mod ingress;
+
 #[path = "session_drain_peer.rs"]
 mod peer;
 use self::peer::{

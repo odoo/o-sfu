@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::anyhow;
 use o_sfu_core::server::room::RoomConfig;
+use secrecy::SecretString;
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::oneshot,
@@ -24,11 +25,100 @@ use tokio_util::{sync::CancellationToken, task::task_tracker::TaskTrackerToken};
 use super::{
     AnyResult, RoomManager, RoomPacketSinkRegistry, Runtime, RuntimeServices, ServeError,
     serve_http_on,
-    test_support::{RuntimeTestBuilder, TEST_ROOM_KEY},
+    test_support::{RuntimeTestBuilder, test_room_key},
 };
-use crate::runtime::metrics::RoomGaugeValues;
+use crate::{
+    config::DeadlineDuration,
+    runtime::{auth::AuthenticationError, metrics::RoomGaugeValues},
+};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[test]
+fn runtime_rejects_invalid_programmatic_operator_tokens_before_starting_workers() {
+    for token in [
+        "",
+        "                                ",
+        "short-secret",
+        "                      short-secret                      ",
+        "operator-secret-with-at-least-32-bytes\0",
+    ] {
+        let mut config = RuntimeTestBuilder::new().config().clone();
+        config.diagnostics.auth_token = Some(SecretString::from(token));
+        let error = Runtime::new(&config).err().map(|error| error.to_string());
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("DIAGNOSTICS_AUTH_TOKEN"))
+        );
+        if !token.is_empty() {
+            assert!(!error.as_deref().is_some_and(|error| error.contains(token)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn runtime_accepts_absent_or_minimum_length_operator_token() -> AnyResult<()> {
+    for token in [
+        None,
+        Some("12345678901234567890123456789012"), // DevSkim: ignore DS173237 (synthetic test token)
+        Some("  12345678901234567890123456789012 \n"),
+    ] {
+        let mut config = RuntimeTestBuilder::new().config().clone();
+        config.diagnostics.auth_token = token.map(SecretString::from);
+        Runtime::new(&config)?
+            .serve(|_state, _shutdown| async { Ok(()) }, async { Ok(()) })
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn runtime_validates_programmatic_proxy_configuration() -> AnyResult<()> {
+    let mut config = RuntimeTestBuilder::new().config().clone();
+    config.http.trust_proxy_headers = true;
+    let result = Runtime::new(&config);
+    match result {
+        Ok(runtime) => {
+            runtime
+                .serve(|_state, _shutdown| async { Ok(()) }, async { Ok(()) })
+                .await?;
+            return Err(anyhow!("proxy mode without trusted proxies must fail"));
+        }
+        Err(error) => assert_eq!(
+            error.to_string(),
+            "TRUSTED_PROXIES must contain at least one proxy CIDR when PROXY=true"
+        ),
+    }
+    for proxy in [None, Some("127.0.0.1/32")] {
+        config.http.trust_proxy_headers = proxy.is_some();
+        config.http.trusted_proxies = proxy.map(str::parse).transpose()?.into_iter().collect();
+        Runtime::new(&config)?
+            .serve(|_state, _shutdown| async { Ok(()) }, async { Ok(()) })
+            .await?;
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_rejects_invalid_programmatic_auth_keys() -> AnyResult<()> {
+    let mut config = RuntimeTestBuilder::new().config().clone();
+    for (key, expected) in [
+        (
+            "invalid-base64!",
+            AuthenticationError::InvalidBase64Encoding,
+        ),
+        ("", AuthenticationError::KeyTooShort),
+        ("YQ==", AuthenticationError::KeyTooShort),
+    ] {
+        config.auth.key = key.into();
+        let error = Runtime::new(&config)
+            .err()
+            .ok_or_else(|| anyhow!("invalid authentication key must fail runtime construction"))?;
+        assert_eq!(error.downcast_ref::<AuthenticationError>(), Some(&expected));
+    }
+    Ok(())
+}
 
 #[tokio::test]
 async fn runtime_shutdown_cancels_drains_and_preserves_errors() -> AnyResult<()> {
@@ -88,7 +178,7 @@ async fn runtime_shutdown_cancels_drains_and_preserves_errors() -> AnyResult<()>
         Err(ServeError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
     ));
 
-    config.http.shutdown_timeout_ms = 20;
+    config.http.shutdown_timeout = DeadlineDuration::from_millis(20)?;
     let runtime = Runtime::new(&config)?;
     let (task_tx, task_rx) = oneshot::channel();
     let server = tokio::spawn(runtime.serve(
@@ -147,7 +237,7 @@ async fn tracked_runtime(
     SocketAddr,
 )> {
     let mut config = RuntimeTestBuilder::new().config().clone();
-    config.http.shutdown_timeout_ms = shutdown_timeout_ms;
+    config.http.shutdown_timeout = DeadlineDuration::from_millis(shutdown_timeout_ms)?;
     let services = RuntimeServices::default();
     let worker_resources = Arc::downgrade(&services.packet_sink_registry);
     let runtime = Runtime::from_services(&config, services)?;
@@ -200,7 +290,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     let config = RoomConfig::default();
 
     let room = rooms
-        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
+        .serve_room("issuer", test_room_key(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
     sleep(RESERVATION_TTL * 2).await;
@@ -211,7 +301,7 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     );
     assert_eq!(rooms.room_gauges().await, RoomGaugeValues::default());
     let room_again = rooms
-        .serve_room("issuer", TEST_ROOM_KEY.into(), &config, None)
+        .serve_room("issuer", test_room_key(), &config, None)
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
 

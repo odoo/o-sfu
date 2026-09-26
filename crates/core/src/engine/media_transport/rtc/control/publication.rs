@@ -145,12 +145,7 @@ pub(super) fn refresh_negotiated_producer_parameters(
             refreshed_parameters.push((mid, parameters));
         }
     }
-    for producer_mid in producer_mids {
-        state.clear_producer_ssrcs_for_mid(session_key, *producer_mid);
-    }
-    for (mid, parameters) in &refreshed_parameters {
-        state.refresh_producer_ssrcs(session_key, *mid, parameters);
-    }
+    state.refresh_answer_producer_ssrcs(session_key, producer_mids, &refreshed_parameters);
     Ok(refreshed_parameters)
 }
 
@@ -283,23 +278,24 @@ fn project_bindings(
             .collect();
     }
 
-    // Multiple RID-less primaries are ambiguous without another stream identity.
-    // Requiring exactly one signaled pair here is O-SFU policy.
-    signaled_ssrcs
+    // A RID-less answer admits one stream even if its SSRC arrives only in RTP.
+    // https://www.rfc-editor.org/rfc/rfc8834.html#section-4.8
+    let ssrcs = signaled_ssrcs
         .first()
         .copied()
         .filter(|_| signaled_ssrcs.len() == 1)
-        .or_else(|| stream_rx_ssrcs(session_state, mid, None))
-        .map(|(ssrc, repair_ssrc)| {
-            let mut binding = StreamBinding::new()
-                .with_ssrc(ssrc)
-                .with_payload_type(primary_payload_type);
-            if let Some(repair_ssrc) = repair_ssrc {
-                binding = binding.with_repair_ssrc(repair_ssrc);
-            }
-            vec![binding]
-        })
-        .unwrap_or_default()
+        .or_else(|| stream_rx_ssrcs(session_state, mid, None));
+    if ssrcs.is_none() && !signaled_ssrcs.is_empty() {
+        return Vec::new();
+    }
+    let mut binding = StreamBinding::new().with_payload_type(primary_payload_type);
+    if let Some((ssrc, repair_ssrc)) = ssrcs {
+        binding = binding.with_ssrc(ssrc);
+        if let Some(repair_ssrc) = repair_ssrc {
+            binding = binding.with_repair_ssrc(repair_ssrc);
+        }
+    }
+    vec![binding]
 }
 
 fn stream_rx_ssrcs(

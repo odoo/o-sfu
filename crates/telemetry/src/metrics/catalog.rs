@@ -17,7 +17,7 @@ use super::{
         MediaQualitySample, RecordingActionOutcome, RtpRelayDropKind, SourceSelectionKind,
         TransportHealthState, TransportHealthTransition, TransportIceState,
         TransportUserLifetimeBucket, WsBusClientFrameKind, WsBusDirection, WsBusFailureKind,
-        WsConnectionStage, WsSessionLoopExitReason, WsStartupFailureKind,
+        WsConnectionStage, WsPreAuthRejection, WsSessionLoopExitReason, WsStartupFailureKind,
     },
     rtc::{RtcMetrics, RtcMetricsRecorder},
     rtp::{RtpMetrics, RtpMetricsRecorder},
@@ -25,6 +25,7 @@ use super::{
 
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
+    pub(super) http_connection_rejections: Counter,
     pub(super) http_requests: CounterFamily<HttpRoute>,
     pub(super) http_room_responses: CounterFamily<HttpRoomResponseStatus>,
     pub(super) http_disconnect_responses: CounterFamily<HttpDisconnectResponseStatus>,
@@ -33,6 +34,7 @@ pub struct RuntimeMetrics {
     pub(super) ws_connections: CounterFamily<WsConnectionStage>,
     pub(super) ws_handshake_rejections: CounterFamily<WebSocketCloseCode>,
     pub(super) ws_handshake_rejections_other: Counter,
+    pub(super) ws_pre_auth_rejections: CounterFamily<WsPreAuthRejection>,
     pub(super) ws_startup_failures: CounterFamily<WsStartupFailureKind>,
     pub(super) ws_user_loops_started: Counter,
     pub(super) ws_user_loop_exits: CounterFamily<WsSessionLoopExitReason>,
@@ -69,6 +71,7 @@ pub struct RuntimeMetrics {
     pub(super) media_quality_jitter_rtp_timestamp_units_observed: Counter,
     pub(super) media_quality_jitter_observations: Counter,
     pub(super) transport_cleanup_failures: Counter,
+    pub(super) subscription_intent_evictions: Counter,
     pub(super) source_selection_updates: CounterFamily<SourceSelectionKind>,
     pub(super) budget_solver_outcomes: CounterFamily<BudgetSolverOutcome>,
 }
@@ -92,6 +95,16 @@ where
 }
 
 impl RuntimeMetrics {
+    /// Counts absent publisher targets evicted from bounded receiver intent.
+    pub fn record_subscription_intent_evictions(&self, targets: usize) {
+        self.subscription_intent_evictions.add(targets);
+    }
+
+    /// Records a socket closed because the HTTP listener reached its connection cap.
+    pub fn record_http_connection_rejection(&self) {
+        self.http_connection_rejections.increment();
+    }
+
     /// counts one HTTP request then records duration and releases inflight state on drop
     #[must_use = "keep the guard until the HTTP request finishes"]
     pub fn track_http_request(&self, route: HttpRoute) -> impl Drop + '_ {
@@ -164,10 +177,15 @@ impl RuntimeMetrics {
                 WebSocketCloseCode::Error
                 | WebSocketCloseCode::Clean
                 | WebSocketCloseCode::Leaving
-                | WebSocketCloseCode::Kicked,
+                | WebSocketCloseCode::Kicked
+                | WebSocketCloseCode::Overloaded,
             )
             | None => self.ws_handshake_rejections_other.increment(),
         }
+    }
+
+    pub fn record_ws_pre_auth_rejection(&self, reason: WsPreAuthRejection) {
+        self.ws_pre_auth_rejections.increment(reason);
     }
 
     pub fn record_ws_user_joined(&self) {

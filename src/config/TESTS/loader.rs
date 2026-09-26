@@ -10,8 +10,8 @@ use crate::{
     config::{
         CodecPreferences, Config, DEFAULT_AUTHENTICATION_TIMEOUT_MS,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
-        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DiagnosticsConfig, MediaCodecFlags,
-        RuntimeFeatureFlags, TelemetryConfig,
+        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, MediaCodecFlags, RuntimeFeatureFlags,
+        TelemetryConfig,
     },
     core::server::room::{
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
@@ -56,7 +56,7 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
     let error = config_error_from(&[("AUTH_KEY", &short)]);
     assert_eq!(
         error.as_deref(),
-        Some("AUTH_KEY must decode to at least 32 bytes")
+        Some("AUTH_KEY: HS256 key must contain at least 32 decoded bytes")
     );
 
     let standard = STANDARD.encode([0xff; 32]);
@@ -78,7 +78,7 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
     );
 
     let error = config_error_from(&[("AUTH_KEY", "not base64")]);
-    assert_eq!(error.as_deref(), Some("AUTH_KEY must be valid base64"));
+    assert_eq!(error.as_deref(), Some("AUTH_KEY: invalid base64 encoding"));
     Ok(())
 }
 
@@ -86,11 +86,14 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
 fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     let config = config_from(&[])?;
     assert_eq!(config.http.bind_address.to_string(), "0.0.0.0:8070");
-    assert_eq!(config.http.shutdown_timeout_ms, 10_000);
+    assert_eq!(
+        config.http.shutdown_timeout.as_duration(),
+        Duration::from_secs(10)
+    );
     assert_eq!(config.auth.key.expose_secret(), TEST_AUTH_KEY);
     assert_eq!(
-        config.auth.authentication_timeout_ms,
-        DEFAULT_AUTHENTICATION_TIMEOUT_MS
+        config.auth.authentication_timeout.as_duration(),
+        Duration::from_millis(DEFAULT_AUTHENTICATION_TIMEOUT_MS)
     );
     assert_eq!(
         config.auth.max_pre_auth_websocket_sessions,
@@ -101,8 +104,11 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN
     );
     assert_eq!(config.user.room_size, 100);
-    assert_eq!(config.user.timeout_ms, 10_000);
-    assert_eq!(config.user.ping_interval_ms, 60_000);
+    assert_eq!(config.user.timeout.as_duration(), Duration::from_secs(10));
+    assert_eq!(
+        config.user.ping_interval.as_duration(),
+        Duration::from_mins(1)
+    );
     assert_eq!(
         config.user.outbound_queue_capacity,
         DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY
@@ -117,7 +123,7 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     assert_eq!(config.features, RuntimeFeatureFlags::default());
     assert_eq!(config.codecs.flags, MediaCodecFlags::default());
     assert_eq!(config.codecs.preferences, CodecPreferences::default());
-    assert_eq!(config.diagnostics, DiagnosticsConfig::default());
+    assert!(config.diagnostics.auth_token.is_none());
     assert_eq!(config.telemetry, TelemetryConfig::default());
     assert_eq!(config.transport.announced_ip.to_string(), "127.0.0.1");
     Ok(())
@@ -128,6 +134,7 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
         ("BIND_ADDRESS", "127.0.0.1:9000"),
         ("PROXY", "true"),
+        ("TRUSTED_PROXIES", "127.0.0.1/32, ::1/128"),
         ("SHUTDOWN_TIMEOUT_MS", "2500"),
         ("AUTHENTICATION_TIMEOUT_MS", "1500"),
         ("MAX_PRE_AUTH_WEBSOCKET_SESSIONS", "12"),
@@ -141,14 +148,23 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
         ("ROOM_DEPARTURE_GRACE", "0"),
     ])?;
     assert_eq!(config.http.bind_address.to_string(), "127.0.0.1:9000");
-    assert_eq!(config.http.shutdown_timeout_ms, 2500);
+    assert_eq!(
+        config.http.shutdown_timeout.as_duration(),
+        Duration::from_millis(2500)
+    );
     assert!(config.http.trust_proxy_headers);
-    assert_eq!(config.auth.authentication_timeout_ms, 1500);
+    assert_eq!(
+        config.auth.authentication_timeout.as_duration(),
+        Duration::from_millis(1500)
+    );
     assert_eq!(config.auth.max_pre_auth_websocket_sessions, 12);
     assert_eq!(config.auth.max_pre_auth_websocket_sessions_per_origin, 3);
     assert_eq!(config.user.room_size, 4);
-    assert_eq!(config.user.timeout_ms, 5000);
-    assert_eq!(config.user.ping_interval_ms, 1000);
+    assert_eq!(config.user.timeout.as_duration(), Duration::from_secs(5));
+    assert_eq!(
+        config.user.ping_interval.as_duration(),
+        Duration::from_secs(1)
+    );
     assert_eq!(config.user.outbound_queue_capacity, 16);
     assert_eq!(config.user.outbound_queue_byte_capacity, 8192);
     assert_eq!(config.user.room_reservation_ttl, Duration::from_mins(2));
@@ -197,10 +213,7 @@ fn config_rejects_invalid_proxy_flag() {
 #[test]
 fn config_rejects_zero_runtime_limits() {
     let cases = [
-        "SHUTDOWN_TIMEOUT_MS",
         "ROOM_SIZE",
-        "USER_TIMEOUT_MS",
-        "PING_INTERVAL_MS",
         "MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
         "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",
         "USER_OUTBOUND_QUEUE_CAPACITY",
@@ -215,4 +228,128 @@ fn config_rejects_zero_runtime_limits() {
             "{key}"
         );
     }
+}
+
+#[test]
+fn proxy_mode_requires_an_explicit_trusted_proxy_network() -> anyhow::Result<()> {
+    assert!(config_error_from(&[("PROXY", "true")]).is_some());
+    for value in [
+        "",
+        " ",
+        "127.0.0.1",
+        "127.0.0.1/33",
+        "127.0.0.1/32,",
+        "localhost/32",
+    ] {
+        assert!(
+            config_error_from(&[("PROXY", "true"), ("TRUSTED_PROXIES", value)]).is_some(),
+            "{value}"
+        );
+    }
+    let config = config_from(&[
+        ("PROXY", "true"),
+        ("TRUSTED_PROXIES", "127.0.0.1/32, ::1/128"),
+    ])?;
+    assert_eq!(config.http.trusted_proxies.len(), 2);
+    assert_eq!(
+        config.auth.authentication_timeout.as_duration(),
+        Duration::from_secs(10)
+    );
+    Ok(())
+}
+
+#[test]
+fn config_rejects_deadlines_outside_one_day() {
+    // Huge millisecond values previously reached unchecked runtime deadline arithmetic.
+    for key in [
+        "USER_TIMEOUT_MS",
+        "PING_INTERVAL_MS",
+        "AUTHENTICATION_TIMEOUT_MS",
+        "SHUTDOWN_TIMEOUT_MS",
+    ] {
+        for raw in ["0", "86400001", "18446744073709551615"] {
+            assert_eq!(
+                config_error_from(&[(key, raw)]),
+                Some(format!("{key} must be between 1 and 86400000 milliseconds")),
+                "{key}={raw}"
+            );
+        }
+    }
+}
+
+#[test]
+fn config_accepts_deadline_boundaries() -> anyhow::Result<()> {
+    for milliseconds in [1, 86_400_000] {
+        let raw = milliseconds.to_string();
+        let config = config_from(&[
+            ("USER_TIMEOUT_MS", &raw),
+            ("PING_INTERVAL_MS", &raw),
+            ("AUTHENTICATION_TIMEOUT_MS", &raw),
+            ("SHUTDOWN_TIMEOUT_MS", &raw),
+            ("ROOM_RESERVATION_TTL", "0"),
+            ("ROOM_DEPARTURE_GRACE", "0"),
+        ])?;
+        let expected = Duration::from_millis(milliseconds);
+        assert_eq!(config.user.timeout.as_duration(), expected);
+        assert_eq!(config.user.ping_interval.as_duration(), expected);
+        assert_eq!(config.auth.authentication_timeout.as_duration(), expected);
+        assert_eq!(config.http.shutdown_timeout.as_duration(), expected);
+        assert_eq!(config.user.room_reservation_ttl, Duration::ZERO);
+        assert_eq!(config.user.departure_grace, Duration::ZERO);
+    }
+    Ok(())
+}
+
+#[test]
+fn http_listener_limits_are_bounded() -> anyhow::Result<()> {
+    let defaults = config_from(&[])?;
+    assert_eq!(defaults.http.max_http_connections, 4096);
+    assert_eq!(defaults.http.header_read_timeout, Duration::from_secs(10));
+    for timeout in ["1", "86400"] {
+        assert!(config_from(&[("HEADER_READ_TIMEOUT", timeout)]).is_ok());
+    }
+    for timeout in ["0", "86401", "18446744073709551615"] {
+        assert_eq!(
+            config_error_from(&[("HEADER_READ_TIMEOUT", timeout)]).as_deref(),
+            Some("HEADER_READ_TIMEOUT must be between 1 and 86400 seconds")
+        );
+    }
+    for limit in ["0".to_owned(), usize::MAX.to_string()] {
+        assert!(
+            config_error_from(&[("MAX_HTTP_CONNECTIONS", &limit)])
+                .is_some_and(|error| error.starts_with("MAX_HTTP_CONNECTIONS must be between"))
+        );
+    }
+    let explicit = config_from(&[
+        ("MAX_HTTP_CONNECTIONS", "123"),
+        ("HEADER_READ_TIMEOUT", "7"),
+    ])?;
+    assert_eq!(explicit.http.max_http_connections, 123);
+    assert_eq!(explicit.http.header_read_timeout, Duration::from_secs(7));
+    let mut http = defaults.http;
+    http.max_http_connections = 0;
+    assert!(http.validate().is_err());
+    http.max_http_connections = 1;
+    http.header_read_timeout = Duration::MAX;
+    assert!(http.validate().is_err());
+    Ok(())
+}
+
+#[test]
+fn config_bounds_media_quality_interval() -> anyhow::Result<()> {
+    let key = "TELEMETRY_MEDIA_QUALITY_INTERVAL_MS";
+    for milliseconds in [0, 1, 86_400_000] {
+        let config = config_from(&[(key, &milliseconds.to_string())])?;
+        assert_eq!(
+            config.telemetry.media_quality_interval,
+            (milliseconds > 0).then(|| Duration::from_millis(milliseconds))
+        );
+    }
+    for raw in ["86400001", "18446744073709551615"] {
+        assert_eq!(
+            config_error_from(&[(key, raw)]),
+            Some(format!("{key} must not exceed 86400000 milliseconds"))
+        );
+    }
+    Ok(())
 }

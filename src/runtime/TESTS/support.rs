@@ -13,9 +13,10 @@ use crate::{
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,
         DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
-        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DiagnosticsConfig, HttpConfig,
-        MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcUdpIoBackend, RuntimeFeatureFlags,
-        TelemetryConfig, TransportConfig, UserConfig, VideoAdaptationTuning, VideoBitrateLimits,
+        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DeadlineDuration, DiagnosticsConfig,
+        HttpConfig, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcUdpIoBackend,
+        RuntimeFeatureFlags, TelemetryConfig, TransportConfig, UserConfig, VideoAdaptationTuning,
+        VideoBitrateLimits,
     },
     runtime::{
         MediaTransport, RuntimeServices, RuntimeState, build_media_transport, build_room_manager,
@@ -30,7 +31,7 @@ use crate::{
 };
 
 pub(super) const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
-pub(super) const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub(super) const TEST_ROOM_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 pub(super) struct RuntimeTestState {
     pub(super) state: RuntimeState,
@@ -42,13 +43,20 @@ pub(super) struct RuntimeTestBuilder {
     config: Config,
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "runtime fixture durations are valid constants or explicit test inputs"
+)]
 impl RuntimeTestBuilder {
     pub(super) fn new() -> Self {
         Self {
             config: Config {
                 auth: AuthConfig {
                     key: SecretString::from(TEST_AUTH_KEY),
-                    authentication_timeout_ms: DEFAULT_AUTHENTICATION_TIMEOUT_MS,
+                    authentication_timeout: DeadlineDuration::from_millis(
+                        DEFAULT_AUTHENTICATION_TIMEOUT_MS,
+                    )
+                    .expect("valid authentication timeout"),
                     max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
                     max_pre_auth_websocket_sessions_per_origin:
                         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
@@ -56,12 +64,17 @@ impl RuntimeTestBuilder {
                 http: HttpConfig {
                     bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
                     trust_proxy_headers: false,
-                    shutdown_timeout_ms: 10_000,
+                    trusted_proxies: Vec::new(),
+                    max_http_connections: 4096,
+                    header_read_timeout: Duration::from_secs(10),
+                    shutdown_timeout: DeadlineDuration::from_millis(10_000)
+                        .expect("valid shutdown timeout"),
                 },
                 user: UserConfig {
                     room_size: 100,
-                    timeout_ms: 10_000,
-                    ping_interval_ms: 60_000,
+                    timeout: DeadlineDuration::from_millis(10_000).expect("valid user timeout"),
+                    ping_interval: DeadlineDuration::from_millis(60_000)
+                        .expect("valid ping interval"),
                     outbound_queue_capacity: DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
                     outbound_queue_byte_capacity: DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
                     room_reservation_ttl: Duration::from_secs(5),
@@ -95,17 +108,20 @@ impl RuntimeTestBuilder {
     }
 
     pub(super) fn authentication_timeout_ms(mut self, value: u64) -> Self {
-        self.config.auth.authentication_timeout_ms = value;
+        self.config.auth.authentication_timeout =
+            DeadlineDuration::from_millis(value).expect("valid authentication timeout");
         self
     }
 
     pub(super) fn user_timeout_ms(mut self, value: u64) -> Self {
-        self.config.user.timeout_ms = value;
+        self.config.user.timeout =
+            DeadlineDuration::from_millis(value).expect("valid user timeout");
         self
     }
 
     pub(super) fn ping_interval_ms(mut self, value: u64) -> Self {
-        self.config.user.ping_interval_ms = value;
+        self.config.user.ping_interval =
+            DeadlineDuration::from_millis(value).expect("valid ping interval");
         self
     }
 
@@ -127,6 +143,7 @@ impl RuntimeTestBuilder {
 
     pub(super) fn trust_proxy_headers(mut self, value: bool) -> Self {
         self.config.http.trust_proxy_headers = value;
+        self.config.http.trusted_proxies = vec![IpAddr::V4(Ipv4Addr::LOCALHOST).into()];
         self
     }
 
@@ -151,7 +168,10 @@ impl RuntimeTestBuilder {
             self.config.user.room_reservation_ttl,
             self.config.user.departure_grace,
         );
-        let runtime_config = RuntimeConfig::from_config(&self.config);
+        let runtime_config = match RuntimeConfig::from_config(&self.config) {
+            Ok(config) => config,
+            Err(error) => panic!("runtime test auth config should be valid: {error}"),
+        };
         let state = RuntimeState::from_parts(
             runtime_config,
             Arc::clone(&room_manager),
@@ -179,4 +199,13 @@ pub(super) fn test_outbound_sender(
         state.config.user.outbound_queue_capacity,
         Arc::clone(&state.metrics),
     )
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "the shared room fixture key is valid HS256 material"
+)]
+pub(super) fn test_room_key() -> secrecy::SecretSlice<u8> {
+    super::auth::decode_signing_key(&TEST_ROOM_KEY.into())
+        .expect("shared test room key should be valid")
 }

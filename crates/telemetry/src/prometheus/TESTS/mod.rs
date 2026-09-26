@@ -6,9 +6,10 @@ use super::{PROMETHEUS_CONTENT_TYPE, render_prometheus};
 use crate::metrics::{
     BudgetSolverOutcome, HttpRoute, METRIC_FAMILY_COUNT, RoomGaugeValues, RtcDatagramDropReason,
     RtcDatagramRoutePath, RtcKeyframeRequestOutcome, RtcNackDirection, RtcOutputBudgetLimit,
-    RtcRelayEnqueueResult, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
-    RtcRouteControlOutcome, RtpDecoderRefreshScope, RtpForwardDestinationKind, RuntimeMetrics,
-    SourceSelectionKind, TransportHealthState, TransportIceState, WsSessionLoopExitReason,
+    RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
+    RtcRemotePacketGateConvergence, RtcRouteControlOutcome, RtpDecoderRefreshScope,
+    RtpForwardDestinationKind, RuntimeMetrics, SourceSelectionKind, TransportHealthState,
+    TransportIceState, WsPreAuthRejection, WsSessionLoopExitReason,
 };
 
 fn assert_http_and_websocket_metrics(rendered: &str) {
@@ -22,6 +23,9 @@ fn assert_http_and_websocket_metrics(rendered: &str) {
     assert!(
         rendered.contains("osfu_ws_handshake_rejections_total{close_code=\"protocol_error\"} 1")
     );
+    assert!(rendered.contains("osfu_ws_pre_auth_rejections_total{limit=\"global\"} 1"));
+    assert!(rendered.contains("osfu_ws_pre_auth_rejections_total{limit=\"origin\"} 1"));
+    assert!(rendered.contains("osfu_ws_handshake_rejections_total{close_code=\"error\"} 0"));
     assert!(rendered.contains("# TYPE osfu_ws_handshake_duration_seconds histogram"));
     assert!(rendered.contains("osfu_ws_handshake_duration_seconds_count 1"));
     assert!(rendered.contains("osfu_ws_auth_duration_seconds_count 1"));
@@ -40,6 +44,7 @@ fn assert_live_and_recording_metrics(rendered: &str) {
         "# HELP osfu_users_active Current number of active room users owned by this runtime.\n# TYPE osfu_users_active gauge\nosfu_users_active 2\n",
         "# HELP osfu_publications_active Current number of committed or pending published media entries owned by this runtime.\n# TYPE osfu_publications_active gauge\nosfu_publications_active 3\n",
         "# HELP osfu_subscriptions_active Current number of committed or pending consumer subscriptions owned by this runtime.\n# TYPE osfu_subscriptions_active gauge\nosfu_subscriptions_active 4\n",
+        "# HELP osfu_subscription_intent_evictions_total Total absent publisher targets evicted from bounded receiver subscription intent.\n# TYPE osfu_subscription_intent_evictions_total counter\nosfu_subscription_intent_evictions_total 5\n",
         "# HELP osfu_recording_rooms_active Current number of rooms with an active recording user.\n# TYPE osfu_recording_rooms_active gauge\nosfu_recording_rooms_active 1\n",
     ] {
         assert_eq!(rendered.matches(family).count(), 1);
@@ -49,6 +54,7 @@ fn assert_live_and_recording_metrics(rendered: &str) {
         "osfu_users_active",
         "osfu_publications_active",
         "osfu_subscriptions_active",
+        "osfu_subscription_intent_evictions_total",
         "osfu_recording_rooms_active",
     ] {
         assert_eq!(rendered.matches(&format!("\n{name}")).count(), 1);
@@ -123,10 +129,14 @@ fn sample_metrics() -> RuntimeMetrics {
     drop(metrics.track_http_request(HttpRoute::Noop));
     drop(metrics.track_http_request(HttpRoute::Metrics));
     metrics.record_ws_connection_accepted();
+    metrics.record_ws_pre_auth_rejection(WsPreAuthRejection::Global);
+    metrics.record_ws_pre_auth_rejection(WsPreAuthRejection::Origin);
     metrics.record_ws_handshake_rejection(Some(WebSocketCloseCode::ProtocolError));
     metrics.record_ws_user_loop_exit(WsSessionLoopExitReason::TransportDisconnected);
     metrics.record_ws_bus_batch_received(2);
     metrics.record_ws_bus_send_failure();
+    metrics.record_subscription_intent_evictions(3);
+    metrics.record_subscription_intent_evictions(2);
     drop(metrics.track_ws_handshake());
     drop(metrics.track_ws_authentication());
     drop(metrics.track_ws_user_initialization());
@@ -204,7 +214,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 79);
+    assert_eq!(METRIC_FAMILY_COUNT, 83);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered
@@ -221,6 +231,30 @@ fn prometheus_export_renders_existing_metric_families() {
     assert_http_and_websocket_metrics(&rendered);
     assert_live_and_recording_metrics(&rendered);
     assert_transport_lifecycle_metrics(&rendered);
+}
+
+#[test]
+fn producer_ssrc_binding_metrics_aggregate_workers_with_bounded_outcomes() {
+    let metrics = RuntimeMetrics::default();
+    let first_worker = metrics.register_rtc_worker();
+    let second_worker = metrics.register_rtc_worker();
+    first_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Learned);
+    second_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Learned);
+    first_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Replaced);
+    second_worker.record_rtc_producer_ssrc_binding(RtcProducerSsrcBindingOutcome::Rejected);
+    let rendered = render_prometheus(&metrics, RoomGaugeValues::default());
+    let samples = rendered
+        .lines()
+        .filter(|line| line.starts_with("osfu_rtc_producer_ssrc_bindings_total"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        samples,
+        [
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"learned\"} 2",
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"replaced\"} 1",
+            "osfu_rtc_producer_ssrc_bindings_total{outcome=\"rejected\"} 1",
+        ]
+    );
 }
 
 #[test]

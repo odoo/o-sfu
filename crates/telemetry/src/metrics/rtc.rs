@@ -4,8 +4,8 @@ use super::{
     counter::{MetricLabel, PaddedCounter, PaddedCounterFamily},
     labels::{
         RtcDatagramDropReason, RtcDatagramRoutePath, RtcKeyframeRequestOutcome, RtcNackDirection,
-        RtcOutputBudgetLimit, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
-        RtcRemotePacketGateConvergence, RtcRouteControlOutcome,
+        RtcOutputBudgetLimit, RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult,
+        RtcRemoteControlDropKind, RtcRemotePacketGateConvergence, RtcRouteControlOutcome,
     },
 };
 
@@ -13,6 +13,8 @@ const RTC_DATAGRAM_ROUTE_PATH_COUNT: usize = <RtcDatagramRoutePath as MetricLabe
 const RTC_DATAGRAM_DROP_REASON_COUNT: usize = <RtcDatagramDropReason as MetricLabel>::COUNT;
 const RTC_NACK_DIRECTION_COUNT: usize = <RtcNackDirection as MetricLabel>::COUNT;
 const RTC_OUTPUT_BUDGET_LIMIT_COUNT: usize = <RtcOutputBudgetLimit as MetricLabel>::COUNT;
+const RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT: usize =
+    <RtcProducerSsrcBindingOutcome as MetricLabel>::COUNT;
 const RTC_ROUTE_CONTROL_OUTCOME_COUNT: usize = <RtcRouteControlOutcome as MetricLabel>::COUNT;
 const RTC_KEYFRAME_REQUEST_OUTCOME_COUNT: usize = <RtcKeyframeRequestOutcome as MetricLabel>::COUNT;
 const RTC_RELAY_ENQUEUE_RESULT_COUNT: usize = <RtcRelayEnqueueResult as MetricLabel>::COUNT;
@@ -37,6 +39,7 @@ pub struct RtcMetricsRecorder {
     rtcp_ingress_budget_drops: PaddedCounter,
     output_budget_exhaustions: PaddedCounterFamily<RtcOutputBudgetLimit>,
     output_budget_session_closes: PaddedCounter,
+    producer_ssrc_bindings: PaddedCounterFamily<RtcProducerSsrcBindingOutcome>,
     route_control: PaddedCounterFamily<RtcRouteControlOutcome>,
     keyframe_requests: PaddedCounterFamily<RtcKeyframeRequestOutcome>,
     relay_enqueues: PaddedCounterFamily<RtcRelayEnqueueResult>,
@@ -83,6 +86,14 @@ impl RtcMetricsRecorder {
 
     pub fn record_rtc_output_budget_session_close(&self) {
         self.output_budget_session_closes.increment();
+    }
+
+    /// Records one producer binding change or rejection after RTP authentication.
+    ///
+    /// Repeated packets matching an established binding do not change it and
+    /// should not increment this counter.
+    pub fn record_rtc_producer_ssrc_binding(&self, outcome: RtcProducerSsrcBindingOutcome) {
+        self.producer_ssrc_bindings.increment(outcome);
     }
 
     pub fn record_rtc_route_control(&self, outcome: RtcRouteControlOutcome) {
@@ -170,6 +181,7 @@ pub(super) struct RtcMetricsSnapshot {
     rtcp_ingress_budget_drops: u64,
     output_budget_exhaustions: [u64; RTC_OUTPUT_BUDGET_LIMIT_COUNT],
     output_budget_session_closes: u64,
+    producer_ssrc_bindings: [u64; RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT],
     route_control: [u64; RTC_ROUTE_CONTROL_OUTCOME_COUNT],
     keyframe_requests: [u64; RTC_KEYFRAME_REQUEST_OUTCOME_COUNT],
     relay_enqueues: [u64; RTC_RELAY_ENQUEUE_RESULT_COUNT],
@@ -230,6 +242,13 @@ impl RtcMetricsSnapshot {
 
     pub(super) const fn output_budget_session_closes(&self) -> u64 {
         self.output_budget_session_closes
+    }
+
+    pub(super) fn producer_ssrc_bindings(&self, outcome: RtcProducerSsrcBindingOutcome) -> u64 {
+        self.producer_ssrc_bindings
+            .get(outcome.as_index())
+            .copied()
+            .unwrap_or(0)
     }
 
     pub(super) fn route_control(&self, outcome: RtcRouteControlOutcome) -> u64 {
@@ -319,6 +338,9 @@ impl RtcMetricsSnapshot {
         self.output_budget_session_closes = self
             .output_budget_session_closes
             .saturating_add(recorder.output_budget_session_closes.load());
+        recorder
+            .producer_ssrc_bindings
+            .accumulate_into(&mut self.producer_ssrc_bindings);
         recorder
             .route_control
             .accumulate_into(&mut self.route_control);

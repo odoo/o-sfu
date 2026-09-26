@@ -65,7 +65,8 @@ export const WS_CLOSE_CODE = {
     AUTH_FAILED: 4106,
     AUTH_TIMEOUT: 4107,
     KICKED: 4108,
-    CHANNEL_FULL: 4109
+    CHANNEL_FULL: 4109,
+    OVERLOADED: 4110
 } as const;
 
 export const REMOTE_MEDIA_UPDATE = "remote_media";

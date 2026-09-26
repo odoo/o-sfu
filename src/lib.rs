@@ -66,8 +66,15 @@
 //! [`SfuCore::admit_user`](core::prelude::SfuCore::admit_user). Both paths require
 //! JWT authentication before admission.
 //!
+//! Upgraded sockets retain their connection permits. Before authentication,
+//! they have a first-frame deadline and global plus per-origin caps
+//! (one bucket per IPv4 address or IPv6 /64).
+//!
 //! ```text
-//! Incoming HTTP / WebSocket I/O
+//! Incoming TCP connection
+//!     |
+//!     v
+//! connection cap + HTTP header deadline
 //!     |
 //!     v
 //! Axum Router
@@ -107,36 +114,42 @@
 //! ## JWT Admission
 //!
 //! Tokens are `HS256` only. [`auth::verify`] rejects any other `alg`, checks the
-//! HMAC in constant time and validates `exp`, `nbf` and the `iat` future-skew
-//! bound when those claims are present. It caps token size at
+//! HMAC in constant time and requires an unexpired `exp`. It validates `nbf`
+//! and the `iat` future-skew bound when present. Current Odoo does not issue
+//! `iat`. Tokens without `exp` fail with [`auth::AuthenticationError::MissingExpiry`].
+//! It caps token size at
 //! [`auth::MAX_JWT_TOKEN_BYTES`].
 //!
 //! There are two different keys:
 //!
-//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 bytes) verifies
+//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 decoded bytes) verifies
 //!   the HTTP [`http::CreateRoomQuery`] path through [`auth::HttpRoomClaims`] and
 //!   [`auth::HttpDisconnectClaims`]. See [`config`].
 //! - **Per-room key**: the request that creates the current room pins the signing
-//!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. For more
-//!   security, prefer the `keySeed` claim, which derives a per-room key with the
-//!   `AUTH_KEY` and provided seed using the following KDF:
+//!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. A direct
+//!   key must decode to at least 32 bytes or room creation returns `400`.
+//!   `keySeed` instead derives the room's signing bytes from `AUTH_KEY`:
 //!   ```text
-//!   room_key = Base64StdPad(HMAC-SHA256(
+//!   room_key = HMAC-SHA256(
 //!       key = Base64Decode(AUTH_KEY),
 //!       message = Base64Decode(keySeed)
-//!   ))
+//!   )
 //!   ```
 //!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
-//!   never against `AUTH_KEY`.
+//!   never against `AUTH_KEY`. Runtime construction decodes the global key once.
+//!   Room creation retains decoded secret bytes, so verification does not decode
+//!   stored keys and equivalent base64 encodings match the same reservation.
 //!
 //! HTTP room creation uses the
 //! `Authorization` header, HTTP disconnect uses the request body and the
 //! WebSocket client sends a first-frame auth envelope decoded by
 //! [`websocket::decode_auth_payload_text`]. An unverified room id selects only a
-//! candidate key, then the same token is re-verified against it. Modern
+//! candidate key, then the same token is verified once against it. Modern
 //! [`auth::WebSocketConnectClaims`] must name the selected room. Legacy Odoo
 //! tokens select it through the auth envelope's `channel` and are normalized
-//! only after verification with that room's key.
+//! only after verification with that room's key. Odoo may send both
+//! `session_id` and account `user_id`. The session takes precedence as the
+//! participant identity. Tokens without either identity are rejected.
 //!
 //! Admission establishes identity and room scope. It does not enforce the
 //! per-user `permissions` claim provided by each tenant.
@@ -157,10 +170,10 @@
 //! ## Signaling Transport
 //!
 //! HTTPS and WSS are expected to be terminated by an external reverse proxy.
-//! Setting `PROXY=true` in [`config`] trusts forwarded headers for every request.
-//! It does not restrict trust to selected proxy addresses. Every request must
-//! then pass through a proxy that strips or overwrites client-supplied
-//! `x-forwarded-*` headers. See [`http::resolve_request_origin`] for origin
+//! Setting `PROXY=true` in [`config`] requires `TRUSTED_PROXIES` CIDRs.
+//! Forwarded headers are honored only when the TCP peer belongs to that set.
+//! The public edge must overwrite client-supplied forwarded host and protocol
+//! headers. See [`http::resolve_request_origin`] for origin
 //! resolution and [`http`] for operator route access.
 //!
 //! # Room and Router Ownership
@@ -181,6 +194,9 @@
 //!
 //! [`o_sfu_router::Router`] owns exact user-to-connection placement. Receiver shadows are foreign local sessions derived from active consumer dependencies, disappearing with their final consumer.
 //!
+//! Absent subscription targets are capped per receiver. Eviction drops the
+//! oldest absent target's intent. Present members do not consume that allowance.
+//!
 //! # Signaling and Client Bundle
 //!
 //! Browsers use `SfuClient` for connection, publication, subscription and room
@@ -190,6 +206,9 @@
 //! browser `WebSocket`, `RTCPeerConnection` and timer APIs. Protocol events are
 //! mapped to Odoo bundle updates during command serialization. `BrowserRuntime`
 //! applies those updates to client state and notifies the application.
+//!
+//! Outbound overflow closes with `4110` (`Overloaded`), allowing reconnect and
+//! intent replay. Replacement or explicit removal uses terminal `4108` (`Kicked`).
 //!
 //! ```text
 //! SfuClient (public API)
@@ -304,7 +323,8 @@ pub mod test_support {
 /// `/v1/stats`, `/metrics` and diagnostics require the configured
 /// [`crate::config::DiagnosticsConfig::auth_token`] on every listener. Without
 /// one, the actual listener must be loopback. Missing or invalid tokens return
-/// `401 Unauthorized`. Tokenless non-loopback access returns `403 Forbidden`.
+/// `401 Unauthorized` with `WWW-Authenticate: Bearer realm="o-sfu"`.
+/// Tokenless non-loopback access returns `403 Forbidden`.
 pub mod http {
     pub use crate::runtime::{
         http_server::contract::{

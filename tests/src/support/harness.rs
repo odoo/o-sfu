@@ -7,7 +7,7 @@ use std::{
     collections::BTreeMap,
     future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Result, anyhow};
@@ -18,9 +18,10 @@ use o_sfu::{
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,
         DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
-        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DiagnosticsConfig, HttpConfig,
-        MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcUdpIoBackend, RuntimeFeatureFlags,
-        TelemetryConfig, TransportConfig, UserConfig, VideoAdaptationTuning, VideoBitrateLimits,
+        DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN, DeadlineDuration, DiagnosticsConfig,
+        HttpConfig, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcUdpIoBackend,
+        RuntimeFeatureFlags, TelemetryConfig, TransportConfig, UserConfig, VideoAdaptationTuning,
+        VideoBitrateLimits,
     },
     core::server::room::{
         DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
@@ -55,7 +56,7 @@ pub type TestWebSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>;
 
 pub const TEST_AUTH_KEY: &str = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
-pub const TEST_ROOM_KEY: &str = "Y2hhbm5lbC1rZXk=";
+pub const TEST_ROOM_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 pub type TestResult<T = ()> = Result<T>;
 
@@ -435,12 +436,21 @@ pub async fn spawn_room_server_with_config(
     Some((server, room_id))
 }
 
+/// Builds the common server configuration with a caller-selected auth deadline.
+///
+/// # Panics
+/// Panics if `authentication_timeout_ms` is outside `1..=86_400_000`.
+#[expect(
+    clippy::expect_used,
+    reason = "test fixture deadlines must fail immediately when their inputs are invalid"
+)]
 #[must_use]
 pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
     Config {
         auth: AuthConfig {
             key: SecretString::from(TEST_AUTH_KEY),
-            authentication_timeout_ms,
+            authentication_timeout: DeadlineDuration::from_millis(authentication_timeout_ms)
+                .expect("valid authentication timeout"),
             max_pre_auth_websocket_sessions: DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
             max_pre_auth_websocket_sessions_per_origin:
                 DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
@@ -448,12 +458,16 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
         http: HttpConfig {
             bind_address: SocketAddr::from(([127, 0, 0, 1], 0)),
             trust_proxy_headers: true,
-            shutdown_timeout_ms: 10_000,
+            trusted_proxies: vec![IpAddr::V4(Ipv4Addr::LOCALHOST).into()],
+            max_http_connections: 4096,
+            header_read_timeout: Duration::from_secs(10),
+            shutdown_timeout: DeadlineDuration::from_millis(10_000)
+                .expect("valid shutdown timeout"),
         },
         user: UserConfig {
             room_size,
-            timeout_ms: 10_000,
-            ping_interval_ms: 60_000,
+            timeout: DeadlineDuration::from_millis(10_000).expect("valid user timeout"),
+            ping_interval: DeadlineDuration::from_millis(60_000).expect("valid ping interval"),
             outbound_queue_capacity: DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
             outbound_queue_byte_capacity: DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
             // this window must stay open far longer than the slowest room-create-to-first-join path
@@ -484,11 +498,19 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
     }
 }
 
+fn expiring_registered_claims() -> Option<RegisteredJwtClaims> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+    Some(RegisteredJwtClaims {
+        exp: Some(now.saturating_add(Duration::from_hours(1)).as_secs().into()),
+        ..RegisteredJwtClaims::default()
+    })
+}
+
 #[must_use]
 pub fn signed_connect_claims(key: &str, room_id: &str, user_id: UserId) -> Option<String> {
     sign(
         &WebSocketConnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: expiring_registered_claims()?,
             room_id: room_id.to_owned(),
             user_id,
             label: Some("Alice".to_owned()),
@@ -506,7 +528,7 @@ pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
         &TestHttpRoomClaims {
             registered: RegisteredJwtClaims {
                 iss: Some(issuer.to_owned()),
-                ..RegisteredJwtClaims::default()
+                ..expiring_registered_claims()?
             },
             key: Some(key),
             key_seed: None,
@@ -521,7 +543,7 @@ pub fn signed_room_claims(issuer: &str, key: &str) -> Option<String> {
 pub fn signed_disconnect_claims(user_ids_by_room: BTreeMap<String, Vec<UserId>>) -> Option<String> {
     sign(
         &HttpDisconnectClaims {
-            registered: RegisteredJwtClaims::default(),
+            registered: expiring_registered_claims()?,
             user_ids_by_room,
         },
         &SecretString::from(TEST_AUTH_KEY),

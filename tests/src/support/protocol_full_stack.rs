@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::{self, protocol::frame::coding::CloseCode};
 use super::{
     TEST_ROOM_KEY, TestServer, TestWebSocket, connect_websocket, decode_protocol_welcome_batch,
     fake_media::FakeMediaSource,
-    fake_rtc_peer::FakeRtcPeer,
+    fake_rtc_peer::{FakeRtcPeer, VideoAnswer},
     protocol_wire::{encode_client_batch, read_protocol_batch, send_server_request_response},
     read_close_code, read_text_message, signed_connect_claims,
 };
@@ -64,7 +64,7 @@ pub fn connect_fake_peer<'a>(
     user_id: UserId,
     key: &'a str,
 ) -> ProtocolFakePeerFuture<'a> {
-    connect_fake_peer_with_video_answer(server, room_id, user_id, key, false)
+    connect_fake_peer_with_video_answer(server, room_id, user_id, key, VideoAnswer::Simulcast)
 }
 
 #[must_use]
@@ -74,7 +74,17 @@ pub fn connect_ridless_video_fake_peer<'a>(
     user_id: UserId,
     key: &'a str,
 ) -> ProtocolFakePeerFuture<'a> {
-    connect_fake_peer_with_video_answer(server, room_id, user_id, key, true)
+    connect_fake_peer_with_video_answer(server, room_id, user_id, key, VideoAnswer::Ridless)
+}
+
+#[must_use]
+pub fn connect_mid_only_fake_peer<'a>(
+    server: &'a TestServer,
+    room_id: &'a str,
+    user_id: UserId,
+    key: &'a str,
+) -> ProtocolFakePeerFuture<'a> {
+    connect_fake_peer_with_video_answer(server, room_id, user_id, key, VideoAnswer::MidOnly)
 }
 
 fn connect_fake_peer_with_video_answer<'a>(
@@ -82,7 +92,7 @@ fn connect_fake_peer_with_video_answer<'a>(
     room_id: &'a str,
     user_id: UserId,
     key: &'a str,
-    ridless_video_fid: bool,
+    video_answer: VideoAnswer,
 ) -> ProtocolFakePeerFuture<'a> {
     Box::pin(async move {
         let token = signed_connect_claims(key, room_id, user_id.clone())?;
@@ -102,9 +112,7 @@ fn connect_fake_peer_with_video_answer<'a>(
 
         let welcome = decode_protocol_welcome_batch(&read_text_message(&mut websocket).await?)?;
         let mut rtc_peer = FakeRtcPeer::bind(0).await?;
-        if ridless_video_fid {
-            rtc_peer.answer_video_with_ridless_fid();
-        }
+        rtc_peer.set_video_answer(video_answer);
         let mut peer = ProtocolFakePeer {
             user_id,
             websocket,

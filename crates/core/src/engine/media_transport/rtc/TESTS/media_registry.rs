@@ -170,6 +170,7 @@ fn producer_media_lookup_falls_back_to_negotiated_ssrc() {
 #[test]
 fn dynamic_producer_ssrc_rid_lookup_clears_with_media_handle() {
     let producer_session = test_transport_session_key(25, 0, 26, UserId::Integer(27));
+    let source = ForwardedPacketSource::Relayed(producer_session.clone());
     let producer_mid = Mid::from("cam-up");
     let producer_ssrc = Ssrc::from(99_999_u32);
     let learned_rid = Rid::from("hi");
@@ -179,14 +180,40 @@ fn dynamic_producer_ssrc_rid_lookup_clears_with_media_handle() {
         mid: producer_mid,
     });
 
-    let source = ForwardedPacketSource::Relayed(producer_session.clone());
-    assert!(state.learn_producer_ssrc_from_pkt(
-        &source,
-        transport_media_id,
-        producer_ssrc,
-        Some(learned_rid),
-    ));
-    assert!(!state.learn_producer_ssrc_from_pkt(&source, transport_media_id, producer_ssrc, None));
+    state.refresh_producer_ssrcs(
+        &producer_session,
+        producer_mid,
+        &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_rid("hi")]),
+    );
+    let binding = ProducerStreamBinding {
+        rid: Some(learned_rid),
+        primary: producer_ssrc,
+        repair: None,
+    };
+    assert_eq!(
+        state.bind_producer_stream(&source, transport_media_id, binding),
+        ProducerSsrcUpdate::Learned,
+    );
+    assert_eq!(
+        state.bind_producer_stream(&source, transport_media_id, binding),
+        ProducerSsrcUpdate::Unchanged,
+    );
+    let repair_ssrc = Ssrc::from(100_000_u32);
+    assert_eq!(
+        state.bind_producer_stream(
+            &source,
+            transport_media_id,
+            ProducerStreamBinding {
+                repair: Some(repair_ssrc),
+                ..binding
+            }
+        ),
+        ProducerSsrcUpdate::Learned,
+    );
+    assert_eq!(
+        state.src_media_for_ssrc(&producer_session, repair_ssrc),
+        Some(transport_media_id)
+    );
 
     assert_eq!(
         state.src_media_for_ssrc(&producer_session, producer_ssrc),
@@ -282,6 +309,7 @@ fn producer_mid_lookup_survives_ssrc_binding_refresh() {
 #[test]
 fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
     let producer_session = test_transport_session_key(28, 0, 31, UserId::Integer(32));
+    let source = ForwardedPacketSource::Relayed(producer_session.clone());
     let first_mid = Mid::from("cam-up-a");
     let second_mid = Mid::from("cam-up-b");
     let shared_ssrc = Ssrc::from(66_666_u32);
@@ -295,20 +323,38 @@ fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
         mid: second_mid,
     });
 
-    let source = ForwardedPacketSource::Relayed(producer_session.clone());
+    for (mid, rid) in [(first_mid, "hi"), (second_mid, "lo")] {
+        state.refresh_producer_ssrcs(
+            &producer_session,
+            mid,
+            &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_rid(rid)]),
+        );
+    }
     let original_encoding = Rid::from("hi");
-    assert!(state.learn_producer_ssrc_from_pkt(
-        &source,
-        first_media_id,
-        shared_ssrc,
-        Some(original_encoding)
-    ));
-    assert!(!state.learn_producer_ssrc_from_pkt(
-        &source,
-        second_media_id,
-        shared_ssrc,
-        Some(Rid::from("lo"))
-    ));
+    assert_eq!(
+        state.bind_producer_stream(
+            &source,
+            first_media_id,
+            ProducerStreamBinding {
+                rid: Some(original_encoding),
+                primary: shared_ssrc,
+                repair: None,
+            }
+        ),
+        ProducerSsrcUpdate::Learned,
+    );
+    assert_eq!(
+        state.bind_producer_stream(
+            &source,
+            second_media_id,
+            ProducerStreamBinding {
+                rid: Some(Rid::from("lo")),
+                primary: shared_ssrc,
+                repair: None,
+            }
+        ),
+        ProducerSsrcUpdate::Rejected,
+    );
 
     assert_eq!(
         state.src_media_for_ssrc(&producer_session, shared_ssrc),
@@ -321,6 +367,33 @@ fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
     assert_eq!(
         state.src_media_for_mid(&producer_session, second_mid),
         Some(second_media_id)
+    );
+    let unbound_primary = Ssrc::from(66_668_u32);
+    assert_eq!(
+        state.bind_producer_stream(
+            &source,
+            second_media_id,
+            ProducerStreamBinding {
+                rid: Some(Rid::from("lo")),
+                primary: unbound_primary,
+                repair: Some(shared_ssrc),
+            }
+        ),
+        ProducerSsrcUpdate::Rejected,
+    );
+    assert_eq!(
+        state.src_media_for_ssrc(&producer_session, unbound_primary),
+        None
+    );
+    assert!(
+        state
+            .routes
+            .producer_ssrcs(second_media_id)
+            .is_some_and(<[Ssrc]>::is_empty)
+    );
+    assert_eq!(
+        state.routes.producer_ssrcs(first_media_id),
+        Some([shared_ssrc].as_slice())
     );
 }
 
@@ -395,4 +468,266 @@ fn expired_local_and_relay_speakers_resolve_the_same_room_once() {
         BTreeSet::from([session.room_instance_id()])
     );
     assert!(state.take_expired_speaker_rooms(expired_at).is_empty());
+}
+
+#[test]
+fn producer_ssrc_rotation_keeps_only_current_encoding_binding() {
+    let session = test_transport_session_key(51, 0, 52, UserId::Integer(53));
+    let source = ForwardedPacketSource::Relayed(session.clone());
+    let mid = Mid::from("camera");
+    let rid = Rid::from("hi");
+    let mut state = PacketLoopState::default();
+    let media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session.clone(),
+        mid,
+    });
+    state.refresh_producer_ssrcs(
+        &session,
+        mid,
+        &RouterRtpParameters::new(vec![], vec![], vec![StreamBinding::new().with_rid("hi")]),
+    );
+    for ssrc in 1..=10_000 {
+        assert_ne!(
+            state.bind_producer_stream(
+                &source,
+                media,
+                ProducerStreamBinding {
+                    rid: Some(rid),
+                    primary: ssrc.into(),
+                    repair: None,
+                }
+            ),
+            ProducerSsrcUpdate::Rejected,
+        );
+    }
+    assert_eq!(
+        state.routes.producer_ssrcs(media),
+        Some([10_000.into()].as_slice())
+    );
+    assert_eq!(
+        state
+            .session_media
+            .get(&session)
+            .map(|lookup| lookup.producer_ssrcs.entries.len()),
+        Some(1)
+    );
+    assert_eq!(state.src_media_for_ssrc(&session, 1.into()), None);
+    assert_eq!(
+        state.src_media_for_ssrc(&session, 10_000.into()),
+        Some(media)
+    );
+}
+
+#[test]
+fn producer_encoding_rotation_bounds_primary_and_repair_indexes() {
+    for rids in [vec![None], vec![Some("lo"), Some("mid"), Some("hi")]] {
+        let session = test_transport_session_key(54, 0, 55, UserId::Integer(56));
+        let source = ForwardedPacketSource::Relayed(session.clone());
+        let mid = Mid::from("source");
+        let mut state = PacketLoopState::default();
+        let media = state.register_media_handle(RegisteredMediaHandle::Producer {
+            session_key: session.clone(),
+            mid,
+        });
+        let bindings = rids
+            .iter()
+            .map(|rid| {
+                rid.map_or_else(StreamBinding::new, |rid| StreamBinding::new().with_rid(rid))
+            })
+            .collect();
+        state.refresh_producer_ssrcs(
+            &session,
+            mid,
+            &RouterRtpParameters::new(vec![], vec![], bindings),
+        );
+        for rotation in 1..=10_000_u32 {
+            for (index, rid) in (0_u32..).zip(&rids) {
+                let primary = (rotation * 10 + index).into();
+                let binding = ProducerStreamBinding {
+                    rid: rid.map(Rid::from),
+                    primary,
+                    repair: Some((rotation * 10 + index + 3).into()),
+                };
+                assert_ne!(
+                    state.bind_producer_stream(&source, media, binding),
+                    ProducerSsrcUpdate::Rejected
+                );
+                assert_eq!(state.source_rid_for_ssrc(&session, primary), binding.rid);
+                assert!(
+                    state
+                        .routes
+                        .producer_ssrcs(media)
+                        .is_some_and(|ssrcs| ssrcs.len() <= rids.len() * 2)
+                );
+                assert!(
+                    state.session_media.get(&session).is_some_and(|lookup| lookup.producer_ssrcs.entries.len() <= rids.len() * 2)
+                );
+            }
+        }
+        assert_eq!(
+            state.routes.producer_ssrcs(media).map(<[Ssrc]>::len),
+            Some(rids.len() * 2)
+        );
+        assert_eq!(state.src_media_for_ssrc(&session, 10.into()), None);
+        assert_eq!(
+            state.src_media_for_ssrc(&session, 100_000.into()),
+            Some(media)
+        );
+        assert_eq!(
+            state.src_media_for_ssrc(&session, 100_003.into()),
+            Some(media)
+        );
+    }
+}
+
+#[test]
+fn rejected_producer_binding_preserves_both_indexes() {
+    let session = test_transport_session_key(57, 0, 58, UserId::Integer(59));
+    let source = ForwardedPacketSource::Relayed(session.clone());
+    let mid = Mid::from("source");
+    let mut state = PacketLoopState::default();
+    let media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session.clone(),
+        mid,
+    });
+    state.refresh_producer_ssrcs(
+        &session,
+        mid,
+        &RouterRtpParameters::new(
+            vec![],
+            vec![],
+            vec![
+                StreamBinding::new()
+                    .with_ssrc(1)
+                    .with_repair_ssrc(2)
+                    .with_rid("hi"),
+            ],
+        ),
+    );
+    let current = ProducerStreamBinding {
+        rid: Some("hi".into()),
+        primary: 3.into(),
+        repair: Some(4.into()),
+    };
+    assert_eq!(
+        state.bind_producer_stream(&source, media, current),
+        ProducerSsrcUpdate::Replaced
+    );
+    for rejected in [
+        ProducerStreamBinding {
+            primary: 1.into(),
+            ..current
+        },
+        ProducerStreamBinding {
+            rid: Some("unknown".into()),
+            primary: 5.into(),
+            ..current
+        },
+        ProducerStreamBinding {
+            primary: 4.into(),
+            ..current
+        },
+    ] {
+        assert_eq!(
+            state.bind_producer_stream(&source, media, rejected),
+            ProducerSsrcUpdate::Rejected
+        );
+        assert_eq!(
+            state.routes.producer_ssrcs(media),
+            Some([3.into(), 4.into()].as_slice())
+        );
+        assert_eq!(
+            state
+                .session_media
+                .get(&session)
+                .map(|lookup| lookup.producer_ssrcs.entries.len()),
+            Some(2)
+        );
+        assert_eq!(state.src_media_for_ssrc(&session, 1.into()), None);
+        assert_eq!(state.src_media_for_ssrc(&session, 5.into()), None);
+    }
+}
+
+#[test]
+fn answer_refresh_keeps_preceding_ssrc_rejected_for_same_encoding() {
+    let session = test_transport_session_key(58, 0, 59, UserId::Integer(60));
+    let source = ForwardedPacketSource::Relayed(session.clone());
+    let mid = Mid::from("source");
+    let mut state = PacketLoopState::default();
+    let media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session.clone(),
+        mid,
+    });
+    let parameters = RouterRtpParameters::new(
+        vec![],
+        vec![],
+        vec![StreamBinding::new().with_rid("hi").with_ssrc(1)],
+    );
+    state.refresh_producer_ssrcs(&session, mid, &parameters);
+    let current = ProducerStreamBinding {
+        rid: Some("hi".into()),
+        primary: 2.into(),
+        repair: None,
+    };
+    assert_eq!(
+        state.bind_producer_stream(&source, media, current),
+        ProducerSsrcUpdate::Replaced
+    );
+    let parameters = RouterRtpParameters::new(
+        vec![],
+        vec![],
+        vec![StreamBinding::new().with_rid("hi").with_ssrc(2)],
+    );
+    state.refresh_answer_producer_ssrcs(&session, &[mid], &[(mid, parameters)]);
+    assert_eq!(
+        state.bind_producer_stream(
+            &source,
+            media,
+            ProducerStreamBinding {
+                primary: 1.into(),
+                ..current
+            }
+        ),
+        ProducerSsrcUpdate::Rejected
+    );
+    assert_eq!(state.src_media_for_ssrc(&session, 1.into()), None);
+    assert_eq!(state.src_media_for_ssrc(&session, 2.into()), Some(media));
+}
+
+#[test]
+fn answer_refresh_reassigns_ssrcs_between_producer_mids() {
+    let session = test_transport_session_key(59, 0, 60, UserId::Integer(61));
+    let first_mid = Mid::from("first");
+    let second_mid = Mid::from("second");
+    let mut state = PacketLoopState::default();
+    let first_media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session.clone(),
+        mid: first_mid,
+    });
+    let second_media = state.register_media_handle(RegisteredMediaHandle::Producer {
+        session_key: session.clone(),
+        mid: second_mid,
+    });
+    state.refresh_producer_ssrcs(&session, first_mid, &rtp_parameters_with_ssrc(first_mid, 1));
+    state.refresh_producer_ssrcs(
+        &session,
+        second_mid,
+        &rtp_parameters_with_ssrc(second_mid, 2),
+    );
+    state.refresh_answer_producer_ssrcs(
+        &session,
+        &[first_mid, second_mid],
+        &[
+            (first_mid, rtp_parameters_with_ssrc(first_mid, 2)),
+            (second_mid, rtp_parameters_with_ssrc(second_mid, 1)),
+        ],
+    );
+    assert_eq!(
+        state.src_media_for_ssrc(&session, 1.into()),
+        Some(second_media)
+    );
+    assert_eq!(
+        state.src_media_for_ssrc(&session, 2.into()),
+        Some(first_media)
+    );
 }

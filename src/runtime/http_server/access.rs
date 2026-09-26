@@ -1,20 +1,24 @@
 //! HTTP authorization schemes and operator access bound to the serving listener.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use axum::http::{HeaderMap, StatusCode, header};
+use secrecy::{ExposeSecret, SecretString};
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 /// Operator authorization bound to the listener that serves the router.
 #[derive(Clone)]
 pub(super) struct OperatorAccessPolicy {
-    auth_token: Option<Arc<str>>,
+    auth_digest: Option<[u8; 32]>,
     listener_is_loopback: bool,
 }
 
 impl OperatorAccessPolicy {
-    pub(super) fn new(auth_token: Option<&str>, listener_address: SocketAddr) -> Self {
+    pub(super) fn new(auth_token: Option<&SecretString>, listener_address: SocketAddr) -> Self {
         Self {
-            auth_token: auth_token.map(Arc::from),
+            auth_digest: auth_token
+                .map(|token| Sha256::digest(token.expose_secret().trim()).into()),
             listener_is_loopback: listener_address.ip().is_loopback(),
         }
     }
@@ -30,9 +34,9 @@ impl OperatorAccessPolicy {
     /// does not match. Without a configured token, a non-loopback listener returns
     /// [`StatusCode::FORBIDDEN`].
     pub(super) fn authorize(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
-        if let Some(expected_token) = self.auth_token.as_deref() {
+        if let Some(expected_digest) = self.auth_digest.as_ref() {
             return match bearer_authorization_token(headers) {
-                Some(actual_token) if tokens_match(actual_token, expected_token) => Ok(()),
+                Some(actual_token) if token_matches(actual_token, expected_digest) => Ok(()),
                 _ => Err(StatusCode::UNAUTHORIZED),
             };
         }
@@ -73,10 +77,11 @@ fn authorization_token<'headers>(
     Some(token)
 }
 
-fn tokens_match(actual: &str, expected: &str) -> bool {
-    let mut diff = actual.len() ^ expected.len();
-    for (actual, expected) in actual.bytes().zip(expected.bytes()) {
-        diff |= usize::from(actual ^ expected);
-    }
-    diff == 0
+/// Compares fixed-size digests without secret-length or matching-prefix shortcuts.
+///
+/// Hashing and request parsing still depend on the supplied token length.
+/// See <https://docs.rs/subtle/latest/subtle/trait.ConstantTimeEq.html>.
+fn token_matches(actual: &str, expected: &[u8; 32]) -> bool {
+    let actual: [u8; 32] = Sha256::digest(actual).into();
+    bool::from(actual.ct_eq(expected))
 }

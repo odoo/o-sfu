@@ -5,8 +5,9 @@ use std::net::SocketAddr;
 use axum::{
     Router,
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     middleware,
+    response::{IntoResponse, Response},
     routing::get,
 };
 
@@ -24,7 +25,7 @@ mod stats;
 /// Unregistered paths retain the router's not-found response.
 pub(super) fn routes(state: &RuntimeState, listener_address: SocketAddr) -> Router<RuntimeState> {
     let policy = OperatorAccessPolicy::new(
-        state.config.diagnostics.auth_token.as_deref(),
+        state.config.diagnostics.auth_token.as_ref(),
         listener_address,
     );
     let authorization = middleware::map_request_with_state(policy, authorize_operator);
@@ -52,11 +53,21 @@ pub(super) fn routes(state: &RuntimeState, listener_address: SocketAddr) -> Rout
 ///
 /// # Errors
 ///
-/// Returns the [`StatusCode`] rejection from [`OperatorAccessPolicy::authorize`].
+/// Returns an HTTP [`Response`] with the policy rejection status.
+/// Unauthorized responses include the Bearer challenge required by RFC 9110.
 async fn authorize_operator(
     State(policy): State<OperatorAccessPolicy>,
     request: Request,
-) -> Result<Request, StatusCode> {
-    policy.authorize(request.headers())?;
+) -> Result<Request, Response> {
+    policy.authorize(request.headers()).map_err(|status| {
+        let mut response = status.into_response();
+        if status == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=\"o-sfu\""),
+            );
+        }
+        response
+    })?;
     Ok(request)
 }

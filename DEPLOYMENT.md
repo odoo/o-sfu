@@ -45,6 +45,7 @@ RTC server KEY = <same value as AUTH_KEY>
 
 ```env
 PROXY=true
+TRUSTED_PROXIES=127.0.0.1/32,::1/128
 ANNOUNCED_IP=<vm-public-ip>
 AUTH_KEY=<base64-auth-key>
 DIAGNOSTICS_AUTH_TOKEN=<diagnostics-token>
@@ -79,12 +80,14 @@ openssl rand -base64 32
 keep port `8070` unreachable from untrusted networks. Bind it to loopback for a
 host proxy or expose it only on an isolated same-host container network
 
-set `PROXY=true` only when the trusted public proxy strips or overwrites
-client-supplied forwarded headers. Use `$proxy_add_x_forwarded_for` only when a
-trusted upstream has already stripped client input
+set `PROXY=true` with `TRUSTED_PROXIES` listing the proxy TCP peers as
+comma-separated IP CIDRs. The list must be nonempty. The trusted public proxy
+must strip or overwrite client-supplied forwarded headers. Use
+`$proxy_add_x_forwarded_for` only when a trusted upstream has already stripped
+client input
 
 `/v1/stats`, `/metrics` and `/internal/diagnostics/...` require
-`DIAGNOSTICS_AUTH_TOKEN` on every request when configured. Without it, the
+the configured diagnostics token on every request. Without one, the
 actual listener must use loopback. A same-host reverse proxy can reach that
 fallback, so configure the token and block these routes at every public edge
 
@@ -359,7 +362,14 @@ selector resolution and rejected stale work do not increment it.
 
 ## NGINX public edge
 
+The example limits each client IP to 64 connections and 10 requests per second.
+Tune both for shared NATs. Apply these limits at the public edge before proxying.
+NGINX counts connections only after complete headers, so set its header timeout too.
+
 ```nginx
+limit_conn_zone $binary_remote_addr zone=sfu_connections:10m;
+limit_req_zone $binary_remote_addr zone=sfu_requests:10m rate=10r/s;
+
 map $http_upgrade $connection_upgrade {
     default upgrade;
     "" close;
@@ -368,6 +378,7 @@ map $http_upgrade $connection_upgrade {
 server {
     listen 443 ssl http2;
     server_name <sfu-domain>;
+    client_header_timeout 10s;
 
     ssl_certificate <certificate-path>;
     ssl_certificate_key <certificate-key-path>;
@@ -385,6 +396,8 @@ server {
     }
 
     location / {
+        limit_conn sfu_connections 64;
+        limit_req zone=sfu_requests burst=20 nodelay;
         proxy_pass http://127.0.0.1:8070;
         proxy_http_version 1.1;
         proxy_read_timeout 75s;
@@ -409,7 +422,7 @@ use the telemetry reference for exact queries and response shapes:
 - [HTTP diagnostics](https://odoo.github.io/o-sfu/o_sfu/http/telemetry/diagnostics/index.html)
 
 remote Prometheus scrape through a private TLS endpoint when
-`DIAGNOSTICS_AUTH_TOKEN` is configured:
+a diagnostics token is configured:
 
 ```yaml
 scrape_configs:
@@ -488,7 +501,7 @@ runtime:
 - Docker Compose logging uses explicit `max-size` and `max-file` limits
 - Docker Compose logging uses `json-file` when `o-sfu-telemetry` ingests Docker logs
 - `o-sfu` has the `com.odoo.sfu.component=server` Docker label
-- `PROXY=true` is set only behind the trusted NGINX edge
+- `PROXY=true` requires `TRUSTED_PROXIES` matching the NGINX peer address
 - `AUTH_KEY` matches the Odoo caller configuration
 - `AUTH_KEY` decodes to at least 32 bytes generated with cryptographically safe randomness
 - `DIAGNOSTICS_AUTH_TOKEN` is generated independently from at least 32 random bytes
@@ -517,25 +530,30 @@ HTTP and operator access:
 | variable | default | description |
 | --- | --- | --- |
 | `BIND_ADDRESS` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
-| `PROXY` | `false` | trusts proxy-provided request metadata when `true` |
-| `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
-| `SHUTDOWN_TIMEOUT_MS` | `10000` | positive total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage |
+| `MAX_HTTP_CONNECTIONS` | `4096` | concurrent accepted sockets per process, including authenticated WebSockets until they close |
+| `HEADER_READ_TIMEOUT` | `10` | seconds from acceptance to first headers and for subsequent HTTP/1 headers, including keep-alive idle time, from `1` to `86400` |
+| `PROXY` | `false` | when `true`, requires nonempty `TRUSTED_PROXIES` IP CIDRs and trusts forwarded metadata only from matching TCP peers |
+| `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token of at least 32 bytes after trimming whitespace for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage, from `1` to `86400000` |
+
+Set `RLIMIT_NOFILE` above `MAX_HTTP_CONNECTIONS` with headroom for UDP sockets,
+logs and other process descriptors. The HTTP cap also limits concurrent WebSocket users.
 
 authentication and websocket admission:
 
 | variable | default | description |
 | --- | --- | --- |
-| `AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds |
+| `AUTHENTICATION_TIMEOUT_MS` | `10000` | first authenticated WebSocket frame timeout in milliseconds, from `1` to `86400000` |
 | `MAX_PRE_AUTH_WEBSOCKET_SESSIONS` | `512` | process-wide cap for upgraded WebSockets waiting for authentication |
-| `MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN` | `16` | per-origin cap for upgraded WebSockets waiting for authentication |
+| `MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN` | `16` | per IPv4 address or IPv6 /64 cap for upgraded WebSockets waiting for authentication |
 
 room and user limits:
 
 | variable | default | description |
 | --- | --- | --- |
 | `ROOM_SIZE` | `100` | maximum concurrent users per room |
-| `USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds |
-| `PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds |
+| `USER_TIMEOUT_MS` | `10000` | idle user timeout in milliseconds, from `1` to `86400000` |
+| `PING_INTERVAL_MS` | `60000` | signaling ping interval in milliseconds, from `1` to `86400000` |
 | `USER_OUTBOUND_QUEUE_CAPACITY` | `128` | per-user WebSocket room-event queue depth |
 | `USER_OUTBOUND_QUEUE_BYTE_CAPACITY` | `2097152` | per-user WebSocket queued-byte budget |
 | `ROOM_RESERVATION_TTL` | `60` | time-to-live for unjoined rooms in seconds |
@@ -608,7 +626,7 @@ telemetry:
 | `TELEMETRY_SERVICE_NAME` | `o-sfu` | service name in telemetry resource metadata |
 | `TELEMETRY_DEPLOYMENT_ENVIRONMENT` | `local` | deployment environment in telemetry resource metadata |
 | `TELEMETRY_SERVICE_INSTANCE_ID` | `pid-<pid>` | stable service instance id override |
-| `TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval, with `0` disabling sampling |
+| `TELEMETRY_MEDIA_QUALITY_INTERVAL_MS` | `5000` | sampled media-quality telemetry interval in milliseconds, from `0` to `86400000`, with `0` disabling sampling |
 | `TELEMETRY_OTLP_ENDPOINT` | disabled | optional OTLP HTTP traces endpoint, normalized to `/v1/traces` |
 
 feature flags:

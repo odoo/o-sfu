@@ -107,7 +107,11 @@ impl RoomState {
                 video: Some(false),
             },
             staged_publishes: StagedPublishes::default(),
-            topology: RoomTopology::new(runtime_context, router_rtp_capabilities),
+            topology: RoomTopology::new(
+                runtime_context,
+                router_rtp_capabilities,
+                admission_policy.max_sessions,
+            ),
         }
     }
 

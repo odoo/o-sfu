@@ -97,6 +97,9 @@ impl ProtocolCore {
     /// - non-terminal closes without saved connect context fall back to
     ///   [`ConnectionState::Disconnected`], because there is nothing safe to reconnect to
     ///
+    /// Queue overflow uses [`WebSocketCloseCode::Overloaded`] so recovery retains
+    /// publication and subscription intent after a temporary backlog.
+    ///
     /// example:
     ///
     /// ```text

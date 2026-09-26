@@ -3,7 +3,7 @@
 //! this module bounds upgrade admission before handing the socket to
 //! [`super::session::run`]
 
-use std::sync::Arc;
+use std::{net::IpAddr, sync::Arc};
 
 use axum::{
     extract::{FromRef, State, ws::WebSocketUpgrade},
@@ -13,18 +13,26 @@ use axum::{
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::warn;
 
-use super::{admission::PreAuthWebSocketAdmissionRejection, io::MAX_CLIENT_FRAME_BYTES, session};
+use super::{
+    admission::{PreAuthWebSocketAdmissionRejection, admit_rejection_log},
+    io::MAX_CLIENT_FRAME_BYTES,
+    session,
+};
 use crate::{
-    config::{AuthConfig, UserConfig},
+    config::{DeadlineDuration, UserConfig},
     core::prelude::SfuCore,
     runtime::{
-        RuntimeMetrics, RuntimeState, request_origin::RequestOrigin, room::RoomManager,
-        telemetry::schema::event as telemetry_event,
+        RuntimeMetrics, RuntimeState,
+        request_origin::RequestOrigin,
+        room::RoomManager,
+        telemetry::{metrics::WsPreAuthRejection, schema::event as telemetry_event},
     },
 };
 
 pub(crate) struct WebSocketServices {
-    pub(super) auth: AuthConfig,
+    pub(super) authentication_timeout: DeadlineDuration,
+    max_pre_auth_websocket_sessions: usize,
+    max_pre_auth_websocket_sessions_per_origin: usize,
     pub(super) user: UserConfig,
     pub(super) room_manager: Arc<RoomManager>,
     pub(super) sfu_core: SfuCore,
@@ -37,7 +45,12 @@ pub(crate) struct WebSocketServices {
 impl FromRef<RuntimeState> for WebSocketServices {
     fn from_ref(state: &RuntimeState) -> Self {
         Self {
-            auth: state.config.auth.clone(),
+            authentication_timeout: state.config.auth.authentication_timeout,
+            max_pre_auth_websocket_sessions: state.config.auth.max_pre_auth_websocket_sessions,
+            max_pre_auth_websocket_sessions_per_origin: state
+                .config
+                .auth
+                .max_pre_auth_websocket_sessions_per_origin,
             user: state.config.user,
             room_manager: Arc::clone(&state.room_manager),
             sfu_core: state.sfu_core.clone(),
@@ -54,17 +67,17 @@ pub(crate) async fn upgrade(
     origin: RequestOrigin,
     websocket: WebSocketUpgrade,
 ) -> Response {
-    let remote_address = Arc::<str>::from(origin.remote_address);
     let pre_auth_permit = match services
         .pre_auth_websocket_admission
-        .try_acquire(Arc::clone(&remote_address))
+        .try_acquire(origin.remote_address)
     {
         Ok(permit) => permit,
         Err(rejection) => {
-            reject_pre_auth_admission(&services, remote_address.as_ref(), rejection);
+            reject_pre_auth_admission(&services, origin.remote_address, rejection);
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     };
+    let remote_address = Arc::<str>::from(format_remote_address(origin.remote_address));
     let session_task = services.sessions.token();
     websocket
         .max_message_size(MAX_CLIENT_FRAME_BYTES)
@@ -77,15 +90,26 @@ pub(crate) async fn upgrade(
 
 fn reject_pre_auth_admission(
     services: &WebSocketServices,
-    remote_address: &str,
+    remote_address: Option<IpAddr>,
     rejection: PreAuthWebSocketAdmissionRejection,
 ) {
+    services
+        .metrics
+        .record_ws_pre_auth_rejection(match rejection {
+            PreAuthWebSocketAdmissionRejection::Global => WsPreAuthRejection::Global,
+            PreAuthWebSocketAdmissionRejection::Origin => WsPreAuthRejection::Origin,
+        });
+    let Some(suppressed_rejections) = admit_rejection_log() else {
+        return;
+    };
+    let remote_address = format_remote_address(remote_address);
     match rejection {
         PreAuthWebSocketAdmissionRejection::Global => {
             warn!(
                 event = telemetry_event::WS_HANDSHAKE_REJECTED,
                 remote_address,
-                max_pre_auth_websocket_sessions = services.auth.max_pre_auth_websocket_sessions,
+                suppressed_rejections,
+                max_pre_auth_websocket_sessions = services.max_pre_auth_websocket_sessions,
                 "rejecting websocket upgrade because global pre-auth admission is full"
             );
         }
@@ -93,10 +117,15 @@ fn reject_pre_auth_admission(
             warn!(
                 event = telemetry_event::WS_HANDSHAKE_REJECTED,
                 remote_address,
+                suppressed_rejections,
                 max_pre_auth_websocket_sessions_per_origin =
-                    services.auth.max_pre_auth_websocket_sessions_per_origin,
+                    services.max_pre_auth_websocket_sessions_per_origin,
                 "rejecting websocket upgrade because origin pre-auth admission is full"
             );
         }
     }
+}
+
+fn format_remote_address(address: Option<IpAddr>) -> String {
+    address.map_or_else(|| "unknown".to_owned(), |address| address.to_string())
 }

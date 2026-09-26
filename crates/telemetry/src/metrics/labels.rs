@@ -198,6 +198,12 @@ impl_exported_metric_label!(WebSocketCloseCode {
     Clean => (5, "clean"),
     Leaving => (6, "leaving"),
     Kicked => (7, "kicked"),
+    Overloaded => (8, "overloaded"),
+});
+
+impl_exported_metric_label!(pub enum WsPreAuthRejection {
+    Global => (0, "global"),
+    Origin => (1, "origin"),
 });
 
 impl_exported_metric_label!(pub(super) enum WsStartupFailureKind {
@@ -275,6 +281,26 @@ impl_exported_metric_label!(pub enum RtcOutputBudgetLimit {
     Packets => (0, "packets"),
     PayloadBytes => (1, "payload_bytes"),
     PacketsAndPayloadBytes => (2, "packets_and_payload_bytes"),
+});
+
+/// Outcomes of authenticated producer SSRC binding changes.
+///
+/// Labels contain no session, media, RID or SSRC identity so source churn cannot
+/// increase the number of exported time series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtcProducerSsrcBindingOutcome {
+    /// A negotiated encoding acquired its first SSRC binding.
+    Learned,
+    /// A negotiated encoding replaced an earlier SSRC binding.
+    Replaced,
+    /// A packet could not claim a negotiated encoding or its SSRC was occupied.
+    Rejected,
+}
+
+impl_exported_metric_label!(RtcProducerSsrcBindingOutcome {
+    Learned => (0, "learned"),
+    Replaced => (1, "replaced"),
+    Rejected => (2, "rejected"),
 });
 
 impl_exported_metric_label!(pub enum RtcRouteControlOutcome {

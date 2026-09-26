@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{Result, ensure};
 
 use super::{
-    UserConfig,
+    DeadlineDuration, UserConfig,
     env::{Env, positive},
 };
 use crate::core::server::room::{
@@ -19,11 +19,12 @@ impl UserConfig {
     pub(super) fn from_env(env: &Env<'_>) -> Result<Self> {
         Ok(Self {
             room_size: env.var("ROOM_SIZE").check(positive).default(100)?,
-            timeout_ms: env.var("USER_TIMEOUT_MS").check(positive).default(10_000)?,
-            ping_interval_ms: env
+            timeout: env
+                .var("USER_TIMEOUT_MS")
+                .default(DeadlineDuration::from_millis(10_000)?)?,
+            ping_interval: env
                 .var("PING_INTERVAL_MS")
-                .check(positive)
-                .default(60_000)?,
+                .default(DeadlineDuration::from_millis(60_000)?)?,
             outbound_queue_capacity: env
                 .var("USER_OUTBOUND_QUEUE_CAPACITY")
                 .check(positive)

@@ -277,6 +277,12 @@ fn gauge_count(value: usize) -> i64 {
 }
 
 metric_catalog! {
+    HttpConnectionRejectionsTotal {
+        name: "osfu_http_connection_rejections_total",
+        help: "Total TCP connections rejected at the HTTP listener connection cap.",
+        kind: Counter,
+        samples: |metrics, capture, output| output.counter(&[], metrics.http_connection_rejections.load())
+    },
     HttpNoopRequestsTotal {
         name: "osfu_http_noop_requests_total",
         help: "Total HTTP requests served by /v1/noop.",
@@ -336,6 +342,12 @@ metric_catalog! {
         help: "Total websocket connections observed at each handshake stage.",
         kind: Counter,
         samples: |metrics, capture, output| write_counter_family(output, &metrics.ws_connections, "stage")
+    },
+    WsPreAuthRejectionsTotal {
+        name: "osfu_ws_pre_auth_rejections_total",
+        help: "Total websocket upgrades rejected by pre-auth admission limit.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_counter_family(output, &metrics.ws_pre_auth_rejections, "limit")
     },
     WsHandshakeRejectionsTotal {
         name: "osfu_ws_handshake_rejections_total",
@@ -456,6 +468,12 @@ metric_catalog! {
         help: "Current number of committed or pending published media entries owned by this runtime.",
         kind: Gauge,
         samples: |metrics, capture, output| output.gauge(&[], gauge_count(capture.room_gauges.publications))
+    },
+    SubscriptionIntentEvictionsTotal {
+        name: "osfu_subscription_intent_evictions_total",
+        help: "Total absent publisher targets evicted from bounded receiver subscription intent.",
+        kind: Counter,
+        samples: |metrics, capture, output| output.counter(&[], metrics.subscription_intent_evictions.load())
     },
     SubscriptionsActive {
         name: "osfu_subscriptions_active",
@@ -765,6 +783,16 @@ metric_catalog! {
         help: "Total RTC sessions closed after output-budget exhaustion.",
         kind: Counter,
         samples: |metrics, capture, output| output.counter(&[], capture.rtc.output_budget_session_closes())
+    },
+    RtcProducerSsrcBindingsTotal {
+        name: "osfu_rtc_producer_ssrc_bindings_total",
+        help: "Total packet-triggered producer SSRC binding changes and rejections by outcome.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_snapshot_counters(output,
+            &capture.rtc,
+            "outcome",
+            RtcMetricsSnapshot::producer_ssrc_bindings
+        )
     },
     RtcRouteControlTotal {
         name: "osfu_rtc_route_control_total",

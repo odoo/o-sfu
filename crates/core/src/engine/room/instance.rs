@@ -139,7 +139,7 @@ impl Room {
     }
 
     #[must_use]
-    pub fn key(&self) -> &secrecy::SecretString {
+    pub fn key(&self) -> &secrecy::SecretSlice<u8> {
         self.definition.key()
     }
 

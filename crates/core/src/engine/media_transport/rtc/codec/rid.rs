@@ -18,7 +18,7 @@ pub(super) const DEFAULT_MIDDLE_RID: &str = "mid";
 pub(super) const DEFAULT_HIGH_RID: &str = "hi";
 pub(super) const DEFAULT_LOW_MAX_BITRATE: Bitrate = Bitrate::from_kbps(150);
 const MIDDLE_BITRATE_DIVISOR: u64 = 5;
-const MAX_SEND_STREAMS: usize = 3;
+pub const MAX_SEND_STREAMS: usize = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::engine::media_transport::rtc) struct NegotiatedRid {

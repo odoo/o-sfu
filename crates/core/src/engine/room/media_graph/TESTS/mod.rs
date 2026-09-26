@@ -6,7 +6,7 @@
     reason = "test assertions use panic, unwrap, expect, and direct indexing for clear failure messages"
 )]
 
-use std::{mem, sync::Arc};
+use std::{collections::BTreeMap, mem, sync::Arc};
 
 use o_sfu_router::{
     MediaKind as RouterMediaKind, RouterId,
@@ -25,7 +25,7 @@ use super::{
 use crate::{
     Bitrate, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserId,
+        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserId, VideoLayoutIntent,
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
             TransportConsumerRoute, TransportMediaId, TransportSessionKey,
@@ -33,11 +33,12 @@ use crate::{
         metrics::RuntimeMetrics,
         room::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
-            state::RoomState,
+            state::{ConnectionCloseCommit, RoomState},
         },
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId,
-            SourceEncodingDescriptor, UploadLayerPolicyRole, UserStreamId,
+            SourceEncodingDescriptor, SourceSubscriptionIntent, UploadLayerPolicyRole,
+            UserStreamId,
             test_support::{
                 TestSubscriptionStates, source_kind_for_stream_id,
                 source_publish_intent_for_source, stream_id_for_source,
@@ -391,8 +392,15 @@ fn stored_intent_attaches_before_readiness_then_reserves_setup() {
     let mut state = test_state();
     let publisher = UserId::Integer(1);
     let receiver = UserId::Integer(2);
-    let publisher_connection = join_test_user(&mut state, &publisher);
     let receiver_connection = join_test_user(&mut state, &receiver);
+    let intent = source_publish_intent_for_source(TestSourceKind::ScalableVideo);
+    let intents = subscription_intents_from_test_states(&scalable_video_states(false));
+    assert!(
+        state
+            .apply_receiver_intent(&receiver, receiver_connection, &publisher, &intents)
+            .is_some()
+    );
+    let publisher_connection = join_test_user(&mut state, &publisher);
     assert!(
         state
             .set_user_negotiated(
@@ -400,13 +408,6 @@ fn stored_intent_attaches_before_readiness_then_reserves_setup() {
                 publisher_connection,
                 sample_client_rtp_capabilities()
             )
-            .is_some()
-    );
-    let intent = source_publish_intent_for_source(TestSourceKind::ScalableVideo);
-    let intents = subscription_intents_from_test_states(&scalable_video_states(false));
-    assert!(
-        state
-            .apply_receiver_intent(&receiver, receiver_connection, &publisher, &intents)
             .is_some()
     );
     let publish = state
@@ -760,4 +761,178 @@ fn publication_preserves_negotiated_upload_roles() {
                 .collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn absent_publisher_intent_is_bounded_by_room_capacity() {
+    let mut state = test_state();
+    let receiver = UserId::Integer(20_000);
+    let connection = join_test_user(&mut state, &receiver);
+    let stream = stream_id_for_source(TestSourceKind::ScalableVideo);
+    let intents = subscription_intents_from_test_states(&scalable_video_states(false));
+    let mut evictions = 0;
+    for publisher in 0..10_000 {
+        evictions += state
+            .apply_receiver_intent(&receiver, connection, &UserId::Integer(publisher), &intents)
+            .unwrap()
+            .work
+            .evictions;
+    }
+    let retained = (0..10_000)
+        .filter(|publisher| {
+            let key = SubscriptionKey::new(&receiver, &UserId::Integer(*publisher), &stream);
+            !state.topology.subscription_intent(&key).is_empty()
+        })
+        .count();
+    assert_eq!(retained, 4);
+    assert_eq!(evictions, 9_996);
+    assert_eq!(state.media_counts().subscriptions, 0);
+}
+
+#[test]
+fn pending_intent_follows_join_departure_and_receiver_replacement() {
+    let mut state = test_state();
+    let receiver = UserId::Integer(20);
+    let connection = join_test_user(&mut state, &receiver);
+    let member = UserId::Integer(1);
+    let member_connection = join_test_user(&mut state, &member);
+    let stream = UserStreamId::from("camera");
+    let pause = SourceSubscriptionIntent::new(Some(false), None);
+    let pin = SourceSubscriptionIntent::new(None, Some(VideoLayoutIntent::Pinned));
+    let intents = BTreeMap::from([(stream.clone(), pause)]);
+    for publisher in [1, 10, 11, 12, 13] {
+        state.apply_receiver_intent(&receiver, connection, &UserId::Integer(publisher), &intents);
+    }
+    let member_key = SubscriptionKey::new(&receiver, &member, &stream);
+    assert_eq!(state.topology.subscription_intent(&member_key), pause);
+    let oldest_key = SubscriptionKey::new(&receiver, &UserId::Integer(10), &stream);
+    state.apply_receiver_intent(
+        &receiver,
+        connection,
+        &UserId::Integer(10),
+        &BTreeMap::from([(stream.clone(), pin)]),
+    );
+    assert_eq!(
+        state.topology.subscription_intent(&oldest_key).active(),
+        Some(false)
+    );
+    assert_eq!(
+        state.topology.subscription_intent(&oldest_key).layout(),
+        pin.layout()
+    );
+    let eviction = state
+        .apply_receiver_intent(&receiver, connection, &UserId::Integer(14), &intents)
+        .unwrap();
+    assert_eq!(eviction.work.evictions, 1);
+    assert!(state.topology.subscription_intent(&oldest_key).is_empty());
+    assert_eq!(state.topology.subscription_intent(&member_key), pause);
+    join_test_user(&mut state, &UserId::Integer(11));
+    state.apply_receiver_intent(&receiver, connection, &UserId::Integer(15), &intents);
+    let promoted_key = SubscriptionKey::new(&receiver, &UserId::Integer(11), &stream);
+    assert_eq!(state.topology.subscription_intent(&promoted_key), pause);
+    let close = state.close_connection(&member, member_connection).unwrap();
+    let ConnectionCloseCommit::Current { evictions, .. } = close else {
+        panic!("expected current member close");
+    };
+    assert_eq!(evictions, 1);
+    let displaced_key = SubscriptionKey::new(&receiver, &UserId::Integer(12), &stream);
+    assert!(
+        state
+            .topology
+            .subscription_intent(&displaced_key)
+            .is_empty()
+    );
+    assert_eq!(state.topology.subscription_intent(&member_key), pause);
+    join_test_user(&mut state, &member);
+    let replacement = join_test_user(&mut state, &receiver);
+    state.apply_receiver_intent(&receiver, replacement, &UserId::Integer(16), &intents);
+    assert_eq!(state.topology.subscription_intent(&member_key), pause);
+    let eviction = state
+        .apply_receiver_intent(&receiver, replacement, &UserId::Integer(17), &intents)
+        .unwrap();
+    assert_eq!(eviction.work.evictions, 1);
+    let evicted_after_replacement = SubscriptionKey::new(&receiver, &UserId::Integer(13), &stream);
+    assert!(
+        state
+            .topology
+            .subscription_intent(&evicted_after_replacement)
+            .is_empty()
+    );
+    assert!(state.close_connection(&receiver, replacement).is_some());
+    assert!(state.topology.subscription_intent(&member_key).is_empty());
+    assert_eq!(state.media_counts().subscriptions, 0);
+}
+
+#[test]
+fn each_receiver_counts_pending_publishers_not_sparse_stream_updates() {
+    let mut state = test_state();
+    let receiver = UserId::Integer(20);
+    let other = UserId::Integer(21);
+    let connection = join_test_user(&mut state, &receiver);
+    let other_connection = join_test_user(&mut state, &other);
+    let pause = SourceSubscriptionIntent::new(Some(false), None);
+    let camera = UserStreamId::from("camera");
+    let screen = UserStreamId::from("screen");
+    for publisher in 0..4 {
+        for stream in [&camera, &screen] {
+            for _ in 0..8 {
+                let commit = state
+                    .apply_receiver_intent(
+                        &receiver,
+                        connection,
+                        &UserId::Integer(publisher),
+                        &BTreeMap::from([(stream.clone(), pause)]),
+                    )
+                    .unwrap();
+                assert_eq!(commit.work.evictions, 0);
+            }
+        }
+    }
+    let mut evictions = 0;
+    for publisher in 100..110 {
+        evictions += state
+            .apply_receiver_intent(
+                &other,
+                other_connection,
+                &UserId::Integer(publisher),
+                &BTreeMap::from([(camera.clone(), pause)]),
+            )
+            .unwrap()
+            .work
+            .evictions;
+    }
+    for publisher in 0..4 {
+        for stream in [&camera, &screen] {
+            let key = SubscriptionKey::new(&receiver, &UserId::Integer(publisher), stream);
+            assert_eq!(state.topology.subscription_intent(&key), pause);
+        }
+    }
+    let empty = state
+        .apply_receiver_intent(
+            &receiver,
+            connection,
+            &UserId::Integer(4),
+            &BTreeMap::from([(camera.clone(), SourceSubscriptionIntent::default())]),
+        )
+        .unwrap();
+    assert_eq!(empty.work.evictions, 0);
+    assert_eq!(evictions, 6);
+    let last_evictions = state
+        .apply_receiver_intent(
+            &receiver,
+            connection,
+            &UserId::Integer(4),
+            &BTreeMap::from([(
+                camera.clone(),
+                SourceSubscriptionIntent::new(None, Some(VideoLayoutIntent::Pinned)),
+            )]),
+        )
+        .unwrap()
+        .work
+        .evictions;
+    for stream in [&camera, &screen] {
+        let key = SubscriptionKey::new(&receiver, &UserId::Integer(0), stream);
+        assert!(state.topology.subscription_intent(&key).is_empty());
+    }
+    assert_eq!(last_evictions, 1);
 }

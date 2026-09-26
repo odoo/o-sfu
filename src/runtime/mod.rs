@@ -98,7 +98,10 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns an error when the configured media transport cannot be built.
+    /// Returns [`anyhow::Error`] when the authentication key is malformed or
+    /// shorter than the HS256 minimum, the diagnostics token is invalid, proxy
+    /// mode lacks trusted proxies, listener limits are outside their supported
+    /// ranges or the media transport cannot be built.
     pub fn new(config: &Config) -> AnyResult<Self> {
         Self::from_services(config, RuntimeServices::default())
     }
@@ -111,7 +114,9 @@ impl Runtime {
     }
 
     fn from_services(config: &Config, services: RuntimeServices) -> AnyResult<Self> {
-        let runtime_config = RuntimeConfig::from_config(config);
+        config.http.validate()?;
+        config.diagnostics.validate()?;
+        let runtime_config = RuntimeConfig::from_config(config)?;
         let media_transport = build_media_transport(config, &services)?;
         let room_runtime_policy = build_room_runtime_policy(config, &media_transport);
         info!(
@@ -166,7 +171,7 @@ impl Runtime {
         HttpServer: Future<Output = io::Result<()>>,
         Shutdown: Future<Output = io::Result<()>>,
     {
-        let timeout = Duration::from_millis(self.config.http.shutdown_timeout_ms);
+        let timeout = self.config.http.shutdown_timeout.as_duration();
         let tasks = RuntimeTasks::spawn(Arc::clone(&self.room_manager), self.media_transport);
         let state = RuntimeState::from_parts(
             self.config,

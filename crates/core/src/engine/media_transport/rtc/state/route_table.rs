@@ -405,22 +405,11 @@ impl RouteTable {
     pub(in super::super) fn replace_producer_ssrcs(
         &mut self,
         source_id: TransportMediaId,
-        ssrcs: Vec<Ssrc>,
+        ssrcs: impl IntoIterator<Item = Ssrc>,
     ) {
-        self.source_mut(source_id).producer.ssrcs = ssrcs;
-    }
-
-    pub(in super::super) fn remember_producer_ssrc(
-        &mut self,
-        source_id: TransportMediaId,
-        ssrc: Ssrc,
-    ) {
-        if let Some(source) = self.sources.get_mut(&source_id)
-            && !source.producer.is_empty()
-            && !source.producer.ssrcs.contains(&ssrc)
-        {
-            source.producer.ssrcs.push(ssrc);
-        }
+        let current = &mut self.source_mut(source_id).producer.ssrcs;
+        current.clear();
+        current.extend(ssrcs);
     }
 
     pub(in super::super) fn producer_ssrcs(&self, source_id: TransportMediaId) -> Option<&[Ssrc]> {

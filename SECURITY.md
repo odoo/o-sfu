@@ -27,13 +27,21 @@ Only latest. Version support is at the Odoo layer.
 
 ### Authentication Secrets
 
-`o-sfu` uses secret containers for server and room keys, key seeds and JWTs.
-These containers redact their contents from debug output and overwrite them
-when dropped, reducing accidental disclosure and secret data left in memory.
+`o-sfu` uses secret containers for server and room keys, key seeds, JWTs
+and operator tokens. These containers redact their contents from debug output
+and zeroize them when dropped, reducing accidental disclosure and secret
+data left in memory.
 
-`AUTH_KEY_FILE` supports loading the server key from a mounted secret,
-keeping its value out of the process environment. Leave `AUTH_KEY` unset
-when using this option. See [Deployment](DEPLOYMENT.md) for configuration.
+`AUTH_KEY_FILE` and `DIAGNOSTICS_AUTH_TOKEN_FILE` load credentials from mounted
+secrets. Leave `AUTH_KEY` and `DIAGNOSTICS_AUTH_TOKEN` unset when using their
+file alternatives. See [Deployment](DEPLOYMENT.md) for configuration.
+
+### Admission & Resource Limits
+
+- **Connections**: Cap accepted sockets through WebSocket upgrades and enforce HTTP header deadlines.
+- **Authentication**: Bound pending WebSockets globally and per IPv4 address or IPv6 /64, with a deadline for the initial authentication frame.
+- **Room State**: Bound SSRC bindings by negotiated encodings and cap absent subscription targets per receiver.
+- **Rejection Logs**: Rate-limit WebSocket admission and authentication rejection events.
 
 ### Security Tooling & Verification
 (see badges above for status)
@@ -63,7 +71,8 @@ see: https://github.com/odoo/o-sfu/releases
 
 ## Privacy & Data Handling
 
-`o-sfu` only operates in-memory, there is no persistent storage.
+The server routes media and maintains room state in memory. Deployment logs
+have their own storage and retention policies.
 
 ### 1. Data Processed
 
@@ -72,13 +81,13 @@ see: https://github.com/odoo/o-sfu/releases
 | **Network & IP Addresses** | Client IP addresses                                 | Real-time WebRTC media routing, connection rate-limiting (anti-abuse/DoS), and diagnostic logging. |
 | **User & Room Identity**   | Ephemeral user IDs and room IDs                     | Authenticating connections and routing media to the correct call participants.                     |
 | **Call Presence**          | Mute state, camera/screen status, speaking activity | Relayed in real time only to active participants within the same room.                             |
-| **Media Streams**          | Audio, video, and screen sharing                    | Encrypted in transit (DTLS-SRTP), routed in volatile memory, and never stored.                     |
+| **Media Streams**          | Audio, video, and screen sharing                    | Encrypted in transit (DTLS-SRTP) and routed in memory.                     |
 
 ### 2. Media Confidentiality & Storage
 
-- **In-Memory Forwarding**: Media streams are forwarded in volatile memory only. `o-sfu` does not record, transcode, inspect content, or write media payloads to disk.
+- **In-Memory Forwarding**: The forwarding path does not transcode or persist media. It parses RTP and codec metadata.
 - **Transport Encryption**: All WebRTC media streams are encrypted in transit over UDP using DTLS-SRTP (the crypto backend is [AWS libcrypto](https://github.com/aws/aws-lc-rs)).
-- **Zero Local Persistence**: `o-sfu` has no database or file storage. When a call ends or a participant leaves, all associated routing and session data are immediately erased from memory.
+- **State Retention**: Session and routing state are released through lifecycle cleanup. Empty-room grace periods can retain room state. Dropping ordinary allocations is not a guarantee that their memory is immediately overwritten.
 
 ### 3. Logging & Observability
 
@@ -94,5 +103,6 @@ Operators hosting `o-sfu` control their deployment environment and should ensure
 
 - **Log Retention**: Configure appropriate log rotation and retention limits on host or container logging systems to manage IP and identifier storage.
 - **Transport Security**: Deploy `o-sfu` behind a trusted reverse proxy with TLS/WSS enabled for signaling traffic.
+- **Proxy Trust**: With `PROXY=true`, only TCP peers in `TRUSTED_PROXIES` may supply forwarded metadata. Trusted proxies must strip or overwrite client-supplied forwarding headers.
 - **Access Control**: Keep observation routes private and securely manage their bearer token plus shared authentication keys.
 - **Observation Transport**: Send the observation bearer token only over same-host loopback, an isolated same-host container network, TLS or an authenticated encrypted transport. Only trusted telemetry services may join the container network. The `o-sfu` HTTP listener does not terminate TLS.

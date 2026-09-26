@@ -1,4 +1,4 @@
-use std::{str, sync::Arc, time::Duration};
+use std::{str, sync::Arc};
 
 use axum::{
     Error as AxumError,
@@ -93,25 +93,25 @@ async fn establish(
     let _guard = services.metrics.track_ws_handshake();
     let auth = {
         let _guard = services.metrics.track_ws_authentication();
-        handshake::authenticate(&services, &mut socket, remote.as_ref()).await
+        handshake::authenticate(&services, &mut socket).await
     };
     let (mut writer, reader) = socket.split();
     let join = match auth {
         Ok(join) => join,
         Err(HandshakeError::PeerClosed) => return None,
-        Err(HandshakeError::Rejected(code)) => {
+        Err(HandshakeError::Shutdown) => {
+            close_writer_bounded(&mut writer, CloseCode::Leaving).await;
+            return None;
+        }
+        Err(error) => {
             handshake::reject(
                 &services,
                 &mut writer,
-                code,
+                error.close_code(),
                 remote.as_ref(),
-                "rejecting websocket during authentication",
+                error,
             )
             .await;
-            return None;
-        }
-        Err(HandshakeError::Shutdown) => {
-            close_writer_bounded(&mut writer, CloseCode::Leaving).await;
             return None;
         }
     };
@@ -333,8 +333,8 @@ impl AuthenticatedSession {
         reason = "all session wake sources stay in one owner loop"
     )]
     async fn run_loop(&mut self) -> SessionExit {
-        let ping_interval = Duration::from_millis(self.user_config.ping_interval_ms);
-        let ping_timeout = Duration::from_millis(self.user_config.timeout_ms);
+        let ping_interval = self.user_config.ping_interval.as_duration();
+        let ping_timeout = self.user_config.timeout.as_duration();
         let mut next_ping_at = Instant::now() + ping_interval;
         let mut next_health_at = next_ping_at;
         let mut pong = None;
@@ -560,10 +560,16 @@ impl AuthenticatedSession {
                     overflow_kind = ?overflow.kind(),
                     "closing websocket because the outbound queue overflowed"
                 );
-                Some(SessionExit::closing(
-                    LoopExit::OutboundQueueOverflow,
-                    CloseCode::Kicked,
-                ))
+                // Overflow can hide the close signal from replacement or explicit removal.
+                let code = if self.user.is_current_connection().await {
+                    CloseCode::Overloaded
+                } else {
+                    CloseCode::Kicked
+                };
+                Some(
+                    self.shutdown_exit()
+                        .unwrap_or(SessionExit::closing(LoopExit::OutboundQueueOverflow, code)),
+                )
             }
             UserOutboundEvent::Closed => {
                 debug!("user outbound room closed");

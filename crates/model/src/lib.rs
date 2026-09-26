@@ -21,7 +21,7 @@
 
 use std::borrow::Cow;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::Value;
 
 /// opaque compatibility payload carried through legacy broadcast paths
@@ -39,11 +39,15 @@ pub type JsonPayload = Value;
 /// state so `"42"` and `42` cannot become two live users in the same call
 ///
 /// non-numeric strings remain valid compatibility ids
+///
+/// Deserialization rejects string identities exceeding 256 decoded UTF-8 bytes,
+/// before numeric-string normalization. Direct Rust construction retains the
+/// existing enum API and does not enforce this wire-input limit.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum UserId {
     Integer(i64),
-    String(String),
+    String(#[serde(deserialize_with = "UserId::deserialize_string")] String),
 }
 
 impl From<i64> for UserId {
@@ -65,6 +69,21 @@ impl From<String> for UserId {
 }
 
 impl UserId {
+    /// Maximum decoded UTF-8 byte length accepted for a wire string identity.
+    pub const MAX_STRING_BYTES: usize = 256;
+
+    fn deserialize_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        // Reject before normalization so long numeric strings cannot bypass the wire limit.
+        if value.len() > Self::MAX_STRING_BYTES {
+            return Err(de::Error::custom("user identity exceeds 256 UTF-8 bytes"));
+        }
+        Ok(value)
+    }
+
     /// return the path representation used by diagnostics and bundle keys
     /// string ids retain their raw representation
     #[must_use]
@@ -355,7 +374,7 @@ pub struct RecordingOptions {
 /// websocket close code vocabulary shared by server and browser protocol code
 ///
 /// standard codes keep their RFC meaning
-/// custom codes mirror the legacy Odoo SFU websocket close vocabulary used by
+/// custom codes extend the legacy Odoo SFU websocket close vocabulary used by
 /// browser clients and low-cardinality telemetry
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
@@ -373,10 +392,12 @@ pub enum WebSocketCloseCode {
     AuthFailed = 4106,
     /// the client did not authenticate before the server timeout
     AuthTimeout = 4107,
-    /// the runtime removed this client from the room
+    /// the client was replaced or explicitly removed from the room
     Kicked = 4108,
     /// admission failed because the room cannot accept another user
     RoomFull = 4109,
+    /// outbound queue overflow allows reconnection with backoff and sticky intent replay
+    Overloaded = 4110,
 }
 
 impl WebSocketCloseCode {
@@ -396,6 +417,7 @@ impl WebSocketCloseCode {
             4107 => Some(Self::AuthTimeout),
             4108 => Some(Self::Kicked),
             4109 => Some(Self::RoomFull),
+            4110 => Some(Self::Overloaded),
             _ => None,
         }
     }
@@ -412,6 +434,7 @@ impl From<WebSocketCloseCode> for u16 {
             WebSocketCloseCode::AuthTimeout => 4107,
             WebSocketCloseCode::Kicked => 4108,
             WebSocketCloseCode::RoomFull => 4109,
+            WebSocketCloseCode::Overloaded => 4110,
         }
     }
 }

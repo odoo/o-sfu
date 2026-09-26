@@ -5,7 +5,10 @@ use tokio::net::TcpSocket;
 use tungstenite::http::StatusCode;
 
 use super::fixtures::*;
-use crate::runtime::auth::MAX_JWT_TOKEN_BYTES;
+use crate::runtime::{
+    auth::{MAX_JWT_TOKEN_BYTES, duration_since_epoch},
+    telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+};
 
 // deliberately creates a startup snapshot large enough to exercise outbound backpressure
 const SLOW_READER_PEER_COUNT: usize = 48;
@@ -43,6 +46,12 @@ async fn websocket_rejects_pre_auth_connections_over_configured_capacity() {
         other => panic!("expected websocket HTTP rejection, got {other:?}"),
     }
 
+    let metrics = server.state.metrics.snapshot();
+    assert_eq!(metrics.ws_handshake_rejected_error(), 0);
+    assert_eq!(
+        metrics.counter_value(MetricName::WsPreAuthRejectionsTotal, &[("limit", "global")]),
+        1
+    );
     assert!(first.close(None).await.is_ok());
 }
 
@@ -77,6 +86,12 @@ async fn websocket_rejects_pre_auth_connections_over_origin_capacity() {
         other => panic!("expected websocket HTTP rejection, got {other:?}"),
     }
 
+    let metrics = server.state.metrics.snapshot();
+    assert_eq!(metrics.ws_handshake_rejected_error(), 0);
+    assert_eq!(
+        metrics.counter_value(MetricName::WsPreAuthRejectionsTotal, &[("limit", "origin")]),
+        1
+    );
     assert!(first.close(None).await.is_ok());
 }
 
@@ -424,6 +439,125 @@ async fn websocket_startup_send_timeout_releases_room_membership() {
 }
 
 #[tokio::test]
+async fn websocket_authenticates_odoo_internal_session_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "odoo-internal", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    let claims = serde_json::json!({
+        "sfu_channel_uuid": room.uuid(),
+        "session_id": 170,
+        "user_id": 42,
+        "label": "Alice",
+        "ice_servers": [],
+        "permissions": { "audioRecording": true },
+        "exp": duration_since_epoch().as_secs() + 8 * 60 * 60,
+    });
+    let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+    let mut websocket = require_some(
+        authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+        "internal-user websocket should connect",
+    )?;
+    require_some(
+        read_welcome(&mut websocket).await,
+        "Odoo internal user should authenticate",
+    )?;
+    assert!(
+        server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(170))
+            .await
+    );
+    assert!(
+        !server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(42))
+            .await
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_authenticates_odoo_guest_session_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "odoo-guest", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    let token = sign(
+        &serde_json::json!({
+            "sfu_channel_uuid": room.uuid(),
+            "session_id": "171",
+            "label": "Guest",
+            "ice_servers": [],
+            "permissions": {},
+            "exp": duration_since_epoch().as_secs() + 8 * 60 * 60,
+        }),
+        &secrecy::SecretString::from(TEST_ROOM_KEY),
+    )?;
+    let mut websocket = require_some(
+        authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+        "guest websocket should connect",
+    )?;
+    require_some(
+        read_welcome(&mut websocket).await,
+        "Odoo guest should authenticate",
+    )?;
+    assert!(
+        server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &UserId::Integer(171))
+            .await
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_rejects_missing_or_malformed_participant_identity() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "invalid-identity", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    for mut claims in [
+        serde_json::json!({}),
+        serde_json::json!({ "session_id": [] }),
+    ] {
+        let object = require_some(
+            claims.as_object_mut(),
+            "credential claims should be an object",
+        )?;
+        object.insert("room_id".to_owned(), serde_json::json!(room.uuid()));
+        object.insert(
+            "exp".to_owned(),
+            serde_json::json!(duration_since_epoch().as_secs() + 60),
+        );
+        let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+        let mut websocket = require_some(
+            authenticate_with_room(
+                &server,
+                secrecy::ExposeSecret::expose_secret(&token),
+                Some(room.uuid()),
+            )
+            .await,
+            "invalid-identity websocket should connect",
+        )?;
+        assert_eq!(
+            read_close_code_promptly(&mut websocket).await,
+            Some(CloseCode::Library(u16::from(
+                WebSocketCloseCode::AuthFailed
+            )))
+        );
+    }
+    assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn websocket_authenticates_legacy_room_scoped_token_with_explicit_room_id() {
     let server = TestServerBuilder::new().spawn().await;
     assert!(server.is_some());
@@ -628,4 +762,77 @@ fn large_user_id(index: usize) -> UserId {
     value.push('-');
     value.extend(repeat_n('x', SLOW_READER_USER_ID_BYTES));
     UserId::String(value)
+}
+
+#[tokio::test]
+async fn websocket_requires_unexpired_credentials() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = require_some(
+        create_room(&server, "expiry-policy", CreateRoomQuery::default()).await,
+        "test room should be served",
+    )?;
+    for exp in [None, Some(0_u64)] {
+        let mut claims = serde_json::json!({ "sfu_channel_uuid": room.uuid(), "session_id": 170 });
+        if let Some(exp) = exp {
+            require_some(
+                claims.as_object_mut(),
+                "credential claims should be an object",
+            )?
+            .insert("exp".to_owned(), serde_json::json!(exp));
+        }
+        let token = sign(&claims, &secrecy::SecretString::from(TEST_ROOM_KEY))?;
+        let mut websocket = require_some(
+            authenticate_with_jwt(&server, secrecy::ExposeSecret::expose_secret(&token)).await,
+            "websocket should connect before auth rejection",
+        )?;
+        assert_eq!(
+            read_close_code_promptly(&mut websocket).await,
+            Some(CloseCode::Library(u16::from(
+                WebSocketCloseCode::AuthFailed
+            )))
+        );
+    }
+    assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn websocket_rejects_seventeenth_trusted_origin_in_same_ipv6_subnet() -> TestResult {
+    let server = require_some(
+        TestServerBuilder::new()
+            .trust_proxy_headers(true)
+            .spawn()
+            .await,
+        "trusted-proxy server must start",
+    )?;
+    let mut sockets = Vec::new();
+    for suffix in 1..=16 {
+        sockets.push(require_some(
+            connect_websocket_with_forwarded_for(&server, &format!("2001:db8:1::{suffix:x}")).await,
+            "the default origin cap must admit sixteen pending authentications",
+        )?);
+    }
+    let mut request = server.url().into_client_request()?;
+    request.headers_mut().insert(
+        "x-forwarded-for",
+        HeaderValue::from_static("2001:db8:1::ffff"),
+    );
+    let rejected = timeout(Duration::from_secs(2), connect_async(request)).await?;
+    assert!(matches!(rejected,
+        Err(tungstenite::Error::Http(response)) if response.status() == StatusCode::SERVICE_UNAVAILABLE
+    ));
+    let metrics = server.state.metrics.snapshot();
+    assert_eq!(metrics.ws_handshake_rejected_error(), 0);
+    assert_eq!(
+        metrics.counter_value(MetricName::WsPreAuthRejectionsTotal, &[("limit", "origin")]),
+        1
+    );
+    sockets.push(require_some(
+        connect_websocket_with_forwarded_for(&server, "2001:db8:2::1").await,
+        "a different IPv6 subnet must retain its own admission capacity",
+    )?);
+    for mut socket in sockets {
+        socket.close(None).await?;
+    }
+    Ok(())
 }
