@@ -5,7 +5,7 @@ use secrecy::{ExposeSecret, SecretString};
 use super::{
     AuthConfig, DEFAULT_AUTHENTICATION_TIMEOUT_MS, DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS,
     DEFAULT_MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN,
-    env::{Env, positive},
+    env::{Env, EnvKey, positive},
 };
 use crate::runtime::auth::decode_key;
 
@@ -33,7 +33,7 @@ impl AuthConfig {
     }
 }
 
-fn validate_auth_key(key: &'static str, value: SecretString) -> Result<SecretString> {
+fn validate_auth_key(key: EnvKey, value: SecretString) -> Result<SecretString> {
     let key_len = decode_key(&value)
         .map_err(|_error| anyhow!("{key} must be valid base64"))?
         .expose_secret()

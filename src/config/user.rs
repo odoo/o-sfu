@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 
 use super::{
     UserConfig,
-    env::{Env, positive},
+    env::{Env, EnvKey, positive},
 };
 use crate::core::server::room::{
     DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY, DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY,
@@ -44,7 +44,7 @@ impl UserConfig {
     }
 }
 
-fn bounded_duration(key: &'static str, value: Duration) -> Result<Duration> {
+fn bounded_duration(key: EnvKey, value: Duration) -> Result<Duration> {
     ensure!(
         value.as_secs() <= MAX_DURATION_SECS,
         "{key} must not exceed {MAX_DURATION_SECS} seconds"

@@ -113,21 +113,21 @@
 //!
 //! There are two different keys:
 //!
-//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 bytes) verifies
+//! - **Server-to-server key**: `OSFU_AUTH_KEY` (base64, at least 32 bytes) verifies
 //!   the HTTP [`http::CreateRoomQuery`] path through [`auth::HttpRoomClaims`] and
 //!   [`auth::HttpDisconnectClaims`]. See [`config`].
 //! - **Per-room key**: the request that creates the current room pins the signing
 //!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. For more
 //!   security, prefer the `keySeed` claim, which derives a per-room key with the
-//!   `AUTH_KEY` and provided seed using the following KDF:
+//!   `OSFU_AUTH_KEY` and provided seed using the following KDF:
 //!   ```text
 //!   room_key = Base64StdPad(HMAC-SHA256(
-//!       key = Base64Decode(AUTH_KEY),
+//!       key = Base64Decode(OSFU_AUTH_KEY),
 //!       message = Base64Decode(keySeed)
 //!   ))
 //!   ```
 //!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
-//!   never against `AUTH_KEY`.
+//!   never against `OSFU_AUTH_KEY`.
 //!
 //! HTTP room creation uses the
 //! `Authorization` header, HTTP disconnect uses the request body and the
@@ -152,12 +152,12 @@
 //!   Accepting the answer stores the expected remote fingerprint. The DTLS
 //!   handshake verifies it against the peer certificate.
 //! - **ICE**: `o-sfu` runs ICE-lite with `a=setup:actpass` and advertises
-//!   `ANNOUNCED_IP`, so media UDP must reach the host directly.
+//!   `OSFU_ANNOUNCED_IP`, so media UDP must reach the host directly.
 //!
 //! ## Signaling Transport
 //!
 //! HTTPS and WSS are expected to be terminated by an external reverse proxy.
-//! Setting `PROXY=true` in [`config`] trusts forwarded headers for every request.
+//! Setting `OSFU_PROXY=true` in [`config`] trusts forwarded headers for every request.
 //! It does not restrict trust to selected proxy addresses. Every request must
 //! then pass through a proxy that strips or overwrites client-supplied
 //! `x-forwarded-*` headers. See [`http::resolve_request_origin`] for origin
@@ -430,7 +430,7 @@ pub mod http {
         /// ```javascript
         /// const origin = "https://o-sfu-observability.internal";
         /// const headers = {
-        ///   Authorization: `Bearer ${process.env.DIAGNOSTICS_AUTH_TOKEN}`,
+        ///   Authorization: `Bearer ${process.env.OSFU_DIAGNOSTICS_AUTH_TOKEN}`,
         /// };
         ///
         /// async function getJson(path) {

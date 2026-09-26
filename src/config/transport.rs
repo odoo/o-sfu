@@ -15,6 +15,7 @@ use super::{
     TransportConfig,
     env::{Env, EnvParse, EnvValue, positive},
 };
+use crate::config::env::EnvKey;
 
 impl EnvParse for RtcUdpIoBackend {
     fn parse(value: EnvValue) -> Result<Self> {
@@ -54,7 +55,9 @@ impl TransportConfig {
             .check(|key, value| {
                 ensure!(
                     value >= rtc_min_port,
-                    "{key} must be greater than or equal to RTC_MIN_PORT"
+                    "{} must be greater than or equal to {}RTC_MIN_PORT",
+                    key,
+                    key.prefix
                 );
                 Ok(value)
             })
@@ -80,7 +83,9 @@ impl TransportConfig {
             .check(|key, value| {
                 ensure!(
                     value.get() <= rtc_media_worker_count,
-                    "{key} must be less than or equal to RTC_MEDIA_WORKER_COUNT"
+                    "{} must be less than or equal to {}RTC_MEDIA_WORKER_COUNT",
+                    key,
+                    key.prefix
                 );
                 Ok(value)
             })
@@ -109,7 +114,7 @@ impl TransportConfig {
     }
 }
 
-fn advertised_ip(key: &'static str, value: IpAddr) -> Result<IpAddr> {
+fn advertised_ip(key: EnvKey, value: IpAddr) -> Result<IpAddr> {
     ensure!(
         !value.is_unspecified(),
         "{key} must be a concrete advertised address"
@@ -118,7 +123,7 @@ fn advertised_ip(key: &'static str, value: IpAddr) -> Result<IpAddr> {
     Ok(value)
 }
 
-fn supported_udp_io_backend(key: &'static str, value: RtcUdpIoBackend) -> Result<RtcUdpIoBackend> {
+fn supported_udp_io_backend(key: EnvKey, value: RtcUdpIoBackend) -> Result<RtcUdpIoBackend> {
     ensure!(
         value != RtcUdpIoBackend::IoUring || cfg!(target_os = "linux"),
         "{key}=io_uring is only supported on Linux"
@@ -190,31 +195,31 @@ pub fn default_rtc_media_worker_count() -> usize {
 fn video_adaptation_tuning_error(error: VideoAdaptationTuningError) -> anyhow::Error {
     match error {
         VideoAdaptationTuningError::MultipartyScalableVideoThresholdZero => {
-            anyhow!("ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD must be greater than zero")
+            anyhow!("OSFU_ROOM_MULTIPARTY_SCALABLE_VIDEO_THRESHOLD must be greater than zero")
         }
         VideoAdaptationTuningError::ThumbnailBudgetDivisorZero => {
-            anyhow!("ROOM_THUMBNAIL_BUDGET_DIVISOR must be greater than zero")
+            anyhow!("OSFU_ROOM_THUMBNAIL_BUDGET_DIVISOR must be greater than zero")
         }
         VideoAdaptationTuningError::SoftPauseDwellZero => {
-            anyhow!("ROOM_SOFT_PAUSE_DWELL_MS must be greater than zero")
+            anyhow!("OSFU_ROOM_SOFT_PAUSE_DWELL_MS must be greater than zero")
         }
         VideoAdaptationTuningError::UpgradeDwellZero => {
-            anyhow!("ROOM_UPGRADE_DWELL_MS must be greater than zero")
+            anyhow!("OSFU_ROOM_UPGRADE_DWELL_MS must be greater than zero")
         }
         VideoAdaptationTuningError::SoftPauseDwellTooLong => {
             anyhow!(
-                "ROOM_SOFT_PAUSE_DWELL_MS must not exceed {}",
+                "OSFU_ROOM_SOFT_PAUSE_DWELL_MS must not exceed {}",
                 VideoAdaptationTuning::MAX_DWELL.as_millis()
             )
         }
         VideoAdaptationTuningError::UpgradeDwellTooLong => {
             anyhow!(
-                "ROOM_UPGRADE_DWELL_MS must not exceed {}",
+                "OSFU_ROOM_UPGRADE_DWELL_MS must not exceed {}",
                 VideoAdaptationTuning::MAX_DWELL.as_millis()
             )
         }
         VideoAdaptationTuningError::ReceiverBudgetHeadroomPercentTooHigh => {
-            anyhow!("ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT must not exceed 100")
+            anyhow!("OSFU_ROOM_RECEIVER_BUDGET_HEADROOM_PERCENT must not exceed 100")
         }
     }
 }

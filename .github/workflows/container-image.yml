@@ -104,9 +104,9 @@ jobs:
         run: |
           set -euo pipefail
           container_id="$(docker run --detach \
-            --env AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= \
-            --env HTTP_INTERFACE=0.0.0.0:8070 \
-            --env ANNOUNCED_IP=127.0.0.1 \
+            --env OSFU_AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= \
+            --env OSFU_HTTP_INTERFACE=0.0.0.0:8070 \
+            --env OSFU_ANNOUNCED_IP=127.0.0.1 \
             --publish 127.0.0.1:18070:8070 \
             "$IMAGE_TAG")"
           healthy=0

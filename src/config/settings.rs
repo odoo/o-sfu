@@ -53,7 +53,7 @@ pub struct HttpConfig {
     pub bind_address: SocketAddr,
     pub trust_proxy_headers: bool,
     /// Positive deadline in milliseconds for listener, session, background and RTC worker drainage.
-    /// Loaded from `SHUTDOWN_TIMEOUT_MS` with a `10_000` default.
+    /// Loaded from `OSFU_SHUTDOWN_TIMEOUT_MS` with a `10_000` default.
     pub shutdown_timeout_ms: u64,
 }
 
