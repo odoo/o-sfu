@@ -25,6 +25,18 @@ https://www.odoo.com/security-report
 
 Only latest. Version support is at the Odoo layer.
 
+### Multi-Tenant Segregation
+
+A single `o-sfu` server can serve multiple independent servers (like Odoo SaaS or Odoo.sh databases)
+through isolated rooms. Joining requires a JWT verified with the room's signing
+key. Signaling and media routing remain within that room. Tenants (like Odoo databases) must provision
+distinct room identities and signing keys and authorize participants before
+issuing their tokens.
+
+The server-wide `AUTH_KEY` grants trusted backends authority across rooms and
+must remain secret. Room segregation relies on those backends and the SFU
+operator.
+
 ### Authentication Secrets
 
 `o-sfu` uses secret containers for server and room keys, key seeds and JWTs.

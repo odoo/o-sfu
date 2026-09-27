@@ -1,12 +1,9 @@
 //! Odoo's Selective Forwarding Unit (SFU) for audio/video calls.
 //!
-//! `o-sfu` provides a dedicated server and an embeddable Rust runtime for room
-//! admission, media policy, signaling and packet forwarding. Applications
-//! provision rooms over HTTP, browsers connect over WebSocket and media travels
-//! over UDP without transcoding or mixing.
-//!
-//! `str0m` supplies the WebRTC state machine for ICE, DTLS and SRTP. `o-sfu`
-//! supplies the UDP sockets, worker threads and packet loops that drive it.
+//! `o-sfu` is a multi-tenant SFU designed to be compatible with the Odoo saas/.sh
+//! architecture, which means that a single o-sfu server can serve
+//! independent (individually authenticated) "rooms" which can be used by many
+//! independent tenants (like odoo saas "databases").
 //!
 //! # Reading Map
 //!

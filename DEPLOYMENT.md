@@ -17,7 +17,17 @@ media UDP must reach the VM public address directly because `o-sfu` advertises `
 
 ## Odoo binding
 
-use the same public SFU URL and shared key on both sides
+A single `o-sfu` deployment can serve many independent tenants, such as
+different Odoo databases. Configure each database with the same public SFU URL
+and shared server key shown below. Calls use separate, independently
+authenticated rooms. The shared server key belongs only to trusted Odoo
+backends. See [Multi-Tenant Segregation](/SECURITY.md#multi-tenant-segregation)
+for the security model.
+
+> [!WARNING]
+> If tenants can see the o-sfu key, you should configure your SFU to be behind a reverse-proxy
+> that whitelists the tenant server IP addresses for the control routes (`v1/channel` and `v1/disconnect`).
+> Without doing that, a tenant may leak the key and be able to use the service outside of their Odoo instance.
 
 on `o-sfu`:
 

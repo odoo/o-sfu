@@ -23,7 +23,7 @@
 
 # o-sfu
 
-It's a SFU.
+Odoo's multi-tenant SFU.
 
 uses [Str0m](https://github.com/algesten/str0m) as the WebRTC engine
 
