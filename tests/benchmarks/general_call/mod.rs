@@ -92,8 +92,9 @@ impl GeneralCallStats {
 }
 
 pub struct GeneralCallFixture {
-    runtime: Runtime,
+    // Release scenario state before shutting down its runtime.
     scenario: GeneralCallScenario,
+    runtime: Runtime,
 }
 
 impl Default for GeneralCallFixture {
@@ -113,16 +114,15 @@ impl GeneralCallFixture {
             Ok(scenario) => scenario,
             Err(error) => panic!("failed to build general call benchmark scenario: {error}"),
         };
-        Self { runtime, scenario }
+        Self { scenario, runtime }
     }
 
     #[expect(
         clippy::panic,
         reason = "benchmark execution must fail loudly when the fixed room flow stops being valid"
     )]
-    pub fn run_total_work(self) -> usize {
-        let Self { runtime, scenario } = self;
-        match runtime.block_on(scenario.run()) {
+    pub fn run_total_work(&mut self) -> usize {
+        match self.runtime.block_on(self.scenario.run()) {
             Ok(stats) => stats.total_work(),
             Err(error) => panic!("general call benchmark failed: {error}"),
         }
@@ -221,7 +221,7 @@ impl GeneralCallScenario {
         })
     }
 
-    async fn run(mut self) -> Result<GeneralCallStats> {
+    async fn run(&mut self) -> Result<GeneralCallStats> {
         self.join_ready_batch(&[1, 2, 3, 4, 5, 6, 7, 8]).await?;
         self.publish_audio_batch(&[(1, 11_101), (2, 11_102), (3, 11_103), (4, 11_104)])
             .await?;

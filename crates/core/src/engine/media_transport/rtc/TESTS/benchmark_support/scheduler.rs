@@ -56,6 +56,9 @@ impl SchedulerBenchFixture {
             }
         }
         state.dirty_sessions.reserve_exact(SCHEDULER_SESSION_COUNT);
+        state
+            .timeout_queue
+            .reserve_exact(2 * SCHEDULER_SESSION_COUNT);
 
         Self {
             state,
