@@ -79,12 +79,14 @@ impl<'a> SourcePolicySnapshot<'a> {
                 .or_insert(next_rank);
         }
         let featured_user_updates = featured_user_updates(room, desired_featured_user_id.as_ref());
+        // Reserve the committed-route bound to avoid copying growing snapshots.
+        let mut routes = Vec::with_capacity(room.topology.consumer_count());
         // Include policy-paused routes so later turns can resume them. Filtering
         // on `delivery_active()` would make a policy pause self-perpetuating.
-        let routes = room
-            .committed_consumer_routes()
-            .filter(|route| route.source.active && route.selection.active())
-            .collect::<Vec<_>>();
+        routes.extend(
+            room.committed_consumer_routes()
+                .filter(|route| route.source.active && route.selection.active()),
+        );
         let audio_reserve_by_connection = audio_reserve_by_connection(
             &routes,
             &admitted_audio_speakers,

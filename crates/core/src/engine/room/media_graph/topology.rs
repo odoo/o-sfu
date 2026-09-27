@@ -210,7 +210,7 @@ impl RoomTopology {
         }
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
+    /// Counts committed consumers, including inactive selections.
     pub(in crate::engine::room) fn consumer_count(&self) -> usize {
         self.route_graph.count()
     }
