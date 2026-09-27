@@ -247,7 +247,6 @@ impl RouteGraph {
             .count()
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
     pub(super) fn count(&self) -> usize {
         self.attached()
             .filter(|(_, current)| current.committed().is_some())

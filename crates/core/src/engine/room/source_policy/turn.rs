@@ -230,7 +230,7 @@ impl SourcePolicyTransaction {
     async fn commit(self, room: &Room, media_transport: &MediaTransport) {
         let Self {
             route_effects,
-            mut state_updates,
+            state_updates,
             receiver_video_budget_plans,
             featured_users,
             video_allocation_revision,
@@ -254,8 +254,8 @@ impl SourcePolicyTransaction {
                 *remaining -= 1;
             }
         }
-        state_updates.extend(accepted_route_updates);
-        if state_updates.is_empty()
+        let mut updates = [state_updates, accepted_route_updates];
+        if updates.iter().all(Vec::is_empty)
             && receiver_video_budget_plans.is_empty()
             && featured_users.is_empty()
             && receiver_timing.is_empty()
@@ -264,9 +264,9 @@ impl SourcePolicyTransaction {
             return;
         }
         let mut state = room.state.write().await;
-        let (committed_updates, deadline) = commit_packet_updates(
+        let deadline = commit_packet_updates(
             &mut state,
-            state_updates,
+            &mut updates,
             &receiver_video_budget_plans,
             video_allocation_revision,
             &outstanding_controls,
@@ -275,7 +275,9 @@ impl SourcePolicyTransaction {
         );
         let info_fanout = commit_featured_user_updates(&mut state, &featured_users);
         drop(state);
-        record_committed_selection_updates(room, &committed_updates);
+        for batch in &updates {
+            record_committed_selection_updates(room, batch);
+        }
         if let Some(info_fanout) = info_fanout {
             info_fanout.emit();
         }
@@ -383,13 +385,13 @@ const fn policy_pause_reason_name(reason: PolicyPauseReason) -> &'static str {
 
 fn commit_packet_updates(
     state: &mut RoomState,
-    mut updates: Vec<ConsumerPacketSelectionUpdate>,
+    updates: &mut [Vec<ConsumerPacketSelectionUpdate>],
     receiver_video_budget_plans: &[ReceiverVideoBudgetPlan],
     video_allocation_revision: u64,
     outstanding_controls: &BTreeMap<ConnectionId, usize>,
     receiver_timing: &[ReceiverPolicyTiming],
     now: Instant,
-) -> (Vec<ConsumerPacketSelectionUpdate>, Option<Instant>) {
+) -> Option<Instant> {
     let allocation_plan_is_current =
         state.topology.video_allocation_revision() == video_allocation_revision;
     let all_route_controls_accepted = outstanding_controls.values().all(|count| *count == 0);
@@ -437,62 +439,66 @@ fn commit_packet_updates(
                 .topology
                 .update_consumer_upgrade(&route.key, route.source_id, &route.route, None);
         }
-        for update in updates.iter().filter(|update| update.interrupts_upgrade) {
-            state.topology.update_consumer_upgrade(
-                &update.key,
-                update.source_id,
-                &update.route,
-                None,
-            );
+        for update in updates.iter().flatten() {
+            if update.interrupts_upgrade {
+                state.topology.update_consumer_upgrade(
+                    &update.key,
+                    update.source_id,
+                    &update.route,
+                    None,
+                );
+            }
         }
     }
-    updates.retain_mut(|update| {
-        let commit_planned_budget = allocation_plan_is_current
-            && (!reconcile_planned_budgets
-                || !receiver_video_budget_plans
-                    .iter()
-                    .any(|plan| plan.receiver == update.key.receiver));
-        let committed = state.topology.update_consumer_source_selection(
-            &update.key,
-            update.source_id,
-            &update.route,
-            |selection| {
-                selection.set_selector(update.selector);
-                selection.set_policy_pause_reason(update.policy_pause_reason);
-                if commit_planned_budget {
-                    selection.set_budget(update.planned_budget);
-                }
-            },
-        );
-        if committed
-            && update.transition.is_some()
-            && !commit_planned_budget
-            && !route_transition_remains_observable(state, update)
-        {
-            update.transition = None;
-        }
-        if let UpgradeChange::Set(pending_upgrade) = update.upgrade
-            && committed
-            && allocation_plan_is_current
-            && receiver_controls_accepted(update.route.consumer_session_key().connection_id())
-            && state.user_connection_id(&update.key.receiver)
-                == Some(update.route.consumer_session_key().connection_id())
-        {
-            state.topology.update_consumer_upgrade(
+    for batch in updates {
+        batch.retain_mut(|update| {
+            let commit_planned_budget = allocation_plan_is_current
+                && (!reconcile_planned_budgets
+                    || !receiver_video_budget_plans
+                        .iter()
+                        .any(|plan| plan.receiver == update.key.receiver));
+            let committed = state.topology.update_consumer_source_selection(
                 &update.key,
                 update.source_id,
                 &update.route,
-                pending_upgrade,
+                |selection| {
+                    selection.set_selector(update.selector);
+                    selection.set_policy_pause_reason(update.policy_pause_reason);
+                    if commit_planned_budget {
+                        selection.set_budget(update.planned_budget);
+                    }
+                },
             );
-        }
-        committed
-    });
+            if committed
+                && update.transition.is_some()
+                && !commit_planned_budget
+                && !route_transition_remains_observable(state, update)
+            {
+                update.transition = None;
+            }
+            if let UpgradeChange::Set(pending_upgrade) = update.upgrade
+                && committed
+                && allocation_plan_is_current
+                && receiver_controls_accepted(update.route.consumer_session_key().connection_id())
+                && state.user_connection_id(&update.key.receiver)
+                    == Some(update.route.consumer_session_key().connection_id())
+            {
+                state.topology.update_consumer_upgrade(
+                    &update.key,
+                    update.source_id,
+                    &update.route,
+                    pending_upgrade,
+                );
+            }
+            committed
+        });
+    }
     if reconcile_planned_budgets {
         for plan in receiver_video_budget_plans {
             reconcile_receiver_video_budget(state, plan);
         }
     }
-    (updates, next_deadline)
+    next_deadline
 }
 
 fn route_transition_remains_observable(
