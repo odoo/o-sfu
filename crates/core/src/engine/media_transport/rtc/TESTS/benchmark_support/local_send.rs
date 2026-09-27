@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::error::Error;
 use std::{
     net::SocketAddr,
     sync::Arc,
@@ -106,9 +108,22 @@ impl LocalSendBenchFixture {
         else {
             panic!("benchmark destination should be a local RTC route");
         };
-        let Some(warmup_bytes) = destination.send(&mut state, &packet) else {
-            panic!("benchmark local-send warm-up should succeed");
-        };
+        let warmup_bytes = (0..LOCAL_SEND_PACKETS)
+            .map(|_| {
+                destination
+                    .send(&mut state, &packet)
+                    .expect("benchmark local-send warm-up should succeed")
+            })
+            .sum();
+        // Clear the warm-up packets while retaining capacity for the measured batch.
+        state
+            .users
+            .get_mut(&consumer)
+            .expect("benchmark consumer session should exist")
+            .rtc
+            .direct_api()
+            .reset_stream_tx(mid, None, Ssrc::from(79), None)
+            .expect("benchmark local-send stream should reset");
 
         Self {
             state,
@@ -143,7 +158,7 @@ impl LocalSendBenchFixture {
             .record(self.observed_at + Duration::from_secs(1), 0);
         let measured_bytes = LOCAL_SEND_PACKETS.saturating_mul(LOCAL_SEND_PAYLOAD.len());
         let total_bytes = measured_bytes.saturating_add(self.warmup_bytes);
-        self.warmup_bytes == LOCAL_SEND_PAYLOAD.len()
+        self.warmup_bytes == measured_bytes
             && self.sent_packets == LOCAL_SEND_PACKETS
             && self.sent_bytes == u64::try_from(measured_bytes).unwrap_or(u64::MAX)
             && self.bitrate_registry.egress_bitrate_snapshot_at(
@@ -158,8 +173,26 @@ impl LocalSendBenchFixture {
 }
 
 #[test]
-fn local_send_fixture_accounts_for_warmup_and_measured_packets() {
+fn local_send_fixture_accounts_for_warmup_and_measured_packets() -> Result<(), Box<dyn Error>> {
+    use str0m::{Input, rtp::StreamTxQueueInfo};
     let mut fixture = LocalSendBenchFixture::successful();
     fixture.send_packets();
+    let session = fixture
+        .state
+        .users
+        .get_mut(&fixture.session_keys[0])
+        .ok_or("benchmark consumer session should exist")?;
+    session
+        .rtc
+        .handle_input(Input::Timeout(fixture.observed_at))?;
+    assert_eq!(
+        session
+            .rtc
+            .direct_api()
+            .stream_tx_by_mid(Mid::from("cam-down"), None)
+            .and_then(|stream| stream.queue_info().map(StreamTxQueueInfo::packet_count)),
+        Some(LOCAL_SEND_PACKETS),
+    );
     assert!(fixture.accounting_matches());
+    Ok(())
 }

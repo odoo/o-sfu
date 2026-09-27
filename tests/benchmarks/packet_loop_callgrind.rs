@@ -3,8 +3,8 @@
 //! this suite measures fixed units of packet-loop work with `Ir` and
 //! `EstimatedCycles`, which are the instruction-count and simulated cycle-cost
 //! metrics reported by Callgrind
-//! each benchmark builds the RTC-engine state outside the measured function,
-//! then repeats one stable packet-loop operation with reusable buffers
+//! each benchmark repeats one packet-loop operation with reusable buffers.
+//! RTC-engine setup and fixture destruction stay outside the measured function.
 //!
 //! the value of this target is base-versus-head review, not throughput proof
 //! it catches accidental instruction growth in production packet-loop helpers
@@ -148,12 +148,13 @@ fn relay_mailbox_256(fixture: RelayPressureBenchFixture) -> RelayPressureBenchFi
 // remote address has been learned
 // repeated misses protect the defensive path that must stay bounded when noise
 // or stale peers send datagrams that do not belong to a live RTC session
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::cached_route(IngressRoutingBenchFixture::cached_accepted_route())]
 #[bench::unknown_source(IngressRoutingBenchFixture::repeated_unknown_source_miss())]
 #[bench::unknown_rtp_1200(IngressRoutingBenchFixture::repeated_large_unknown_source_miss())]
-fn ingress_demux_256(mut fixture: IngressRoutingBenchFixture) -> usize {
-    black_box(fixture.route_datagrams())
+fn ingress_demux_256(mut fixture: IngressRoutingBenchFixture) -> IngressRoutingBenchFixture {
+    black_box(fixture.route_datagrams());
+    black_box(fixture)
 }
 
 // measures the completed-datagram ingress boundary in front of demux
@@ -161,11 +162,12 @@ fn ingress_demux_256(mut fixture: IngressRoutingBenchFixture) -> usize {
 // this protects the path where the socket receive task obtains a reusable
 // buffer, enqueues a completed datagram for the packet loop, then the packet
 // loop drains the bounded queue before routing and recycling the packet buffer
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::cached_route(IngressBurstBenchFixture::cached_accepted_route())]
 #[bench::unknown_rtp_1200(IngressBurstBenchFixture::repeated_large_unknown_source_miss())]
-fn ingress_completed_burst_256(mut fixture: IngressBurstBenchFixture) -> usize {
-    black_box(fixture.route_completed_bursts())
+fn ingress_completed_burst_256(mut fixture: IngressBurstBenchFixture) -> IngressBurstBenchFixture {
+    black_box(fixture.route_completed_bursts());
+    black_box(fixture)
 }
 
 // measures dirty-session scheduling and lazy stale-timeout cleanup
@@ -185,16 +187,17 @@ fn scheduler_churn_128(mut fixture: SchedulerBenchFixture) -> SchedulerBenchFixt
 //
 // this keeps the fingerprint cost visible next to the broader ingress-demux
 // benchmark that includes recent-miss cache lookup and drop accounting
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::rtp_1200(args = (1200usize), setup = fingerprint_packet)]
-fn fingerprint_4096(packet: Vec<u8>) -> u64 {
+fn fingerprint_4096(packet: Vec<u8>) -> Vec<u8> {
     let mut fingerprint = 0_u64;
     for _ in 0..ROUTING_MISS_FINGERPRINT_ATTEMPTS {
         fingerprint = fingerprint.wrapping_add(routing_miss_packet_fingerprint(black_box(
             packet.as_slice(),
         )));
     }
-    black_box(fingerprint)
+    black_box(fingerprint);
+    black_box(packet)
 }
 
 // measures packet-sink fanout through production route planning and flush
@@ -203,10 +206,11 @@ fn fingerprint_4096(packet: Vec<u8>) -> u64 {
 // recording sinks share the packet-loop origin side with media forwarding
 // this benchmark keeps that adjacent path visible so recording support cannot
 // quietly add per-packet cost to rooms that are already forwarding media
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::recording(PacketSinkFanoutBenchFixture::recording_sink())]
-fn packet_sink_512(mut fixture: PacketSinkFanoutBenchFixture) -> usize {
-    black_box(fixture.route_sink_turns())
+fn packet_sink_512(mut fixture: PacketSinkFanoutBenchFixture) -> PacketSinkFanoutBenchFixture {
+    black_box(fixture.route_sink_turns());
+    black_box(fixture)
 }
 
 // measures selected-RID packet-gate batch updates for many consumers attached
@@ -230,11 +234,12 @@ fn route_gate_batch(fixture: ConsumerGateBatchBenchFixture) -> ConsumerGateBatch
 //
 // this protects remote gate convergence from linear queue dedupe and front
 // drain movement when relay pressure prevents immediate control delivery
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::sources_64(RemoteGateRetryBenchFixture::sources_64())]
 #[bench::sources_256(RemoteGateRetryBenchFixture::sources_256())]
-fn remote_gate_retry(mut fixture: RemoteGateRetryBenchFixture) -> usize {
-    black_box(fixture.retry_under_pressure())
+fn remote_gate_retry(mut fixture: RemoteGateRetryBenchFixture) -> RemoteGateRetryBenchFixture {
+    black_box(fixture.retry_under_pressure());
+    black_box(fixture)
 }
 
 // measures selected-RID readiness when one observed RID activates many pending
@@ -255,11 +260,12 @@ fn rid_readiness_256(mut fixture: RidReadinessBenchFixture) -> RidReadinessBench
 //
 // this protects the per-destination local egress rewrite cost paid before each
 // forwarded packet is handed to str0m
-#[library_benchmark(config = callgrind_config(0.5))]
+#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
 #[bench::steady_ssrc(LocalRewriteBenchFixture::steady_ssrc())]
 #[bench::switching_ssrc(LocalRewriteBenchFixture::switching_ssrc())]
-fn local_rewrite_4096(mut fixture: LocalRewriteBenchFixture) -> u64 {
-    black_box(fixture.project_packets())
+fn local_rewrite_4096(mut fixture: LocalRewriteBenchFixture) -> LocalRewriteBenchFixture {
+    black_box(fixture.project_packets());
+    black_box(fixture)
 }
 
 // measures successful local RTC writes plus egress bitrate accounting
@@ -281,10 +287,11 @@ fn local_send_512(mut fixture: LocalSendBenchFixture) -> LocalSendBenchFixture {
 //
 // this protects the packet-level audio policy used by room source-policy
 // updates and diagnostics
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::many_sources(ActiveSpeakerBenchFixture::many_sources())]
-fn active_speaker_policy(mut fixture: ActiveSpeakerBenchFixture) -> usize {
-    black_box(fixture.observe_sources())
+fn active_speaker_policy(mut fixture: ActiveSpeakerBenchFixture) -> ActiveSpeakerBenchFixture {
+    black_box(fixture.observe_sources());
+    black_box(fixture)
 }
 
 // measures producer-side keyframe request coalescing for many consumer-local
@@ -294,10 +301,13 @@ fn active_speaker_policy(mut fixture: ActiveSpeakerBenchFixture) -> usize {
 // source command per consumer
 // this benchmark checks the route-scoped flush path that resolves current route
 // state before collapsing many requests into one producer-side signal
-#[library_benchmark(config = callgrind_config(5.0))]
+#[library_benchmark(config = callgrind_config(5.0), teardown = drop)]
 #[bench::remote_source(KeyframeCoalescingBenchFixture::remote_source_requests())]
-fn keyframe_coalesce_512(mut fixture: KeyframeCoalescingBenchFixture) -> usize {
-    black_box(fixture.flush_requests())
+fn keyframe_coalesce_512(
+    mut fixture: KeyframeCoalescingBenchFixture,
+) -> KeyframeCoalescingBenchFixture {
+    black_box(fixture.flush_requests());
+    black_box(fixture)
 }
 
 // measures packet work interleaved with worker lifecycle commands
@@ -315,19 +325,24 @@ fn interleaved_fanout(
     black_box(fixture)
 }
 
+fn validate_session_drain(fixture: SessionDrainBenchFixture) {
+    fixture.assert_drained();
+}
+
 // measures ready session output draining
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_session_drain)]
 #[bench::drain(SessionDrainBenchFixture::new())]
 fn session_drain_128(mut fixture: SessionDrainBenchFixture) -> SessionDrainBenchFixture {
-    black_box(fixture.drain_sessions());
+    fixture.drain_sessions();
     black_box(fixture)
 }
 
 // measures relay channel packet draining
-#[library_benchmark(config = callgrind_config(1.0))]
+#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
 #[bench::drain(RelayDrainBenchFixture::new())]
-fn relay_drain_256(mut fixture: RelayDrainBenchFixture) -> usize {
-    black_box(fixture.drain_relay())
+fn relay_drain_256(mut fixture: RelayDrainBenchFixture) -> RelayDrainBenchFixture {
+    black_box(fixture.drain_relay());
+    black_box(fixture)
 }
 
 library_benchmark_group!(

@@ -16,6 +16,7 @@ use o_sfu_core::server::transport::benchmark_support::{
     IncomingObservationBenchFixture, MeetingFlowBenchFixture, RELAY_MAILBOX_ATTEMPTS,
     ROUTE_PLANNING_TURNS, RelayDrainBenchFixture, RelayFanoutBenchFixture,
     RelayPressureBenchFixture, RemoteGateRetryBenchFixture, RidReadinessBenchFixture,
+    SchedulerBenchFixture, SessionDrainBenchFixture,
 };
 use source_policy::SourcePolicyFixture;
 
@@ -99,5 +100,24 @@ fn remote_gate_retry_scenario_keeps_saturated_sources_pending() {
         (RemoteGateRetryBenchFixture::sources_256(), 256),
     ] {
         assert_eq!(fixture.retry_under_pressure(), source_count);
+    }
+}
+
+#[test]
+fn session_drain_scenario_polls_every_ready_session() {
+    let mut fixture = SessionDrainBenchFixture::new();
+    fixture.drain_sessions();
+    fixture.assert_drained();
+}
+
+#[test]
+fn scheduler_scenario_collects_sessions_and_keeps_future_deadlines() {
+    let mut fixture = SchedulerBenchFixture::stale_timeouts();
+    for _ in 0..2 {
+        assert_eq!(
+            fixture.collect_ready_and_next_timeout(),
+            129,
+            "all 128 sessions must be ready with a future deadline remaining"
+        );
     }
 }
