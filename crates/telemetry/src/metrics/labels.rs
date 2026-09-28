@@ -297,6 +297,11 @@ impl_exported_metric_label!(pub enum RtcInputFailure {
     Other => (5, "other"),
 });
 
+impl_exported_metric_label!(pub enum RtcDrainFailureStage {
+    PollOutput => (0, "poll_output"),
+    TimeoutInput => (1, "timeout_input"),
+});
+
 impl_exported_metric_label!(pub enum RtcOutputBudgetLimit {
     Packets => (0, "packets"),
     PayloadBytes => (1, "payload_bytes"),

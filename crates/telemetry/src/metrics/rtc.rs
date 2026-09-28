@@ -7,10 +7,10 @@ use std::{
 use super::{
     counter::{MetricLabel, PaddedCounter, PaddedCounterFamily},
     labels::{
-        RtcDatagramDropReason, RtcDatagramRoutePath, RtcInputFailure, RtcKeyframeRequestOutcome,
-        RtcNackDirection, RtcOutputBudgetLimit, RtcProducerSsrcBindingOutcome,
-        RtcRelayEnqueueResult, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
-        RtcRouteControlOutcome, RtcTransportIoFailure,
+        RtcDatagramDropReason, RtcDatagramRoutePath, RtcDrainFailureStage, RtcInputFailure,
+        RtcKeyframeRequestOutcome, RtcNackDirection, RtcOutputBudgetLimit,
+        RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
+        RtcRemotePacketGateConvergence, RtcRouteControlOutcome, RtcTransportIoFailure,
     },
 };
 
@@ -19,6 +19,7 @@ const RTC_DATAGRAM_DROP_REASON_COUNT: usize = <RtcDatagramDropReason as MetricLa
 const RTC_NACK_DIRECTION_COUNT: usize = <RtcNackDirection as MetricLabel>::COUNT;
 const RTC_TRANSPORT_IO_FAILURE_COUNT: usize = <RtcTransportIoFailure as MetricLabel>::COUNT;
 const RTC_INPUT_FAILURE_COUNT: usize = <RtcInputFailure as MetricLabel>::COUNT;
+const RTC_DRAIN_FAILURE_STAGE_COUNT: usize = <RtcDrainFailureStage as MetricLabel>::COUNT;
 const RTC_OUTPUT_BUDGET_LIMIT_COUNT: usize = <RtcOutputBudgetLimit as MetricLabel>::COUNT;
 const RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT: usize =
     <RtcProducerSsrcBindingOutcome as MetricLabel>::COUNT;
@@ -71,6 +72,7 @@ pub struct RtcMetricsRecorder {
     transport_io_log: Mutex<[FailureLogSlot; RTC_TRANSPORT_IO_FAILURE_COUNT]>,
     input_failures: PaddedCounterFamily<RtcInputFailure>,
     input_log: Mutex<[FailureLogSlot; RTC_INPUT_FAILURE_COUNT]>,
+    drain_failures: PaddedCounterFamily<RtcDrainFailureStage>,
     output_budget_exhaustions: PaddedCounterFamily<RtcOutputBudgetLimit>,
     output_budget_session_closes: PaddedCounter,
     producer_ssrc_bindings: PaddedCounterFamily<RtcProducerSsrcBindingOutcome>,
@@ -132,6 +134,10 @@ impl RtcMetricsRecorder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         slots.get_mut(failure.as_index())?.observe(Instant::now())
+    }
+
+    pub fn record_rtc_drain_failure(&self, stage: RtcDrainFailureStage) {
+        self.drain_failures.increment(stage);
     }
 
     pub fn record_rtc_output_budget_exhaustion(&self, limit: RtcOutputBudgetLimit) {
@@ -235,6 +241,7 @@ pub(super) struct RtcMetricsSnapshot {
     rtcp_ingress_budget_drops: u64,
     transport_io_failures: [u64; RTC_TRANSPORT_IO_FAILURE_COUNT],
     input_failures: [u64; RTC_INPUT_FAILURE_COUNT],
+    drain_failures: [u64; RTC_DRAIN_FAILURE_STAGE_COUNT],
     output_budget_exhaustions: [u64; RTC_OUTPUT_BUDGET_LIMIT_COUNT],
     output_budget_session_closes: u64,
     producer_ssrc_bindings: [u64; RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT],
@@ -299,6 +306,13 @@ impl RtcMetricsSnapshot {
     pub(super) fn input_failures(&self, failure: RtcInputFailure) -> u64 {
         self.input_failures
             .get(failure.as_index())
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(super) fn drain_failures(&self, stage: RtcDrainFailureStage) -> u64 {
+        self.drain_failures
+            .get(stage.as_index())
             .copied()
             .unwrap_or(0)
     }
@@ -408,6 +422,9 @@ impl RtcMetricsSnapshot {
         recorder
             .input_failures
             .accumulate_into(&mut self.input_failures);
+        recorder
+            .drain_failures
+            .accumulate_into(&mut self.drain_failures);
         recorder
             .output_budget_exhaustions
             .accumulate_into(&mut self.output_budget_exhaustions);

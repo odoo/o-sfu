@@ -14,7 +14,7 @@ use std::{
     time::Instant,
 };
 
-use str0m::{Event, Input, Output};
+use str0m::{Event, Input, Output, RtcError};
 use tracing::{trace, warn};
 
 use super::{
@@ -34,7 +34,7 @@ use super::{
 };
 use crate::engine::{
     media_transport::{SourcePolicySignal, TransportSessionKey},
-    metrics::{RtcMetricsRecorder, RtcOutputBudgetLimit, RuntimeMetrics},
+    metrics::{RtcDrainFailureStage, RtcMetricsRecorder, RtcOutputBudgetLimit, RuntimeMetrics},
 };
 
 // The limits admit hundreds of MTU-sized fragments from one large video
@@ -85,6 +85,7 @@ impl SessionOutputBudget {
 enum SessionDrainOutcome {
     Drained(Option<Instant>),
     Exhausted(TransportSessionKey, RtcOutputBudgetLimit),
+    Failed(TransportSessionKey, RtcDrainFailureStage, RtcError),
 }
 
 /// Worker services needed to observe output or tear down an exhausted session.
@@ -95,6 +96,8 @@ pub struct SessionDrainContext<'a> {
     rtc_metrics: &'a RtcMetricsRecorder,
     source_policy_signal: &'a SourcePolicySignal,
     output_limits: SessionOutputLimits,
+    #[cfg(test)]
+    forced_failure: Option<(TransportSessionKey, RtcDrainFailureStage)>,
 }
 
 impl<'a> SessionDrainContext<'a> {
@@ -113,6 +116,8 @@ impl<'a> SessionDrainContext<'a> {
             rtc_metrics,
             source_policy_signal,
             output_limits: SESSION_OUTPUT_LIMITS,
+            #[cfg(test)]
+            forced_failure: None,
         }
     }
 }
@@ -168,10 +173,31 @@ pub fn drain_ready_sessions(
                     context.bitrate_registry,
                     context.snapshot_state,
                     &session_key,
-                    SessionCloseDisposition::OutputBudgetExhausted,
+                    SessionCloseDisposition::TerminalFailure,
                     context.metrics,
                 );
                 context.rtc_metrics.record_rtc_output_budget_session_close();
+                topology_changed = true;
+            }
+            SessionDrainOutcome::Failed(session_key, failure_stage, error) => {
+                // A failed str0m drain can leave partial output in this turn.
+                buffers.rollback_session_drain(&checkpoint);
+                context.rtc_metrics.record_rtc_drain_failure(failure_stage);
+                warn!(
+                    user_id = ?session_key.user_id(),
+                    media_worker_id = session_key.media_worker_id().as_usize(),
+                    ?failure_stage,
+                    ?error,
+                    "retiring RTC session after terminal drain failure"
+                );
+                worker_close_session(
+                    state,
+                    context.bitrate_registry,
+                    context.snapshot_state,
+                    &session_key,
+                    SessionCloseDisposition::TerminalFailure,
+                    context.metrics,
+                );
                 topology_changed = true;
             }
         }
@@ -182,7 +208,12 @@ pub fn drain_ready_sessions(
 
 /// Drains one [`str0m::Rtc`] and stages its output.
 ///
-/// Returns the next deadline or the exhausted session identity and limit.
+/// Returns a deadline or the identity of a session that must be retired.
+/// The caller rolls back output staged by a failed session.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Moving Event by value into a helper raised session_drain_128 Callgrind instructions by 3.1%"
+)]
 fn drain_single_session(
     session_handle: SessionHandle,
     session_key: &TransportSessionKey,
@@ -193,11 +224,22 @@ fn drain_single_session(
 ) -> SessionDrainOutcome {
     let defer_rtx_expiry = begin_rtx_cache_expiry(session_state, now);
     let mut output_budget = SessionOutputBudget::new(context.output_limits);
+    #[cfg(test)]
+    let mut polled_transmit = false;
     loop {
         // The output budget bounds emitted datagrams. str0m may scan a
         // potentially long resend deque before yielding one. Accept that
         // upstream constraint until runtime evidence shows a material stall.
-        match session_state.rtc.poll_output() {
+        #[cfg(test)]
+        let output = tests::substitute_poll_result(
+            session_state.rtc.poll_output(),
+            context,
+            session_key,
+            polled_transmit,
+        );
+        #[cfg(not(test))]
+        let output = session_state.rtc.poll_output();
+        match output {
             Ok(Output::Transmit(transmit)) => {
                 if let Err(limit) = output_budget.try_charge(transmit.contents.len()) {
                     session_state.clear_ingress_context();
@@ -208,6 +250,10 @@ fn drain_single_session(
                     transmit.destination,
                     Vec::<u8>::from(transmit.contents),
                 );
+                #[cfg(test)]
+                {
+                    polled_transmit = true;
+                }
             }
             Ok(Output::Event(Event::RtpPacket(packet))) => {
                 let (mid, binding) = {
@@ -240,7 +286,7 @@ fn drain_single_session(
                     ));
             }
             Ok(Output::Event(Event::KeyframeRequest(request))) => {
-                // Consumer MID/RID names the receiving leg. Preserve `session_key`
+                // Consumer MID/RID names the receiving leg. Preserve session_key
                 // so route state can resolve its current producer after this borrow.
                 buffers
                     .pending_keyframe_requests
@@ -269,22 +315,22 @@ fn drain_single_session(
             }
             Ok(Output::Timeout(timeout_at)) => {
                 // A future timeout can leave paced resend references inside
-                // str0m. Rotating now deliberately lets them miss after the
-                // original packet's finite buffering time.
+                // str0m. Rotate after current output has been exhausted.
                 // https://www.rfc-editor.org/rfc/rfc4588.html#section-3
                 finish_rtx_cache_expiry(session_state, now, defer_rtx_expiry);
                 session_state.clear_ingress_context();
-                // `Output::Timeout` marks current output exhausted. Elapsed host
-                // time alone does not advance str0m's clock, so feed an already-due
-                // deadline back and drain again.
                 if timeout_at <= now {
-                    if session_state.rtc.handle_input(Input::Timeout(now)).is_err() {
-                        warn!(
-                            user_id = ?session_key.user_id(),
-                            media_worker_id = session_key.media_worker_id().as_usize(),
-                            "failed to apply immediate rtc packet-loop timeout input"
+                    #[cfg(test)]
+                    let input_result =
+                        tests::handle_timeout_input(session_state, context, session_key, now);
+                    #[cfg(not(test))]
+                    let input_result = session_state.rtc.handle_input(Input::Timeout(now));
+                    if let Err(error) = input_result {
+                        return SessionDrainOutcome::Failed(
+                            session_key.clone(),
+                            RtcDrainFailureStage::TimeoutInput,
+                            error,
                         );
-                        return SessionDrainOutcome::Drained(None);
                     }
                     continue;
                 }
@@ -293,15 +339,11 @@ fn drain_single_session(
             Err(error) => {
                 finish_rtx_cache_expiry(session_state, now, defer_rtx_expiry);
                 session_state.clear_ingress_context();
-                // A failed poll yields no replacement deadline. Returning `None`
-                // removes the schedule rather than retrying an unclassified `RtcError`.
-                warn!(
-                    user_id = ?session_key.user_id(),
-                    media_worker_id = session_key.media_worker_id().as_usize(),
-                    ?error,
-                    "rtc packet loop failed while polling output"
+                return SessionDrainOutcome::Failed(
+                    session_key.clone(),
+                    RtcDrainFailureStage::PollOutput,
+                    error,
                 );
-                return SessionDrainOutcome::Drained(None);
             }
         }
     }
