@@ -328,6 +328,33 @@ impl MediaTransport {
         consumer_rtp_parameters: &RouterRtpParameters,
         initial_activity: ConsumerActivity,
     ) -> Result<TransportMediaId, TransportAdapterError> {
+        self.consume_media_with_mid(
+            consumer_session_key,
+            media_kind,
+            source_session_key,
+            source_media_id,
+            consumer_rtp_parameters,
+            initial_activity,
+        )
+        .await
+        .map(|(transport_media_id, _mid)| transport_media_id)
+    }
+
+    /// Declares consumer media and returns the MID from the same worker turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError`] when either session is unavailable,
+    /// the source is unknown or the worker cannot create the consumer.
+    pub(in crate::engine) async fn consume_media_with_mid(
+        &self,
+        consumer_session_key: &TransportSessionKey,
+        media_kind: MediaKind,
+        source_session_key: &TransportSessionKey,
+        source_media_id: TransportMediaId,
+        consumer_rtp_parameters: &RouterRtpParameters,
+        initial_activity: ConsumerActivity,
+    ) -> Result<(TransportMediaId, String), TransportAdapterError> {
         let result = async {
             Self::ensure_same_room(consumer_session_key, source_session_key)?;
             let consumer_worker = self.require_worker_for_user(consumer_session_key)?;

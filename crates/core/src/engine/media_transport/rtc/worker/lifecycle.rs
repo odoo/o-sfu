@@ -15,13 +15,14 @@ use std::{
         mpsc as std_mpsc,
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
-    sync::{mpsc, oneshot},
+    sync::{Semaphore, mpsc, oneshot},
     task::spawn_blocking,
+    time::timeout,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -234,6 +235,9 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
+const OBSERVATION_DEADLINE: Duration = Duration::from_millis(500);
+const OBSERVATION_CONCURRENCY_LIMIT: usize = 8;
+
 impl Drop for RtcWorker {
     fn drop(&mut self) {
         self.handle.terminal.store(true, Ordering::Release);
@@ -351,6 +355,7 @@ impl RtcWorker {
             shutdown,
             thread: Mutex::new(Some(thread)),
             join_completion: CancellationToken::new(),
+            observation_permits: Semaphore::new(OBSERVATION_CONCURRENCY_LIMIT),
             #[cfg(any(test, feature = "testing-transport"))]
             metrics: Arc::clone(metrics),
             rtc_metrics,
@@ -405,7 +410,8 @@ impl RtcWorker {
     ///
     /// Returns the command handler error or
     /// [`TransportAdapterError::TransportUnavailable`] when delivery fails,
-    /// the worker exits.
+    /// the worker exits or a read-only observation exceeds its deadline.
+    /// The observation deadline covers permit admission, mailbox delivery and response.
     pub async fn request_worker<T, F>(&self, build_command: F) -> Result<T, TransportAdapterError>
     where
         F: FnOnce(RtcWorkerResponse<T>) -> RtcWorkerCommand,
@@ -414,11 +420,39 @@ impl RtcWorker {
             return Err(TransportAdapterError::TransportUnavailable);
         }
         let (response_tx, response_rx) = oneshot::channel();
-        self.handle
+        let command = build_command(response_tx);
+        if let Some(kind) = command.observation_kind() {
+            let observation = async {
+                let _observation_permit = self
+                    .observation_permits
+                    .acquire()
+                    .await
+                    .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
+                let mailbox_permit = self
+                    .handle
+                    .command_tx
+                    .reserve()
+                    .await
+                    .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
+                mailbox_permit.send(command);
+                response_rx
+                    .await
+                    .map_err(|_error| TransportAdapterError::TransportUnavailable)?
+            };
+            return timeout(OBSERVATION_DEADLINE, observation)
+                .await
+                .map_err(|_elapsed| {
+                    self.rtc_metrics.record_rtc_worker_observation_timeout(kind);
+                    TransportAdapterError::TransportUnavailable
+                })?;
+        }
+        let permit = self
+            .handle
             .command_tx
-            .send(build_command(response_tx))
+            .reserve()
             .await
             .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
+        permit.send(command);
         response_rx
             .await
             .map_err(|_error| TransportAdapterError::TransportUnavailable)?
@@ -540,30 +574,36 @@ impl RtcWorker {
         snapshot_state.transport_health_snapshot(session_keys)
     }
 
-    /// asks the packet loop for its current active-speaker source snapshot
+    /// Reads active-speaker sources from the worker's ordered route state.
     ///
-    /// this command is read-only but still enters the worker mailbox because
-    /// the source activity ordering lives beside route-control state
-    /// dispatch failures return an empty snapshot
-    pub async fn active_speaker_source_snapshot(&self) -> Vec<ActiveSpeakerSource> {
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the worker
+    /// has stopped or the observation cannot complete within its deadline.
+    pub async fn active_speaker_source_snapshot(
+        &self,
+    ) -> Result<Vec<ActiveSpeakerSource>, TransportAdapterError> {
         self.request_worker(|response| RtcWorkerCommand::ActiveSpeakerSourceSnapshot { response })
             .await
-            .unwrap_or_default()
     }
 
     /// Reads source activity and active-speaker facts in one worker turn.
     ///
-    /// Missing sources are omitted and dispatch failure returns no facts
+    /// Missing sources are omitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the worker
+    /// is unavailable or cannot answer before the observation deadline.
     pub async fn source_diagnostics_snapshot(
         &self,
         transport_media_ids: &[TransportMediaId],
-    ) -> TransportSourceDiagnosticsSnapshot {
+    ) -> Result<TransportSourceDiagnosticsSnapshot, TransportAdapterError> {
         self.request_worker(|response| RtcWorkerCommand::SourceDiagnosticsSnapshot {
             transport_media_ids: transport_media_ids.to_vec(),
             response,
         })
         .await
-        .unwrap_or_default()
     }
 }
 

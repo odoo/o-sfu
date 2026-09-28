@@ -11,6 +11,7 @@ use super::{
         RtcKeyframeRequestOutcome, RtcNackDirection, RtcOutputBudgetLimit,
         RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
         RtcRemotePacketGateConvergence, RtcRouteControlOutcome, RtcTransportIoFailure,
+        RtcWorkerObservationKind,
     },
 };
 
@@ -20,6 +21,7 @@ const RTC_NACK_DIRECTION_COUNT: usize = <RtcNackDirection as MetricLabel>::COUNT
 const RTC_TRANSPORT_IO_FAILURE_COUNT: usize = <RtcTransportIoFailure as MetricLabel>::COUNT;
 const RTC_INPUT_FAILURE_COUNT: usize = <RtcInputFailure as MetricLabel>::COUNT;
 const RTC_DRAIN_FAILURE_STAGE_COUNT: usize = <RtcDrainFailureStage as MetricLabel>::COUNT;
+const RTC_WORKER_OBSERVATION_KIND_COUNT: usize = <RtcWorkerObservationKind as MetricLabel>::COUNT;
 const RTC_OUTPUT_BUDGET_LIMIT_COUNT: usize = <RtcOutputBudgetLimit as MetricLabel>::COUNT;
 const RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT: usize =
     <RtcProducerSsrcBindingOutcome as MetricLabel>::COUNT;
@@ -74,6 +76,7 @@ pub struct RtcMetricsRecorder {
     input_log: Mutex<[FailureLogSlot; RTC_INPUT_FAILURE_COUNT]>,
     drain_failures: PaddedCounterFamily<RtcDrainFailureStage>,
     worker_terminal_failures: PaddedCounter,
+    worker_observation_timeouts: PaddedCounterFamily<RtcWorkerObservationKind>,
     output_budget_exhaustions: PaddedCounterFamily<RtcOutputBudgetLimit>,
     output_budget_session_closes: PaddedCounter,
     producer_ssrc_bindings: PaddedCounterFamily<RtcProducerSsrcBindingOutcome>,
@@ -143,6 +146,10 @@ impl RtcMetricsRecorder {
 
     pub fn record_rtc_worker_terminal_failure(&self) {
         self.worker_terminal_failures.increment();
+    }
+
+    pub fn record_rtc_worker_observation_timeout(&self, kind: RtcWorkerObservationKind) {
+        self.worker_observation_timeouts.increment(kind);
     }
 
     pub fn record_rtc_output_budget_exhaustion(&self, limit: RtcOutputBudgetLimit) {
@@ -248,6 +255,7 @@ pub(super) struct RtcMetricsSnapshot {
     input_failures: [u64; RTC_INPUT_FAILURE_COUNT],
     drain_failures: [u64; RTC_DRAIN_FAILURE_STAGE_COUNT],
     worker_terminal_failures: u64,
+    worker_observation_timeouts: [u64; RTC_WORKER_OBSERVATION_KIND_COUNT],
     output_budget_exhaustions: [u64; RTC_OUTPUT_BUDGET_LIMIT_COUNT],
     output_budget_session_closes: u64,
     producer_ssrc_bindings: [u64; RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT],
@@ -325,6 +333,13 @@ impl RtcMetricsSnapshot {
 
     pub(super) const fn worker_terminal_failures(&self) -> u64 {
         self.worker_terminal_failures
+    }
+
+    pub(super) fn worker_observation_timeouts(&self, kind: RtcWorkerObservationKind) -> u64 {
+        self.worker_observation_timeouts
+            .get(kind.as_index())
+            .copied()
+            .unwrap_or(0)
     }
 
     pub(super) fn output_budget_exhaustions(&self, limit: RtcOutputBudgetLimit) -> u64 {
@@ -438,6 +453,9 @@ impl RtcMetricsSnapshot {
         self.worker_terminal_failures = self
             .worker_terminal_failures
             .saturating_add(recorder.worker_terminal_failures.load());
+        recorder
+            .worker_observation_timeouts
+            .accumulate_into(&mut self.worker_observation_timeouts);
         recorder
             .output_budget_exhaustions
             .accumulate_into(&mut self.output_budget_exhaustions);

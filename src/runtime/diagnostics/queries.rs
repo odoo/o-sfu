@@ -6,7 +6,9 @@ use o_sfu_core::{
     MediaWorkerId,
     server::{
         room::{RoomOverviewCapture, RuntimeRoomDirectorySnapshot},
-        transport::{MediaTransport, TransportHealthSnapshot, TransportSessionKey},
+        transport::{
+            MediaTransport, TransportAdapterError, TransportHealthSnapshot, TransportSessionKey,
+        },
     },
 };
 use o_sfu_telemetry::diagnostics::{
@@ -71,26 +73,34 @@ pub(crate) async fn rooms_response(
         .collect()
 }
 
+/// Captures a room detail without presenting unavailable worker facts as empty.
+///
+/// # Errors
+///
+/// Returns [`TransportAdapterError::TransportUnavailable`] when source
+/// diagnostics cannot be observed from every assigned worker.
 pub(crate) async fn room_detail_response(
     rooms: &RoomManager,
     transport: &MediaTransport,
     room_id: &str,
-) -> Option<DiagnosticsRoomDetail> {
-    let entry = rooms.directory_snapshot(room_id).await?;
+) -> Result<Option<DiagnosticsRoomDetail>, TransportAdapterError> {
+    let Some(entry) = rooms.directory_snapshot(room_id).await else {
+        return Ok(None);
+    };
     let capture = entry.room.diagnostics_detail_capture().await;
     let session_keys = capture.session_keys();
     let source_keys = capture.source_keys().cloned().collect::<Vec<_>>();
     let bitrate = transport.transport_bitrate_snapshot(session_keys);
     let quality = transport.transport_quality_snapshot(session_keys);
     let health = transport.transport_health_snapshot(session_keys);
-    let source_diagnostics = transport.source_diagnostics_snapshot(&source_keys).await;
+    let source_diagnostics = transport.source_diagnostics_snapshot(&source_keys).await?;
     let (overview, users, sources) =
         capture.into_views(&bitrate, &quality, &health, &source_diagnostics);
-    Some(DiagnosticsRoomDetail {
+    Ok(Some(DiagnosticsRoomDetail {
         summary: room_summary((entry, overview), &health),
         sources,
         users,
-    })
+    }))
 }
 
 pub(crate) async fn room_users_response(

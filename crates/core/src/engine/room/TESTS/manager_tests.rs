@@ -1,10 +1,12 @@
 use std::{
+    collections::BTreeSet,
     num::{NonZeroU64, NonZeroUsize},
     slice,
     sync::Arc,
     time::Duration,
 };
 
+use futures_util::StreamExt;
 use o_sfu_telemetry::schema::event as telemetry_event;
 use serde_json::Value;
 use tokio::{sync::Notify, task::yield_now, time::timeout};
@@ -109,6 +111,247 @@ async fn assert_home_worker(room: &Arc<TestRoom>, raw_user_id: i64, media_worker
 
 async fn assert_router_count(room: &Arc<TestRoom>, expected: usize) {
     assert_eq!(room.test_api().router_count().await, expected);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_policy_ignores_paused_workers_without_sources() {
+    let manager = manager_with_room_worker_policy(spillover_policy(2));
+    let media_transport = real_adapter();
+    media_transport.test_api().set_packet_loop_delays_ms(vec![
+        Some(0),
+        Some(20),
+        Some(20),
+        Some(20),
+    ]);
+    let stalled_room = serve_test_room(&manager, "issuer-stalled-policy-room").await;
+    manager_join_user(&manager, &stalled_room, 1, &media_transport).await;
+    assert_home_worker(&stalled_room, 1, 0).await;
+    media_transport
+        .test_api()
+        .set_packet_loop_delays_ms(vec![Some(20), Some(0), Some(0), Some(0)]);
+    let healthy_room = serve_test_room(&manager, "issuer-healthy-policy-room").await;
+    manager_join_user(&manager, &healthy_room, 2, &media_transport).await;
+    assert_home_worker(&healthy_room, 2, 1).await;
+    media_transport.test_api().set_packet_loop_delays_ms(vec![
+        Some(0),
+        Some(20),
+        Some(20),
+        Some(20),
+    ]);
+    manager_join_user(&manager, &healthy_room, 3, &media_transport).await;
+    assert_home_worker(&healthy_room, 3, 0).await;
+    manager
+        .disconnect_users(healthy_room.uuid(), &[UserId::Integer(3)], &media_transport)
+        .await;
+    assert_router_count(&healthy_room, 2).await;
+    for (room, raw_user_id) in [(&stalled_room, 1), (&healthy_room, 2)] {
+        let user_id = UserId::Integer(raw_user_id);
+        make_session_ready_with_transport(room, &user_id, &media_transport).await;
+        publish_track(
+            room,
+            &user_id,
+            TestSourceKind::AudioDetector,
+            test_audio_rtp_parameters(),
+            &media_transport,
+        )
+        .await;
+    }
+    let release_worker = media_transport
+        .test_api()
+        .pause_first_worker()
+        .await
+        .expect("first worker should pause");
+    timeout(
+        Duration::from_millis(100),
+        refresh_source_policy(&healthy_room, &media_transport),
+    )
+    .await
+    .expect("healthy room policy must not observe a worker without sources");
+    let mut first_batch = manager
+        .source_policy_turns(
+            &BTreeSet::from([stalled_room.instance_id(), healthy_room.instance_id()]),
+            &media_transport,
+        )
+        .await;
+    assert_eq!(
+        timeout(Duration::from_millis(100), first_batch.next())
+            .await
+            .expect("healthy room should complete before the stalled observation"),
+        Some(healthy_room.instance_id())
+    );
+    let mut follow_up = manager
+        .source_policy_turns(
+            &BTreeSet::from([healthy_room.instance_id()]),
+            &media_transport,
+        )
+        .await;
+    assert_eq!(
+        timeout(Duration::from_millis(100), follow_up.next())
+            .await
+            .expect("healthy room can run again while its previous batch remains pending"),
+        Some(healthy_room.instance_id())
+    );
+    release_worker
+        .send(())
+        .expect("paused worker should resume");
+    assert_eq!(
+        timeout(Duration::from_secs(1), first_batch.next())
+            .await
+            .expect("resumed room should finish"),
+        Some(stalled_room.instance_id())
+    );
+    assert_eq!(first_batch.next().await, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn policy_survives_a_terminal_worker_in_the_same_room() {
+    let manager = manager_with_room_worker_policy(spillover_policy(2));
+    let media_transport = real_adapter();
+    media_transport.test_api().set_packet_loop_delays_ms(vec![
+        Some(0),
+        Some(20),
+        Some(20),
+        Some(20),
+    ]);
+    let room = serve_test_room(&manager, "issuer-terminal-worker-policy").await;
+    manager_join_user(&manager, &room, 1, &media_transport).await;
+    media_transport.test_api().set_packet_loop_delays_ms(vec![
+        Some(20),
+        Some(0),
+        Some(20),
+        Some(20),
+    ]);
+    manager_join_user(&manager, &room, 2, &media_transport).await;
+    assert_home_worker(&room, 1, 0).await;
+    assert_home_worker(&room, 2, 1).await;
+    for raw_user_id in [1, 2] {
+        let user_id = UserId::Integer(raw_user_id);
+        make_session_ready_with_transport(&room, &user_id, &media_transport).await;
+        publish_track(
+            &room,
+            &user_id,
+            TestSourceKind::AudioDetector,
+            test_audio_rtp_parameters(),
+            &media_transport,
+        )
+        .await;
+    }
+    media_transport.test_api().stop_worker(0).await;
+    let updates = media_transport.source_policy_subscription();
+    let _ = updates.take_pending_updates();
+    for use_batch in [false, true] {
+        if use_batch {
+            manager
+                .sync_source_packet_selection_policies_for_runtime_ids(
+                    &BTreeSet::from([room.instance_id()]),
+                    &media_transport,
+                )
+                .await;
+        } else {
+            refresh_source_policy(&room, &media_transport).await;
+        }
+        assert!(
+            timeout(Duration::from_secs(2), updates.wait_for_update())
+                .await
+                .is_err(),
+            "a terminal worker must not leave the surviving room in a retry loop"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn policy_sync_retries_when_room_gains_publisher_worker_during_observation() {
+    let manager = manager_with_room_worker_policy(spillover_policy(2));
+    let media_transport = real_adapter();
+    media_transport.test_api().set_packet_loop_delays_ms(vec![
+        Some(0),
+        Some(20),
+        Some(20),
+        Some(20),
+    ]);
+    let room = serve_test_room(&manager, "issuer-policy-placement-race").await;
+    manager_join_user(&manager, &room, 1, &media_transport).await;
+    assert_home_worker(&room, 1, 0).await;
+    make_session_ready_with_transport(&room, &UserId::Integer(1), &media_transport).await;
+    publish_track(
+        &room,
+        &UserId::Integer(1),
+        TestSourceKind::AudioDetector,
+        test_audio_rtp_parameters(),
+        &media_transport,
+    )
+    .await;
+    let updates = media_transport.source_policy_subscription();
+    let _ = updates.take_pending_updates();
+    let release_worker = media_transport
+        .test_api()
+        .pause_first_worker()
+        .await
+        .expect("first worker should pause");
+    let room_ids = BTreeSet::from([room.instance_id()]);
+    let mut turns = manager
+        .source_policy_turns(&room_ids, &media_transport)
+        .await;
+    assert!(futures_util::poll!(turns.next()).is_pending());
+    assert!(
+        media_transport
+            .worker_pressure_snapshots()
+            .first()
+            .is_some_and(|worker| worker.command_backlog_depth > 0),
+        "policy observation should queue behind the paused worker"
+    );
+    let (sender, _receiver) = test_sender();
+    let publisher_connection_id = room
+        .test_api()
+        .join_user_with_packet_loop_delays(
+            UserId::Integer(2),
+            None,
+            UserPermissions::default(),
+            sender,
+            vec![Some(20), Some(0), Some(0), Some(0)],
+        )
+        .await
+        .expect("state-only admission should add a second worker");
+    assert_home_worker(&room, 2, 1).await;
+    let publisher_id = UserId::Integer(2);
+    assert!(
+        room.state
+            .write()
+            .await
+            .set_user_negotiated(
+                &publisher_id,
+                publisher_connection_id,
+                test_client_rtp_capabilities(),
+            )
+            .is_some()
+    );
+    room.test_api()
+        .publish_negotiated_track(
+            &publisher_id,
+            NegotiatedPublish {
+                connection_id: publisher_connection_id,
+                stream_type: TestSourceKind::AudioDetector,
+                transport_media_id: TransportMediaId::new(99),
+                consumable_rtp_parameters: test_audio_rtp_parameters(),
+            },
+            &media_transport,
+        )
+        .await
+        .expect("second worker publication should commit");
+    let _ = updates.take_pending_updates();
+    release_worker
+        .send(())
+        .expect("paused worker should resume");
+    assert_eq!(
+        timeout(Duration::from_secs(1), turns.next())
+            .await
+            .expect("policy sync should complete"),
+        Some(room.instance_id())
+    );
+    let retried = timeout(Duration::from_secs(2), updates.wait_for_update())
+        .await
+        .expect("new publisher worker should schedule a policy retry");
+    assert!(retried.contains(&room.instance_id()));
 }
 
 #[tokio::test(flavor = "current_thread")]

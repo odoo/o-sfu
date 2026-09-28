@@ -126,6 +126,7 @@ pub fn handle_worker_command(
                 transport_media_id,
             ),
         ),
+        #[cfg(test)]
         RtcWorkerCommand::ResolveMediaMid {
             transport_media_id,
             response,

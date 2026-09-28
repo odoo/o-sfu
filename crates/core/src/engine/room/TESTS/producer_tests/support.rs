@@ -35,7 +35,10 @@ pub(super) async fn diagnostics_room_views(
     let bitrate = adapter.transport_bitrate_snapshot(session_keys);
     let quality = adapter.transport_quality_snapshot(session_keys);
     let health = adapter.transport_health_snapshot(session_keys);
-    let source_diagnostics = adapter.source_diagnostics_snapshot(&source_keys).await;
+    let source_diagnostics = adapter
+        .source_diagnostics_snapshot(&source_keys)
+        .await
+        .expect("diagnostic observation should complete");
     let (_, users, sources) = capture.into_views(&bitrate, &quality, &health, &source_diagnostics);
     (users, sources)
 }

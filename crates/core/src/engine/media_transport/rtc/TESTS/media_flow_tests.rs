@@ -591,7 +591,10 @@ async fn rtc_active_speaker_source_snapshot_orders_recent_audio_sources() {
         .await
         .expect("test probe must complete");
 
-    let snapshot = adapter.active_speaker_source_snapshot().await;
+    let snapshot = adapter
+        .active_speaker_source_snapshot()
+        .await
+        .expect("active speaker snapshot should complete");
     assert_eq!(
         snapshot
             .into_iter()
@@ -628,7 +631,13 @@ async fn active_speaker_expiry_wakes_policy_without_input() {
         .await
         .expect("active-speaker expiry should wake room policy");
     assert_eq!(dirty_rooms, BTreeSet::from([room_instance_id]));
-    assert!(adapter.active_speaker_source_snapshot().await.is_empty());
+    assert!(
+        adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete")
+            .is_empty()
+    );
     assert!(
         timeout(Duration::from_millis(50), updates.wait_for_update())
             .await

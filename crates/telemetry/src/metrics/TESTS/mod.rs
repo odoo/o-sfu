@@ -698,3 +698,49 @@ fn handshake_rejection_buckets_are_distinct() {
     assert_eq!(snapshot.ws_handshake_rejected_room_full(), 1);
     assert_eq!(snapshot.ws_handshake_rejected_error(), 1);
 }
+
+#[test]
+fn rtc_failure_counters_aggregate_with_bounded_labels() {
+    use super::{
+        RtcDrainFailureStage, RtcInputFailure, RtcTransportIoFailure, RtcWorkerObservationKind,
+    };
+    let metrics = RuntimeMetrics::default();
+    let first = metrics.register_rtc_worker();
+    let second = metrics.register_rtc_worker();
+    let _ = first.record_rtc_transport_io_failure(RtcTransportIoFailure::ReceiveOther);
+    let _ = second.record_rtc_transport_io_failure(RtcTransportIoFailure::ReceiveOther);
+    let _ = second.record_rtc_input_failure(RtcInputFailure::Dtls);
+    first.record_rtc_drain_failure(RtcDrainFailureStage::PollOutput);
+    first.record_rtc_worker_terminal_failure();
+    second.record_rtc_worker_observation_timeout(RtcWorkerObservationKind::ResolveMediaMid);
+    let snapshot = metrics.snapshot();
+    assert_eq!(
+        snapshot.counter_value(
+            MetricName::RtcTransportIoFailuresTotal,
+            &[("direction", "receive"), ("category", "other")]
+        ),
+        2
+    );
+    assert_eq!(
+        snapshot.counter_value(MetricName::RtcInputFailuresTotal, &[("category", "dtls")]),
+        1
+    );
+    assert_eq!(
+        snapshot.counter_value(
+            MetricName::RtcDrainFailuresTotal,
+            &[("stage", "poll_output")]
+        ),
+        1
+    );
+    assert_eq!(
+        snapshot.counter_value(MetricName::RtcWorkerTerminalFailuresTotal, &[]),
+        1
+    );
+    assert_eq!(
+        snapshot.counter_value(
+            MetricName::RtcWorkerObservationTimeoutsTotal,
+            &[("kind", "resolve_media_mid")]
+        ),
+        1
+    );
+}

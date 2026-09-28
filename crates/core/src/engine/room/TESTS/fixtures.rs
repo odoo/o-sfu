@@ -515,7 +515,11 @@ impl SourcePolicyScenario {
     }
 
     pub(super) async fn refresh_policy_until_upgrades_settle(&self) {
-        let sources = self.adapter.active_speaker_source_snapshot().await;
+        let sources = self
+            .adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete");
         let now = self.policy_now.get().max(Instant::now());
         for elapsed in [Duration::ZERO, VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL] {
             let tx = {

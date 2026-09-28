@@ -6,6 +6,7 @@
 //! avoid running a full async worker unless the contract under
 //! test requires worker scheduling behavior.
 
+mod observations;
 mod scheduling;
 
 use std::{

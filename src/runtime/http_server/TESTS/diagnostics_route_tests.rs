@@ -212,6 +212,41 @@ async fn diagnostics_routes_require_the_configured_bearer_token() -> TestResult 
 }
 
 #[tokio::test]
+async fn room_detail_reports_unavailable_worker_observation() -> TestResult {
+    let test_state = test_state_with_handles();
+    let room = serve_diagnostics_room(&test_state, "issuer-observation", "203.0.113.20").await?;
+    let user_id = UserId::Integer(71);
+    let (_session, _receiver) = join_room_user(&test_state.state, &room, user_id.clone()).await?;
+    publish_camera(&room, &user_id, &test_state.media_transport).await?;
+    let detail_path = route::diagnostics::ROOM.replace("{uuid}", room.uuid());
+    let missing_path = route::diagnostics::ROOM.replace("{uuid}", "missing-room");
+    diagnostics_status(
+        &test_state.state,
+        &missing_path,
+        None,
+        StatusCode::NOT_FOUND,
+    )
+    .await?;
+    let release = require_some(
+        test_state
+            .media_transport
+            .test_api()
+            .pause_first_worker()
+            .await,
+        "worker should pause before diagnostics",
+    )?;
+    let status = diagnostics_status(
+        &test_state.state,
+        &detail_path,
+        None,
+        StatusCode::SERVICE_UNAVAILABLE,
+    )
+    .await;
+    drop(release);
+    status
+}
+
+#[tokio::test]
 async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult {
     let test_state = test_state_with_handles();
     let room = serve_diagnostics_room(&test_state, "issuer-a", "203.0.113.10").await?;

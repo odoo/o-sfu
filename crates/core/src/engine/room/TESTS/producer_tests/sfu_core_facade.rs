@@ -193,7 +193,8 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     assert_eq!(route_state, Some(ConsumerRouteState::Absent));
     let media_mid = media_transport
         .transport_media_mid(&subscriber_session_key, declined_media_id)
-        .await;
+        .await
+        .expect("MID observation must complete");
     assert_eq!(media_mid, None);
     let tx_pair = transport
         .session_stream_tx_pair(&subscriber_session_key, declined_mid)

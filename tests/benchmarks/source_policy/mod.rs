@@ -491,7 +491,7 @@ impl SourcePolicyScenario {
         let source_diagnostics = self
             .media_transport
             .source_diagnostics_snapshot(&source_keys)
-            .await;
+            .await?;
         let (_, users, _) = capture.into_views(&bitrate, &quality, &health, &source_diagnostics);
         let video_stream_id = stream_id_for_source(TestSourceKind::ScalableVideo).to_string();
         let mut observation = BudgetPressureObservation::default();

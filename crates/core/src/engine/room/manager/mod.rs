@@ -7,11 +7,22 @@
 
 #[cfg(any(test, feature = "testing-transport"))]
 use std::sync::Mutex;
-use std::{collections::BTreeSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 
+use futures_util::{
+    FutureExt, StreamExt,
+    future::try_join_all,
+    stream::{self, BoxStream, FuturesUnordered},
+};
 use o_sfu_telemetry::schema::event as telemetry_event;
 use secrecy::SecretSlice;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
 
 #[cfg(any(test, feature = "testing-transport"))]
@@ -28,7 +39,9 @@ use super::{
 };
 use crate::engine::{
     ConnectionId, RoomInstanceId, UserId,
-    media_transport::{MediaTransport, TransportSessionKey},
+    media_transport::{
+        ActiveSpeakerSource, MediaTransport, TransportAdapterError, TransportSessionKey,
+    },
     metrics::{RoomGaugeValues, RuntimeMetrics},
     room::{
         directory::{ExpiryReason, RoomRemovalPolicy},
@@ -39,6 +52,8 @@ use crate::engine::{
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/support.rs"]
 mod test_support;
+
+const SOURCE_POLICY_CONCURRENCY: usize = 8;
 
 /// operator-facing room stats assembled from directory and transport snapshots
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,8 +123,47 @@ pub struct RoomManager {
     factory: RoomFactory,
     reservation_ttl: Duration,
     departure_grace: Duration,
+    policy_permits: Semaphore,
     #[cfg(any(test, feature = "testing-transport"))]
     join_placement_gate: Mutex<Option<Arc<JoinPlacementTestGate>>>,
+}
+
+fn room_active_speaker_sources(
+    snapshots: &[Arc<Vec<ActiveSpeakerSource>>],
+    source_ids: &[u64],
+) -> Vec<ActiveSpeakerSource> {
+    let mut by_media = BTreeMap::<u64, ActiveSpeakerSource>::new();
+    for &media_id in source_ids {
+        for snapshot in snapshots {
+            let candidate = snapshot
+                .binary_search_by_key(&media_id, |source| source.transport_media_id().as_u64())
+                .ok()
+                .and_then(|index| snapshot.get(index))
+                .copied();
+            if let Some(candidate) = candidate {
+                let candidate_rank = (
+                    candidate.observed_at(),
+                    candidate.last_audio_level_dbov().unwrap_or(i8::MIN),
+                );
+                let entry = by_media.entry(media_id).or_insert(candidate);
+                let current_rank = (
+                    entry.observed_at(),
+                    entry.last_audio_level_dbov().unwrap_or(i8::MIN),
+                );
+                if candidate_rank > current_rank {
+                    *entry = candidate;
+                }
+            }
+        }
+    }
+    let mut sources = by_media.into_values().collect::<Vec<_>>();
+    sources.sort_unstable_by_key(|source| {
+        (
+            Reverse(source.observed_at()),
+            source.transport_media_id().as_u64(),
+        )
+    });
+    sources
 }
 
 impl RoomManager {
@@ -128,6 +182,7 @@ impl RoomManager {
             factory,
             reservation_ttl,
             departure_grace,
+            policy_permits: Semaphore::new(SOURCE_POLICY_CONCURRENCY),
             #[cfg(any(test, feature = "testing-transport"))]
             join_placement_gate: Mutex::new(None),
         }
@@ -248,31 +303,106 @@ impl RoomManager {
         })
     }
 
-    /// recalculates packet-selection policy for rooms dirtied by media activity
-    ///
-    /// empty input is a no-op. rooms that left the current directory before the
-    /// drain are skipped. committed route work is executed after each policy
-    /// plan so transport routing and accepted selector state stay in sync
+    /// Recalculates packet selection for the requested current rooms.
     pub async fn sync_source_packet_selection_policies_for_runtime_ids(
         &self,
         room_instance_ids: &BTreeSet<RoomInstanceId>,
         media_transport: &MediaTransport,
     ) {
-        if room_instance_ids.is_empty() {
-            return;
-        }
+        self.source_policy_turns(room_instance_ids, media_transport)
+            .await
+            .for_each(|_| async {})
+            .await;
+    }
+
+    /// Yields each requested room after its ordered policy turn completes.
+    ///
+    /// Worker reads are shared within the batch. Missing rooms also complete.
+    /// Failed observations schedule a retry before completing their room.
+    /// Dropping the stream cancels pending turns, including accepted effects.
+    pub async fn source_policy_turns<'a>(
+        &'a self,
+        room_instance_ids: &BTreeSet<RoomInstanceId>,
+        media_transport: &'a MediaTransport,
+    ) -> BoxStream<'a, RoomInstanceId> {
         let rooms = self
             .directory_entries_for_instance_ids(room_instance_ids)
             .await;
-        if rooms.is_empty() {
-            return;
-        }
-        let active_speaker_sources = media_transport.active_speaker_source_snapshot().await;
+        let mut absent = room_instance_ids.clone();
+        let mut jobs = Vec::with_capacity(rooms.len());
+        let mut needed_workers = BTreeSet::new();
         for room in rooms {
-            SourcePolicyTurn::packet_selection()
-                .execute(&room, Some(media_transport), Some(&active_speaker_sources))
-                .await;
+            absent.remove(&room.instance_id());
+            let worker_indices = room.source_policy_worker_indices(media_transport).await;
+            needed_workers.extend(worker_indices.iter().copied());
+            jobs.push((room, worker_indices));
         }
+        // Shared futures send one read per worker while each room waits only for
+        // the workers that own its published sources.
+        let observations = needed_workers
+            .into_iter()
+            .map(|worker_index| {
+                let future = async move {
+                    let mut sources = media_transport
+                        .active_speaker_source_snapshot_for_worker(worker_index)
+                        .await?;
+                    sources.sort_unstable_by_key(|source| {
+                        (
+                            source.transport_media_id().as_u64(),
+                            Reverse(source.observed_at()),
+                            Reverse(source.last_audio_level_dbov().unwrap_or(i8::MIN)),
+                        )
+                    });
+                    sources.dedup_by_key(|source| source.transport_media_id());
+                    Ok::<_, TransportAdapterError>(Arc::new(sources))
+                }
+                .boxed()
+                .shared();
+                (worker_index, future)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let turns = jobs
+            .into_iter()
+            .map(|(room, worker_indices)| {
+                let worker_reads = worker_indices
+                    .iter()
+                    .map(|worker_index| observations.get(worker_index).cloned())
+                    .collect::<Option<Vec<_>>>();
+                async move {
+                    let room_id = room.instance_id();
+                    let Some(worker_reads) = worker_reads else {
+                        media_transport.schedule_source_policy_retry(room_id);
+                        return room_id;
+                    };
+                    let Ok(snapshots) = try_join_all(worker_reads).await else {
+                        media_transport.schedule_source_policy_retry(room_id);
+                        return room_id;
+                    };
+                    let guard = room.lock_source_policy().await;
+                    let Ok(_permit) = self.policy_permits.acquire().await else {
+                        return room_id;
+                    };
+                    if room.source_policy_worker_indices(media_transport).await != worker_indices {
+                        media_transport.schedule_source_policy_retry(room_id);
+                        return room_id;
+                    }
+                    let source_ids = {
+                        let state = room.state.read().await;
+                        state
+                            .topology
+                            .published_sources()
+                            .map(|source| source.transport.transport_media_id().as_u64())
+                            .collect::<Vec<_>>()
+                    };
+                    let sources = room_active_speaker_sources(&snapshots, &source_ids);
+                    SourcePolicyTurn::packet_selection()
+                        .execute_guarded(&guard, Some(media_transport), Some(&sources))
+                        .await;
+                    room_id
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        stream::iter(absent).chain(turns).boxed()
     }
 
     /// Admits one WebSocket connection into a current room.

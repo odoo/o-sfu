@@ -193,7 +193,7 @@ impl PendingConsumerSetup {
         origin: ConsumerSetupOrigin,
     ) -> Result<DeclaredConsumerSetup, Self> {
         match media_transport
-            .consume_media(
+            .consume_media_with_mid(
                 &self.target.session,
                 self.target.kind,
                 self.target.source.session_key(),
@@ -203,16 +203,11 @@ impl PendingConsumerSetup {
             )
             .await
         {
-            Ok(media) => {
-                let mid = media_transport
-                    .transport_media_mid(&self.target.session, media)
-                    .await;
-                Ok(DeclaredConsumerSetup {
-                    route: self.target.transport_consumer_route(media),
-                    pending: self,
-                    mid,
-                })
-            }
+            Ok((media, mid)) => Ok(DeclaredConsumerSetup {
+                route: self.target.transport_consumer_route(media),
+                pending: self,
+                mid: Some(mid),
+            }),
             Err(error) => {
                 warn!(
                     consumer_user_id = ?self.target.session.user_id(),

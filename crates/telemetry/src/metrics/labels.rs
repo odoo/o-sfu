@@ -302,6 +302,13 @@ impl_exported_metric_label!(pub enum RtcDrainFailureStage {
     TimeoutInput => (1, "timeout_input"),
 });
 
+impl_exported_metric_label!(pub enum RtcWorkerObservationKind {
+    ActiveSpeakerSources => (0, "active_speaker_sources"),
+    SourceDiagnostics => (1, "source_diagnostics"),
+    ResolveMediaMid => (2, "resolve_media_mid"),
+    NegotiatedProducerParameters => (3, "negotiated_producer_parameters"),
+});
+
 impl_exported_metric_label!(pub enum RtcOutputBudgetLimit {
     Packets => (0, "packets"),
     PayloadBytes => (1, "payload_bytes"),

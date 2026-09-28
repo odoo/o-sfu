@@ -264,7 +264,11 @@ async fn source_bitrate_cap_pause_survives_receiver_overload() {
 
     let tx = {
         let receiver_user_id = UserId::Integer(2);
-        let active_speaker_sources = scenario.adapter.active_speaker_source_snapshot().await;
+        let active_speaker_sources = scenario
+            .adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete");
         let receiver_connection_id = user_connection_id(&scenario.room, &receiver_user_id).await;
         let receiver_session_key = scenario
             .room
@@ -1492,7 +1496,11 @@ async fn aggregate_pressure_uses_intermediate_quality_before_pausing_thumbnails(
                 .await;
         }
         scenario.refresh_policy_until_upgrades_settle().await;
-        let speakers = scenario.adapter.active_speaker_source_snapshot().await;
+        let speakers = scenario
+            .adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete");
         let now = scenario.policy_now.get().max(Instant::now());
         // Each important route can afford hi alone. Only the aggregate pass can
         // trade it for mid and keep the thumbnail within this receiver budget.
@@ -2445,7 +2453,11 @@ async fn third_camera_policy_transaction(
 async fn source_policy_transaction_from_transport_snapshot(
     scenario: &SourcePolicyScenario,
 ) -> SourcePolicyTransaction {
-    let active_speaker_sources = scenario.adapter.active_speaker_source_snapshot().await;
+    let active_speaker_sources = scenario
+        .adapter
+        .active_speaker_source_snapshot()
+        .await
+        .expect("active speaker snapshot should complete");
     let session_keys = {
         let state = scenario.room.state.read().await;
         state
@@ -2990,7 +3002,11 @@ async fn continuous_pressure_downsteps_then_pauses_the_current_victim_at_750_ms(
     scenario
         .mark_active_speaker(scenario.audio_media_id(3).await)
         .await;
-    let speakers = scenario.adapter.active_speaker_source_snapshot().await;
+    let speakers = scenario
+        .adapter
+        .active_speaker_source_snapshot()
+        .await
+        .expect("active speaker snapshot should complete");
     policy_at(
         &scenario,
         &speakers,

@@ -47,7 +47,10 @@ pub(super) async fn workers(State(services): State<DiagnosticsServices>) -> Resp
     .into_response()
 }
 
-/// room diagnostics with users and sources
+/// Room diagnostics with users and sources.
+///
+/// Returns HTTP 404 when the room is missing and HTTP 503 when a required
+/// worker source observation is unavailable.
 pub(super) async fn room_detail(
     State(services): State<DiagnosticsServices>,
     Path(room_id): Path<String>,
@@ -58,7 +61,10 @@ pub(super) async fn room_detail(
         &room_id,
     )
     .await;
-    optional_response(payload)
+    payload.map_or_else(
+        |_error| StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        optional_response,
+    )
 }
 
 /// user rows for one room

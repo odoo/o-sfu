@@ -214,7 +214,7 @@ fn sample_room_gauges() -> RoomGaugeValues {
 fn prometheus_export_renders_existing_metric_families() {
     let rendered = render_prometheus(&sample_metrics(), sample_room_gauges());
 
-    assert_eq!(METRIC_FAMILY_COUNT, 83);
+    assert_eq!(METRIC_FAMILY_COUNT, 88);
     for prefix in ["# HELP ", "# TYPE "] {
         assert_eq!(
             rendered
@@ -336,4 +336,28 @@ fn prometheus_export_renders_rtc_datagram_metric_families() {
     assert!(
         rendered.contains("osfu_rtc_remote_packet_gate_convergence_total{outcome=\"flushed\"} 1")
     );
+}
+
+#[test]
+fn prometheus_exports_bounded_rtc_failure_categories() {
+    use crate::metrics::{
+        RtcDrainFailureStage, RtcInputFailure, RtcTransportIoFailure, RtcWorkerObservationKind,
+    };
+    let metrics = RuntimeMetrics::default();
+    let worker = metrics.register_rtc_worker();
+    let _ = worker.record_rtc_transport_io_failure(RtcTransportIoFailure::SendPermissionDenied);
+    let _ = worker.record_rtc_input_failure(RtcInputFailure::Net);
+    worker.record_rtc_drain_failure(RtcDrainFailureStage::TimeoutInput);
+    worker.record_rtc_worker_terminal_failure();
+    worker.record_rtc_worker_observation_timeout(RtcWorkerObservationKind::ActiveSpeakerSources);
+    let rendered = render_prometheus(&metrics, RoomGaugeValues::default());
+    for sample in [
+        "osfu_rtc_transport_io_failures_total{direction=\"send\",category=\"permission_denied\"} 1",
+        "osfu_rtc_input_failures_total{category=\"net\"} 1",
+        "osfu_rtc_drain_failures_total{stage=\"timeout_input\"} 1",
+        "osfu_rtc_worker_terminal_failures_total 1",
+        "osfu_rtc_worker_observation_timeouts_total{kind=\"active_speaker_sources\"} 1",
+    ] {
+        assert!(rendered.contains(sample), "missing {sample}");
+    }
 }
