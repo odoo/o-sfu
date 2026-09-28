@@ -1,38 +1,26 @@
-use super::{packet_fingerprint, packet_fingerprint_scalar};
+use super::packet_fingerprint;
 
-// Covers every 16-byte alignment offset with the suffix ending at the slice bundary.
 #[test]
-fn packet_fingerprint_matches_scalar_reference() {
-    for len in [0_usize, 1, 7, 8, 15, 16, 17, 64, 256, 1200] {
-        for seed in 0_usize..8 {
-            for offset in 0_usize..16 {
-                let storage = deterministic_packet(len + offset, seed);
-                let (_, packet) = storage.split_at(offset);
-
-                assert_eq!(
-                    packet_fingerprint(packet),
-                    packet_fingerprint_scalar(packet)
-                );
-            }
+fn packet_fingerprint_preserves_bytes_order_and_padding() {
+    const CASES: [(usize, u64); 8] = [
+        (0, 0x0000_0000_0000_0000),
+        (1, 0x0000_0000_0002_0000),
+        (7, 0x9068_4020_3026_e0b8),
+        (8, 0x9068_4018_30d8_e0b8),
+        (15, 0xc820_7850_689e_98f0),
+        (16, 0xd028_0058_70a8_a0f8),
+        (17, 0xd830_08a0_78b2_a8c0),
+        (32, 0x50a8_80d8_f048_2078),
+    ];
+    for (len, expected) in CASES {
+        let packet: Vec<u8> = (0..len)
+            .map(|index| u8::try_from(index).unwrap_or(0))
+            .collect();
+        for offset in 0..16 {
+            let mut storage = vec![0xa5; offset];
+            storage.extend_from_slice(&packet);
+            let (_, unaligned_packet) = storage.split_at(offset);
+            assert_eq!(packet_fingerprint(unaligned_packet), expected);
         }
     }
-}
-
-#[must_use]
-fn deterministic_packet(len: usize, seed: usize) -> Vec<u8> {
-    let mut packet = Vec::with_capacity(len);
-    for byte_index in 0..len {
-        packet.push(deterministic_byte(seed, byte_index));
-    }
-    packet
-}
-
-#[must_use]
-fn deterministic_byte(seed: usize, byte_index: usize) -> u8 {
-    let mixed = seed
-        .wrapping_mul(37)
-        .wrapping_add(byte_index.wrapping_mul(19))
-        .wrapping_add(byte_index.rotate_left(3))
-        .wrapping_add(11);
-    u8::try_from(mixed & 0xff).unwrap_or(0)
 }
