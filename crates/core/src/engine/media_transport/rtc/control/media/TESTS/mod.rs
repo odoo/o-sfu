@@ -1926,20 +1926,19 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
     .with_mid(consumer_mid.to_string());
     let source = TransportSourceKey::new(source_session.clone(), src_media);
 
-    assert!(
-        worker_add_send_media(
-            &mut state,
-            AddSendMediaRequest {
-                consumer_key: &consumer_session,
-                media_kind: MediaKind::Video,
-                source: &source,
-                remote_source_control: None,
-                consumer_rtp_parameters: &consumer_rtp_parameters,
-                active: true,
-            },
-        )
-        .is_ok()
-    );
+    let (_consumer_media, declared_mid) = worker_add_send_media(
+        &mut state,
+        AddSendMediaRequest {
+            consumer_key: &consumer_session,
+            media_kind: MediaKind::Video,
+            source: &source,
+            remote_source_control: None,
+            consumer_rtp_parameters: &consumer_rtp_parameters,
+            active: true,
+        },
+    )
+    .expect("consumer media declaration must succeed");
+    assert_eq!(declared_mid, consumer_mid.to_string());
 
     let Some(consumer_session_state) = state.users.get_mut(&consumer_session) else {
         panic!("consumer session should exist after RTC state bootstrap");

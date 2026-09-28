@@ -799,6 +799,14 @@ metric_catalog! {
         kind: Counter,
         samples: |metrics, capture, output| output.counter(&[], capture.rtc.worker_terminal_failures())
     },
+    RtcWorkerObservationTimeoutsTotal {
+        name: "osfu_rtc_worker_observation_timeouts_total",
+        help: "Total bounded media worker observations that timed out by command kind.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_snapshot_counters(output,
+            &capture.rtc, "kind", RtcMetricsSnapshot::worker_observation_timeouts
+        )
+    },
     RtcOutputBudgetExhaustionsTotal {
         name: "osfu_rtc_output_budget_exhaustions_total",
         help: "Total RTC session drains that exhausted the output budget by limit.",

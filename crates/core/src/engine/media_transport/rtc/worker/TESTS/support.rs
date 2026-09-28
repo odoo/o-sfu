@@ -485,6 +485,10 @@ mod worker_exit_tests {
             Err(TransportAdapterError::TransportUnavailable)
         );
         assert_eq!(
+            failed_worker.active_speaker_source_snapshot().await,
+            Err(TransportAdapterError::TransportUnavailable)
+        );
+        assert_eq!(
             failed_worker
                 .metrics
                 .snapshot()
@@ -500,12 +504,10 @@ mod worker_exit_tests {
             1
         );
         assert!(other_worker.is_usable());
-        assert!(
-            other_worker
-                .active_speaker_source_snapshot()
-                .await
-                .is_empty()
-        );
+        assert!(matches!(
+            other_worker.active_speaker_source_snapshot().await,
+            Ok(sources) if sources.is_empty()
+        ));
         other_worker.wait_for_shutdown().await;
     }
 

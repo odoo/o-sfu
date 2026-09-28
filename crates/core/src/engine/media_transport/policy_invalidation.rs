@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     mem,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tokio::{
@@ -14,6 +14,8 @@ use tokio::{
 
 use super::MediaTransport;
 use crate::{RoomInstanceId, engine::sync::lock_unpoisoned};
+
+const OBSERVATION_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
 struct PendingSourcePolicyUpdates {
@@ -119,6 +121,29 @@ impl SourcePolicySignal {
         }
     }
 
+    /// Preserves an earlier room deadline while retrying unavailable observations.
+    fn schedule_observation_retry(&self, room: RoomInstanceId) {
+        let retry_at = Instant::now() + OBSERVATION_RETRY_DELAY;
+        let mut pending = lock_unpoisoned(&self.0.pending);
+        if pending
+            .scheduled_by_room
+            .get(&room)
+            .is_some_and(|deadline| *deadline <= retry_at)
+        {
+            return;
+        }
+        let previous_earliest = pending.next_deadline();
+        if let Some(previous) = pending.scheduled_by_room.insert(room, retry_at) {
+            pending.deadlines.remove(&(previous, room));
+        }
+        pending.deadlines.insert((retry_at, room));
+        let notify = previous_earliest != pending.next_deadline();
+        drop(pending);
+        if notify {
+            self.0.notify.notify_one();
+        }
+    }
+
     /// Replaces or cancels a room's earliest deadline. Equal deadlines are a no-op.
     fn set_deadline(&self, room: RoomInstanceId, deadline: Option<Instant>) {
         let mut pending = lock_unpoisoned(&self.0.pending);
@@ -142,6 +167,10 @@ impl SourcePolicySignal {
 }
 
 impl MediaTransport {
+    pub(in crate::engine) fn schedule_source_policy_retry(&self, room: RoomInstanceId) {
+        self.source_policy_signal.schedule_observation_retry(room);
+    }
+
     /// Replaces or cancels the room deadline recomputed by its ordered policy turn.
     pub(in crate::engine) fn set_source_policy_deadline(
         &self,

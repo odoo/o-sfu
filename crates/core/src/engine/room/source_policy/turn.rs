@@ -98,7 +98,14 @@ impl SourcePolicyTurn {
         let transaction = if let Some(sources) = active_speaker_sources {
             run_packet_selection(room, sources, media_transport, bandwidth, now).await
         } else {
-            let sources = media_transport.active_speaker_source_snapshot().await;
+            let worker_indices = room.source_policy_worker_indices(media_transport).await;
+            let Ok(sources) = media_transport
+                .active_speaker_source_snapshot_for_workers(&worker_indices)
+                .await
+            else {
+                media_transport.schedule_source_policy_retry(room.instance_id());
+                return false;
+            };
             run_packet_selection(room, &sources, media_transport, bandwidth, now).await
         };
         let Some(transaction) = transaction else {
@@ -107,6 +114,25 @@ impl SourcePolicyTurn {
         };
         transaction.commit(room, media_transport).await;
         true
+    }
+}
+
+impl Room {
+    pub(in crate::engine::room) async fn source_policy_worker_indices(
+        &self,
+        media_transport: &MediaTransport,
+    ) -> Vec<usize> {
+        let state = self.state.read().await;
+        let mut indices = state
+            .topology
+            .published_sources()
+            .map(|source| source.transport.session_key().media_worker_id().as_usize())
+            .filter(|&worker| media_transport.worker_is_usable(worker))
+            .collect::<Vec<_>>();
+        drop(state);
+        indices.sort_unstable();
+        indices.dedup();
+        indices
     }
 }
 

@@ -355,6 +355,13 @@ impl Router {
             .map(|placements| placements.primary().media_worker)
     }
 
+    pub fn assigned_media_workers(&self) -> impl Iterator<Item = MediaWorkerId> + '_ {
+        self.placements
+            .iter()
+            .flat_map(RouterPlacements::iter)
+            .map(|placement| placement.media_worker)
+    }
+
     #[must_use]
     pub fn placement_snapshot(&self) -> PlacementSnapshot {
         let placements = self

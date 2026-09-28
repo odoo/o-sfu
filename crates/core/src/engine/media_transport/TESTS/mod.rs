@@ -762,7 +762,10 @@ async fn rtc_active_speaker_source_snapshot_canonicalizes_worker_observations() 
         .expect("test probe must complete");
 
     assert_eq!(
-        adapter.active_speaker_source_snapshot().await,
+        adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete"),
         vec![
             ActiveSpeakerSource::with_audio_level(repeated_media_id, newest, Some(-30)),
             ActiveSpeakerSource::with_audio_level(unique_media_id, middle, Some(-20)),
@@ -851,7 +854,8 @@ async fn rtc_diagnostics_group_workers_and_preserve_media_ids() {
             TransportSourceKey::new(first_session, sibling_media_id),
             TransportSourceKey::new(second_session, second_media_id),
         ])
-        .await;
+        .await
+        .expect("diagnostic observation should complete");
 
     assert_eq!(test_api.source_diagnostics_request_count(), 2);
     let [first_activity, sibling_activity, second_activity] = snapshot.activity.as_slice() else {

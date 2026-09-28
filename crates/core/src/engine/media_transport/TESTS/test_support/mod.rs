@@ -84,6 +84,21 @@ impl MediaTransportTestApi<'_> {
         Some(release)
     }
 
+    /// Stops the selected worker and waits for its thread to exit.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the fixture requests a nonexistent worker.
+    #[cfg(test)]
+    pub async fn stop_worker(self, worker_index: usize) {
+        let worker = self
+            .transport
+            .worker_for_index(worker_index)
+            .expect("test worker should exist");
+        worker.cancel();
+        worker.wait_for_shutdown().await;
+    }
+
     /// Overrides packet-loop delay snapshots at the worker boundary.
     ///
     /// # Panics

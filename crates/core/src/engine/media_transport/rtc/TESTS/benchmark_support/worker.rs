@@ -114,12 +114,25 @@ impl WorkerLoopBenchFixture {
     ///
     /// it blocks the fixture runtime until each mailbox response arrives, so
     /// callers should keep it inside benchmark code rather than production tests
+    ///
+    /// # Panics
+    ///
+    /// Panics if the benchmark worker stops before completing a read-only command.
     #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "benchmark command failures must fail the measured fixture"
+    )]
     pub fn run_command_roundtrips(&self) -> usize {
         self.runtime.block_on(async {
             let mut observed_sources = 0;
             for _ in 0..WORKER_COMMAND_ROUNDTRIPS {
-                observed_sources += self.worker.active_speaker_source_snapshot().await.len();
+                observed_sources += self
+                    .worker
+                    .active_speaker_source_snapshot()
+                    .await
+                    .expect("benchmark worker observation should complete")
+                    .len();
             }
             observed_sources
         })

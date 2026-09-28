@@ -65,7 +65,7 @@ use std::{
     thread,
 };
 
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -117,6 +117,7 @@ pub struct RtcWorker {
     shutdown: CancellationToken,
     thread: Mutex<Option<thread::JoinHandle<()>>>,
     join_completion: CancellationToken,
+    observation_permits: Semaphore,
     #[cfg(any(test, feature = "testing-transport"))]
     pub metrics: Arc<RuntimeMetrics>,
     rtc_metrics: Arc<RtcMetricsRecorder>,

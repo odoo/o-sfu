@@ -136,5 +136,6 @@ impl RtcWorker {
             response,
         })
         .await
+        .map(|(transport_media_id, _mid)| transport_media_id)
     }
 }

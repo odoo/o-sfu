@@ -2,9 +2,10 @@
 //!
 //! Request handlers receive [`RuntimeState`] without boot or teardown control.
 
-use std::{future::Future, io, process, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, future::Future, io, process, sync::Arc, time::Duration};
 
 use anyhow::Result as AnyResult;
+use futures_util::{StreamExt, stream::SelectAll};
 use thiserror::Error;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
@@ -329,20 +330,34 @@ fn spawn_source_packet_policy_update_task(
     info!("booted source packet policy update task");
     let updates = media_transport.source_policy_subscription();
     tokio::spawn(async move {
+        let mut pending = BTreeSet::new();
+        let mut running = BTreeSet::new();
+        let mut batches = SelectAll::new();
         loop {
-            let mut dirty_rooms = tokio::select! {
+            tokio::select! {
                 biased;
-                () = shutdown_token.cancelled() => return,
-                dirty_rooms = updates.wait_for_update() => dirty_rooms,
-            };
-            dirty_rooms.extend(updates.take_pending_updates());
-            rooms
-                .sync_source_packet_selection_policies_for_runtime_ids(
-                    &dirty_rooms,
-                    &media_transport,
-                )
-                .await;
+                () = shutdown_token.cancelled() => break,
+                completed = batches.next(), if !batches.is_empty() => {
+                    if let Some(room_id) = completed {
+                        running.remove(&room_id);
+                    }
+                },
+                dirty_rooms = updates.wait_for_update() => pending.extend(dirty_rooms),
+            }
+            let ready = pending
+                .difference(&running)
+                .copied()
+                .collect::<BTreeSet<_>>();
+            if ready.is_empty() {
+                continue;
+            }
+            pending.retain(|room| !ready.contains(room));
+            running.extend(ready.iter().copied());
+            batches.push(rooms.source_policy_turns(&ready, &media_transport).await);
         }
+        // A policy turn can have accepted transport effects. Finish those turns
+        // before shutdown releases their room state.
+        batches.for_each(|_| async {}).await;
     })
 }
 

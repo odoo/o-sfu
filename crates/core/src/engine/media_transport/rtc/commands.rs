@@ -32,7 +32,10 @@ use crate::engine::{
         TransportMediaId, TransportResult, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
         TransportSourceKey,
     },
-    metrics::{RtcMetricsRecorder, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence},
+    metrics::{
+        RtcMetricsRecorder, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
+        RtcWorkerObservationKind,
+    },
 };
 
 /// command handle used by remote consumers to push control back to a source worker
@@ -331,6 +334,7 @@ pub enum RtcWorkerCommand {
     ///
     /// returns `None` when this worker has no current handle for the id, including
     /// after media removal
+    #[cfg(test)]
     ResolveMediaMid {
         transport_media_id: TransportMediaId,
         response: RtcWorkerResponse<Option<String>>,
@@ -362,7 +366,7 @@ pub enum RtcWorkerCommand {
         remote_source_control: Option<RemoteSourceControl>,
         consumer_rtp_parameters: RouterRtpParameters,
         active: bool,
-        response: RtcWorkerResponse<TransportMediaId>,
+        response: RtcWorkerResponse<(TransportMediaId, String)>,
     },
     ApplyMediaControlBatch {
         batch: WorkerMediaControlBatch,
@@ -372,4 +376,33 @@ pub enum RtcWorkerCommand {
         request: RouteControlRequest,
         response: Option<RtcWorkerResponse<()>>,
     },
+}
+
+impl RtcWorkerCommand {
+    /// Classifies mailbox reads without assuming a command's response type is read-only.
+    pub(super) fn observation_kind(&self) -> Option<RtcWorkerObservationKind> {
+        match self {
+            Self::ActiveSpeakerSourceSnapshot { .. } => {
+                Some(RtcWorkerObservationKind::ActiveSpeakerSources)
+            }
+            Self::SourceDiagnosticsSnapshot { .. } => {
+                Some(RtcWorkerObservationKind::SourceDiagnostics)
+            }
+            #[cfg(test)]
+            Self::ResolveMediaMid { .. } => Some(RtcWorkerObservationKind::ResolveMediaMid),
+            #[cfg(test)]
+            Self::ResolveNegotiatedProducerParameters { .. } => {
+                Some(RtcWorkerObservationKind::NegotiatedProducerParameters)
+            }
+            Self::CreateInitialSessionOffer { .. }
+            | Self::CreateSessionRenegotiationOffer { .. }
+            | Self::ApplySessionAnswer { .. }
+            | Self::CloseSession { .. }
+            | Self::RemoveMedia { .. }
+            | Self::AddRecvMedia { .. }
+            | Self::AddSendMedia { .. }
+            | Self::ApplyMediaControlBatch { .. }
+            | Self::RouteControl { .. } => None,
+        }
+    }
 }

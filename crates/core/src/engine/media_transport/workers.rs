@@ -9,6 +9,7 @@
 use std::sync::atomic::Ordering;
 use std::{cmp::Reverse, collections::BTreeMap, ptr};
 
+use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use str0m::media::MediaKind as Str0mMediaKind;
 
 use super::rtc::{RtcWorker, RtcWorkerCommand};
@@ -23,6 +24,8 @@ use crate::engine::{
         TransportWorkerPressureSnapshot,
     },
 };
+
+const WORKER_OBSERVATION_CONCURRENCY: usize = 8;
 
 /// Worker availability is independent of missing or delayed loop samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,38 +109,50 @@ impl MediaTransport {
 
     /// Returns source activity and active-speaker facts with one command per worker.
     ///
-    /// Missing sources and worker dispatch failures contribute no facts
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] if any source
+    /// selects an unavailable worker or its observation does not complete.
     pub async fn source_diagnostics_snapshot(
         &self,
         sources: &[TransportSourceKey],
-    ) -> TransportSourceDiagnosticsSnapshot {
-        let mut snapshot = TransportSourceDiagnosticsSnapshot::default();
+    ) -> Result<TransportSourceDiagnosticsSnapshot, TransportAdapterError> {
         let mut media_ids_by_worker = BTreeMap::<usize, Vec<TransportMediaId>>::new();
         for source in sources {
-            let Some(worker_index) = self.worker_index_for_user(source.session_key()) else {
-                continue;
-            };
+            let worker_index = self
+                .worker_index_for_user(source.session_key())
+                .ok_or(TransportAdapterError::TransportUnavailable)?;
             media_ids_by_worker
                 .entry(worker_index)
                 .or_default()
                 .push(source.transport_media_id());
         }
-        for (worker_index, transport_media_ids) in media_ids_by_worker {
-            let Some(worker) = self.worker_for_index(worker_index) else {
-                continue;
-            };
-            #[cfg(any(test, feature = "testing-transport"))]
-            self.source_diagnostics_requests
-                .fetch_add(1, Ordering::Relaxed);
-            let worker_snapshot = worker
-                .source_diagnostics_snapshot(&transport_media_ids)
-                .await;
+        let worker_snapshots = stream::iter(media_ids_by_worker)
+            .map(|(worker_index, transport_media_ids)| async move {
+                let worker = self
+                    .worker_for_index(worker_index)
+                    .ok_or(TransportAdapterError::TransportUnavailable)?;
+                #[cfg(any(test, feature = "testing-transport"))]
+                self.source_diagnostics_requests
+                    .fetch_add(1, Ordering::Relaxed);
+                let snapshot = worker
+                    .source_diagnostics_snapshot(&transport_media_ids)
+                    .await?;
+                Ok::<_, TransportAdapterError>((worker_index, snapshot))
+            })
+            .buffer_unordered(WORKER_OBSERVATION_CONCURRENCY)
+            .try_collect::<Vec<_>>()
+            .await?;
+        let mut worker_snapshots = worker_snapshots;
+        worker_snapshots.sort_unstable_by_key(|(worker_index, _)| *worker_index);
+        let mut snapshot = TransportSourceDiagnosticsSnapshot::default();
+        for (_, worker_snapshot) in worker_snapshots {
             snapshot.activity.extend(worker_snapshot.activity);
             snapshot
                 .active_speaker_diagnostics
                 .extend(worker_snapshot.active_speaker_diagnostics);
         }
-        snapshot
+        Ok(snapshot)
     }
 
     /// Returns transport pressure for every media worker.
@@ -160,6 +175,12 @@ impl MediaTransport {
             .collect()
     }
 
+    /// Reports whether the worker still owns usable transport sessions.
+    pub(crate) fn worker_is_usable(&self, worker_index: usize) -> bool {
+        self.worker_for_index(worker_index)
+            .is_some_and(RtcWorker::is_usable)
+    }
+
     pub(crate) fn worker_placement_states(&self) -> Vec<WorkerPlacementState> {
         self.workers
             .iter()
@@ -173,16 +194,40 @@ impl MediaTransport {
             .collect()
     }
 
-    /// Returns each media source's newest active-speaker observation in recency
-    /// order, preferring its strongest audio level on timestamp ties.
-    pub async fn active_speaker_source_snapshot(&self) -> Vec<ActiveSpeakerSource> {
-        let mut snapshot = Vec::new();
-        for worker in self.workers.iter() {
-            snapshot.extend(worker.active_speaker_source_snapshot().await);
-        }
-        // A relayed source is observed on its owner and consumer workers. Keep one
-        // policy fact per media ID, preferring recency then the strongest level as
-        // the deterministic same-timestamp tie-break.
+    /// Returns one worker's active-speaker inventory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the worker
+    /// is missing or cannot answer before the observation deadline.
+    pub(crate) async fn active_speaker_source_snapshot_for_worker(
+        &self,
+        worker_index: usize,
+    ) -> Result<Vec<ActiveSpeakerSource>, TransportAdapterError> {
+        let worker = self
+            .worker_for_index(worker_index)
+            .ok_or(TransportAdapterError::TransportUnavailable)?;
+        worker.active_speaker_source_snapshot().await
+    }
+
+    /// Returns one observation from each requested worker before merging relayed sources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] if a requested
+    /// worker is unavailable. Callers must retry rather than use partial facts.
+    pub(crate) async fn active_speaker_source_snapshot_for_workers(
+        &self,
+        worker_indices: &[usize],
+    ) -> Result<Vec<ActiveSpeakerSource>, TransportAdapterError> {
+        let snapshots = try_join_all(
+            worker_indices
+                .iter()
+                .map(|&worker_index| self.active_speaker_source_snapshot_for_worker(worker_index)),
+        )
+        .await?;
+        let mut snapshot = snapshots.into_iter().flatten().collect::<Vec<_>>();
+        // A relayed source can be observed on its owner and consumer workers.
         snapshot.sort_unstable_by_key(|source| {
             (
                 source.transport_media_id().as_u64(),
@@ -197,7 +242,21 @@ impl MediaTransport {
                 source.transport_media_id().as_u64(),
             )
         });
-        snapshot
+        Ok(snapshot)
+    }
+
+    /// Returns active-speaker observations from all workers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] if any worker
+    /// observation fails. No partial observation is returned to policy.
+    pub async fn active_speaker_source_snapshot(
+        &self,
+    ) -> Result<Vec<ActiveSpeakerSource>, TransportAdapterError> {
+        let workers = (0..self.workers.len()).collect::<Vec<_>>();
+        self.active_speaker_source_snapshot_for_workers(&workers)
+            .await
     }
 
     /// Applies one cross-worker relay mutation on the source worker.
@@ -250,21 +309,24 @@ impl MediaTransport {
 
     /// Returns the MID stored by the current transport media handle.
     ///
-    /// `None` means `session_key` selects no worker, the worker request failed or
-    /// `transport_media_id` has no registered handle.
+    /// `None` means `transport_media_id` has no registered handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] if the selected
+    /// worker is unavailable or cannot answer before the observation deadline.
+    #[cfg(test)]
     pub(crate) async fn transport_media_mid(
         &self,
         session_key: &TransportSessionKey,
         transport_media_id: TransportMediaId,
-    ) -> Option<String> {
-        self.worker_for_user(session_key)?
+    ) -> Result<Option<String>, TransportAdapterError> {
+        self.require_worker_for_user(session_key)?
             .request_worker(|response| RtcWorkerCommand::ResolveMediaMid {
                 transport_media_id,
                 response,
             })
             .await
-            .ok()
-            .flatten()
     }
 
     /// Returns the latest known transport health for one session.

@@ -122,6 +122,7 @@ async fn staged_publish_is_not_visible_in_room_graph_before_answer() {
         media_transport
             .transport_media_mid(&session_key, transport_media_id)
             .await
+            .expect("MID observation must complete")
             .is_some()
     );
     assert!(

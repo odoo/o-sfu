@@ -354,7 +354,7 @@ fn worker_stage_native_recv_media(
 pub fn worker_add_send_media(
     state: &mut PacketLoopState,
     request: AddSendMediaRequest<'_>,
-) -> TransportResult<TransportMediaId> {
+) -> TransportResult<(TransportMediaId, String)> {
     let AddSendMediaRequest {
         consumer_key,
         media_kind,
@@ -403,6 +403,7 @@ pub fn worker_add_send_media(
     if should_mark_dirty {
         state.mark_session_dirty(consumer_key);
     }
+    let mid_string = mid.to_string();
     let transport_media_id = state.register_consumer_route(ConsumerRouteRegistration {
         consumer_key,
         consumer_stream,
@@ -425,7 +426,7 @@ pub fn worker_add_send_media(
         downstream_rid_policy = "single_ridless_stream",
         "declared send-only media and registered media route for consumer"
     );
-    Ok(transport_media_id)
+    Ok((transport_media_id, mid_string))
 }
 
 fn declare_consumer_stream(
