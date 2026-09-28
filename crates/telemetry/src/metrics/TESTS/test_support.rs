@@ -1,3 +1,8 @@
+#![allow(
+    clippy::panic,
+    reason = "test-support metric lookup must fail when a declared sample is missing"
+)]
+
 use super::{
     HttpRoute, MetricName, RtcDatagramDropReason, RtcDatagramRoutePath, RtcKeyframeRequestOutcome,
     RtcNackDirection, RtcOutputBudgetLimit, RtcRelayEnqueueResult, RtcRemoteControlDropKind,
@@ -72,16 +77,13 @@ pub trait RuntimeMetricsSnapshotLookup {
 
 impl RuntimeMetricsSnapshotLookup for RuntimeMetricsSnapshot {
     fn counter_value(&self, name: MetricName, labels: &[(&str, &str)]) -> u64 {
-        let value = self.counter(name, labels);
-        assert!(
-            value.is_some(),
-            "missing counter sample {name:?} with labels {labels:?}"
-        );
-        value.unwrap_or(0)
+        self.counter(name, labels)
+            .unwrap_or_else(|| panic!("missing counter sample {name:?} with labels {labels:?}"))
     }
 
     fn gauge_value(&self, name: MetricName, labels: &[(&str, &str)]) -> i64 {
-        self.gauge(name, labels).unwrap_or(0)
+        self.gauge(name, labels)
+            .unwrap_or_else(|| panic!("missing gauge sample {name:?} with labels {labels:?}"))
     }
 
     fn duration_snapshot(
@@ -89,9 +91,9 @@ impl RuntimeMetricsSnapshotLookup for RuntimeMetricsSnapshot {
         name: MetricName,
         labels: &[(&str, &str)],
     ) -> DurationHistogramSnapshot {
-        let Some(histogram) = self.histogram(name, labels) else {
-            return DurationHistogramSnapshot::default();
-        };
+        let histogram = self
+            .histogram(name, labels)
+            .unwrap_or_else(|| panic!("missing histogram sample {name:?} with labels {labels:?}"));
         DurationHistogramSnapshot {
             le_10_millis: histogram.bucket("0.01"),
             le_50_millis: histogram.bucket("0.05"),
@@ -109,17 +111,20 @@ impl RuntimeMetricsSnapshotLookup for RuntimeMetricsSnapshot {
         upper_bound: &str,
     ) -> u64 {
         self.histogram(name, labels)
-            .map_or(0, |histogram| histogram.bucket(upper_bound))
+            .unwrap_or_else(|| panic!("missing histogram sample {name:?} with labels {labels:?}"))
+            .bucket(upper_bound)
     }
 
     fn histogram_count_value(&self, name: MetricName, labels: &[(&str, &str)]) -> u64 {
         self.histogram(name, labels)
-            .map_or(0, |histogram| histogram.count)
+            .unwrap_or_else(|| panic!("missing histogram sample {name:?} with labels {labels:?}"))
+            .count
     }
 
     fn histogram_sum_micros_value(&self, name: MetricName, labels: &[(&str, &str)]) -> u64 {
         self.histogram(name, labels)
-            .map_or(0, |histogram| histogram.sum_micros)
+            .unwrap_or_else(|| panic!("missing histogram sample {name:?} with labels {labels:?}"))
+            .sum_micros
     }
 }
 
@@ -442,4 +447,39 @@ impl RuntimeMetricsSnapshotTestExt for RuntimeMetricsSnapshot {}
 
 fn metric_label<L: ExportedMetricLabel>(label: L) -> &'static str {
     label.label_value()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::metrics::{RuntimeMetrics, snapshot::SnapshotWriter};
+
+    #[test]
+    #[should_panic(expected = "missing gauge sample")]
+    fn missing_gauge_sample_fails() {
+        let snapshot = SnapshotWriter::default().finish();
+        let _ = snapshot.gauge_value(MetricName::HttpInflightRequests, &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "missing histogram bucket")]
+    fn missing_histogram_bucket_fails() {
+        let snapshot = RuntimeMetrics::default().snapshot();
+        let _ = snapshot.histogram_bucket_value(MetricName::WsAuthDurationSeconds, &[], "missing");
+    }
+
+    #[test]
+    fn transport_lifetime_bucket_boundaries_use_supplied_durations() {
+        let metrics = RuntimeMetrics::default();
+        metrics.record_transport_user_lifetime(Duration::from_secs(1));
+        metrics.record_transport_user_lifetime(Duration::from_secs(1) + Duration::from_micros(1));
+        metrics.record_transport_user_lifetime(Duration::from_secs(10));
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.transport_user_lifetime_le_1_second(), 1);
+        assert_eq!(snapshot.transport_user_lifetime_le_10_seconds(), 3);
+        assert_eq!(snapshot.transport_user_lifetime_count(), 3);
+        assert_eq!(snapshot.transport_user_lifetime_sum_micros(), 12_000_001);
+    }
 }

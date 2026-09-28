@@ -1,3 +1,8 @@
+#![allow(
+    clippy::panic,
+    reason = "test-support snapshot lookup must fail when a declared bucket is missing"
+)]
+
 use super::{
     catalog::RuntimeMetrics,
     descriptor::{MetricLabel, MetricLabelValue, MetricName, build_snapshot},
@@ -15,7 +20,10 @@ impl MetricHistogramSnapshot {
         self.buckets
             .iter()
             .find(|(bound, _)| *bound == upper_bound)
-            .map_or(0, |(_, value)| *value)
+            .map_or_else(
+                || panic!("missing histogram bucket {upper_bound}"),
+                |(_, value)| *value,
+            )
     }
 }
 
