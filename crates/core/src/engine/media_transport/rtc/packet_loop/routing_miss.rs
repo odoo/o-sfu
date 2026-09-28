@@ -165,20 +165,14 @@ impl PacketLoopRoutingMissCache {
             .push_back(PacketLoopRoutingMissRecord::new(key, packet));
     }
 
-    /// remove one miss after fallback routing later accepts the same source
+    /// Invalidate decisions for a source after str0m accepts its ownership.
     ///
-    /// fallback route success means the packet loop learned something new about that
-    /// source tuple. Forgetting the matching negative record avoids carrying a
-    /// stale "no session accepted this" result next to a fresh source pin
-    fn forget(&mut self, key: PacketLoopRoutingMissKey, packet: &[u8]) {
-        let Some(position) = self
-            .entries
-            .iter()
-            .position(|candidate| candidate.key == key && candidate.packet.as_slice() == packet)
-        else {
-            return;
-        };
-        let _ = self.entries.remove(position);
+    /// An accepted STUN request can make later media from this source viable.
+    /// Earlier negative packets for the same tuple must not outlive that ICE
+    /// change or suppress recovery after its learned pin is evicted.
+    fn forget_source(&mut self, source_addr: SocketAddr) {
+        self.entries
+            .retain(|candidate| candidate.key.source_addr != source_addr);
     }
 }
 
@@ -351,17 +345,22 @@ impl DemuxRecoveryState {
         self.source_rate_limiter.record_miss(source_addr, now)
     }
 
+    /// Charge an unresolved source when a bounded scan has not visited every
+    /// overflowed session. This result cannot enter the exact miss cache.
+    pub(in super::super) fn record_incomplete_probe(
+        &mut self,
+        source_addr: SocketAddr,
+        now: Instant,
+    ) -> bool {
+        self.source_rate_limiter.record_miss(source_addr, now)
+    }
+
     /// clear negative state for a source after fallback routing succeeds
     ///
     /// once fallback accepts a source, later packets should use the learned
     /// source pin or revalidate normally instead of inheriting old failures
-    pub(in super::super) fn record_fallback_route_success(
-        &mut self,
-        miss_key: PacketLoopRoutingMissKey,
-        packet: &[u8],
-        source_addr: SocketAddr,
-    ) {
-        self.miss_cache.forget(miss_key, packet);
+    pub(in super::super) fn record_fallback_route_success(&mut self, source_addr: SocketAddr) {
+        self.miss_cache.forget_source(source_addr);
         self.source_rate_limiter.forget_source(source_addr);
     }
 }

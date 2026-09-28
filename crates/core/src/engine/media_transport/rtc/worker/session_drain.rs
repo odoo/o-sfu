@@ -27,7 +27,7 @@ use super::{
         recovery::PendingKeyframeRequest,
         state::{
             PacketLoopState, RtcSessionState, RtcSnapshotState, bitrate::BitrateRegistry,
-            media_registry::ProducerStreamBinding, slots::SessionHandle,
+            demux::RemoteAddrDemux, media_registry::ProducerStreamBinding, slots::SessionHandle,
         },
     },
     buffers::PacketLoopBuffers,
@@ -40,6 +40,7 @@ use crate::engine::{
 // The limits admit hundreds of MTU-sized fragments from one large video
 // keyframe while bounding one authenticated peer's work before the next input.
 const SESSION_DRAIN_MAX_TRANSMITS: usize = 512;
+const SESSION_DRAIN_MAX_IMMEDIATE_TIMEOUTS: usize = 8;
 const SESSION_DRAIN_MAX_PAYLOAD_BYTES: usize = 384 * 1024;
 
 #[derive(Clone, Copy)]
@@ -98,6 +99,8 @@ pub struct SessionDrainContext<'a> {
     output_limits: SessionOutputLimits,
     #[cfg(test)]
     forced_failure: Option<(TransportSessionKey, RtcDrainFailureStage)>,
+    #[cfg(test)]
+    pub(in crate::engine::media_transport::rtc) force_immediate_timeout: bool,
 }
 
 impl<'a> SessionDrainContext<'a> {
@@ -118,6 +121,8 @@ impl<'a> SessionDrainContext<'a> {
             output_limits: SESSION_OUTPUT_LIMITS,
             #[cfg(test)]
             forced_failure: None,
+            #[cfg(test)]
+            force_immediate_timeout: false,
         }
     }
 }
@@ -152,6 +157,7 @@ pub fn drain_ready_sessions(
                 session_handle,
                 session_key,
                 session_state,
+                &mut state.remote_addr_demux,
                 context,
                 buffers,
                 now,
@@ -208,8 +214,9 @@ pub fn drain_ready_sessions(
 
 /// Drains one [`str0m::Rtc`] and stages its output.
 ///
-/// Returns a deadline or the identity of a session that must be retired.
-/// The caller rolls back output staged by a failed session.
+/// Returns a future or due deadline after full output exhaustion. A budget or RTC
+/// failure returns the session identity so the caller can discard staged output
+/// and retire that session.
 #[expect(
     clippy::too_many_lines,
     reason = "Moving Event by value into a helper raised session_drain_128 Callgrind instructions by 3.1%"
@@ -218,12 +225,14 @@ fn drain_single_session(
     session_handle: SessionHandle,
     session_key: &TransportSessionKey,
     session_state: &mut RtcSessionState,
+    demux: &mut RemoteAddrDemux,
     context: &SessionDrainContext<'_>,
     buffers: &mut PacketLoopBuffers,
     now: Instant,
 ) -> SessionDrainOutcome {
     let defer_rtx_expiry = begin_rtx_cache_expiry(session_state, now);
     let mut output_budget = SessionOutputBudget::new(context.output_limits);
+    let mut immediate_timeouts = 0;
     #[cfg(test)]
     let mut polled_transmit = false;
     loop {
@@ -244,6 +253,15 @@ fn drain_single_session(
                 if let Err(limit) = output_budget.try_charge(transmit.contents.len()) {
                     session_state.clear_ingress_context();
                     return SessionDrainOutcome::Exhausted(session_key.clone(), limit);
+                }
+                // ICE STUN output can target any candidate. DTLS and media output
+                // uses str0m's nominated send address.
+                if transmit
+                    .contents
+                    .first()
+                    .is_some_and(|first| matches!(first, 20..=63 | 128..=191))
+                {
+                    demux.remember_selected_remote_addr(session_key, transmit.destination);
                 }
                 session_state.note_repairable_transmit(&transmit.contents, now);
                 buffers.push_pending_transmit(
@@ -314,27 +332,18 @@ fn drain_single_session(
                 log_rtc_event(session_key, &event);
             }
             Ok(Output::Timeout(timeout_at)) => {
-                // A future timeout can leave paced resend references inside
-                // str0m. Rotate after current output has been exhausted.
-                // https://www.rfc-editor.org/rfc/rfc4588.html#section-3
-                finish_rtx_cache_expiry(session_state, now, defer_rtx_expiry);
-                session_state.clear_ingress_context();
-                if timeout_at <= now {
+                if let Some(outcome) = advance_output_timeout(
+                    session_key,
+                    session_state,
+                    now,
+                    timeout_at,
+                    &mut immediate_timeouts,
+                    defer_rtx_expiry,
                     #[cfg(test)]
-                    let input_result =
-                        tests::handle_timeout_input(session_state, context, session_key, now);
-                    #[cfg(not(test))]
-                    let input_result = session_state.rtc.handle_input(Input::Timeout(now));
-                    if let Err(error) = input_result {
-                        return SessionDrainOutcome::Failed(
-                            session_key.clone(),
-                            RtcDrainFailureStage::TimeoutInput,
-                            error,
-                        );
-                    }
-                    continue;
+                    context,
+                ) {
+                    return outcome;
                 }
-                return SessionDrainOutcome::Drained(Some(timeout_at));
             }
             Err(error) => {
                 finish_rtx_cache_expiry(session_state, now, defer_rtx_expiry);
@@ -347,6 +356,45 @@ fn drain_single_session(
             }
         }
     }
+}
+
+fn advance_output_timeout(
+    session_key: &TransportSessionKey,
+    session_state: &mut RtcSessionState,
+    now: Instant,
+    timeout_at: Instant,
+    immediate_timeouts: &mut usize,
+    defer_rtx_expiry: bool,
+    #[cfg(test)] context: &SessionDrainContext<'_>,
+) -> Option<SessionDrainOutcome> {
+    #[cfg(test)]
+    let timeout_at = tests::forced_timeout_at(context, session_key, now, timeout_at);
+    // A future timeout can leave paced resend references inside str0m.
+    // Rotating now lets them miss after the original packet's finite buffering time.
+    // https://www.rfc-editor.org/rfc/rfc4588.html#section-3
+    finish_rtx_cache_expiry(session_state, now, defer_rtx_expiry);
+    session_state.clear_ingress_context();
+    if timeout_at > now {
+        return Some(SessionDrainOutcome::Drained(Some(timeout_at)));
+    }
+    // Output::Timeout marks current output exhausted. Elapsed host time alone
+    // does not advance str0m's clock, so feed a due deadline back and drain again.
+    if *immediate_timeouts == SESSION_DRAIN_MAX_IMMEDIATE_TIMEOUTS {
+        return Some(SessionDrainOutcome::Drained(Some(now)));
+    }
+    #[cfg(test)]
+    let input_result = tests::handle_timeout_input(session_state, context, session_key, now);
+    #[cfg(not(test))]
+    let input_result = session_state.rtc.handle_input(Input::Timeout(now));
+    if let Err(error) = input_result {
+        return Some(SessionDrainOutcome::Failed(
+            session_key.clone(),
+            RtcDrainFailureStage::TimeoutInput,
+            error,
+        ));
+    }
+    *immediate_timeouts += 1;
+    None
 }
 
 fn begin_rtx_cache_expiry(session_state: &mut RtcSessionState, now: Instant) -> bool {

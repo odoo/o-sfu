@@ -6,11 +6,20 @@
 //! and reverse indexes together so session teardown cannot leave routing hints.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     net::SocketAddr,
 };
 
 use crate::engine::media_transport::TransportSessionKey;
+
+/// Maximum learned source tuples retained for one RTC session.
+const MAX_REMOTE_ADDRS_PER_SESSION: usize = 16;
+
+#[derive(Debug, Default)]
+struct SessionRemoteAddrs {
+    addrs: Vec<SocketAddr>,
+    selected_addr: Option<SocketAddr>,
+}
 
 /// Bidirectional demux indexes for worker-local UDP ingress recovery.
 #[derive(Debug, Default)]
@@ -18,7 +27,9 @@ pub struct RemoteAddrDemux {
     /// learned UDP source tuple to session pin
     remote_addr_index: HashMap<SocketAddr, TransportSessionKey>,
     /// reverse lookup for learned UDP source tuple cleanup
-    remote_addrs_by_session: BTreeMap<TransportSessionKey, Vec<SocketAddr>>,
+    remote_addrs_by_session: BTreeMap<TransportSessionKey, SessionRemoteAddrs>,
+    /// sessions that evicted an accepted source and may still accept that tuple
+    overflowed_sessions: VecDeque<TransportSessionKey>,
     /// local ICE ufrag to session recovery hint
     local_ice_ufrag_index: HashMap<String, TransportSessionKey>,
     /// reverse lookup for replacing or removing a session local ICE ufrag
@@ -73,10 +84,62 @@ impl RemoteAddrDemux {
             .remote_addrs_by_session
             .entry(session_key.clone())
             .or_default();
-        if !session_addrs.contains(&source_addr) {
-            session_addrs.push(source_addr);
+        session_addrs.addrs.push(source_addr);
+        let evicted = if session_addrs.addrs.len() > MAX_REMOTE_ADDRS_PER_SESSION
+            && let Some(position) = session_addrs
+                .addrs
+                .iter()
+                .position(|addr| Some(*addr) != session_addrs.selected_addr)
+        {
+            let evicted_addr = session_addrs.addrs.remove(position);
+            self.remote_addr_index.remove(&evicted_addr);
+            true
+        } else {
+            false
+        };
+        if evicted && !self.overflowed_sessions.contains(session_key) {
+            self.overflowed_sessions.push_back(session_key.clone());
         }
         true
+    }
+
+    /// Retains the destination of str0m's selected pair through source churn.
+    ///
+    /// The caller must supply a destination from a non-STUN str0m transmit.
+    /// The locked str0m output path sends DTLS and RTP/RTCP through its
+    /// nominated send address, while ICE STUN probes use a separate path.
+    pub(in super::super) fn remember_selected_remote_addr(
+        &mut self,
+        session_key: &TransportSessionKey,
+        selected_addr: SocketAddr,
+    ) {
+        if self
+            .remote_addrs_by_session
+            .get(session_key)
+            .is_some_and(|session_addrs| session_addrs.selected_addr == Some(selected_addr))
+        {
+            return;
+        }
+        let _ = self.remember_remote_addr(selected_addr, session_key);
+        if let Some(session_addrs) = self.remote_addrs_by_session.get_mut(session_key) {
+            session_addrs.selected_addr = Some(selected_addr);
+        }
+    }
+
+    /// Rotates sessions whose accepted source pins exceeded the per-session cap.
+    ///
+    /// Ingress tests these only after its normal indexes miss. Each returned
+    /// session consumes one bounded `Rtc::accepts()` probe before the next key
+    /// is considered on a later packet.
+    pub(in super::super) fn next_overflowed_session(&mut self) -> Option<&TransportSessionKey> {
+        let session_key = self.overflowed_sessions.pop_front()?;
+        self.overflowed_sessions.push_back(session_key);
+        self.overflowed_sessions.back()
+    }
+
+    #[must_use]
+    pub(in super::super) fn overflowed_session_count(&self) -> usize {
+        self.overflowed_sessions.len()
     }
 
     /// returns the session advertised by a local ICE ufrag
@@ -182,10 +245,12 @@ impl RemoteAddrDemux {
 
     /// removes every learned UDP source tuple when its session is removed
     pub(in super::super) fn forget_user_remote_addrs(&mut self, session_key: &TransportSessionKey) {
+        self.overflowed_sessions
+            .retain(|candidate| candidate != session_key);
         let Some(session_addrs) = self.remote_addrs_by_session.remove(session_key) else {
             return;
         };
-        for source_addr in session_addrs {
+        for source_addr in session_addrs.addrs {
             self.remote_addr_index.remove(&source_addr);
         }
     }
@@ -235,7 +300,7 @@ impl RemoteAddrDemux {
     ) -> Option<&[SocketAddr]> {
         self.remote_addrs_by_session
             .get(session_key)
-            .map(Vec::as_slice)
+            .map(|session_addrs| session_addrs.addrs.as_slice())
     }
 
     #[cfg(test)]
@@ -261,6 +326,7 @@ impl RemoteAddrDemux {
     #[cfg(test)]
     pub(in super::super) fn is_empty(&self) -> bool {
         self.remote_addrs_by_session.is_empty()
+            && self.overflowed_sessions.is_empty()
             && self.local_ice_ufrag_by_session.is_empty()
             && self.remote_candidate_addrs_by_session.is_empty()
     }
@@ -270,10 +336,17 @@ impl RemoteAddrDemux {
             .remote_addrs_by_session
             .get_mut(session_key)
             .is_some_and(|session_addrs| {
-                if let Some(position) = session_addrs.iter().position(|addr| *addr == source_addr) {
-                    session_addrs.swap_remove(position);
+                if let Some(position) = session_addrs
+                    .addrs
+                    .iter()
+                    .position(|addr| *addr == source_addr)
+                {
+                    session_addrs.addrs.remove(position);
                 }
-                session_addrs.is_empty()
+                if session_addrs.selected_addr == Some(source_addr) {
+                    session_addrs.selected_addr = None;
+                }
+                session_addrs.addrs.is_empty()
             });
         if should_remove_session_entry {
             self.remote_addrs_by_session.remove(session_key);

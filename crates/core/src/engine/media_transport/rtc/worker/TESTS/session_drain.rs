@@ -88,6 +88,21 @@ pub(super) fn substitute_poll_result(
     }
 }
 
+pub(super) fn forced_timeout_at(
+    context: &SessionDrainContext<'_>,
+    session_key: &TransportSessionKey,
+    now: Instant,
+    timeout_at: Instant,
+) -> Instant {
+    if context.force_immediate_timeout
+        || forces_failure(context, session_key, RtcDrainFailureStage::TimeoutInput)
+    {
+        now
+    } else {
+        timeout_at
+    }
+}
+
 pub(super) fn handle_timeout_input(
     session_state: &mut RtcSessionState,
     context: &SessionDrainContext<'_>,
@@ -1219,4 +1234,43 @@ fn terminal_poll_failure_retires_only_its_session() -> Result<(), &'static str> 
 #[test]
 fn terminal_timeout_input_failure_retires_only_its_session() -> Result<(), &'static str> {
     assert_terminal_drain_failure(RtcDrainFailureStage::TimeoutInput)
+}
+
+#[test]
+fn repeated_immediate_timeouts_yield_after_a_bounded_drain() -> Result<(), &'static str> {
+    let mut fixture = NackDrainFixture::new(1, 1)?;
+    fixture.state.mark_session_dirty(&fixture.offender);
+    fixture.state.mark_session_dirty(&fixture.sibling);
+    let mut context = SessionDrainContext::new(
+        &fixture.snapshot_state,
+        &fixture.bitrate_registry,
+        &fixture.metrics,
+        &fixture.rtc_metrics,
+        &fixture.source_policy_signal,
+    );
+    context.force_immediate_timeout = true;
+    assert!(!drain_ready_sessions(
+        &mut fixture.state,
+        &context,
+        &mut fixture.buffers,
+        fixture.now
+    ));
+    assert_eq!(
+        fixture
+            .state
+            .users
+            .get(&fixture.offender)
+            .and_then(|session| session.next_timeout),
+        Some(fixture.now)
+    );
+    assert_eq!(
+        fixture
+            .state
+            .users
+            .get(&fixture.sibling)
+            .and_then(|session| session.next_timeout),
+        Some(fixture.now)
+    );
+    assert_eq!(fixture.state.next_timeout_deadline(), Some(fixture.now));
+    Ok(())
 }

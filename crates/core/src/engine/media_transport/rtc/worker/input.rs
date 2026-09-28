@@ -182,11 +182,19 @@ impl PacketLoopInputReceivers {
 }
 
 impl PacketLoopControlInput {
+    /// Whether dispatch can change session or ICE indexes used by demux recovery.
+    pub(super) fn may_change_demux_topology(&self) -> bool {
+        match self {
+            Self::Command(command) => command.may_change_demux_topology(),
+            #[cfg(any(test, feature = "testing-transport"))]
+            Self::Probe(_) => true,
+        }
+    }
+
     /// Apply this control input to authoritative worker state.
     ///
-    /// The caller remains responsible for invalidating demux recovery hints
-    /// after dispatch. Both variants may change ownership indexes that demux
-    /// recovery relies on.
+    /// The caller invalidates demux hints when [`Self::may_change_demux_topology`]
+    /// reports a possible ownership change.
     pub(super) fn dispatch(self, state: &mut PacketLoopState, context: &WorkerCommandContext<'_>) {
         match self {
             Self::Command(command) => handle_worker_command(state, context, command),
