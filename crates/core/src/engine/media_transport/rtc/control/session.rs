@@ -20,14 +20,14 @@ use crate::engine::{
 #[derive(Clone, Copy)]
 pub(in crate::engine::media_transport::rtc) enum SessionCloseDisposition {
     OwnerClose,
-    OutputBudgetExhausted,
+    TerminalFailure,
 }
 
 /// Retires one worker RTC session according to `disposition`.
 ///
 /// Missing `RtcSessionState` is not an error. Scheduler, demux, media, route and
 /// bitrate cleanup still runs so repeated close cannot retain stale indexes.
-/// Output-budget retirement keeps disconnected health until the owner closes.
+/// Terminal worker retirement keeps disconnected health until the owner closes.
 pub(in crate::engine::media_transport::rtc) fn worker_close_session(
     state: &mut PacketLoopState,
     bitrate_registry: &Arc<Mutex<BitrateRegistry>>,
@@ -41,7 +41,7 @@ pub(in crate::engine::media_transport::rtc) fn worker_close_session(
         let previous = snapshot.remove_session(session_key);
         let next = match disposition {
             SessionCloseDisposition::OwnerClose => None,
-            SessionCloseDisposition::OutputBudgetExhausted => {
+            SessionCloseDisposition::TerminalFailure => {
                 snapshot.set_transport_health(session_key, TransportSessionHealth::Disconnected);
                 Some(TransportSessionHealth::Disconnected)
             }

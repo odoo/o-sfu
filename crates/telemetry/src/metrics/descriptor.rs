@@ -785,6 +785,14 @@ metric_catalog! {
             &capture.rtc, "category", RtcMetricsSnapshot::input_failures
         )
     },
+    RtcDrainFailuresTotal {
+        name: "osfu_rtc_drain_failures_total",
+        help: "Total terminal RTC session drain failures by stage.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_snapshot_counters(output,
+            &capture.rtc, "stage", RtcMetricsSnapshot::drain_failures
+        )
+    },
     RtcOutputBudgetExhaustionsTotal {
         name: "osfu_rtc_output_budget_exhaustions_total",
         help: "Total RTC session drains that exhausted the output budget by limit.",

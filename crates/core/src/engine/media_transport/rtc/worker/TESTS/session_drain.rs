@@ -1,4 +1,5 @@
 use std::{
+    io,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
@@ -53,12 +54,55 @@ use crate::{
                 },
             },
         },
-        metrics::{self, RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt},
+        metrics::{
+            self, RuntimeMetrics,
+            test_support::{RuntimeMetricsSnapshotLookup, RuntimeMetricsSnapshotTestExt},
+        },
     },
 };
 
 const MISSING_PACKETS_PER_STREAM: u16 = 100;
 const NACK_INTERVAL: Duration = Duration::from_millis(33);
+
+fn forces_failure(
+    context: &SessionDrainContext<'_>,
+    session_key: &TransportSessionKey,
+    stage: RtcDrainFailureStage,
+) -> bool {
+    context
+        .forced_failure
+        .as_ref()
+        .is_some_and(|(key, forced_stage)| key == session_key && *forced_stage == stage)
+}
+
+pub(super) fn substitute_poll_result(
+    output: Result<Output, RtcError>,
+    context: &SessionDrainContext<'_>,
+    session_key: &TransportSessionKey,
+    polled_transmit: bool,
+) -> Result<Output, RtcError> {
+    if polled_transmit && forces_failure(context, session_key, RtcDrainFailureStage::PollOutput) {
+        Err(RtcError::Io(io::Error::other("forced poll failure")))
+    } else {
+        output
+    }
+}
+
+pub(super) fn handle_timeout_input(
+    session_state: &mut RtcSessionState,
+    context: &SessionDrainContext<'_>,
+    session_key: &TransportSessionKey,
+    now: Instant,
+) -> Result<(), RtcError> {
+    let result = session_state.rtc.handle_input(Input::Timeout(now));
+    if forces_failure(context, session_key, RtcDrainFailureStage::TimeoutInput) {
+        Err(RtcError::Io(io::Error::other(
+            "forced timeout input failure",
+        )))
+    } else {
+        result
+    }
+}
 
 #[test]
 fn output_budget_rejects_the_first_transmit_past_the_private_packet_limit() {
@@ -1048,4 +1092,131 @@ fn repeated_nack_rounds_remain_paced_and_below_host_limits() -> Result<(), &'sta
     assert_eq!(offender.receiver_bwe_str0m_update_count, 2);
     assert_output_budget_metrics(&fixture.metrics, None);
     Ok(())
+}
+
+fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'static str> {
+    let mut fixture = NackDrainFixture::new(1, 1)?;
+    let nack_at = fixture.now + NACK_INTERVAL;
+    let feedback = capture_compound_nack(
+        &mut fixture.peer,
+        nack_at,
+        1,
+        u32::from(MISSING_PACKETS_PER_STREAM),
+    )?;
+    fixture.route_nack(&feedback.datagram, nack_at);
+    fixture.state.mark_session_dirty(&fixture.sibling);
+    fixture
+        .buffers
+        .push_pending_transmit(fixture.candidate_addr, b"healthy-prefix".to_vec());
+    let mut context = SessionDrainContext::new(
+        &fixture.snapshot_state,
+        &fixture.bitrate_registry,
+        &fixture.metrics,
+        &fixture.rtc_metrics,
+        &fixture.source_policy_signal,
+    );
+    context.forced_failure = Some((fixture.offender.clone(), stage));
+    let changed = drain_ready_sessions(&mut fixture.state, &context, &mut fixture.buffers, nack_at);
+    assert!(changed);
+    assert!(!fixture.state.users.contains_key(&fixture.offender));
+    assert!(fixture.state.users.contains_key(&fixture.sibling));
+    assert!(!fixture.state.has_dirty_sessions());
+    let snapshot = fixture
+        .snapshot_state
+        .lock()
+        .map_err(|_error| "snapshot state should lock")?;
+    assert_eq!(
+        snapshot.transport_health(&fixture.offender),
+        Some(TransportSessionHealth::Disconnected)
+    );
+    assert_eq!(
+        snapshot.transport_health(&fixture.sibling),
+        Some(TransportSessionHealth::Connected)
+    );
+    drop(snapshot);
+    assert!(
+        fixture
+            .state
+            .remote_addr_demux
+            .session_key_for_remote_addr(fixture.source_addr)
+            .is_none()
+    );
+    assert!(
+        !fixture
+            .bitrate_registry
+            .lock()
+            .map_err(|_error| "bitrate registry should lock")?
+            .egress_bitrates_by_session
+            .contains_key(&fixture.offender)
+    );
+    assert_eq!(fixture.buffers.pending_transmits.len(), 1);
+    assert_eq!(
+        fixture
+            .buffers
+            .pending_transmits
+            .first()
+            .map(|p| p.contents.as_slice()),
+        Some(b"healthy-prefix".as_slice())
+    );
+    let label = match stage {
+        RtcDrainFailureStage::PollOutput => "poll_output",
+        RtcDrainFailureStage::TimeoutInput => "timeout_input",
+    };
+    assert_eq!(
+        fixture.metrics.snapshot().counter_value(
+            metrics::MetricName::RtcDrainFailuresTotal,
+            &[("stage", label)],
+        ),
+        1
+    );
+    assert_retired_owner_cleanup(&mut fixture)?;
+    Ok(())
+}
+
+fn assert_retired_owner_cleanup(fixture: &mut NackDrainFixture) -> Result<(), &'static str> {
+    fixture.state.mark_session_dirty(&fixture.offender);
+    assert!(!fixture.state.has_dirty_sessions());
+    let replacement = test_transport_session_key(10, 0, 15, UserId::Integer(12));
+    ensure_session_rtc_state(
+        &mut fixture.state.users,
+        &replacement,
+        fixture.candidate_addr,
+        Bitrate::from_mbps(10),
+    )
+    .map_err(|_error| "replacement RTC state should initialize")?;
+    fixture
+        .snapshot_state
+        .lock()
+        .map_err(|_error| "snapshot state should lock")?
+        .set_transport_health(&replacement, TransportSessionHealth::Connected);
+    worker_close_session(
+        &mut fixture.state,
+        &fixture.bitrate_registry,
+        &fixture.snapshot_state,
+        &fixture.offender,
+        SessionCloseDisposition::OwnerClose,
+        &fixture.metrics,
+    );
+    let snapshot = fixture
+        .snapshot_state
+        .lock()
+        .map_err(|_error| "snapshot state should lock")?;
+    assert_eq!(snapshot.transport_health(&fixture.offender), None);
+    assert_eq!(
+        snapshot.transport_health(&replacement),
+        Some(TransportSessionHealth::Connected)
+    );
+    assert!(fixture.state.users.contains_key(&replacement));
+    drop(snapshot);
+    Ok(())
+}
+
+#[test]
+fn terminal_poll_failure_retires_only_its_session() -> Result<(), &'static str> {
+    assert_terminal_drain_failure(RtcDrainFailureStage::PollOutput)
+}
+
+#[test]
+fn terminal_timeout_input_failure_retires_only_its_session() -> Result<(), &'static str> {
+    assert_terminal_drain_failure(RtcDrainFailureStage::TimeoutInput)
 }
