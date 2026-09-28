@@ -12,6 +12,7 @@ use super::{
     },
     labels::{
         ControlPlaneDurationBucket, ExportedMetricLabelPair, HttpRoute, RtcRelayEnqueueResult,
+        RtcTransportIoFailure,
     },
     rtc::RtcMetricsSnapshot,
     rtp::{RtpMetricsSnapshot, RtpTrafficSnapshot},
@@ -767,6 +768,22 @@ metric_catalog! {
         help: "Total candidate RTCP datagrams dropped by the per-session ingress byte budget.",
         kind: Counter,
         samples: |metrics, capture, output| output.counter(&[], capture.rtc.rtcp_ingress_budget_drops())
+    },
+    RtcTransportIoFailuresTotal {
+        name: "osfu_rtc_transport_io_failures_total",
+        help: "Total RTC UDP socket failures by direction and bounded category.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_label_pair_counters::<RtcTransportIoFailure>(
+            output, |failure| capture.rtc.transport_io_failures(failure)
+        )
+    },
+    RtcInputFailuresTotal {
+        name: "osfu_rtc_input_failures_total",
+        help: "Total RTC datagram input failures by bounded category.",
+        kind: Counter,
+        samples: |metrics, capture, output| write_snapshot_counters(output,
+            &capture.rtc, "category", RtcMetricsSnapshot::input_failures
+        )
     },
     RtcOutputBudgetExhaustionsTotal {
         name: "osfu_rtc_output_budget_exhaustions_total",

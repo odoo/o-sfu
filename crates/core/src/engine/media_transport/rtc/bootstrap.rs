@@ -30,7 +30,10 @@ use super::{
 };
 use crate::{
     Bitrate, RtcPortRange, RtcUdpIoBackend,
-    engine::media_transport::{TransportAdapterError, TransportSessionKey},
+    engine::{
+        media_transport::{TransportAdapterError, TransportSessionKey},
+        metrics::RtcMetricsRecorder,
+    },
 };
 #[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
 #[path = "TESTS/bootstrap.rs"]
@@ -55,6 +58,7 @@ pub(super) fn bind_shared_rtc_socket(
     announced_ip: IpAddr,
     rtc_port_range: RtcPortRange,
     rtc_udp_io_backend: RtcUdpIoBackend,
+    rtc_metrics: &Arc<RtcMetricsRecorder>,
 ) -> Result<SharedRtcSocket, TransportAdapterError> {
     let bind_ip = bind_ip_for_announced_ip(announced_ip);
     for port in rtc_port_range.ports() {
@@ -81,7 +85,12 @@ pub(super) fn bind_shared_rtc_socket(
             TransportAdapterError::TransportUnavailable
         })?;
         let candidate_addr = SocketAddr::new(announced_ip, port);
-        let ingress = UdpIngress::new(socket.clone(), bind_addr, candidate_addr);
+        let ingress = UdpIngress::new(
+            socket.clone(),
+            bind_addr,
+            candidate_addr,
+            Arc::clone(rtc_metrics),
+        );
         info!(
             %bind_addr,
             %candidate_addr,

@@ -367,7 +367,12 @@ fn test_socket() -> Result<SharedRtcSocket, &'static str> {
     let socket = RtcUdpSocket::from_std(socket, RtcUdpIoBackend::Tokio)
         .map_err(|_error| "test socket should convert")?;
     Ok(SharedRtcSocket {
-        ingress: UdpIngress::new(socket.clone(), addr, addr),
+        ingress: UdpIngress::new(
+            socket.clone(),
+            addr,
+            addr,
+            RuntimeMetrics::default().register_rtc_worker(),
+        ),
         socket,
         candidate_addr: addr,
     })
@@ -2015,7 +2020,8 @@ fn due_heartbeat_yields_to_ready_control_without_reporting_health() -> Result<()
             &mut demux,
             &mut inputs,
         );
-        turn.flush_outputs(&shared_socket.socket).await;
+        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
+            .await;
         let input = turn
             .wait_for_next_input(
                 snapshot,
@@ -2062,7 +2068,8 @@ fn heartbeat_wake_does_not_create_a_timeout_turn() -> Result<(), &'static str> {
             &mut demux,
             &mut inputs,
         );
-        turn.flush_outputs(&shared_socket.socket).await;
+        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
+            .await;
         let wait = timeout(
             Duration::from_millis(20),
             turn.wait_for_next_input(

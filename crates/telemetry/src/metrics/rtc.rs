@@ -1,17 +1,24 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    mem::take,
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use super::{
     counter::{MetricLabel, PaddedCounter, PaddedCounterFamily},
     labels::{
-        RtcDatagramDropReason, RtcDatagramRoutePath, RtcKeyframeRequestOutcome, RtcNackDirection,
-        RtcOutputBudgetLimit, RtcProducerSsrcBindingOutcome, RtcRelayEnqueueResult,
-        RtcRemoteControlDropKind, RtcRemotePacketGateConvergence, RtcRouteControlOutcome,
+        RtcDatagramDropReason, RtcDatagramRoutePath, RtcInputFailure, RtcKeyframeRequestOutcome,
+        RtcNackDirection, RtcOutputBudgetLimit, RtcProducerSsrcBindingOutcome,
+        RtcRelayEnqueueResult, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
+        RtcRouteControlOutcome, RtcTransportIoFailure,
     },
 };
 
 const RTC_DATAGRAM_ROUTE_PATH_COUNT: usize = <RtcDatagramRoutePath as MetricLabel>::COUNT;
 const RTC_DATAGRAM_DROP_REASON_COUNT: usize = <RtcDatagramDropReason as MetricLabel>::COUNT;
 const RTC_NACK_DIRECTION_COUNT: usize = <RtcNackDirection as MetricLabel>::COUNT;
+const RTC_TRANSPORT_IO_FAILURE_COUNT: usize = <RtcTransportIoFailure as MetricLabel>::COUNT;
+const RTC_INPUT_FAILURE_COUNT: usize = <RtcInputFailure as MetricLabel>::COUNT;
 const RTC_OUTPUT_BUDGET_LIMIT_COUNT: usize = <RtcOutputBudgetLimit as MetricLabel>::COUNT;
 const RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT: usize =
     <RtcProducerSsrcBindingOutcome as MetricLabel>::COUNT;
@@ -21,6 +28,29 @@ const RTC_RELAY_ENQUEUE_RESULT_COUNT: usize = <RtcRelayEnqueueResult as MetricLa
 const RTC_REMOTE_CONTROL_DROP_KIND_COUNT: usize = <RtcRemoteControlDropKind as MetricLabel>::COUNT;
 const RTC_REMOTE_PACKET_GATE_CONVERGENCE_COUNT: usize =
     <RtcRemotePacketGateConvergence as MetricLabel>::COUNT;
+
+const FAILURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Default)]
+struct FailureLogSlot {
+    last_log: Option<Instant>,
+    suppressed: u64,
+}
+
+impl FailureLogSlot {
+    fn observe(&mut self, now: Instant) -> Option<u64> {
+        if self
+            .last_log
+            .is_some_and(|last| now.saturating_duration_since(last) < FAILURE_LOG_INTERVAL)
+        {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return None;
+        }
+        let suppressed = take(&mut self.suppressed);
+        self.last_log = Some(now);
+        Some(suppressed)
+    }
+}
 
 /// Worker-local RTC packet-loop metric recorder.
 ///
@@ -37,6 +67,10 @@ pub struct RtcMetricsRecorder {
     rtx_packets_received_from_publisher: PaddedCounter,
     rtx_payload_bytes_received_from_publisher: PaddedCounter,
     rtcp_ingress_budget_drops: PaddedCounter,
+    transport_io_failures: PaddedCounterFamily<RtcTransportIoFailure>,
+    transport_io_log: Mutex<[FailureLogSlot; RTC_TRANSPORT_IO_FAILURE_COUNT]>,
+    input_failures: PaddedCounterFamily<RtcInputFailure>,
+    input_log: Mutex<[FailureLogSlot; RTC_INPUT_FAILURE_COUNT]>,
     output_budget_exhaustions: PaddedCounterFamily<RtcOutputBudgetLimit>,
     output_budget_session_closes: PaddedCounter,
     producer_ssrc_bindings: PaddedCounterFamily<RtcProducerSsrcBindingOutcome>,
@@ -78,6 +112,26 @@ impl RtcMetricsRecorder {
 
     pub fn record_rtc_rtcp_ingress_budget_drop(&self) {
         self.rtcp_ingress_budget_drops.increment();
+    }
+
+    /// Counts every failure and returns suppressed occurrences when this category may log.
+    pub fn record_rtc_transport_io_failure(&self, failure: RtcTransportIoFailure) -> Option<u64> {
+        self.transport_io_failures.increment(failure);
+        let mut slots = self
+            .transport_io_log
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        slots.get_mut(failure.as_index())?.observe(Instant::now())
+    }
+
+    /// Counts every failure and returns suppressed occurrences when this category may log.
+    pub fn record_rtc_input_failure(&self, failure: RtcInputFailure) -> Option<u64> {
+        self.input_failures.increment(failure);
+        let mut slots = self
+            .input_log
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        slots.get_mut(failure.as_index())?.observe(Instant::now())
     }
 
     pub fn record_rtc_output_budget_exhaustion(&self, limit: RtcOutputBudgetLimit) {
@@ -179,6 +233,8 @@ pub(super) struct RtcMetricsSnapshot {
     rtx_packets_received_from_publisher: u64,
     rtx_payload_bytes_received_from_publisher: u64,
     rtcp_ingress_budget_drops: u64,
+    transport_io_failures: [u64; RTC_TRANSPORT_IO_FAILURE_COUNT],
+    input_failures: [u64; RTC_INPUT_FAILURE_COUNT],
     output_budget_exhaustions: [u64; RTC_OUTPUT_BUDGET_LIMIT_COUNT],
     output_budget_session_closes: u64,
     producer_ssrc_bindings: [u64; RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT],
@@ -231,6 +287,20 @@ impl RtcMetricsSnapshot {
 
     pub(super) const fn rtcp_ingress_budget_drops(&self) -> u64 {
         self.rtcp_ingress_budget_drops
+    }
+
+    pub(super) fn transport_io_failures(&self, failure: RtcTransportIoFailure) -> u64 {
+        self.transport_io_failures
+            .get(failure.as_index())
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(super) fn input_failures(&self, failure: RtcInputFailure) -> u64 {
+        self.input_failures
+            .get(failure.as_index())
+            .copied()
+            .unwrap_or(0)
     }
 
     pub(super) fn output_budget_exhaustions(&self, limit: RtcOutputBudgetLimit) -> u64 {
@@ -333,6 +403,12 @@ impl RtcMetricsSnapshot {
             .rtcp_ingress_budget_drops
             .saturating_add(recorder.rtcp_ingress_budget_drops.load());
         recorder
+            .transport_io_failures
+            .accumulate_into(&mut self.transport_io_failures);
+        recorder
+            .input_failures
+            .accumulate_into(&mut self.input_failures);
+        recorder
             .output_budget_exhaustions
             .accumulate_into(&mut self.output_budget_exhaustions);
         self.output_budget_session_closes = self
@@ -373,3 +449,7 @@ impl RtcMetricsSnapshot {
             .accumulate_into(&mut self.remote_packet_gate_convergence);
     }
 }
+
+#[cfg(test)]
+#[path = "TESTS/failure_log.rs"]
+mod failure_log_tests;

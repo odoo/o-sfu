@@ -25,10 +25,11 @@ use str0m::{
     ice::StunMessage,
     net::{Protocol, Receive},
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::{
     super::state::{PacketLoopState, RtcSessionState, demux::RemoteAddrDemux, slots::SessionStore},
+    io_failures::report_rtc_input_failure,
     routing_miss::{DemuxRecoveryState, PacketLoopRoutingMissKey},
 };
 use crate::engine::{
@@ -269,14 +270,10 @@ fn route_cached_pkt(
     session_state.prepare_rtp_input(packet);
     // `Rtc::accepts()` owns the demux decision. A later processing error does
     // not invalidate the learned pin.
-    if session_state.rtc.handle_input(input).is_err() {
+    if let Err(error) = session_state.rtc.handle_input(input) {
         session_state.clear_ingress_context();
         cold_path();
-        warn!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            "failed to feed indexed UDP datagram into rtc user state"
-        );
+        report_rtc_input_failure(metrics, session_key, &error);
     } else {
         let dirty_session_key = if session_state.packet_loop_dirty {
             None
@@ -482,13 +479,9 @@ fn route_packet_to_session(
     };
     if admit_rtcp_datagram(session_state, route.packet, route.now) {
         session_state.prepare_rtp_input(route.packet);
-        if session_state.rtc.handle_input(input).is_err() {
+        if let Err(error) = session_state.rtc.handle_input(input) {
             session_state.clear_ingress_context();
-            warn!(
-                user_id = ?session_key.user_id(),
-                media_worker_id = session_key.media_worker_id().as_usize(),
-                "failed to feed incoming UDP datagram into rtc user state"
-            );
+            report_rtc_input_failure(route.metrics, session_key, &error);
         } else {
             state.mark_session_dirty(session_key);
         }
