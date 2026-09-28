@@ -2,7 +2,8 @@
 //!
 //! [`ingress_routing`] maps a UDP datagram to a session using
 //! [`super::state::demux`] indexes and [`str0m::Rtc::accepts`]. [`routing_miss`]
-//! bounds repeated unsuccessful lookup. [`udp`] owns socket I/O and ingress.
+//! bounds repeated unsuccessful lookup. [`udp`] owns socket setup and ingress.
+//! [`super::egress`] submits complete RTC output after mutable state access.
 //!
 //! The worker stages RTP from session output and relay input. Each packet
 //! completes this sequence before the next packet can change route state:

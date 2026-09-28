@@ -11,7 +11,7 @@
 //! Values stored here are staged work that must either be flushed during the
 //! current turn or dropped as part of clearing the turn.
 
-use std::net::SocketAddr;
+use str0m::net::Transmit;
 
 use super::super::{
     packet_loop::forwarded_packet::ForwardedPacket,
@@ -22,16 +22,6 @@ use crate::engine::media_transport::TransportSessionKey;
 
 pub(in super::super) const RECEIVE_BUFFER_LEN: usize = 2000;
 pub(in super::super) const MAX_RELAY_PACKETS_PER_ITERATION: usize = 64;
-
-/// One queued UDP datagram ready to be written to the worker socket.
-///
-/// The backing storage is reused across turns, while the payload buffer is moved
-/// from `str0m` output into the socket send path.
-#[derive(Debug)]
-pub(in super::super) struct PendingTransmit {
-    pub(in super::super) destination: SocketAddr,
-    pub(in super::super) contents: Vec<u8>,
-}
 
 pub(in super::super) struct SessionDrainCheckpoint {
     transmits: usize,
@@ -50,8 +40,8 @@ pub(in super::super) struct SessionDrainCheckpoint {
 /// added here only when they replace repeated hot-path allocation or preserve a
 /// bounded batch between two packet-loop phases
 pub struct PacketLoopBuffers {
-    /// reusable UDP transmit slots produced by `str0m::Output::Transmit`
-    pub(in super::super) pending_transmits: Vec<PendingTransmit>,
+    /// reusable complete transmit slots produced by `str0m::Output::Transmit`
+    pub(in super::super) pending_transmits: Vec<Transmit>,
     /// media packets produced by local adapter sessions or inbound relays
     pub pending_packets: Vec<ForwardedPacket>,
     /// raw keyframe feedback emitted by consumer sessions before source lookup
@@ -92,18 +82,6 @@ impl PacketLoopBuffers {
         self.keyframe_retries.clear();
     }
 
-    /// Queue a UDP transmit by moving the owned `str0m` datagram buffer.
-    pub(in super::super) fn push_pending_transmit(
-        &mut self,
-        destination: SocketAddr,
-        contents: Vec<u8>,
-    ) {
-        self.pending_transmits.push(PendingTransmit {
-            destination,
-            contents,
-        });
-    }
-
     #[must_use]
     pub(in super::super) fn checkpoint_session_drain(&self) -> SessionDrainCheckpoint {
         SessionDrainCheckpoint {
@@ -118,11 +96,5 @@ impl PacketLoopBuffers {
         self.pending_packets.truncate(checkpoint.packets);
         self.pending_keyframe_requests
             .truncate(checkpoint.keyframe_requests);
-    }
-
-    pub(in super::super) fn pending_transmits_mut(
-        &mut self,
-    ) -> impl Iterator<Item = &mut PendingTransmit> {
-        self.pending_transmits.iter_mut()
     }
 }

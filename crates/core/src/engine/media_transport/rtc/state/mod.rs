@@ -63,7 +63,7 @@ use self::{
     route_table::{RidReadinessScratch, RouteTable},
     slots::{SessionHandle, SessionStore},
 };
-use super::packet_loop::{RtcUdpSocket, UdpIngress};
+use super::{egress::RtcEgress, packet_loop::UdpIngress};
 use crate::engine::media_transport::TransportMediaId;
 pub use crate::engine::media_transport::TransportSessionHealth;
 
@@ -73,12 +73,12 @@ pub use crate::engine::media_transport::TransportSessionHealth;
 /// uses `Rtc::accepts()` to decide whether an inbound datagram belongs to that
 /// session
 pub(super) struct SharedRtcSocket {
-    /// worker socket used by packet-loop UDP sends
-    pub(super) socket: RtcUdpSocket,
+    /// advertised UDP candidate shared by all sessions on this worker
+    pub(super) udp_candidate_addr: SocketAddr,
+    /// protocol dispatch for worker RTC output
+    pub(super) egress: RtcEgress,
     /// completed datagrams received by the worker-local ingress pump
     pub(super) ingress: UdpIngress,
-    /// public candidate tuple inserted into local SDP for sessions on this worker
-    pub(super) candidate_addr: SocketAddr,
 }
 
 /// authoritative mutable state for one RTC packet-loop worker

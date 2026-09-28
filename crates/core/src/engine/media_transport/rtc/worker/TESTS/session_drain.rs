@@ -9,6 +9,7 @@ use str0m::{
     Rtc,
     format::{Codec, PayloadParams},
     media::{KeyframeRequestKind, MediaKind, Mid, Pt},
+    net::{Protocol, Transmit},
     rtp::{RtpWrite, Ssrc},
 };
 use tokio::sync::oneshot;
@@ -119,6 +120,15 @@ pub(super) fn handle_timeout_input(
     }
 }
 
+fn test_transmit(source: SocketAddr, destination: SocketAddr, contents: &[u8]) -> Transmit {
+    Transmit {
+        proto: Protocol::Udp,
+        source,
+        destination,
+        contents: contents.to_vec().into(),
+    }
+}
+
 #[test]
 fn output_budget_rejects_the_first_transmit_past_the_private_packet_limit() {
     let mut packet_budget = SessionOutputBudget::new(SESSION_OUTPUT_LIMITS);
@@ -155,12 +165,16 @@ fn output_budget_rejects_the_first_byte_past_the_private_payload_limit() {
 }
 
 #[test]
-fn session_drain_rollback_preserves_the_prior_session_prefix() {
+fn session_drain_rollback_preserves_the_prior_session_prefix() -> Result<(), &'static str> {
     let healthy_session = test_transport_session_key(1, 0, 2, UserId::Integer(3));
     let offender_session = test_transport_session_key(1, 0, 4, UserId::Integer(5));
     let destination = SocketAddr::from(([127, 0, 0, 1], 46_000));
     let mut buffers = PacketLoopBuffers::new();
-    buffers.push_pending_transmit(destination, b"healthy-transmit".to_vec());
+    buffers.pending_transmits.push(test_transmit(
+        SocketAddr::from(([127, 0, 0, 1], 46_001)),
+        destination,
+        b"healthy-transmit",
+    ));
     buffers.pending_packets.push(sample_forwarded_packet(
         healthy_session.clone(),
         "healthy",
@@ -176,7 +190,11 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() {
     ));
     let checkpoint = buffers.checkpoint_session_drain();
 
-    buffers.push_pending_transmit(destination, b"offender-transmit".to_vec());
+    buffers.pending_transmits.push(test_transmit(
+        SocketAddr::from(([127, 0, 0, 1], 46_002)),
+        destination,
+        b"offender-transmit",
+    ));
     buffers.pending_packets.push(sample_forwarded_packet(
         offender_session.clone(),
         "offender",
@@ -194,13 +212,14 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() {
     buffers.rollback_session_drain(&checkpoint);
 
     assert_eq!(buffers.pending_transmits.len(), 1);
-    assert_eq!(
-        buffers
-            .pending_transmits
-            .first()
-            .map(|transmit| transmit.contents.as_slice()),
-        Some(b"healthy-transmit".as_slice())
-    );
+    let transmit = buffers
+        .pending_transmits
+        .first()
+        .ok_or("healthy transmit should survive rollback")?;
+    assert_eq!(transmit.proto, Protocol::Udp);
+    assert_eq!(transmit.source, SocketAddr::from(([127, 0, 0, 1], 46_001)));
+    assert_eq!(transmit.destination, destination);
+    assert_eq!(&*transmit.contents, b"healthy-transmit");
     assert_eq!(buffers.pending_packets.len(), 1);
     assert_eq!(
         buffers
@@ -217,6 +236,7 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() {
             .map(|(session_key, _request)| session_key),
         Some(&healthy_session)
     );
+    Ok(())
 }
 
 struct LocalWriteDrainFixture {
@@ -297,9 +317,15 @@ impl LocalWriteDrainFixture {
             .into_iter()
             .find(|transmit| muxed_rtp_ssrc(&transmit.contents) == Some(self.primary))
             .ok_or("drain should emit one primary RTP packet")?;
+        assert_eq!(transmit.proto, Protocol::Udp);
+        assert_eq!(transmit.source, self.candidate_addr);
         deliver_rtp(
             &mut self.peer,
-            &TestDatagram::udp(self.candidate_addr, transmit.destination, transmit.contents),
+            &TestDatagram::udp(
+                transmit.source,
+                transmit.destination,
+                transmit.contents.into(),
+            ),
             self.now,
         )
     }
@@ -928,9 +954,11 @@ fn assert_authenticated_nack_exhaustion(
         u32::from(MISSING_PACKETS_PER_STREAM),
     )?;
     fixture.route_nack(&feedback.datagram, nack_at);
-    fixture
-        .buffers
-        .push_pending_transmit(fixture.candidate_addr, b"healthy-prefix".to_vec());
+    fixture.buffers.pending_transmits.push(test_transmit(
+        SocketAddr::from(([127, 0, 0, 1], 46_011)),
+        fixture.candidate_addr,
+        b"healthy-prefix",
+    ));
 
     assert!(fixture.drain_with_limits(nack_at, output_limits));
     assert!(!fixture.state.users.contains_key(&fixture.offender));
@@ -964,14 +992,12 @@ fn assert_authenticated_nack_exhaustion(
             .is_some_and(|session| session.next_timeout.is_some())
     );
     assert_eq!(fixture.buffers.pending_transmits.len(), 1);
-    assert_eq!(
-        fixture
-            .buffers
-            .pending_transmits
-            .first()
-            .map(|transmit| transmit.contents.as_slice()),
-        Some(b"healthy-prefix".as_slice())
-    );
+    let transmits = &fixture.buffers.pending_transmits;
+    let transmit = transmits.first().ok_or("healthy prefix lost")?;
+    assert_eq!(transmit.proto, Protocol::Udp);
+    assert_eq!(transmit.source, SocketAddr::from(([127, 0, 0, 1], 46_011)));
+    assert_eq!(transmit.destination, fixture.candidate_addr);
+    assert_eq!(&*transmit.contents, b"healthy-prefix");
     assert!(
         fixture
             .state
@@ -1120,9 +1146,11 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
     )?;
     fixture.route_nack(&feedback.datagram, nack_at);
     fixture.state.mark_session_dirty(&fixture.sibling);
-    fixture
-        .buffers
-        .push_pending_transmit(fixture.candidate_addr, b"healthy-prefix".to_vec());
+    fixture.buffers.pending_transmits.push(test_transmit(
+        fixture.candidate_addr,
+        fixture.candidate_addr,
+        b"healthy-prefix",
+    ));
     let mut context = SessionDrainContext::new(
         &fixture.snapshot_state,
         &fixture.bitrate_registry,
@@ -1170,7 +1198,7 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
             .buffers
             .pending_transmits
             .first()
-            .map(|p| p.contents.as_slice()),
+            .map(|transmit| &*transmit.contents),
         Some(b"healthy-prefix".as_slice())
     );
     let label = match stage {
