@@ -58,7 +58,10 @@ mod test_support;
 
 use std::{
     fmt,
-    sync::{Arc, Mutex, atomic::AtomicU64},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64},
+    },
     thread,
 };
 
@@ -92,6 +95,8 @@ pub(super) struct RtcWorkerHandle {
     pub(super) bitrate_registry: Arc<Mutex<BitrateRegistry>>,
     pub(super) snapshot_state: Arc<Mutex<RtcSnapshotState>>,
     pub(super) packet_loop_delay: Arc<PacketLoopDelaySnapshot>,
+    /// Set before explicit cancellation or when the thread exits unexpectedly.
+    pub(super) terminal: Arc<AtomicBool>,
 }
 
 impl fmt::Debug for RtcWorkerHandle {
@@ -110,7 +115,8 @@ pub struct RtcWorker {
     relay_target_id: RelayTargetId,
     handle: RtcWorkerHandle,
     shutdown: CancellationToken,
-    thread: Option<thread::JoinHandle<()>>,
+    thread: Mutex<Option<thread::JoinHandle<()>>>,
+    join_completion: CancellationToken,
     #[cfg(any(test, feature = "testing-transport"))]
     pub metrics: Arc<RuntimeMetrics>,
     rtc_metrics: Arc<RtcMetricsRecorder>,

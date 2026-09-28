@@ -73,6 +73,7 @@ pub struct RtcMetricsRecorder {
     input_failures: PaddedCounterFamily<RtcInputFailure>,
     input_log: Mutex<[FailureLogSlot; RTC_INPUT_FAILURE_COUNT]>,
     drain_failures: PaddedCounterFamily<RtcDrainFailureStage>,
+    worker_terminal_failures: PaddedCounter,
     output_budget_exhaustions: PaddedCounterFamily<RtcOutputBudgetLimit>,
     output_budget_session_closes: PaddedCounter,
     producer_ssrc_bindings: PaddedCounterFamily<RtcProducerSsrcBindingOutcome>,
@@ -138,6 +139,10 @@ impl RtcMetricsRecorder {
 
     pub fn record_rtc_drain_failure(&self, stage: RtcDrainFailureStage) {
         self.drain_failures.increment(stage);
+    }
+
+    pub fn record_rtc_worker_terminal_failure(&self) {
+        self.worker_terminal_failures.increment();
     }
 
     pub fn record_rtc_output_budget_exhaustion(&self, limit: RtcOutputBudgetLimit) {
@@ -242,6 +247,7 @@ pub(super) struct RtcMetricsSnapshot {
     transport_io_failures: [u64; RTC_TRANSPORT_IO_FAILURE_COUNT],
     input_failures: [u64; RTC_INPUT_FAILURE_COUNT],
     drain_failures: [u64; RTC_DRAIN_FAILURE_STAGE_COUNT],
+    worker_terminal_failures: u64,
     output_budget_exhaustions: [u64; RTC_OUTPUT_BUDGET_LIMIT_COUNT],
     output_budget_session_closes: u64,
     producer_ssrc_bindings: [u64; RTC_PRODUCER_SSRC_BINDING_OUTCOME_COUNT],
@@ -315,6 +321,10 @@ impl RtcMetricsSnapshot {
             .get(stage.as_index())
             .copied()
             .unwrap_or(0)
+    }
+
+    pub(super) const fn worker_terminal_failures(&self) -> u64 {
+        self.worker_terminal_failures
     }
 
     pub(super) fn output_budget_exhaustions(&self, limit: RtcOutputBudgetLimit) -> u64 {
@@ -425,6 +435,9 @@ impl RtcMetricsSnapshot {
         recorder
             .drain_failures
             .accumulate_into(&mut self.drain_failures);
+        self.worker_terminal_failures = self
+            .worker_terminal_failures
+            .saturating_add(recorder.worker_terminal_failures.load());
         recorder
             .output_budget_exhaustions
             .accumulate_into(&mut self.output_budget_exhaustions);

@@ -1,5 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddrV4, UdpSocket},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -612,13 +613,21 @@ fn media_transport_build_rejects_occupied_port_range() {
         .local_addr()
         .unwrap_or_else(|error| panic!("test RTC port should expose its address: {error}"))
         .port();
+    let deps = test_media_transport_deps();
+    let metrics = Arc::clone(&deps.metrics);
     assert_eq!(
         MediaTransport::build(
             test_media_transport_config(1, RtcPortRange::new(port, port)),
-            test_media_transport_deps(),
+            deps,
         )
         .err(),
         Some(MediaTransportBuildError::WorkerStartup { worker_index: 0 })
+    );
+    assert_eq!(
+        metrics
+            .snapshot()
+            .counter_value(MetricName::RtcWorkerTerminalFailuresTotal, &[]),
+        0
     );
 }
 
@@ -1086,4 +1095,41 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
     assert_eq!(transport_cleanup_failures(&adapter), 1);
     Ok(())
+}
+
+#[tokio::test]
+async fn dead_relay_target_teardown_preserves_healthy_source() {
+    let adapter = test_media_transport(2, test_rtc_port_range());
+    let source_session = test_session_key(41, 0, 1, UserId::Integer(1));
+    let target_session = test_session_key(41, 1, 2, UserId::Integer(2));
+    prepare_rtc_sessions(&adapter, &[&source_session, &target_session]).await;
+    let source_media_id = publish_audio(
+        &adapter,
+        &source_session,
+        &sample_rtp_parameters("relay-source", 64_000),
+    )
+    .await;
+    install_active_relay_route(&adapter, &source_session, source_media_id, &target_session).await;
+    let source_worker = expect_worker_for_user(&adapter, &source_session);
+    let target_worker = expect_worker_for_user(&adapter, &target_session);
+    assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
+    target_worker.cancel();
+    target_worker.wait_for_shutdown().await;
+
+    adapter
+        .teardown([TransportTeardown::ReleaseRelayRoute {
+            source: TransportSourceKey::new(source_session.clone(), source_media_id),
+            target_media_worker_id: target_session.media_worker_id(),
+        }])
+        .await;
+
+    assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
+    assert!(
+        source_worker
+            .debug_resolve_mid(source_media_id)
+            .await
+            .expect("source worker must answer")
+            .is_some()
+    );
+    assert_eq!(transport_cleanup_failures(&adapter), 0);
 }

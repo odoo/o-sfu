@@ -793,6 +793,12 @@ metric_catalog! {
             &capture.rtc, "stage", RtcMetricsSnapshot::drain_failures
         )
     },
+    RtcWorkerTerminalFailuresTotal {
+        name: "osfu_rtc_worker_terminal_failures_total",
+        help: "Total media workers retired after unexpected terminal failure.",
+        kind: Counter,
+        samples: |metrics, capture, output| output.counter(&[], capture.rtc.worker_terminal_failures())
+    },
     RtcOutputBudgetExhaustionsTotal {
         name: "osfu_rtc_output_budget_exhaustions_total",
         help: "Total RTC session drains that exhausted the output budget by limit.",
