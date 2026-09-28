@@ -264,10 +264,7 @@ fn drain_single_session(
                     demux.remember_selected_remote_addr(session_key, transmit.destination);
                 }
                 session_state.note_repairable_transmit(&transmit.contents, now);
-                buffers.push_pending_transmit(
-                    transmit.destination,
-                    Vec::<u8>::from(transmit.contents),
-                );
+                buffers.pending_transmits.push(transmit);
                 #[cfg(test)]
                 {
                     polled_transmit = true;

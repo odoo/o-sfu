@@ -48,7 +48,7 @@ impl ReceiveFailureControl {
     }
 }
 
-/// Worker socket shared by packet-loop egress and one receive task.
+/// Worker UDP socket shared by `RtcEgress` and one receive task.
 ///
 /// Tokio uses [`Arc`] because `tokio::spawn` requires `Send`. `tokio-uring` uses
 /// [`std::rc::Rc`] because its task stays on the worker's local runtime.
@@ -122,24 +122,6 @@ impl RtcUdpSocket {
                         "io_uring RTC UDP I/O backend is only supported on Linux",
                     ))
                 }
-            }
-        }
-    }
-
-    /// Sends one datagram to `destination`.
-    pub(in super::super) async fn send_to(
-        &self,
-        packet: Vec<u8>,
-        destination: SocketAddr,
-    ) -> io::Result<usize> {
-        match self {
-            Self::Tokio(socket) => socket.send_to(packet.as_slice(), destination).await,
-            #[cfg(target_os = "linux")]
-            Self::IoUring(socket) => {
-                // io_uring retains the buffer until completion, so this wrapper
-                // takes `Vec<u8>` by value.
-                let (result, _packet) = socket.send_to(packet, destination).await;
-                result
             }
         }
     }

@@ -11,7 +11,7 @@
 //!   -> for each packet: observe facts -> plan -> flush
 //!   -> finish batch observations and policy notifications
 //!   -> dispatch retries still pending after packet observation
-//!   -> flush staged UDP output
+//!   -> flush staged RTC output through RtcEgress
 //!   -> wait for one input, prioritizing shutdown and bounded control bursts
 //! ```
 //!
@@ -28,8 +28,9 @@
 //! Snapshots, metrics, bitrate counters and source-policy signals expose
 //! observations without granting callers access to authoritative route state.
 
+#[cfg(feature = "internal-benchmarks")]
+use std::mem::take;
 use std::{
-    mem::take,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -47,13 +48,13 @@ use super::{
     super::{
         RtcWorkerConfig,
         control::WorkerCommandContext,
+        egress::RtcEgress,
         packet_loop::{
             ForwardingEffects, PacketForwarder, drain_relay_packets,
             forwarded_packet::ForwardedPacket,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
-            io_failures::report_udp_send_failure,
             routing_miss::DemuxRecoveryState,
-            udp::{RtcUdpSocket, UdpDatagram, UdpIngress},
+            udp::{UdpDatagram, UdpIngress},
         },
         recovery::{drain_due_kf_retries, drain_due_publisher_kf, flush_pending_kf_reqs_at},
         state::{PacketLoopState, RtcSnapshotState, SharedRtcSocket, bitrate::BitrateRegistry},
@@ -316,6 +317,11 @@ impl PacketLoopTurn {
         )
     }
 
+    /// Flushes transmits staged during the pump phase.
+    pub(super) async fn flush_outputs(&mut self, egress: &mut RtcEgress) {
+        egress.flush(&mut self.buffers.pending_transmits).await;
+    }
+
     /// Waits for the next event that should resume the worker loop.
     ///
     /// Shutdown wins ready inputs. Control precedes ingress except for one
@@ -431,20 +437,6 @@ impl PacketLoopTurn {
         }
     }
 
-    /// Sends UDP transmits staged during the pump phase.
-    pub(super) async fn flush_outputs(
-        &mut self,
-        socket: &RtcUdpSocket,
-        rtc_metrics: &RtcMetricsRecorder,
-    ) {
-        for pending_transmit in self.buffers.pending_transmits_mut() {
-            let packet = take(&mut pending_transmit.contents);
-            if let Err(error) = socket.send_to(packet, pending_transmit.destination).await {
-                report_udp_send_failure(rtc_metrics, pending_transmit.destination, &error);
-            }
-        }
-    }
-
     /// tries to consume one already queued UDP datagram without awaiting
     ///
     /// the burst budget allows short receive bursts while still forcing the worker
@@ -509,8 +501,8 @@ const MAX_INPUTS_BEFORE_YIELD: usize = 32;
 ///
 /// # Concurrency
 ///
-/// this task owns `PacketLoopState`, demux recovery hints, `UdpIngress` and
-/// `PacketLoopBuffers`
+/// this task owns `PacketLoopState`, demux recovery hints, `UdpIngress`,
+/// `RtcEgress` and `PacketLoopBuffers`
 /// other tasks communicate with it through channels, shared read-side snapshots
 /// and cancellation
 /// no `MutexGuard` is held across socket sends or receives
@@ -548,7 +540,7 @@ pub async fn run_packet_loop(
                     packet_loop_state: &mut packet_loop_state,
                     bitrate_registry: &bitrate_registry,
                     snapshot_state: &snapshot_state,
-                    candidate_addr: shared_socket.candidate_addr,
+                    candidate_addr: shared_socket.udp_candidate_addr,
                     config: &config,
                     demux: &mut demux,
                     ingress: &shared_socket.ingress,
@@ -568,8 +560,7 @@ pub async fn run_packet_loop(
 
         // Await socket I/O only after `pump` releases its mutable
         // `PacketLoopState` borrow.
-        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
-            .await;
+        turn.flush_outputs(&mut shared_socket.egress).await;
 
         let input = turn
             .wait_for_next_input(

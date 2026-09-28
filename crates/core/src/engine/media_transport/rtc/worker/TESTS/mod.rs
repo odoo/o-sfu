@@ -51,6 +51,7 @@ use super::{
         RtcWorker, RtcWorkerConfig, RtpProfile, bootstrap, codec,
         commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
         consumer_egress::test_support::{SourceRtpIdentity, project_identity},
+        egress::RtcEgress,
         packet_loop::{
             ForwardingDestination, PacketForwarder, PacketGateDecision, drain_relay_packets,
             event_observation::{RtcEventContext, observe_rtc_event},
@@ -368,15 +369,11 @@ fn test_socket() -> Result<SharedRtcSocket, &'static str> {
         .map_err(|_error| "test socket should have a local addr")?;
     let socket = RtcUdpSocket::from_std(socket, RtcUdpIoBackend::Tokio)
         .map_err(|_error| "test socket should convert")?;
+    let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
     Ok(SharedRtcSocket {
-        ingress: UdpIngress::new(
-            socket.clone(),
-            addr,
-            addr,
-            RuntimeMetrics::default().register_rtc_worker(),
-        ),
-        socket,
-        candidate_addr: addr,
+        udp_candidate_addr: addr,
+        ingress: UdpIngress::new(socket.clone(), addr, addr, Arc::clone(&rtc_metrics)),
+        egress: RtcEgress::new(socket, addr, rtc_metrics),
     })
 }
 
@@ -1906,14 +1903,14 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
         bootstrap::test_support::ensure_session_rtc_state(
             &mut state.users,
             &session,
-            shared_socket.candidate_addr,
+            shared_socket.udp_candidate_addr,
             Bitrate::from_mbps(10),
         )
         .map_err(|_error| "RTC state should initialize")?;
         let source_addr = SocketAddr::from(([127, 0, 0, 1], 42_100));
         let packet = sample_rtp_packet(421, 422);
         let miss_key =
-            PacketLoopRoutingMissKey::new(source_addr, shared_socket.candidate_addr, &packet);
+            PacketLoopRoutingMissKey::new(source_addr, shared_socket.udp_candidate_addr, &packet);
         demux.record_miss(miss_key, &packet, source_addr, Instant::now());
         assert!(demux.should_skip_scan(miss_key, &packet));
         for response in [dirty_response, queued_response] {
@@ -1943,7 +1940,7 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
                 packet_loop_state: &mut state,
                 bitrate_registry: &bitrate_registry,
                 snapshot_state: &snapshot_state,
-                candidate_addr: shared_socket.candidate_addr,
+                candidate_addr: shared_socket.udp_candidate_addr,
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,
@@ -2022,8 +2019,7 @@ fn due_heartbeat_yields_to_ready_control_without_reporting_health() -> Result<()
             &mut demux,
             &mut inputs,
         );
-        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
-            .await;
+        turn.flush_outputs(&mut shared_socket.egress).await;
         let input = turn
             .wait_for_next_input(
                 snapshot,
@@ -2070,8 +2066,7 @@ fn heartbeat_wake_does_not_create_a_timeout_turn() -> Result<(), &'static str> {
             &mut demux,
             &mut inputs,
         );
-        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
-            .await;
+        turn.flush_outputs(&mut shared_socket.egress).await;
         let wait = timeout(
             Duration::from_millis(20),
             turn.wait_for_next_input(
@@ -2106,7 +2101,7 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
         let config = packet_loop_config_for_test();
         let mut demux = super::super::packet_loop::routing_miss::DemuxRecoveryState::new();
         let mut shared_socket = test_socket()?;
-        let socket_addr = shared_socket.candidate_addr;
+        let socket_addr = shared_socket.udp_candidate_addr;
         let sender = StdUdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .map_err(|_error| "sender socket should bind")?;
         let (_command_tx, command_rx) = mpsc::channel(1);
@@ -2136,7 +2131,7 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
                 packet_loop_state: &mut state,
                 bitrate_registry: &bitrate_registry,
                 snapshot_state: &snapshot_state,
-                candidate_addr: shared_socket.candidate_addr,
+                candidate_addr: shared_socket.udp_candidate_addr,
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,

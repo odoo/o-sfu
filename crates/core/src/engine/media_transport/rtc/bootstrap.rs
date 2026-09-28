@@ -22,6 +22,7 @@ use tracing::{info, warn};
 use super::{
     RtpProfile,
     consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
+    egress::RtcEgress,
     packet_loop::{RtcUdpSocket, UdpIngress},
     state::{
         RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
@@ -97,9 +98,9 @@ pub(super) fn bind_shared_rtc_socket(
             "booted shared rtc UDP socket"
         );
         return Ok(SharedRtcSocket {
-            socket,
+            udp_candidate_addr: candidate_addr,
+            egress: RtcEgress::new(socket, candidate_addr, Arc::clone(rtc_metrics)),
             ingress,
-            candidate_addr,
         });
     }
     warn!(

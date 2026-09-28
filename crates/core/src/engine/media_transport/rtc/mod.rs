@@ -18,7 +18,9 @@
 //! exposes observations without granting access to that mutable state.
 //!
 //! [`worker::loop_driver`] governs turn ordering. [`consumer_egress`] provides
-//! receiver RTP writes. Packet processing and recovery do not call command handlers.
+//! receiver RTP writes. [`egress`] dispatches encoded transmits to network adapters
+//! after the worker releases mutable RTC state. Packet processing and recovery
+//! do not call command handlers.
 //!
 //! [`commands`] defines shared mailbox contracts, [`codec`] provides codec rules
 //! and [`bootstrap`] initializes sockets and sessions.
@@ -38,6 +40,7 @@ mod codec;
 mod commands;
 mod consumer_egress;
 mod control;
+mod egress;
 #[cfg(any(test, fuzzing))]
 #[path = "TESTS/fuzz_support/mod.rs"]
 pub(crate) mod fuzz_support;
