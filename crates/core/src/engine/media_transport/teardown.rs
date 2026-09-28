@@ -131,7 +131,11 @@ impl MediaTransport {
         target_media_worker_id: MediaWorkerId,
     ) -> Result<(), TransportAdapterError> {
         let source_worker = self.require_worker_for_user(source.session_key())?;
-        let target_worker = self.require_worker_for_media_worker_id(target_media_worker_id)?;
+        // The target handle remains in the pool after its thread exits. Its
+        // relay ID still identifies the route that the source worker must remove.
+        let Some(target_worker) = self.workers.get(target_media_worker_id.as_usize()) else {
+            return Ok(());
+        };
         if ptr::eq(source_worker, target_worker) {
             return Ok(());
         }

@@ -875,3 +875,33 @@ async fn websocket_rejects_seventeenth_trusted_origin_in_same_ipv6_subnet() -> T
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn websocket_reports_unavailable_workers_as_server_error() -> TestResult {
+    let server = TestServerBuilder::new().spawn_required().await?;
+    let room = create_room(&server, "issuer-unavailable", CreateRoomQuery::default())
+        .await
+        .expect("test room should be served");
+    let user_id = UserId::Integer(31);
+    let token = signed_connect_claims(TEST_ROOM_KEY, room.uuid(), user_id.clone())
+        .expect("valid room credentials should sign");
+    server.media_transport.shutdown().await;
+    let mut socket = authenticate_with_jwt(&server, &token)
+        .await
+        .expect("valid credentials should reach room admission");
+    assert_eq!(
+        read_close_code_promptly(&mut socket).await,
+        Some(CloseCode::Error)
+    );
+    assert!(
+        !server
+            .room_manager
+            .test_api()
+            .has_session(room.uuid(), &user_id)
+            .await
+    );
+    let metrics = server.state.metrics.snapshot();
+    assert_eq!(metrics.ws_handshake_rejected_error(), 1);
+    assert_eq!(metrics.ws_handshake_rejected_authentication_failed(), 0);
+    Ok(())
+}

@@ -274,11 +274,13 @@
 //!
 //! Rooms use one [`o_sfu_router::Router`] facade and default to one local router.
 //! [`config::RoomWorkerPolicy`] can enable additional same-process local routers.
-//! Joins then prefer assigned workers with a known delay below the configured
-//! threshold. When none qualifies, a join may attach an unused healthy worker
-//! within the router cap and worker count. If expansion is unavailable, joins
-//! reuse an assigned worker even when it exceeds the delay threshold. The
-//! single-router policy always reuses the room's primary placement.
+//! Only running workers are eligible. Joins prefer assigned workers with a known
+//! delay below the configured threshold. When none qualifies, a join may attach
+//! an unused healthy worker within the router cap and worker count. Otherwise,
+//! joins reuse a running assigned worker even when it exceeds the delay threshold.
+//! Placements on failed workers do not count toward the cap. If no assigned worker
+//! is running, a later join can attach a fresh placement on another running worker
+//! even under the single-router policy. Admission fails when no worker is running.
 //!
 //! # Feature Flags
 //!

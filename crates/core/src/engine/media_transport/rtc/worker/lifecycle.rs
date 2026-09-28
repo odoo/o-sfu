@@ -4,14 +4,16 @@
 //! [`RtcWorker::cancel`] is terminal and does not promise to drain queued command
 //! or relay mailboxes. [`RtcWorker::wait_for_shutdown`] keeps the blocking thread
 //! join out of the caller's async executor.
-#[cfg(target_os = "linux")]
 use std::{
     any::Any,
-    panic::{AssertUnwindSafe, catch_unwind},
-};
-use std::{
+    cell::Cell,
     net::IpAddr,
-    sync::{Arc, Mutex, atomic::Ordering, mpsc as std_mpsc},
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+        mpsc as std_mpsc,
+    },
     thread,
     time::Instant,
 };
@@ -19,7 +21,7 @@ use std::{
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
     sync::{mpsc, oneshot},
-    task::yield_now,
+    task::spawn_blocking,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -38,11 +40,15 @@ use super::{
 };
 use crate::{
     Bitrate, MediaWorkerId, RtcPortRange, RtcUdpIoBackend,
-    engine::media_transport::{
-        ActiveSpeakerSource, MediaTransportConfig, MediaTransportDeps, ReceiverBandwidthSnapshot,
-        SourcePolicySignal, TransportAdapterError, TransportBitrateSnapshot,
-        TransportHealthSnapshot, TransportMediaId, TransportQualitySnapshot, TransportSessionKey,
-        TransportSourceDiagnosticsSnapshot, TransportWorkerPressureSnapshot,
+    engine::{
+        media_transport::{
+            ActiveSpeakerSource, MediaTransportConfig, MediaTransportDeps,
+            ReceiverBandwidthSnapshot, SourcePolicySignal, TransportAdapterError,
+            TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
+            TransportQualitySnapshot, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
+            TransportWorkerPressureSnapshot,
+        },
+        metrics::RtcMetricsRecorder,
     },
 };
 
@@ -53,6 +59,9 @@ struct PacketLoopStartup {
     bitrate_registry: Arc<Mutex<BitrateRegistry>>,
     snapshot_state: Arc<Mutex<RtcSnapshotState>>,
     inputs: super::PacketLoopInputReceivers,
+    terminal: Arc<AtomicBool>,
+    shutdown: CancellationToken,
+    media_worker_id: MediaWorkerId,
 }
 
 impl PacketLoopStartup {
@@ -60,6 +69,7 @@ impl PacketLoopStartup {
         self,
         backend: RtcUdpIoBackend,
         startup_tx: std_mpsc::SyncSender<Result<(), TransportAdapterError>>,
+        started: &Cell<bool>,
     ) {
         let shared_socket = match bootstrap::bind_shared_rtc_socket(
             self.announced_ip,
@@ -78,6 +88,7 @@ impl PacketLoopStartup {
             // disappears. Returning releases the socket and packet-loop inputs.
             return;
         }
+        started.set(true);
         super::run_packet_loop(
             self.config,
             shared_socket,
@@ -94,22 +105,47 @@ fn spawn_tokio_packet_loop(
     startup: PacketLoopStartup,
 ) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
     let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
+    let terminal = Arc::clone(&startup.terminal);
+    let shutdown = startup.shutdown.clone();
+    let rtc_metrics = Arc::clone(&startup.config.rtc_metrics);
+    let media_worker_id = startup.media_worker_id;
     let thread = thread::Builder::new()
         .name(thread_name)
         .spawn(move || {
-            match TokioRuntimeBuilder::new_current_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-            {
-                Ok(runtime) => {
-                    runtime.block_on(startup.run(RtcUdpIoBackend::Tokio, startup_tx));
-                }
-                Err(error) => {
-                    warn!(?error, "failed to boot rtc packet loop Tokio runtime");
-                    let _ = startup_tx.send(Err(TransportAdapterError::TransportUnavailable));
-                }
-            }
+            let started = Cell::new(false);
+            let outcome =
+                catch_unwind(AssertUnwindSafe(
+                    || match TokioRuntimeBuilder::new_current_thread()
+                        .enable_io()
+                        .enable_time()
+                        .build()
+                    {
+                        Ok(runtime) => {
+                            runtime.block_on(startup.run(
+                                RtcUdpIoBackend::Tokio,
+                                startup_tx,
+                                &started,
+                            ));
+                        }
+                        Err(error) => {
+                            warn!(
+                                ?media_worker_id,
+                                ?error,
+                                "failed to boot rtc packet loop Tokio runtime"
+                            );
+                            let _ =
+                                startup_tx.send(Err(TransportAdapterError::TransportUnavailable));
+                        }
+                    },
+                ));
+            mark_thread_exit(
+                &terminal,
+                started.get(),
+                &shutdown,
+                &rtc_metrics,
+                media_worker_id,
+                outcome,
+            );
         })
         .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
     wait_for_packet_loop_startup(thread, &startup_rx)
@@ -121,24 +157,54 @@ fn spawn_io_uring_packet_loop(
     startup: PacketLoopStartup,
 ) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
     let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
+    let terminal = Arc::clone(&startup.terminal);
+    let shutdown = startup.shutdown.clone();
+    let rtc_metrics = Arc::clone(&startup.config.rtc_metrics);
+    let media_worker_id = startup.media_worker_id;
     let thread = thread::Builder::new()
         .name(thread_name)
         .spawn(move || {
-            let startup_err_tx = startup_tx.clone();
-            // `tokio_uring::start` unwraps runtime creation. Catch that panic in
-            // the worker thread so startup can report failure and join the thread.
-            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
-                tokio_uring::start(startup.run(RtcUdpIoBackend::IoUring, startup_tx));
-            })) {
-                warn!(
-                    panic = panic_message(payload.as_ref()),
-                    "rtc packet loop io_uring runtime panicked"
-                );
-                let _ = startup_err_tx.send(Err(TransportAdapterError::TransportUnavailable));
-            }
+            let started = Cell::new(false);
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                tokio_uring::start(startup.run(RtcUdpIoBackend::IoUring, startup_tx, &started));
+            }));
+            mark_thread_exit(
+                &terminal,
+                started.get(),
+                &shutdown,
+                &rtc_metrics,
+                media_worker_id,
+                outcome,
+            );
         })
         .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
     wait_for_packet_loop_startup(thread, &startup_rx)
+}
+
+fn mark_thread_exit(
+    terminal: &AtomicBool,
+    started: bool,
+    shutdown: &CancellationToken,
+    rtc_metrics: &RtcMetricsRecorder,
+    media_worker_id: MediaWorkerId,
+    outcome: Result<(), Box<dyn Any + Send>>,
+) {
+    terminal.store(true, Ordering::Release);
+    let panicked = outcome.is_err();
+    if let Err(payload) = outcome {
+        warn!(
+            ?media_worker_id,
+            panic = panic_message(payload.as_ref()),
+            "rtc packet loop worker panicked"
+        );
+    }
+    if started && (panicked || !shutdown.is_cancelled()) {
+        rtc_metrics.record_rtc_worker_terminal_failure();
+        warn!(
+            ?media_worker_id,
+            "rtc packet loop worker exited unexpectedly"
+        );
+    }
 }
 
 fn wait_for_packet_loop_startup(
@@ -158,7 +224,6 @@ fn wait_for_packet_loop_startup(
     }
 }
 
-#[cfg(target_os = "linux")]
 fn panic_message(payload: &(dyn Any + Send)) -> &str {
     if let Some(message) = payload.downcast_ref::<&'static str>() {
         message
@@ -171,16 +236,14 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
 
 impl Drop for RtcWorker {
     fn drop(&mut self) {
-        let shutdown_started = self.shutdown.is_cancelled();
+        self.handle.terminal.store(true, Ordering::Release);
         self.shutdown.cancel();
-        // A drop that initiates shutdown owns the blocking join. After `cancel`,
-        // Drop must stay nonblocking and joins only an already-finished thread.
-        // `MediaTransport::shutdown` waits asynchronously before final drop.
-        if let Some(thread) = self.thread.take()
-            && (!shutdown_started || thread.is_finished())
-        {
-            let _ = thread.join();
-        }
+        // Dropping a JoinHandle detaches its thread. Drop cannot block an async caller.
+        let _ = self
+            .thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 }
 
@@ -213,6 +276,7 @@ impl RtcWorker {
         let snapshot_state = Arc::new(Mutex::new(RtcSnapshotState::default()));
         let packet_loop_delay = Arc::new(super::PacketLoopDelaySnapshot::new(Instant::now()));
         let shutdown = CancellationToken::new();
+        let terminal = Arc::new(AtomicBool::new(false));
         let handle = RtcWorkerHandle {
             command_tx,
             #[cfg(any(test, feature = "testing-transport"))]
@@ -221,6 +285,7 @@ impl RtcWorker {
             bitrate_registry: Arc::clone(&bitrate_registry),
             snapshot_state: Arc::clone(&snapshot_state),
             packet_loop_delay: Arc::clone(&packet_loop_delay),
+            terminal: Arc::clone(&terminal),
         };
         let packet_loop_inputs =
             super::PacketLoopInputReceivers::new(command_rx, relay_rx, shutdown.clone());
@@ -252,6 +317,9 @@ impl RtcWorker {
             bitrate_registry,
             snapshot_state,
             inputs: packet_loop_inputs,
+            terminal,
+            shutdown: shutdown.clone(),
+            media_worker_id,
         };
         let thread_name = format!("rtc-packet-loop-{relay_target_id:?}");
         let thread = match config.rtc_udp_io_backend {
@@ -281,7 +349,8 @@ impl RtcWorker {
             relay_target_id,
             handle,
             shutdown,
-            thread: Some(thread),
+            thread: Mutex::new(Some(thread)),
+            join_completion: CancellationToken::new(),
             #[cfg(any(test, feature = "testing-transport"))]
             metrics: Arc::clone(metrics),
             rtc_metrics,
@@ -296,21 +365,33 @@ impl RtcWorker {
     /// wait boundary cancellation wins over commands and relay packets still
     /// queued, so [`Self::cancel`] does not drain either mailbox.
     pub(in crate::engine::media_transport) fn cancel(&self) {
+        self.handle.terminal.store(true, Ordering::Release);
         self.shutdown.cancel();
     }
 
-    /// Waits until the packet loop drops its command receiver and its OS thread exits.
+    /// Waits for the worker OS thread to exit and joins it off the async executor.
     ///
-    /// [`Self::cancel`] must run first during normal operation. The finished
-    /// [`thread::JoinHandle`] remains owned by [`Drop`] so this async wait never
-    /// blocks the caller's executor.
+    /// Cancellation starts before joining. A canceled waiter leaves the blocking
+    /// join running so another shutdown caller can still await completion.
     pub(in crate::engine::media_transport) async fn wait_for_shutdown(&self) {
-        self.handle.command_tx.closed().await;
-        if let Some(thread) = &self.thread {
-            while !thread.is_finished() {
-                yield_now().await;
-            }
+        self.cancel();
+        let thread = self
+            .thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(thread) = thread {
+            let completion = self.join_completion.clone();
+            spawn_blocking(move || {
+                let _ = thread.join();
+                completion.cancel();
+            });
         }
+        self.join_completion.cancelled().await;
+    }
+
+    pub(in crate::engine::media_transport) fn is_usable(&self) -> bool {
+        !self.handle.terminal.load(Ordering::Acquire)
     }
 
     /// Enqueues one bounded-mailbox command and waits for its oneshot result.
@@ -323,12 +404,15 @@ impl RtcWorker {
     /// # Errors
     ///
     /// Returns the command handler error or
-    /// [`TransportAdapterError::TransportUnavailable`] when command delivery or
-    /// response receipt fails.
+    /// [`TransportAdapterError::TransportUnavailable`] when delivery fails,
+    /// the worker exits.
     pub async fn request_worker<T, F>(&self, build_command: F) -> Result<T, TransportAdapterError>
     where
         F: FnOnce(RtcWorkerResponse<T>) -> RtcWorkerCommand,
     {
+        if !self.is_usable() {
+            return Err(TransportAdapterError::TransportUnavailable);
+        }
         let (response_tx, response_rx) = oneshot::channel();
         self.handle
             .command_tx
@@ -418,12 +502,16 @@ impl RtcWorker {
 
     /// reads the latest transport health side-channel entry for one session
     ///
-    /// `None` means the snapshot lock is unavailable or no health event has
-    /// been observed for the session
+    /// A stopped worker reports `Disconnected` for every assigned session.
+    /// Otherwise `None` means the snapshot lock is unavailable or no health
+    /// event has been observed for the session.
     pub fn session_transport_health(
         &self,
         session_key: &TransportSessionKey,
     ) -> Option<TransportSessionHealth> {
+        if !self.is_usable() {
+            return Some(TransportSessionHealth::Disconnected);
+        }
         let Ok(snapshot_state) = self.handle.snapshot_state.lock() else {
             return None;
         };
@@ -432,11 +520,20 @@ impl RtcWorker {
 
     /// Reads transport health for selected sessions under one snapshot lock.
     ///
-    /// Missing sessions are omitted and an unavailable snapshot lock returns no facts
+    /// A stopped worker reports `Disconnected` for every requested session.
+    /// Otherwise missing sessions are omitted and an unavailable snapshot lock
+    /// returns no facts.
     pub fn transport_health_snapshot(
         &self,
         session_keys: &[TransportSessionKey],
     ) -> TransportHealthSnapshot {
+        if !self.is_usable() {
+            return session_keys
+                .iter()
+                .cloned()
+                .map(|key| (key, TransportSessionHealth::Disconnected))
+                .collect();
+        }
         let Ok(snapshot_state) = self.handle.snapshot_state.lock() else {
             return TransportHealthSnapshot::default();
         };

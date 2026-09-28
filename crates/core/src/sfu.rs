@@ -255,8 +255,9 @@ impl SfuCore {
     ///
     /// Returns [`RoomManagerJoinError::MissingRoom`] when `room_id` is not
     /// current. Returns [`RoomManagerJoinError::RoomFull`] when a new user
-    /// exceeds room capacity. Returns [`RoomManagerJoinError::RouterState`] when
-    /// router placement cannot commit.
+    /// exceeds room capacity. Returns [`RoomManagerJoinError::NoUsableWorker`]
+    /// when no configured worker is usable. Returns [`RoomManagerJoinError::RouterState`]
+    /// when router placement cannot commit.
     ///
     /// # Panics
     ///

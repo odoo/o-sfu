@@ -17,6 +17,8 @@ use crate::{
 pub enum RoomJoinError {
     #[error("room is full")]
     RoomFull,
+    #[error("no usable media worker")]
+    NoUsableWorker,
     #[error("router state error")]
     RouterState,
 }
@@ -27,6 +29,8 @@ pub enum RoomManagerJoinError {
     MissingRoom,
     #[error("room is full")]
     RoomFull,
+    #[error("no usable media worker")]
+    NoUsableWorker,
     #[error("router state error")]
     RouterState,
 }

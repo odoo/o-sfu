@@ -24,6 +24,13 @@ use crate::engine::{
     },
 };
 
+/// Worker availability is independent of missing or delayed loop samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WorkerPlacementState {
+    Running(Option<u64>),
+    Unavailable,
+}
+
 impl MediaTransport {
     /// Selects the worker that owns a transport session.
     ///
@@ -145,10 +152,24 @@ impl MediaTransport {
             .collect()
     }
 
+    #[cfg(any(test, feature = "testing-transport"))]
     pub(crate) fn packet_loop_delays_ms(&self) -> Vec<Option<u64>> {
         self.workers
             .iter()
             .map(RtcWorker::packet_loop_delay_ms)
+            .collect()
+    }
+
+    pub(crate) fn worker_placement_states(&self) -> Vec<WorkerPlacementState> {
+        self.workers
+            .iter()
+            .map(|worker| {
+                if worker.is_usable() {
+                    WorkerPlacementState::Running(worker.packet_loop_delay_ms())
+                } else {
+                    WorkerPlacementState::Unavailable
+                }
+            })
             .collect()
     }
 
@@ -269,6 +290,7 @@ impl MediaTransport {
         session_key: &TransportSessionKey,
     ) -> Result<&RtcWorker, TransportAdapterError> {
         self.worker_for_user(session_key)
+            .filter(|worker| worker.is_usable())
             .ok_or(TransportAdapterError::TransportUnavailable)
     }
 
@@ -277,6 +299,7 @@ impl MediaTransport {
         media_worker_id: MediaWorkerId,
     ) -> Result<&RtcWorker, TransportAdapterError> {
         self.worker_for_index(media_worker_id.as_usize())
+            .filter(|worker| worker.is_usable())
             .ok_or(TransportAdapterError::TransportUnavailable)
     }
 

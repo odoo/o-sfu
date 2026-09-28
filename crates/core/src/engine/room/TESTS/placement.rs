@@ -39,13 +39,29 @@ fn policy(max_local_routers: usize, threshold_ms: u64) -> RoomWorkerPolicy {
     )
 }
 
+fn choose_placement_for_test(
+    room: &PlacementSnapshot,
+    policy: RoomWorkerPolicy,
+    delays_ms: &[Option<u64>],
+    start_worker: usize,
+    allocate: impl FnOnce() -> RouterId,
+) -> RouterPlacement {
+    let workers = delays_ms
+        .iter()
+        .copied()
+        .map(WorkerPlacementState::Running)
+        .collect::<Vec<_>>();
+    choose_placement(room, policy, &workers, start_worker, allocate)
+        .expect("running worker should accept placement")
+}
+
 fn choose(
     room: &PlacementSnapshot,
     policy: RoomWorkerPolicy,
     delays_ms: &[Option<u64>],
     start_worker: usize,
 ) -> RouterPlacement {
-    choose_placement(room, policy, delays_ms, start_worker, || RouterId(8))
+    choose_placement_for_test(room, policy, delays_ms, start_worker, || RouterId(8))
 }
 
 #[test]
@@ -162,7 +178,7 @@ fn spillover_router_allocation_is_lazy() {
     let primary = placement(7, 0);
 
     assert_eq!(
-        choose_placement(
+        choose_placement_for_test(
             &room_with(primary, Vec::new()),
             policy(2, 20),
             &[Some(0), Some(0)],
@@ -172,7 +188,7 @@ fn spillover_router_allocation_is_lazy() {
         primary
     );
     assert_eq!(
-        choose_placement(
+        choose_placement_for_test(
             &room_with(primary, Vec::new()),
             RoomWorkerPolicy::strict_single_router(),
             &[Some(20), Some(0)],
@@ -182,7 +198,7 @@ fn spillover_router_allocation_is_lazy() {
         primary
     );
     assert_eq!(
-        choose_placement(
+        choose_placement_for_test(
             &room_with(primary, vec![placement(9, 1)]),
             policy(2, 20),
             &[Some(20), Some(20)],
@@ -194,7 +210,7 @@ fn spillover_router_allocation_is_lazy() {
     assert_eq!(allocations.get(), 0);
 
     assert_eq!(
-        choose_placement(
+        choose_placement_for_test(
             &room_with(primary, Vec::new()),
             policy(2, 20),
             &[Some(20), Some(0)],
@@ -204,4 +220,75 @@ fn spillover_router_allocation_is_lazy() {
         placement(8, 1)
     );
     assert_eq!(allocations.get(), 1);
+}
+
+#[test]
+fn failed_workers_do_not_receive_primary_or_spillover_placement() {
+    let workers = [
+        WorkerPlacementState::Unavailable,
+        WorkerPlacementState::Running(Some(0)),
+    ];
+    assert_eq!(
+        choose_placement(&unassigned_room(), policy(2, 20), &workers, 0, || RouterId(
+            8
+        )),
+        Ok(placement(7, 1))
+    );
+    assert_eq!(
+        choose_placement(
+            &room_with(placement(7, 0), Vec::new()),
+            policy(2, 20),
+            &workers,
+            0,
+            || RouterId(8),
+        ),
+        Ok(placement(8, 1))
+    );
+}
+
+#[test]
+fn failed_router_does_not_consume_live_placement_capacity() {
+    let workers = [
+        WorkerPlacementState::Unavailable,
+        WorkerPlacementState::Running(Some(0)),
+    ];
+    assert_eq!(
+        choose_placement(
+            &room_with(placement(7, 0), Vec::new()),
+            RoomWorkerPolicy::strict_single_router(),
+            &workers,
+            0,
+            || RouterId(8),
+        ),
+        Ok(placement(8, 1))
+    );
+    assert_eq!(
+        choose_placement(
+            &unassigned_room(),
+            policy(2, 20),
+            &[WorkerPlacementState::Unavailable],
+            0,
+            || RouterId(8),
+        ),
+        Err(RoomJoinError::NoUsableWorker)
+    );
+}
+
+#[test]
+fn failed_router_assignments_do_not_fill_spillover_cap() {
+    let workers = [
+        WorkerPlacementState::Unavailable,
+        WorkerPlacementState::Unavailable,
+        WorkerPlacementState::Running(Some(0)),
+    ];
+    assert_eq!(
+        choose_placement(
+            &room_with(placement(7, 0), vec![placement(8, 1)]),
+            policy(2, 20),
+            &workers,
+            0,
+            || RouterId(9),
+        ),
+        Ok(placement(9, 2))
+    );
 }

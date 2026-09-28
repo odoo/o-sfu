@@ -283,8 +283,9 @@ impl RoomManager {
     ///
     /// Returns [`RoomManagerJoinError::MissingRoom`] when `room_id` is not
     /// current. Returns [`RoomManagerJoinError::RoomFull`] when a new user
-    /// exceeds room capacity. Returns [`RoomManagerJoinError::RouterState`] when
-    /// router placement cannot commit.
+    /// exceeds room capacity. Returns [`RoomManagerJoinError::NoUsableWorker`]
+    /// when no worker can accept placement and [`RoomManagerJoinError::RouterState`]
+    /// when router placement cannot commit.
     pub async fn join_user(
         &self,
         room_id: &str,
@@ -310,6 +311,7 @@ impl RoomManager {
                 return Err(match err {
                     RoomJoinError::RoomFull => RoomManagerJoinError::RoomFull,
                     RoomJoinError::RouterState => RoomManagerJoinError::RouterState,
+                    RoomJoinError::NoUsableWorker => RoomManagerJoinError::NoUsableWorker,
                 });
             }
         };

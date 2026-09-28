@@ -76,6 +76,7 @@ pub use types::{
 };
 pub(crate) use types::{SourceActivityRevision, SourceActivityUpdate};
 
+pub(crate) use self::workers::WorkerPlacementState;
 use self::workers::signaling_to_str0m_media_kind;
 use crate::engine::metrics::RuntimeMetrics;
 

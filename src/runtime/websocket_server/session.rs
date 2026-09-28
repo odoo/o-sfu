@@ -185,8 +185,9 @@ async fn admit(
         Err(error) => {
             let code = match error {
                 RoomManagerJoinError::RoomFull => CloseCode::RoomFull,
-                RoomManagerJoinError::MissingRoom | RoomManagerJoinError::RouterState => {
-                    CloseCode::AuthFailed
+                RoomManagerJoinError::MissingRoom => CloseCode::AuthFailed,
+                RoomManagerJoinError::NoUsableWorker | RoomManagerJoinError::RouterState => {
+                    CloseCode::Error
                 }
             };
             warn!(

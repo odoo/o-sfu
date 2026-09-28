@@ -54,7 +54,8 @@ impl Room {
     /// # Errors
     ///
     /// Returns [`RoomJoinError::RoomFull`] when a new user exceeds capacity.
-    /// Returns [`RoomJoinError::RouterState`] when placement cannot commit.
+    /// Returns [`RoomJoinError::NoUsableWorker`] when no configured worker is usable.
+    /// Returns [`RoomJoinError::RouterState`] when router placement cannot commit.
     pub(super) async fn commit_admission(
         &self,
         admission: JoinAdmissionTurn<'_, impl FnOnce() -> o_sfu_router::RouterId>,
