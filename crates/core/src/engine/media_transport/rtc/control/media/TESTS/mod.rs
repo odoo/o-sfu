@@ -54,11 +54,16 @@ use crate::{
                 consumer_egress::test_support::{
                     SourceRtpIdentity, project_identity, queue_repairable_write,
                 },
-                recovery::{observe_src_rid_ready, request_recovery_kf, retry_source_kf},
+                recovery::{
+                    drain_due_publisher_kf, observe_src_rid_ready, request_consumer_feedback_kf,
+                    request_recovery_kf, retry_source_kf, worker_request_remote_kf,
+                    worker_request_resumed_video_kf,
+                },
                 state::{
                     PacketLoopState,
                     keyframe_tracker::{
-                        KeyframeRequestDecision, KeyframeRequestOrigin, SourceKeyframeRequest,
+                        KeyframeRequestDecision, KeyframeRequestOrigin, PublisherRequestDemand,
+                        SourceKeyframeRequest,
                     },
                     media_registry::{ConsumerKeyframeTarget, RegisteredMediaHandle},
                     relay_registry::{RelayPacketMailbox, RelayTargetId},
@@ -581,6 +586,7 @@ fn remote_keyframe_requests_drop_when_the_relay_target_is_inactive() {
     apply_route_control_request(
         &mut state,
         &rtc_metrics,
+        Instant::now(),
         RouteControlRequest::RequestRemoteKeyframe {
             source: TransportSourceKey::new(source_session.clone(), src_media),
             target_id: RelayTargetId::new(7),
@@ -626,6 +632,7 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
     apply_route_control_request(
         &mut route.state,
         &route.rtc_metrics,
+        Instant::now(),
         RouteControlRequest::SetRemoteSourceActivity {
             source: source.clone(),
             update: SourceActivityUpdate::new(ProducerActivity::Inactive, second_revision),
@@ -649,6 +656,7 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
     apply_route_control_request(
         &mut route.state,
         &route.rtc_metrics,
+        Instant::now(),
         RouteControlRequest::SetRemoteSourceActivity {
             source: source.clone(),
             update: SourceActivityUpdate::new(ProducerActivity::Active, first_revision),
@@ -660,6 +668,7 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
     apply_route_control_request(
         &mut route.state,
         &route.rtc_metrics,
+        Instant::now(),
         RouteControlRequest::SetRemoteSourceActivity {
             source,
             update: SourceActivityUpdate::new(ProducerActivity::Active, third_revision),
@@ -671,7 +680,7 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
 }
 
 #[test]
-fn source_worker_forwards_each_coalesced_remote_keyframe_request() {
+fn source_worker_defers_coalesced_remote_keyframe_requests() {
     let source_session = test_source_session_key(111);
     let source_mid = Mid::from("cam-up");
     let mut state = PacketLoopState::default();
@@ -680,17 +689,26 @@ fn source_worker_forwards_each_coalesced_remote_keyframe_request() {
     let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let src_media = prepare_source_session(&mut state, &source_session, source_mid, 77_777);
     let relay_target_id = RelayTargetId::new(8);
+    let other_relay_target_id = RelayTargetId::new(9);
+    let (other_mailbox, _other_relay_rx) = RelayPacketMailbox::channel_for_test();
 
     state
         .routes
         .add_relay_target(src_media, relay_target_id, mailbox);
     state
         .routes
+        .add_relay_target(src_media, other_relay_target_id, other_mailbox);
+    state
+        .routes
         .set_relay_target_active(src_media, relay_target_id, true);
+    state
+        .routes
+        .set_relay_target_active(src_media, other_relay_target_id, true);
 
     apply_route_control_request(
         &mut state,
         &rtc_metrics,
+        Instant::now(),
         RouteControlRequest::RequestRemoteKeyframe {
             source: TransportSourceKey::new(source_session.clone(), src_media),
             target_id: relay_target_id,
@@ -702,9 +720,22 @@ fn source_worker_forwards_each_coalesced_remote_keyframe_request() {
     apply_route_control_request(
         &mut state,
         &rtc_metrics,
+        Instant::now(),
         RouteControlRequest::RequestRemoteKeyframe {
             source: TransportSourceKey::new(source_session.clone(), src_media),
             target_id: relay_target_id,
+            rid: None,
+            kind: KeyframeRequestKind::Pli,
+        },
+        None,
+    );
+    apply_route_control_request(
+        &mut state,
+        &rtc_metrics,
+        Instant::now(),
+        RouteControlRequest::RequestRemoteKeyframe {
+            source: TransportSourceKey::new(source_session.clone(), src_media),
+            target_id: other_relay_target_id,
             rid: None,
             kind: KeyframeRequestKind::Fir,
         },
@@ -716,10 +747,18 @@ fn source_worker_forwards_each_coalesced_remote_keyframe_request() {
         vec![source_session.clone()]
     );
     let snapshot = metrics.snapshot();
-    assert_eq!(snapshot.rtc_route_control_forwarded(), 2);
+    assert_eq!(snapshot.rtc_route_control_forwarded(), 1);
+    assert_eq!(snapshot.rtc_keyframe_requests_deferred(), 2);
     assert_eq!(snapshot.rtc_route_control_absorbed(), 0);
     assert_eq!(snapshot.rtc_route_control_route_gated_relay_drops(), 0);
     assert!(state.routes.next_kf_deadline().is_none());
+    state.routes.remove_relay_target(src_media, relay_target_id);
+    let Some(deadline) = state.routes.publisher_keyframes.next_deadline() else {
+        panic!("publisher deferred request should have a deadline");
+    };
+    drain_due_publisher_kf(&mut state, &rtc_metrics, deadline);
+    assert_eq!(drain_ready_sessions(&mut state), vec![source_session]);
+    assert_eq!(metrics.snapshot().rtc_route_control_forwarded(), 2);
 }
 
 #[test]
@@ -906,6 +945,106 @@ fn open_consumer_keyframe_request_refreshes_simulcast_video_source() {
     route.request_kf();
     route.assert_source_ready();
     assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 1);
+
+    let target_id = RelayTargetId::new(225);
+    let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+    route
+        .state
+        .routes
+        .add_relay_target(route.src_media, target_id, mailbox);
+    route
+        .state
+        .routes
+        .set_relay_target_active(route.src_media, target_id, true);
+    let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        target_id,
+        Some(Rid::from("hi")),
+        KeyframeRequestKind::Pli,
+        Instant::now(),
+    );
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        target_id,
+        None,
+        KeyframeRequestKind::Pli,
+        Instant::now(),
+    );
+    assert_eq!(route.metrics.snapshot().rtc_keyframe_requests_deferred(), 2);
+    let Some(deadline) = route.state.routes.publisher_keyframes.next_deadline() else {
+        panic!("overlapping RID requests should be deferred");
+    };
+    drain_due_publisher_kf(&mut route.state, &route.rtc_metrics, deadline);
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 3);
+}
+
+#[test]
+fn relay_demand_does_not_keep_local_publisher_feedback_alive() {
+    let mut route = LocalVideoRoute::new(226, 88_203);
+    let target_id = RelayTargetId::new(226);
+    let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+    route
+        .state
+        .routes
+        .add_relay_target(route.src_media, target_id, mailbox);
+    route
+        .state
+        .routes
+        .set_relay_target_active(route.src_media, target_id, true);
+    assert!(route.state.routes.has_kf_demand(route.src_media, None));
+    assert!(
+        route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, None)
+    );
+    route
+        .state
+        .routes
+        .set_consumer_active(
+            route.src_media,
+            0,
+            &route.consumer_session,
+            route.consumer_media,
+            false,
+        )
+        .expect("consumer destination should exist");
+    assert!(route.state.routes.has_kf_demand(route.src_media, None));
+    assert!(
+        !route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, None)
+    );
+
+    let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
+    let start = Instant::now();
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        target_id,
+        None,
+        KeyframeRequestKind::Pli,
+        start,
+    );
+    worker_request_resumed_video_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        start + Duration::from_millis(100),
+    );
+    assert_eq!(route.metrics.snapshot().rtc_keyframe_requests_deferred(), 1);
+    let Some(deadline) = route.state.routes.publisher_keyframes.next_deadline() else {
+        panic!("source-wide recovery should remain pending for relay-only demand");
+    };
+    drain_due_publisher_kf(&mut route.state, &route.rtc_metrics, deadline);
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);
 }
 
 #[test]
@@ -1618,6 +1757,156 @@ fn relayed_selected_rid_retries_while_decoder_demand_remains() {
     assert!(route.state.routes.next_kf_deadline().is_some());
 }
 
+fn add_open_gate_rid_stream(route: &mut LocalVideoRoute, ssrc: u32) {
+    let source_mid = Mid::from("cam-up");
+    add_source_rid_stream(
+        &mut route.state,
+        &route.source_session,
+        source_mid,
+        ssrc,
+        Rid::from("lo"),
+    );
+    let Some(session) = route.state.users.get_mut(&route.source_session) else {
+        panic!("source session should exist after route setup");
+    };
+    session
+        .sdp_negotiation
+        .negotiated_producer_parameters
+        .insert(
+            source_mid,
+            RouterRtpParameters::new(
+                vec![],
+                vec![],
+                vec![StreamBinding::new().with_ssrc(ssrc).with_rid("lo")],
+            )
+            .with_mid(source_mid.to_string()),
+        );
+    assert!(
+        route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, None)
+    );
+    assert!(
+        !route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, Some(Rid::from("lo")))
+    );
+}
+
+#[test]
+fn source_wide_deferred_request_survives_open_gate_after_relay_retirement() {
+    let mut route = LocalVideoRoute::new(227, 88_204);
+    add_open_gate_rid_stream(&mut route, 88_205);
+    let relay_id = RelayTargetId::new(227);
+    let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+    route
+        .state
+        .routes
+        .add_relay_target(route.src_media, relay_id, mailbox);
+    route
+        .state
+        .routes
+        .set_relay_target_active(route.src_media, relay_id, true);
+    let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
+    let now = Instant::now();
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        relay_id,
+        None,
+        KeyframeRequestKind::Pli,
+        now,
+    );
+    route
+        .state
+        .routes
+        .remove_relay_target(route.src_media, relay_id);
+    worker_request_resumed_video_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        now + Duration::from_millis(100),
+    );
+    assert_eq!(route.metrics.snapshot().rtc_keyframe_requests_deferred(), 1);
+    let Some(deadline) = route.state.routes.publisher_keyframes.next_deadline() else {
+        panic!("source-wide request should remain deferred");
+    };
+    drain_due_publisher_kf(&mut route.state, &route.rtc_metrics, deadline);
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);
+}
+
+#[test]
+fn source_wide_local_fir_remains_strongest_with_relay_pli() {
+    let mut route = LocalVideoRoute::new(228, 88_205);
+    add_open_gate_rid_stream(&mut route, 88_206);
+    let relay_id = RelayTargetId::new(228);
+    let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+    route
+        .state
+        .routes
+        .add_relay_target(route.src_media, relay_id, mailbox);
+    route
+        .state
+        .routes
+        .set_relay_target_active(route.src_media, relay_id, true);
+    let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
+    let now = Instant::now();
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        relay_id,
+        None,
+        KeyframeRequestKind::Pli,
+        now,
+    );
+    request_consumer_feedback_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        SourceKeyframeRequest {
+            src_media: route.src_media,
+            rid: None,
+            kind: KeyframeRequestKind::Fir,
+        },
+        now + Duration::from_millis(100),
+    );
+    worker_request_remote_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        &source,
+        relay_id,
+        None,
+        KeyframeRequestKind::Pli,
+        now + Duration::from_millis(200),
+    );
+    let Some(due) = route
+        .state
+        .routes
+        .publisher_keyframes
+        .take_due(now + Duration::from_millis(300))
+    else {
+        panic!("coalesced publisher request should become due");
+    };
+    let kind = due.active_kind(|demand| match demand {
+        PublisherRequestDemand::Local(requested_rid) => route
+            .state
+            .routes
+            .has_local_kf_demand(due.src_media, requested_rid),
+        PublisherRequestDemand::Source(requested_rid) => route
+            .state
+            .routes
+            .has_kf_demand(due.src_media, requested_rid),
+        PublisherRequestDemand::Relay(target_id) => route
+            .state
+            .routes
+            .source_relay_target_is_active(due.src_media, target_id),
+    });
+    assert_eq!(kind, Some(KeyframeRequestKind::Fir));
+}
+
 #[test]
 fn remote_keyframe_retry_clears_tracking_when_feedback_closes() {
     let mut route = RemoteVideoRoute::new(142, 62, 19);
@@ -2214,6 +2503,7 @@ fn remote_source_packet_gate_ignores_wrong_source_owner() {
     apply_route_control_request(
         &mut state,
         &rtc_metrics,
+        Instant::now(),
         RouteControlRequest::SetRemoteSourcePacketGate {
             source: TransportSourceKey::new(wrong_session, src_media),
             target_id: RelayTargetId::new(9),

@@ -12,7 +12,10 @@ use super::super::{
     commands::{RemoteControlSendOutcome, RemoteSourceControl},
     state::{
         PacketLoopState,
-        keyframe_tracker::{KeyframeRequestDecision, KeyframeRequestOrigin, SourceKeyframeRequest},
+        keyframe_tracker::{
+            KeyframeRequestDecision, KeyframeRequestOrigin, PUBLISHER_KEYFRAME_DRAIN_LIMIT,
+            PublisherRequestDemand, SourceKeyframeRequest,
+        },
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayTargetId,
         source_route::{MediaRouteDestination, RemoteSourceRegistration},
@@ -34,6 +37,7 @@ pub fn worker_request_remote_kf(
     target_id: RelayTargetId,
     rid: Option<Rid>,
     kind: KeyframeRequestKind,
+    now: Instant,
 ) {
     let src_media = src.transport_media_id();
     // The consumer worker owns coalescing and retries. Revalidate the relay
@@ -51,14 +55,16 @@ pub fn worker_request_remote_kf(
         state,
         metrics,
         src.session_key(),
-        LocalKeyframeRequest {
+        PublisherKeyframeRequest {
             source: SourceKeyframeRequest {
                 src_media,
                 rid,
                 kind,
             },
+            demand: PublisherRequestDemand::Relay(target_id),
         },
         KeyframeRequestMode::Forward,
+        now,
     );
 }
 
@@ -91,7 +97,15 @@ pub fn request_source_recovery_kf(
     src_media: TransportMediaId,
     now: Instant,
 ) -> bool {
-    request_recovery_kf(state, metrics, observed_source, src_media, None, now)
+    request_recovery_with_demand(
+        state,
+        metrics,
+        observed_source,
+        src_media,
+        None,
+        now,
+        PublisherRequestDemand::Source(None),
+    )
 }
 
 /// Resolves a current source and requests decoder recovery for its selected RID.
@@ -103,20 +117,14 @@ pub fn request_recovery_kf(
     rid: Option<Rid>,
     now: Instant,
 ) -> bool {
-    let mode = KeyframeRequestMode::for_recovery(
-        now,
-        state.routes.decoder_refresh_is_observable(src_media),
-    );
-    request_source_kf(
+    request_recovery_with_demand(
         state,
         metrics,
-        SourceKeyframeRequest {
-            src_media,
-            rid,
-            kind: KeyframeRequestKind::Pli,
-        },
-        Some(observed_source),
-        mode,
+        observed_source,
+        src_media,
+        rid,
+        now,
+        PublisherRequestDemand::Local(rid),
     )
 }
 
@@ -139,6 +147,36 @@ pub(super) fn request_decoder_readiness_kf(
         },
         Some(observed_source),
         KeyframeRequestMode::for_recovery(now, true),
+        PublisherRequestDemand::Local(Some(rid)),
+        now,
+    )
+}
+
+fn request_recovery_with_demand(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    observed_source: &TransportSessionKey,
+    src_media: TransportMediaId,
+    rid: Option<Rid>,
+    now: Instant,
+    demand: PublisherRequestDemand,
+) -> bool {
+    let mode = KeyframeRequestMode::for_recovery(
+        now,
+        state.routes.decoder_refresh_is_observable(src_media),
+    );
+    request_source_kf(
+        state,
+        metrics,
+        SourceKeyframeRequest {
+            src_media,
+            rid,
+            kind: KeyframeRequestKind::Pli,
+        },
+        Some(observed_source),
+        mode,
+        demand,
+        now,
     )
 }
 
@@ -157,6 +195,8 @@ pub fn request_consumer_feedback_kf(
             now,
             origin: KeyframeRequestOrigin::ConsumerFeedback,
         },
+        PublisherRequestDemand::Local(request.rid),
+        now,
     );
 }
 
@@ -164,10 +204,18 @@ pub fn retry_source_kf(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
     request: SourceKeyframeRequest,
-    _now: Instant,
+    now: Instant,
 ) {
     if !state.routes.has_kf_demand(request.src_media, request.rid)
-        || !request_source_kf(state, metrics, request, None, KeyframeRequestMode::Retry)
+        || !request_source_kf(
+            state,
+            metrics,
+            request,
+            None,
+            KeyframeRequestMode::Retry,
+            PublisherRequestDemand::Source(request.rid),
+            now,
+        )
     {
         state.routes.forget_kf_req(request.src_media, request.rid);
     }
@@ -179,6 +227,8 @@ fn request_source_kf(
     request: SourceKeyframeRequest,
     observed_source: Option<&TransportSessionKey>,
     mode: KeyframeRequestMode,
+    demand: PublisherRequestDemand,
+    now: Instant,
 ) -> bool {
     let SourceKeyframeRequest {
         src_media,
@@ -195,8 +245,12 @@ fn request_source_kf(
             state,
             metrics,
             &src_key,
-            LocalKeyframeRequest { source: request },
+            PublisherKeyframeRequest {
+                source: request,
+                demand,
+            },
             mode,
+            now,
         );
         return true;
     }
@@ -261,16 +315,18 @@ impl KeyframeRequestMode {
 }
 
 #[derive(Clone, Copy)]
-struct LocalKeyframeRequest {
+struct PublisherKeyframeRequest {
     source: SourceKeyframeRequest,
+    demand: PublisherRequestDemand,
 }
 
 fn request_local_kf(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
     src_key: &TransportSessionKey,
-    request: LocalKeyframeRequest,
+    request: PublisherKeyframeRequest,
     mode: KeyframeRequestMode,
+    now: Instant,
 ) {
     let SourceKeyframeRequest {
         src_media,
@@ -291,18 +347,22 @@ fn request_local_kf(
             if !track_kf_req(state, metrics, src_media, target_rid, kind, mode) {
                 continue;
             }
-            if request_kf_from_producer(
+            match request_kf_from_producer(
                 state,
                 metrics,
                 src_key,
-                src_media,
                 mid,
                 &[target_rid],
-                kind,
+                request,
+                now,
             ) {
-                metrics.record_rtc_keyframe_request(mode.outcome());
-            } else {
-                state.routes.forget_kf_req(src_media, target_rid);
+                ProducerDispatchOutcome::Sent => {
+                    metrics.record_rtc_keyframe_request(mode.outcome());
+                }
+                ProducerDispatchOutcome::Deferred => {}
+                ProducerDispatchOutcome::Missing => {
+                    state.routes.forget_kf_req(src_media, target_rid);
+                }
             }
         }
         return;
@@ -310,10 +370,10 @@ fn request_local_kf(
     if !track_kf_req(state, metrics, src_media, rid, kind, mode) {
         return;
     }
-    if request_kf_from_producer(state, metrics, src_key, src_media, mid, &target_rids, kind) {
-        metrics.record_rtc_keyframe_request(mode.outcome());
-    } else {
-        state.routes.forget_kf_req(src_media, rid);
+    match request_kf_from_producer(state, metrics, src_key, mid, &target_rids, request, now) {
+        ProducerDispatchOutcome::Sent => metrics.record_rtc_keyframe_request(mode.outcome()),
+        ProducerDispatchOutcome::Deferred => {}
+        ProducerDispatchOutcome::Missing => state.routes.forget_kf_req(src_media, rid),
     }
 }
 
@@ -521,15 +581,25 @@ fn push_unique_rid(rids: &mut Vec<Rid>, rid: Rid) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ProducerDispatchOutcome {
+    Sent,
+    Deferred,
+    Missing,
+}
+
 fn request_kf_from_producer(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
     src_key: &TransportSessionKey,
-    src_media: TransportMediaId,
     mid: Mid,
     target_rids: &[Option<Rid>],
-    kind: KeyframeRequestKind,
-) -> bool {
+    request: PublisherKeyframeRequest,
+    now: Instant,
+) -> ProducerDispatchOutcome {
+    let SourceKeyframeRequest {
+        src_media, kind, ..
+    } = request.source;
     let Some(session_state) = state.users.get_mut(src_key) else {
         log_ignored_kf_req(
             src_key,
@@ -539,26 +609,46 @@ fn request_kf_from_producer(
             kind,
             "ignored keyframe request for missing source session",
         );
-        return false;
+        return ProducerDispatchOutcome::Missing;
     };
     let mut direct_api = session_state.rtc.direct_api();
     let mut requested_rids = Vec::with_capacity(target_rids.len());
+    let mut deferred = false;
     for target_rid in target_rids {
-        if let Some(stream_rx) = direct_api.stream_rx_by_mid(mid, *target_rid) {
-            stream_rx.request_keyframe(kind);
-            requested_rids.push(*target_rid);
+        let Some(stream_rx) = direct_api.stream_rx_by_mid(mid, *target_rid) else {
+            continue;
+        };
+        match state
+            .routes
+            .request_publisher_kf(src_media, *target_rid, kind, request.demand, now)
+        {
+            Some(kind) => {
+                stream_rx.request_keyframe(kind);
+                state
+                    .routes
+                    .publisher_keyframes
+                    .sent(src_media, *target_rid, now);
+                requested_rids.push(*target_rid);
+            }
+            None => deferred = true,
         }
     }
+    if deferred {
+        metrics.record_rtc_keyframe_request(RtcKeyframeRequestOutcome::Deferred);
+    }
     if requested_rids.is_empty() {
-        log_ignored_kf_req(
-            src_key,
-            src_media,
-            Some(mid),
-            None,
-            kind,
-            "ignored keyframe request for missing producer stream",
-        );
-        return false;
+        if !deferred {
+            log_ignored_kf_req(
+                src_key,
+                src_media,
+                Some(mid),
+                None,
+                kind,
+                "ignored keyframe request for missing producer stream",
+            );
+            return ProducerDispatchOutcome::Missing;
+        }
+        return ProducerDispatchOutcome::Deferred;
     }
     state.mark_session_dirty(src_key);
     metrics.record_rtc_route_control(RtcRouteControlOutcome::Forwarded);
@@ -570,7 +660,69 @@ fn request_kf_from_producer(
         ?kind,
         "requested local producer keyframe"
     );
-    true
+    ProducerDispatchOutcome::Sent
+}
+
+/// Dispatches one deferred request per producer RID after its minimum interval.
+pub fn drain_due_publisher_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    now: Instant,
+) {
+    for _ in 0..PUBLISHER_KEYFRAME_DRAIN_LIMIT {
+        let Some(request) = state.routes.publisher_keyframes.take_due(now) else {
+            break;
+        };
+        if !state.routes.source_is_active(request.src_media) {
+            continue;
+        }
+        let Some(kind) = request.active_kind(|demand| match demand {
+            PublisherRequestDemand::Local(requested_rid) => state
+                .routes
+                .has_local_kf_demand(request.src_media, requested_rid),
+            PublisherRequestDemand::Source(requested_rid) => {
+                state.routes.has_kf_demand(request.src_media, requested_rid)
+            }
+            PublisherRequestDemand::Relay(target_id) => state
+                .routes
+                .source_relay_target_is_active(request.src_media, target_id),
+        }) else {
+            continue;
+        };
+        let Some(RegisteredMediaHandle::Producer { session_key, .. }) =
+            state.media_handle(request.src_media)
+        else {
+            continue;
+        };
+        let src_key = session_key.clone();
+        let Some(mid) = local_kf_req_mid(state, &src_key, request.src_media, request.rid, kind)
+        else {
+            continue;
+        };
+        let target_rids =
+            producer_kf_target_rids(state, &src_key, request.src_media, mid, request.rid, kind);
+        if matches!(
+            request_kf_from_producer(
+                state,
+                metrics,
+                &src_key,
+                mid,
+                &target_rids,
+                PublisherKeyframeRequest {
+                    source: SourceKeyframeRequest {
+                        src_media: request.src_media,
+                        rid: request.rid,
+                        kind,
+                    },
+                    demand: PublisherRequestDemand::Source(request.rid),
+                },
+                now
+            ),
+            ProducerDispatchOutcome::Sent
+        ) {
+            metrics.record_rtc_keyframe_request(RtcKeyframeRequestOutcome::Forwarded);
+        }
+    }
 }
 
 fn log_ignored_kf_req(

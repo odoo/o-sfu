@@ -348,6 +348,7 @@ impl_exported_metric_label!(pub enum RtcKeyframeRequestOutcome {
     Absorbed => (1, "absorbed"),
     Retry => (2, "retry"),
     Cleared => (3, "cleared"),
+    Deferred => (4, "deferred"),
 });
 
 impl_metric_label!(pub enum RtcRelayEnqueueResult {

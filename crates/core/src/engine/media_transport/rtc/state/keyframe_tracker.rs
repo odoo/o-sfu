@@ -5,14 +5,15 @@
 //! observable decoder transitions retry until route demand clears
 
 use std::{
-    cmp::Reverse,
-    collections::BinaryHeap,
+    cmp::{Ordering, Reverse},
+    collections::{BTreeSet, BinaryHeap, HashMap},
     time::{Duration, Instant},
 };
 
 use itertools::{Itertools, partition};
 use str0m::media::{KeyframeRequestKind, Rid};
 
+use super::relay_registry::RelayTargetId;
 use crate::engine::media_transport::TransportMediaId;
 
 pub(in crate::engine::media_transport::rtc) const KEYFRAME_REQUEST_RETRY_DELAY: Duration =
@@ -253,3 +254,261 @@ impl KeyframeRequestState {
         self.deadline == deadline.deadline && self.id == deadline.id
     }
 }
+
+/// Dispatch timing for requests delivered to one producer worker.
+///
+/// This state is independent of consumer retry tracking so a decoder refresh
+/// cannot reset the publisher's rate limit. Only deferred requests have a
+/// deadline in the worker's wakeup queue.
+#[derive(Debug, Default)]
+pub struct PublisherKeyframeLimiter {
+    targets: HashMap<(TransportMediaId, Option<Rid>), PublisherKeyframeTarget>,
+    deadlines: BTreeSet<PublisherDeadline>,
+}
+
+/// libwebrtc uses 300 ms as the configurable default for encoder feedback.
+/// <https://webrtc.googlesource.com/src/+/refs/heads/main/video/encoder_rtcp_feedback.cc>
+const PUBLISHER_KEYFRAME_INTERVAL: Duration = Duration::from_millis(300);
+pub const PUBLISHER_KEYFRAME_DRAIN_LIMIT: usize = 64;
+
+#[derive(Debug, Default)]
+struct PublisherKeyframeTarget {
+    last_sent: Option<Instant>,
+    deferred: Option<DeferredPublisherRequest>,
+    pending_deadline: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PublisherDeadline {
+    at: Instant,
+    key: (TransportMediaId, Option<Rid>),
+}
+
+impl PartialOrd for PublisherDeadline {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PublisherDeadline {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.at
+            .cmp(&other.at)
+            .then_with(|| self.key.0.cmp(&other.key.0))
+            .then_with(|| self.key.1.as_deref().cmp(&other.key.1.as_deref()))
+    }
+}
+
+#[derive(Debug, Default)]
+struct DeferredPublisherRequest {
+    demands: Vec<PublisherDemandRequest>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PublisherDemandRequest {
+    demand: PublisherRequestDemand,
+    kind: KeyframeRequestKind,
+}
+
+impl DeferredPublisherRequest {
+    fn record(&mut self, demand: PublisherRequestDemand, kind: KeyframeRequestKind) {
+        if let Some(existing) = self.demands.iter_mut().find(|entry| entry.demand == demand) {
+            existing.kind = coalesce_kf_kind(existing.kind, kind);
+        } else {
+            self.demands.push(PublisherDemandRequest { demand, kind });
+        }
+    }
+
+    fn active_kind(
+        &self,
+        mut active: impl FnMut(PublisherRequestDemand) -> bool,
+    ) -> Option<KeyframeRequestKind> {
+        self.demands
+            .iter()
+            .filter(|entry| active(entry.demand))
+            .map(|entry| entry.kind)
+            .reduce(coalesce_kf_kind)
+    }
+}
+
+/// Route demand authorizing a publisher request.
+///
+/// The requested RID stays distinct from the concrete publisher RID used for
+/// cooldown so source-wide Open-gate demand survives RID expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublisherRequestDemand {
+    Local(Option<Rid>),
+    Source(Option<Rid>),
+    Relay(RelayTargetId),
+}
+
+#[derive(Debug)]
+pub struct DuePublisherRequest {
+    pub src_media: TransportMediaId,
+    pub rid: Option<Rid>,
+    pending: DeferredPublisherRequest,
+}
+
+impl DuePublisherRequest {
+    pub fn active_kind(
+        &self,
+        active: impl FnMut(PublisherRequestDemand) -> bool,
+    ) -> Option<KeyframeRequestKind> {
+        self.pending.active_kind(active)
+    }
+}
+
+impl PublisherKeyframeLimiter {
+    /// Returns the strongest valid request or retains it until the interval ends.
+    pub fn request(
+        &mut self,
+        src_media: TransportMediaId,
+        rid: Option<Rid>,
+        kind: KeyframeRequestKind,
+        demand: PublisherRequestDemand,
+        now: Instant,
+        mut demand_active: impl FnMut(PublisherRequestDemand) -> bool,
+    ) -> Option<KeyframeRequestKind> {
+        let key = (src_media, rid);
+        let target = self.targets.entry(key).or_default();
+        if let Some(pending) = &mut target.deferred {
+            pending.demands.retain(|entry| demand_active(entry.demand));
+            if pending.demands.is_empty() {
+                target.deferred = None;
+                if let Some(at) = target.pending_deadline.take() {
+                    self.deadlines.remove(&PublisherDeadline { at, key });
+                }
+            }
+        }
+        if let Some(last_sent) = target.last_sent
+            && now.saturating_duration_since(last_sent) < PUBLISHER_KEYFRAME_INTERVAL
+        {
+            target
+                .deferred
+                .get_or_insert_with(Default::default)
+                .record(demand, kind);
+            if target.pending_deadline.is_none() {
+                let at = last_sent + PUBLISHER_KEYFRAME_INTERVAL;
+                target.pending_deadline = Some(at);
+                self.deadlines.insert(PublisherDeadline { at, key });
+            }
+            return None;
+        }
+        if let Some(at) = target.pending_deadline.take() {
+            self.deadlines.remove(&PublisherDeadline { at, key });
+        }
+        Some(
+            target
+                .deferred
+                .take()
+                .and_then(|pending| pending.active_kind(|_| true))
+                .map_or(kind, |pending_kind| coalesce_kf_kind(pending_kind, kind)),
+        )
+    }
+
+    pub fn sent(&mut self, src_media: TransportMediaId, rid: Option<Rid>, now: Instant) {
+        if let Some(target) = self.targets.get_mut(&(src_media, rid)) {
+            target.last_sent = Some(now);
+        }
+    }
+
+    pub fn observe_refresh(&mut self, src_media: TransportMediaId, rid: Option<Rid>) {
+        if self.deadlines.is_empty() {
+            return;
+        }
+        self.cancel_target((src_media, rid));
+        if rid.is_some() {
+            self.cancel_target((src_media, None));
+        }
+    }
+
+    pub fn cancel_source(&mut self, src_media: TransportMediaId) {
+        for (key, target) in &mut self.targets {
+            if key.0 == src_media {
+                target.deferred = None;
+                if let Some(at) = target.pending_deadline.take() {
+                    self.deadlines.remove(&PublisherDeadline { at, key: *key });
+                }
+            }
+        }
+    }
+
+    pub fn forget_source(&mut self, src_media: TransportMediaId) {
+        let deadlines = &mut self.deadlines;
+        self.targets.retain(|key, target| {
+            if key.0 != src_media {
+                return true;
+            }
+            if let Some(at) = target.pending_deadline {
+                deadlines.remove(&PublisherDeadline { at, key: *key });
+            }
+            false
+        });
+    }
+
+    pub fn retire_local(&mut self, src_media: TransportMediaId) {
+        self.retire_demands(src_media, |demand| {
+            matches!(demand, PublisherRequestDemand::Local(_))
+        });
+    }
+
+    pub fn retire_relay(&mut self, src_media: TransportMediaId, target_id: RelayTargetId) {
+        self.retire_demands(src_media, |demand| {
+            demand == PublisherRequestDemand::Relay(target_id)
+        });
+    }
+
+    fn retire_demands(
+        &mut self,
+        src_media: TransportMediaId,
+        remove: impl Fn(PublisherRequestDemand) -> bool,
+    ) {
+        for (key, target) in &mut self.targets {
+            if key.0 != src_media {
+                continue;
+            }
+            if let Some(pending) = &mut target.deferred {
+                pending.demands.retain(|entry| !remove(entry.demand));
+                if pending.demands.is_empty() {
+                    target.deferred = None;
+                    if let Some(at) = target.pending_deadline.take() {
+                        self.deadlines.remove(&PublisherDeadline { at, key: *key });
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.deadlines.first().map(|deadline| deadline.at)
+    }
+
+    pub fn take_due(&mut self, now: Instant) -> Option<DuePublisherRequest> {
+        let deadline = *self.deadlines.first()?;
+        if deadline.at > now {
+            return None;
+        }
+        self.deadlines.pop_first();
+        let target = self.targets.get_mut(&deadline.key)?;
+        target.pending_deadline = None;
+        let pending = target.deferred.take()?;
+        Some(DuePublisherRequest {
+            src_media: deadline.key.0,
+            rid: deadline.key.1,
+            pending,
+        })
+    }
+
+    fn cancel_target(&mut self, key: (TransportMediaId, Option<Rid>)) {
+        if let Some(target) = self.targets.get_mut(&key) {
+            target.deferred = None;
+            if let Some(at) = target.pending_deadline.take() {
+                self.deadlines.remove(&PublisherDeadline { at, key });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "TESTS/publisher_keyframes.rs"]
+mod publisher_tests;

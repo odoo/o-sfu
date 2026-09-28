@@ -47,7 +47,7 @@ use super::{
     bitrate::MediaBitrateCounter,
     keyframe_tracker::{
         KeyframeRequestDecision, KeyframeRequestOrigin, KeyframeRequestTracker,
-        SourceKeyframeRequest,
+        PublisherKeyframeLimiter, PublisherRequestDemand, SourceKeyframeRequest,
     },
     relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
     route_control::PacketLayerGate,
@@ -140,6 +140,7 @@ pub(in super::super) struct RouteTable {
     active: ActiveSpeakerRank,
     remote_gate_queue: VecDeque<TransportMediaId>,
     keyframe_requests: KeyframeRequestTracker,
+    pub(in super::super) publisher_keyframes: PublisherKeyframeLimiter,
 }
 
 impl RouteTable {
@@ -229,6 +230,9 @@ impl RouteTable {
         if removed.stopped_forwarding {
             self.forwarding_sources -= 1;
         }
+        if !self.has_local_kf_demand(source_id, None) {
+            self.publisher_keyframes.retire_local(source_id);
+        }
         self.refresh_src_pkt_gate(source_id);
         self.prune_unrouted_remote_src(source_id);
         self.prune_empty(source_id);
@@ -247,6 +251,7 @@ impl RouteTable {
             .set_source_active(active);
         if !active {
             self.keyframe_requests.forget_source(source_id);
+            self.publisher_keyframes.cancel_source(source_id);
         }
         Ok(())
     }
@@ -263,6 +268,7 @@ impl RouteTable {
             .apply_source_activity(update);
         if accepted && !update.activity().is_active() {
             self.keyframe_requests.forget_source(source_id);
+            self.publisher_keyframes.cancel_source(source_id);
         }
         Ok(accepted)
     }
@@ -280,6 +286,9 @@ impl RouteTable {
             .get_mut(&source_id)
             .ok_or(TransportAdapterError::TransportUnavailable)?
             .set_consumer_active(dst_idx, session_key, media_id, active)?;
+        if !self.has_local_kf_demand(source_id, None) {
+            self.publisher_keyframes.retire_local(source_id);
+        }
         if update.route_changed {
             self.refresh_src_pkt_gate(source_id);
         }
@@ -392,6 +401,41 @@ impl RouteTable {
             .is_some_and(|source| source.has_kf_demand(rid))
     }
 
+    pub(in super::super) fn has_local_kf_demand(
+        &self,
+        source_id: TransportMediaId,
+        rid: Option<Rid>,
+    ) -> bool {
+        self.sources
+            .get(&source_id)
+            .is_some_and(|source| source.has_local_kf_demand(rid))
+    }
+
+    pub(in super::super) fn request_publisher_kf(
+        &mut self,
+        src_media: TransportMediaId,
+        rid: Option<Rid>,
+        kind: KeyframeRequestKind,
+        demand: PublisherRequestDemand,
+        now: Instant,
+    ) -> Option<KeyframeRequestKind> {
+        let source = self.sources.get(&src_media);
+        self.publisher_keyframes
+            .request(src_media, rid, kind, demand, now, |pending_demand| {
+                source.is_some_and(|source| match pending_demand {
+                    PublisherRequestDemand::Local(requested_rid) => {
+                        source.has_local_kf_demand(requested_rid)
+                    }
+                    PublisherRequestDemand::Source(requested_rid) => {
+                        source.has_kf_demand(requested_rid)
+                    }
+                    PublisherRequestDemand::Relay(target_id) => {
+                        source.source_is_active() && source.is_relay_target_active(target_id)
+                    }
+                })
+            })
+    }
+
     pub(in super::super) fn register_local_source(&mut self, source_id: TransportMediaId) {
         self.source_mut(source_id).producer.registered = true;
     }
@@ -399,6 +443,7 @@ impl RouteTable {
     pub(in super::super) fn unregister_local_source(&mut self, source_id: TransportMediaId) {
         self.forget_packet_state(source_id);
         self.keyframe_requests.forget_source(source_id);
+        self.publisher_keyframes.forget_source(source_id);
         self.prune_empty(source_id);
     }
 
@@ -525,6 +570,7 @@ impl RouteTable {
             if !keep_registered {
                 self.forget_packet_state(source_id);
                 self.keyframe_requests.forget_source(source_id);
+                self.publisher_keyframes.forget_source(source_id);
             }
             self.prune_empty(source_id);
         }
@@ -645,6 +691,7 @@ impl RouteTable {
         source_id: TransportMediaId,
         rid: Option<Rid>,
     ) -> usize {
+        self.publisher_keyframes.observe_refresh(source_id, rid);
         self.keyframe_requests.observe_refresh(source_id, rid)
     }
 
@@ -842,6 +889,7 @@ impl RouteTable {
         if change.stopped_forwarding() {
             self.forwarding_sources -= 1;
         }
+        self.publisher_keyframes.retire_relay(source_id, target_id);
         self.prune_empty(source_id);
     }
 
@@ -853,6 +901,9 @@ impl RouteTable {
     ) {
         if let Some(source) = self.sources.get_mut(&source_id) {
             source.set_relay_target_active(target_id, active);
+        }
+        if !active {
+            self.publisher_keyframes.retire_relay(source_id, target_id);
         }
     }
 
@@ -887,6 +938,7 @@ impl RouteTable {
         self.forget_packet_state(source_id);
         self.remote_gate_queue.retain(|queued| *queued != source_id);
         self.keyframe_requests.forget_source(source_id);
+        self.publisher_keyframes.forget_source(source_id);
         self.prune_empty(source_id);
     }
 
@@ -907,6 +959,8 @@ impl RouteTable {
             .is_some_and(RouteSource::is_empty)
         {
             self.sources.remove(&source_id);
+            self.keyframe_requests.forget_source(source_id);
+            self.publisher_keyframes.forget_source(source_id);
             self.active.drop_src(source_id);
         }
     }
