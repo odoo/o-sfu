@@ -350,20 +350,22 @@ impl RouteSource {
     }
 
     pub(super) fn has_kf_demand(&self, rid: Option<Rid>) -> bool {
-        if !self.source_active {
-            return false;
-        }
-        let local_demand = self.local_route.as_ref().is_some_and(|route| {
-            route.destinations.iter().any(|destination| {
-                destination.active
-                    && matches!(
-                        destination.delivery.keyframe_target_rid(None),
-                        DestinationKeyframeTarget::Current(target_rid)
-                            if rid.is_none() || target_rid == rid
-                    )
+        self.has_local_kf_demand(rid)
+            || (self.source_active && self.active_relay_targets().is_some())
+    }
+
+    pub(super) fn has_local_kf_demand(&self, rid: Option<Rid>) -> bool {
+        self.source_active
+            && self.local_route.as_ref().is_some_and(|route| {
+                route.destinations.iter().any(|destination| {
+                    destination.active
+                        && matches!(
+                            destination.delivery.keyframe_target_rid(None),
+                            DestinationKeyframeTarget::Current(target_rid)
+                                if rid.is_none() || target_rid == rid
+                        )
+                })
             })
-        });
-        local_demand || self.active_relay_targets().is_some()
     }
 
     pub(super) fn register_remote_source(

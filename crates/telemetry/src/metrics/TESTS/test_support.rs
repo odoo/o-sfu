@@ -393,6 +393,7 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         rtc_keyframe_requests_absorbed => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Absorbed),
         rtc_keyframe_requests_retried => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Retry),
         rtc_keyframe_requests_cleared => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Cleared),
+        rtc_keyframe_requests_deferred => rtc_keyframe_requests(RtcKeyframeRequestOutcome::Deferred),
     }
 
     fn rtc_relay_enqueue(&self, result: RtcRelayEnqueueResult) -> u64 {

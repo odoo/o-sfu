@@ -32,6 +32,7 @@ fn map_updates<T, R>(updates: Vec<(usize, T)>, mut apply: impl FnMut(T) -> R) ->
 pub fn apply_route_control_request(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
+    now: Instant,
     request: RouteControlRequest,
     response: Option<RtcWorkerResponse<()>>,
 ) {
@@ -58,7 +59,7 @@ pub fn apply_route_control_request(
             rid,
             kind,
         } => {
-            worker_request_remote_kf(state, metrics, &source, target_id, rid, kind);
+            worker_request_remote_kf(state, metrics, &source, target_id, rid, kind, now);
             Ok(())
         }
         RouteControlRequest::SetRemoteSourcePacketGate {

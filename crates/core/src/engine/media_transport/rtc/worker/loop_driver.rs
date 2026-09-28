@@ -55,7 +55,7 @@ use super::{
             routing_miss::DemuxRecoveryState,
             udp::{RtcUdpSocket, UdpDatagram, UdpIngress},
         },
-        recovery::{drain_due_kf_retries, flush_pending_kf_reqs_at},
+        recovery::{drain_due_kf_retries, drain_due_publisher_kf, flush_pending_kf_reqs_at},
         state::{PacketLoopState, RtcSnapshotState, SharedRtcSocket, bitrate::BitrateRegistry},
     },
     buffers::{MAX_RELAY_PACKETS_PER_ITERATION, PacketLoopBuffers},
@@ -307,6 +307,7 @@ impl PacketLoopTurn {
             &mut self.buffers.keyframe_retries,
             now,
         );
+        drain_due_publisher_kf(state, &config.rtc_metrics, now);
         (
             WaitPhaseSnapshot {
                 next_timeout: next_timeout_deadline_at(state, now),
@@ -646,6 +647,7 @@ fn next_timeout_deadline_at(state: &mut PacketLoopState, now: Instant) -> Option
     [
         state.next_timeout_deadline(),
         state.routes.next_kf_deadline(),
+        state.routes.publisher_keyframes.next_deadline(),
         state.routes.next_active_speaker_deadline(now),
     ]
     .into_iter()

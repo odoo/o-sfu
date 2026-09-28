@@ -212,7 +212,13 @@ pub fn handle_worker_command(
             )),
         ),
         RtcWorkerCommand::RouteControl { request, response } => {
-            media::apply_route_control_request(state, context.rtc_metrics, request, response);
+            media::apply_route_control_request(
+                state,
+                context.rtc_metrics,
+                context.now,
+                request,
+                response,
+            );
         }
     }
 }
