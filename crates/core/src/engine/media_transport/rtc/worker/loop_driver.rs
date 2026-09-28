@@ -40,7 +40,6 @@ use tokio::{
     task::yield_now,
     time::{sleep_until, timeout},
 };
-use tracing::warn;
 
 #[cfg(feature = "internal-benchmarks")]
 use super::super::recovery::PendingKeyframeRequest;
@@ -52,6 +51,7 @@ use super::{
             ForwardingEffects, PacketForwarder, drain_relay_packets,
             forwarded_packet::ForwardedPacket,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+            io_failures::report_udp_send_failure,
             routing_miss::DemuxRecoveryState,
             udp::{RtcUdpSocket, UdpDatagram, UdpIngress},
         },
@@ -305,11 +305,6 @@ impl PacketLoopTurn {
         )
     }
 
-    /// Sends UDP transmits staged during the pump phase.
-    pub(super) async fn flush_outputs(&mut self, socket: &RtcUdpSocket) {
-        self.flush_staged_transmits(socket).await;
-    }
-
     /// Waits for the next event that should resume the worker loop.
     ///
     /// Shutdown wins ready inputs. Control precedes ingress except for one
@@ -424,18 +419,16 @@ impl PacketLoopTurn {
         }
     }
 
-    async fn flush_staged_transmits(&mut self, socket: &RtcUdpSocket) {
+    /// Sends UDP transmits staged during the pump phase.
+    pub(super) async fn flush_outputs(
+        &mut self,
+        socket: &RtcUdpSocket,
+        rtc_metrics: &RtcMetricsRecorder,
+    ) {
         for pending_transmit in self.buffers.pending_transmits_mut() {
             let packet = take(&mut pending_transmit.contents);
-            if socket
-                .send_to(packet, pending_transmit.destination)
-                .await
-                .is_err()
-            {
-                warn!(
-                    destination = %pending_transmit.destination,
-                    "failed to send packet-loop transport datagram"
-                );
+            if let Err(error) = socket.send_to(packet, pending_transmit.destination).await {
+                report_udp_send_failure(rtc_metrics, pending_transmit.destination, &error);
             }
         }
     }
@@ -563,7 +556,8 @@ pub async fn run_packet_loop(
 
         // Await socket I/O only after `pump` releases its mutable
         // `PacketLoopState` borrow.
-        turn.flush_outputs(&shared_socket.socket).await;
+        turn.flush_outputs(&shared_socket.socket, &config.rtc_metrics)
+            .await;
 
         let input = turn
             .wait_for_next_input(

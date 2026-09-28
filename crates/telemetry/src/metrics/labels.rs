@@ -277,6 +277,26 @@ impl_exported_metric_label!(pub enum RtcNackDirection {
     ReceivedFromSubscriber => (1, "received_from_subscriber"),
 });
 
+impl_exported_metric_label_pair!(pub enum RtcTransportIoFailure {
+    ReceivePermissionDenied => (0, [("direction", "receive"), ("category", "permission_denied")]),
+    ReceiveNetworkUnavailable => (1, [("direction", "receive"), ("category", "network_unavailable")]),
+    ReceiveWouldBlock => (2, [("direction", "receive"), ("category", "would_block")]),
+    ReceiveOther => (3, [("direction", "receive"), ("category", "other")]),
+    SendPermissionDenied => (4, [("direction", "send"), ("category", "permission_denied")]),
+    SendNetworkUnavailable => (5, [("direction", "send"), ("category", "network_unavailable")]),
+    SendWouldBlock => (6, [("direction", "send"), ("category", "would_block")]),
+    SendOther => (7, [("direction", "send"), ("category", "other")]),
+});
+
+impl_exported_metric_label!(pub enum RtcInputFailure {
+    Io => (0, "io"),
+    Dtls => (1, "dtls"),
+    Net => (2, "net"),
+    Ice => (3, "ice"),
+    Sctp => (4, "sctp"),
+    Other => (5, "other"),
+});
+
 impl_exported_metric_label!(pub enum RtcOutputBudgetLimit {
     Packets => (0, "packets"),
     PayloadBytes => (1, "payload_bytes"),

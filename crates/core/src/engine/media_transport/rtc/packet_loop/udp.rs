@@ -15,17 +15,16 @@ use std::{
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket as StdUdpSocket},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc};
+use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc, time::sleep};
 #[cfg(target_os = "linux")]
 use tokio_uring::net::UdpSocket as TokioUringUdpSocket;
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 
-use super::super::worker::buffers::RECEIVE_BUFFER_LEN;
-use crate::RtcUdpIoBackend;
+use super::{super::worker::buffers::RECEIVE_BUFFER_LEN, io_failures::report_udp_receive_failure};
+use crate::{RtcUdpIoBackend, engine::metrics::RtcMetricsRecorder};
 
 #[cfg(test)]
 #[path = "udp/TESTS/support.rs"]
@@ -33,6 +32,21 @@ pub(in super::super) mod test_support;
 
 const INGRESS_QUEUE_CAPACITY: usize = 32;
 const RECEIVE_BUFFER_POOL_CAPACITY: usize = 32;
+const RECEIVE_FAILURE_BACKOFF_MAX: Duration = Duration::from_millis(100);
+
+struct ReceiveFailureControl {
+    metrics: Arc<RtcMetricsRecorder>,
+    backoff: Duration,
+}
+
+impl ReceiveFailureControl {
+    fn new(metrics: Arc<RtcMetricsRecorder>) -> Self {
+        Self {
+            metrics,
+            backoff: Duration::from_millis(1),
+        }
+    }
+}
 
 /// Worker socket shared by packet-loop egress and one receive task.
 ///
@@ -140,12 +154,24 @@ impl UdpIngress {
     /// # Panics
     ///
     /// Panics outside the runtime required by the selected socket backend.
-    pub fn new(socket: RtcUdpSocket, bind_addr: SocketAddr, candidate_addr: SocketAddr) -> Self {
+    pub fn new(
+        socket: RtcUdpSocket,
+        bind_addr: SocketAddr,
+        candidate_addr: SocketAddr,
+        metrics: Arc<RtcMetricsRecorder>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(INGRESS_QUEUE_CAPACITY);
         let (recycle_tx, recycle_rx) = mpsc::channel(RECEIVE_BUFFER_POOL_CAPACITY);
         let shutdown = CancellationToken::new();
         let wake_addr = udp_wake_addr(bind_addr);
-        spawn_ingress(socket, candidate_addr, tx, recycle_rx, shutdown.clone());
+        spawn_ingress(
+            socket,
+            candidate_addr,
+            tx,
+            recycle_rx,
+            shutdown.clone(),
+            metrics,
+        );
         Self {
             rx,
             recycle_tx,
@@ -232,6 +258,7 @@ fn spawn_ingress(
     tx: mpsc::Sender<UdpDatagram>,
     recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
+    metrics: Arc<RtcMetricsRecorder>,
 ) {
     match socket {
         RtcUdpSocket::Tokio(socket) => {
@@ -241,6 +268,7 @@ fn spawn_ingress(
                 tx,
                 recycle_rx,
                 shutdown,
+                metrics,
             ));
         }
         #[cfg(target_os = "linux")]
@@ -251,6 +279,7 @@ fn spawn_ingress(
                 tx,
                 recycle_rx,
                 shutdown,
+                metrics,
             ));
         }
     }
@@ -262,7 +291,9 @@ async fn run_tokio_ingress(
     tx: mpsc::Sender<UdpDatagram>,
     mut recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
+    metrics: Arc<RtcMetricsRecorder>,
 ) {
+    let mut failures = ReceiveFailureControl::new(metrics);
     loop {
         if shutdown.is_cancelled() {
             return;
@@ -273,7 +304,17 @@ async fn run_tokio_ingress(
         if shutdown.is_cancelled() {
             return;
         }
-        if ingress_should_stop(result, packet, candidate_addr, received_at, &tx, &shutdown).await {
+        if ingress_should_stop(
+            result,
+            packet,
+            candidate_addr,
+            received_at,
+            &tx,
+            &shutdown,
+            &mut failures,
+        )
+        .await
+        {
             return;
         }
     }
@@ -286,7 +327,9 @@ async fn run_io_uring_ingress(
     tx: mpsc::Sender<UdpDatagram>,
     mut recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
+    metrics: Arc<RtcMetricsRecorder>,
 ) {
+    let mut failures = ReceiveFailureControl::new(metrics);
     loop {
         if shutdown.is_cancelled() {
             return;
@@ -297,7 +340,17 @@ async fn run_io_uring_ingress(
         if shutdown.is_cancelled() {
             return;
         }
-        if ingress_should_stop(result, packet, candidate_addr, received_at, &tx, &shutdown).await {
+        if ingress_should_stop(
+            result,
+            packet,
+            candidate_addr,
+            received_at,
+            &tx,
+            &shutdown,
+            &mut failures,
+        )
+        .await
+        {
             return;
         }
     }
@@ -310,9 +363,11 @@ async fn ingress_should_stop(
     received_at: Instant,
     tx: &mpsc::Sender<UdpDatagram>,
     shutdown: &CancellationToken,
+    failures: &mut ReceiveFailureControl,
 ) -> bool {
     match result {
         Ok((received_size, source_addr)) => {
+            failures.backoff = Duration::from_millis(1);
             packet.truncate(received_size);
             let datagram = UdpDatagram {
                 source_addr,
@@ -329,10 +384,21 @@ async fn ingress_should_stop(
             }
         }
         Err(error) => {
-            warn!(?error, "rtc packet loop failed to receive datagram");
-            false
+            report_udp_receive_failure(&failures.metrics, &error);
+            let wait = advance_receive_failure_backoff(&mut failures.backoff);
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => true,
+                () = sleep(wait) => false,
+            }
         }
     }
+}
+
+fn advance_receive_failure_backoff(backoff: &mut Duration) -> Duration {
+    let wait = *backoff;
+    *backoff = (*backoff * 2).min(RECEIVE_FAILURE_BACKOFF_MAX);
+    wait
 }
 
 fn udp_wake_addr(bind_addr: SocketAddr) -> SocketAddr {
@@ -367,3 +433,7 @@ fn receive_buffer(recycle_rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
     buffer.clear();
     buffer
 }
+
+#[cfg(test)]
+#[path = "TESTS/udp.rs"]
+mod tests;

@@ -65,6 +65,7 @@ impl PacketLoopStartup {
             self.announced_ip,
             self.rtc_port_range,
             backend,
+            &self.config.rtc_metrics,
         ) {
             Ok(shared_socket) => shared_socket,
             Err(error) => {

@@ -29,6 +29,7 @@ pub(super) mod forwarded_packet;
 mod forwarding_destination;
 mod forwarding_planner;
 pub(super) mod ingress_routing;
+pub(super) mod io_failures;
 pub(super) mod routing_miss;
 pub(super) mod udp;
 
