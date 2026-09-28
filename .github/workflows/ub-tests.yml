@@ -54,9 +54,6 @@ jobs:
       - name: Bootstrap Miri
         run: cargo +nightly-2026-04-01 miri setup
 
-      - name: Run SIMD fingerprint UB test
-        run: cargo +nightly-2026-04-01 miri test --locked -p o-sfu-core --lib packet_fingerprint_matches_scalar_reference
-
       - name: Run host-target UB-oriented tests
         if: matrix.host_suite
         run: |

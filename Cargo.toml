@@ -74,7 +74,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     "cfg(kani)",
     "cfg(rust_analyzer)",
 ] }
-unsafe_code = "deny"
+unsafe_code = "forbid"
 
 [workspace.lints.clippy] # https://rust-lang.github.io/rust-clippy/
 correctness = { level = "deny", priority = -1 }

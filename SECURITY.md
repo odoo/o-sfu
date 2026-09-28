@@ -60,7 +60,7 @@ file alternatives. See [Deployment](DEPLOYMENT.md) for configuration.
 
 - **Dynamic Analysis & Sanitizers**:
     - **AddressSanitizer (ASan)**: Validates runtime execution, protocol handling, and media packet loops to detect memory corruption, buffer overflows, and use-after-free issues.
-    - **Miri (Undefined Behavior Detection)**: Analyzes unsafe blocks, pointer provenance, uninitialized memory, SIMD versus scalar operations, and cross-target endianness.
+    - **Miri (Undefined Behavior Detection)**: Runs focused authentication, protocol and RTP negotiation tests on the host, plus authentication and RTP negotiation tests on a big-endian target.
     - **Fuzzing (`cargo-fuzz` / `libFuzzer`)**: Continuously stresses ingress attack surfaces against malformed input, taregts are: WebSocket protocol decoders, HTTP authentication payloads, SDP negotiation, and RTP packet demuxing.
 - **Static Analysis**:
     - **CodeQL**: Semantic code analysis for common vulnerabilities, taint tracking, and memory safety flaws ([@GitHub/codeql](https://github.com/github/codeql)).
