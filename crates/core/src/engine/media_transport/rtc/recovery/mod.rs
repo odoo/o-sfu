@@ -5,8 +5,8 @@
 //! after packet-loop state commits gates and consumer RTX invalidation. Packet
 //! liveness must already be recorded before applying decoder readiness.
 //!
-//! [`request_kf_for_target`] dispatches through the current producer or remote
-//! control path. For remote sources the consumer worker keeps retry ownership:
+//! The coordinator resolves source ownership before producer or remote dispatch.
+//! For remote sources the consumer worker keeps retry ownership:
 //!
 //! ```text
 //! consumer worker: Track / Retry
@@ -30,9 +30,11 @@ mod test_support;
 
 pub use decoder_readiness::apply_src_decoder_ready;
 pub use feedback::{PendingKeyframeRequest, drain_due_kf_retries, flush_pending_kf_reqs_at};
+#[cfg(test)]
+pub use keyframe::request_recovery_kf;
 pub use keyframe::{
-    KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target, worker_request_consumer_kf,
-    worker_request_remote_kf, worker_request_resumed_video_kf,
+    request_consumer_feedback_kf, request_source_recovery_kf, retry_source_kf,
+    worker_request_consumer_kf, worker_request_remote_kf, worker_request_resumed_video_kf,
 };
 #[cfg(test)]
 pub use test_support::observe_src_rid_ready;

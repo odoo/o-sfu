@@ -12,15 +12,12 @@
 
 use std::{mem::take, time::Instant};
 
-use str0m::media::{KeyframeRequestKind, Rid};
-use tracing::{debug, warn};
+use str0m::media::Rid;
+use tracing::debug;
 
 use super::{
-    super::state::{
-        PacketLoopState, route_table::RidReadinessSelectedGateUpdate,
-        source_route::RemoteSourceRegistration,
-    },
-    KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target,
+    super::state::{PacketLoopState, route_table::RidReadinessSelectedGateUpdate},
+    keyframe::request_decoder_readiness_kf,
 };
 use crate::engine::{
     media_transport::{TransportMediaId, TransportSessionKey},
@@ -45,37 +42,16 @@ pub fn apply_src_decoder_ready(
     let route_update =
         state.update_decoder_readiness(src_media, rid, is_keyframe, now, &mut scratch);
     for stale_rid in scratch.stale.iter().copied() {
-        request_live_rid_kf(
-            state,
-            metrics,
-            src_key,
-            src_media,
-            stale_rid,
-            KeyframeRequestMode::for_recovery(now, true),
-        );
+        request_live_rid_kf(state, metrics, src_key, src_media, stale_rid, now);
     }
     match route_update.selected_gate {
         RidReadinessSelectedGateUpdate::BootstrapFallback if rid.is_some() => {
             for pending_rid in scratch.pending_selected.iter().copied() {
-                request_live_rid_kf(
-                    state,
-                    metrics,
-                    src_key,
-                    src_media,
-                    pending_rid,
-                    KeyframeRequestMode::for_recovery(now, true),
-                );
+                request_live_rid_kf(state, metrics, src_key, src_media, pending_rid, now);
             }
         }
         RidReadinessSelectedGateUpdate::Pending if let Some(rid) = rid => {
-            request_live_rid_kf(
-                state,
-                metrics,
-                src_key,
-                src_media,
-                rid,
-                KeyframeRequestMode::for_recovery(now, true),
-            );
+            request_live_rid_kf(state, metrics, src_key, src_media, rid, now);
         }
         RidReadinessSelectedGateUpdate::Activated
         | RidReadinessSelectedGateUpdate::BootstrapFallback
@@ -98,7 +74,7 @@ fn request_live_rid_kf(
     src_key: &TransportSessionKey,
     src_media: TransportMediaId,
     rid: Rid,
-    mode: KeyframeRequestMode,
+    now: Instant,
 ) {
     debug!(
         user_id = ?src_key.user_id(),
@@ -107,49 +83,5 @@ fn request_live_rid_kf(
         ?rid,
         "requesting selected RID producer keyframe"
     );
-    if state.ensure_local_producer_mid(src_key, src_media).is_ok() {
-        request_kf_for_target(
-            state,
-            metrics,
-            KeyframeRequestTarget::Local(src_key, src_media),
-            Some(rid),
-            KeyframeRequestKind::Pli,
-            mode,
-        );
-        return;
-    }
-    let Some((registered_src, src_control)) = state
-        .routes
-        .remote_source(src_media)
-        .map(RemoteSourceRegistration::cloned_control_path)
-    else {
-        warn!(
-            user_id = ?src_key.user_id(),
-            media_worker_id = src_key.media_worker_id().as_usize(),
-            source_transport_media_id = ?src_media,
-            ?rid,
-            "could not request selected RID keyframe because source ownership is unavailable"
-        );
-        return;
-    };
-    if registered_src.session_key() != src_key {
-        warn!(
-            observed_source_user_id = ?src_key.user_id(),
-            observed_media_worker_id = src_key.media_worker_id().as_usize(),
-            registered_source_user_id = ?registered_src.session_key().user_id(),
-            registered_media_worker_id = registered_src.session_key().media_worker_id().as_usize(),
-            source_transport_media_id = ?src_media,
-            ?rid,
-            "could not request selected RID keyframe because source ownership changed"
-        );
-        return;
-    }
-    request_kf_for_target(
-        state,
-        metrics,
-        KeyframeRequestTarget::Remote(&registered_src, &src_control),
-        Some(rid),
-        KeyframeRequestKind::Pli,
-        mode,
-    );
+    request_decoder_readiness_kf(state, metrics, src_key, src_media, rid, now);
 }

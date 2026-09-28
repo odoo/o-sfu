@@ -13,16 +13,13 @@ use core::hint::cold_path;
 use std::mem::take;
 use std::time::Instant;
 
-use str0m::media::{KeyframeRequestKind, MediaKind, Rid};
+use str0m::media::{MediaKind, Rid};
 use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::{
     super::{
-        recovery::{
-            KeyframeRequestMode, KeyframeRequestTarget, apply_src_decoder_ready,
-            request_kf_for_target,
-        },
+        recovery::{apply_src_decoder_ready, request_source_recovery_kf},
         state::{
             PacketLoopState,
             media_registry::{ProducerSsrcUpdate, RegisteredMediaHandle},
@@ -421,19 +418,7 @@ fn request_first_video_kf_for_session(
     if state.routes.source_is_active(transport_media_id)
         && source_is_video(state, src_key, transport_media_id)
     {
-        request_kf_for_target(
-            state,
-            metrics,
-            KeyframeRequestTarget::Local(src_key, transport_media_id),
-            None,
-            KeyframeRequestKind::Pli,
-            KeyframeRequestMode::for_recovery(
-                now,
-                state
-                    .routes
-                    .decoder_refresh_is_observable(transport_media_id),
-            ),
-        );
+        request_source_recovery_kf(state, metrics, src_key, transport_media_id, now);
     }
 }
 

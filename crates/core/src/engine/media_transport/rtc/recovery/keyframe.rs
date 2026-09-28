@@ -1,7 +1,7 @@
 //! Keyframe dispatch for local and relayed sources.
 //!
-//! all callers dispatch through a local or remote target so pending request
-//! tracking and retry accounting stay in one place
+//! Semantic feedback and recovery intents resolve current source ownership here.
+//! Consumer workers retain retry ownership for relayed requests.
 
 use std::time::Instant;
 
@@ -11,8 +11,8 @@ use tracing::debug;
 use super::super::{
     commands::{RemoteControlSendOutcome, RemoteSourceControl},
     state::{
-        PacketLoopState, RouteSourceKind,
-        keyframe_tracker::{KeyframeRequestDecision, KeyframeRequestOrigin},
+        PacketLoopState,
+        keyframe_tracker::{KeyframeRequestDecision, KeyframeRequestOrigin, SourceKeyframeRequest},
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayTargetId,
         source_route::{MediaRouteDestination, RemoteSourceRegistration},
@@ -47,12 +47,17 @@ pub fn worker_request_remote_kf(
     }
     // A source-wide request can match several RID streams. Resolve the target
     // against current producer bindings rather than the consumer snapshot.
-    request_kf_for_target(
+    request_local_kf(
         state,
         metrics,
-        KeyframeRequestTarget::Local(src.session_key(), src_media),
-        rid,
-        kind,
+        src.session_key(),
+        LocalKeyframeRequest {
+            source: SourceKeyframeRequest {
+                src_media,
+                rid,
+                kind,
+            },
+        },
         KeyframeRequestMode::Forward,
     );
 }
@@ -75,28 +80,142 @@ pub fn worker_request_resumed_video_kf(
     if !is_video {
         return;
     }
+    request_source_recovery_kf(state, metrics, source.session_key(), src_media, now);
+}
+
+/// Requests source-wide recovery for an active producer and its route demand.
+pub fn request_source_recovery_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    observed_source: &TransportSessionKey,
+    src_media: TransportMediaId,
+    now: Instant,
+) -> bool {
+    request_recovery_kf(state, metrics, observed_source, src_media, None, now)
+}
+
+/// Resolves a current source and requests decoder recovery for its selected RID.
+pub fn request_recovery_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    observed_source: &TransportSessionKey,
+    src_media: TransportMediaId,
+    rid: Option<Rid>,
+    now: Instant,
+) -> bool {
     let mode = KeyframeRequestMode::for_recovery(
         now,
         state.routes.decoder_refresh_is_observable(src_media),
     );
-    request_kf_for_target(
+    request_source_kf(
         state,
         metrics,
-        KeyframeRequestTarget::Local(source.session_key(), src_media),
-        None,
-        KeyframeRequestKind::Pli,
+        SourceKeyframeRequest {
+            src_media,
+            rid,
+            kind: KeyframeRequestKind::Pli,
+        },
+        Some(observed_source),
         mode,
+    )
+}
+
+/// Tracks a selected RID until a packet-proven decoder refresh satisfies its demand.
+pub(super) fn request_decoder_readiness_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    observed_source: &TransportSessionKey,
+    src_media: TransportMediaId,
+    rid: Rid,
+    now: Instant,
+) -> bool {
+    request_source_kf(
+        state,
+        metrics,
+        SourceKeyframeRequest {
+            src_media,
+            rid: Some(rid),
+            kind: KeyframeRequestKind::Pli,
+        },
+        Some(observed_source),
+        KeyframeRequestMode::for_recovery(now, true),
+    )
+}
+
+pub fn request_consumer_feedback_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    request: SourceKeyframeRequest,
+    now: Instant,
+) {
+    request_source_kf(
+        state,
+        metrics,
+        request,
+        None,
+        KeyframeRequestMode::Track {
+            now,
+            origin: KeyframeRequestOrigin::ConsumerFeedback,
+        },
     );
 }
 
-#[derive(Clone, Copy)]
-pub enum KeyframeRequestTarget<'a> {
-    Local(&'a TransportSessionKey, TransportMediaId),
-    Remote(&'a TransportSourceKey, &'a RemoteSourceControl),
+pub fn retry_source_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    request: SourceKeyframeRequest,
+    _now: Instant,
+) {
+    if !state.routes.has_kf_demand(request.src_media, request.rid)
+        || !request_source_kf(state, metrics, request, None, KeyframeRequestMode::Retry)
+    {
+        state.routes.forget_kf_req(request.src_media, request.rid);
+    }
+}
+
+fn request_source_kf(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    request: SourceKeyframeRequest,
+    observed_source: Option<&TransportSessionKey>,
+    mode: KeyframeRequestMode,
+) -> bool {
+    let SourceKeyframeRequest {
+        src_media,
+        rid,
+        kind,
+    } = request;
+    if let Some(RegisteredMediaHandle::Producer { session_key, .. }) = state.media_handle(src_media)
+    {
+        if observed_source.is_some_and(|observed| observed != session_key) {
+            return false;
+        }
+        let src_key = session_key.clone();
+        request_local_kf(
+            state,
+            metrics,
+            &src_key,
+            LocalKeyframeRequest { source: request },
+            mode,
+        );
+        return true;
+    }
+    let Some((src, src_control)) = state
+        .routes
+        .remote_source(src_media)
+        .map(RemoteSourceRegistration::cloned_control_path)
+    else {
+        return false;
+    };
+    if observed_source.is_some_and(|observed| observed != src.session_key()) {
+        return false;
+    }
+    request_remote_kf(state, metrics, &src, &src_control, rid, kind, mode);
+    true
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum KeyframeRequestMode {
+enum KeyframeRequestMode {
     Track {
         now: Instant,
         origin: KeyframeRequestOrigin,
@@ -141,38 +260,23 @@ impl KeyframeRequestMode {
     }
 }
 
-/// Dispatches feedback through the current producer or remote control path.
-///
-/// Tracked requests coalesce by source and RID. Retry dispatch retains pending
-/// state when a remote queue is full and removes it when the channel is closed.
-/// Forwarded relay requests never create a second retry owner.
-pub fn request_kf_for_target(
-    state: &mut PacketLoopState,
-    metrics: &RtcMetricsRecorder,
-    target: KeyframeRequestTarget<'_>,
-    rid: Option<Rid>,
-    kind: KeyframeRequestKind,
-    mode: KeyframeRequestMode,
-) {
-    match target {
-        KeyframeRequestTarget::Local(src_key, src_media) => {
-            request_local_kf(state, metrics, src_key, src_media, rid, kind, mode);
-        }
-        KeyframeRequestTarget::Remote(source, source_control) => {
-            request_remote_kf(state, metrics, source, source_control, rid, kind, mode);
-        }
-    }
+#[derive(Clone, Copy)]
+struct LocalKeyframeRequest {
+    source: SourceKeyframeRequest,
 }
 
 fn request_local_kf(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
     src_key: &TransportSessionKey,
-    src_media: TransportMediaId,
-    rid: Option<Rid>,
-    kind: KeyframeRequestKind,
+    request: LocalKeyframeRequest,
     mode: KeyframeRequestMode,
 ) {
+    let SourceKeyframeRequest {
+        src_media,
+        rid,
+        kind,
+    } = request.source;
     let Some(mid) = local_kf_req_mid(state, src_key, src_media, rid, kind) else {
         return;
     };
@@ -277,7 +381,7 @@ pub fn worker_request_consumer_kf(
     let consumer_media = route.consumer_transport_media_id();
     let src_key = route.source_session_key();
     let src_media = route.source_transport_media_id();
-    let route_source = state.ensure_existing_route_src(consumer_key, route.source())?;
+    state.ensure_existing_route_src(consumer_key, route.source())?;
     match state.media_handle(consumer_media) {
         Some(RegisteredMediaHandle::Consumer {
             session_key,
@@ -306,38 +410,8 @@ pub fn worker_request_consumer_kf(
     }
     let dst_rid = kf_req_rid(destination);
     let now = Instant::now();
-    let mode = KeyframeRequestMode::for_recovery(
-        now,
-        state.routes.decoder_refresh_is_observable(src_media),
-    );
-    match route_source {
-        RouteSourceKind::Local => {
-            request_kf_for_target(
-                state,
-                metrics,
-                KeyframeRequestTarget::Local(src_key, src_media),
-                dst_rid,
-                KeyframeRequestKind::Pli,
-                mode,
-            );
-        }
-        RouteSourceKind::Remote => {
-            let Some((src, src_control)) = state
-                .routes
-                .remote_source(src_media)
-                .map(RemoteSourceRegistration::cloned_control_path)
-            else {
-                return Err(TransportAdapterError::TransportUnavailable);
-            };
-            request_kf_for_target(
-                state,
-                metrics,
-                KeyframeRequestTarget::Remote(&src, &src_control),
-                dst_rid,
-                KeyframeRequestKind::Pli,
-                mode,
-            );
-        }
+    if !request_recovery_kf(state, metrics, src_key, src_media, dst_rid, now) {
+        return Err(TransportAdapterError::TransportUnavailable);
     }
     Ok(())
 }
