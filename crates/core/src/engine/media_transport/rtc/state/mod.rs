@@ -46,7 +46,6 @@ pub(super) mod slots;
 pub(super) mod source_route;
 
 pub(super) use consumer_routes::ConsumerRouteRegistration;
-pub use ownership::RouteSourceKind;
 pub(super) use session::{
     PendingRecvStream, PendingSessionOffer, RtcNackTotals, RtcSessionState, RtcpIngressBudget,
     SessionSdpNegotiationState, muxed_rtp_ssrc,

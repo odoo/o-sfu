@@ -54,10 +54,12 @@ use crate::{
                 consumer_egress::test_support::{
                     SourceRtpIdentity, project_identity, queue_repairable_write,
                 },
-                recovery::{KeyframeRequestMode, KeyframeRequestTarget, request_kf_for_target},
+                recovery::{observe_src_rid_ready, request_recovery_kf, retry_source_kf},
                 state::{
                     PacketLoopState,
-                    keyframe_tracker::{KeyframeRequestDecision, KeyframeRequestOrigin},
+                    keyframe_tracker::{
+                        KeyframeRequestDecision, KeyframeRequestOrigin, SourceKeyframeRequest,
+                    },
                     media_registry::{ConsumerKeyframeTarget, RegisteredMediaHandle},
                     relay_registry::{RelayPacketMailbox, RelayTargetId},
                     route_control::PacketLayerGate,
@@ -1541,27 +1543,12 @@ fn selected_rid_relay_retries_saturated_readiness_keyframe() {
     let Some(deadline) = route.state.routes.next_kf_deadline() else {
         panic!("saturated keyframe request should remain scheduled");
     };
-    let Some((source, control)) = route
-        .state
-        .routes
-        .remote_source(route.src_media)
-        .map(RemoteSourceRegistration::cloned_control_path)
-    else {
-        panic!("remote source should remain registered");
-    };
     let mut retries = Vec::new();
     route.state.routes.drain_due_kf_reqs(deadline, &mut retries);
     let Some(retry) = retries.pop() else {
         panic!("saturated keyframe request should become due");
     };
-    request_kf_for_target(
-        &mut route.state,
-        &route.rtc_metrics,
-        KeyframeRequestTarget::Remote(&source, &control),
-        retry.rid,
-        retry.kind,
-        KeyframeRequestMode::Retry,
-    );
+    retry_source_kf(&mut route.state, &route.rtc_metrics, retry, deadline);
     assert_remote_keyframe_command(
         &mut route.control_rx,
         &route.source_session,
@@ -1569,6 +1556,66 @@ fn selected_rid_relay_retries_saturated_readiness_keyframe() {
         route.target_id,
         Some("lo".into()),
     );
+}
+
+#[test]
+fn relayed_selected_rid_retries_while_decoder_demand_remains() {
+    let selected_rid = Rid::from("lo");
+    let mut route = RemoteVideoRoute::new(143, 63, 20);
+    assert_remote_packet_gate_command(
+        &mut route.control_rx,
+        &route.source_session,
+        route.src_media,
+        route.target_id,
+        PacketLayerGate::Open,
+    );
+    route
+        .state
+        .routes
+        .set_consumer_pkt_gate(
+            route.src_media,
+            0,
+            &route.consumer_session,
+            route.consumer_media,
+            PacketLayerGate::Rid(selected_rid),
+        )
+        .expect("selected RID destination should exist");
+    let now = Instant::now();
+    observe_src_rid_ready(
+        &mut route.state,
+        &route.rtc_metrics,
+        &route.source_session,
+        route.src_media,
+        selected_rid,
+        false,
+        now,
+    );
+    assert_remote_keyframe_command(
+        &mut route.control_rx,
+        &route.source_session,
+        route.src_media,
+        route.target_id,
+        Some(selected_rid),
+    );
+    for _ in 0..6 {
+        let Some(deadline) = route.state.routes.next_kf_deadline() else {
+            panic!("selected RID demand should retain a retry deadline");
+        };
+        let mut retries = Vec::new();
+        route.state.routes.drain_due_kf_reqs(deadline, &mut retries);
+        let [retry] = retries.as_slice() else {
+            panic!("selected RID request should retry while demand remains");
+        };
+        retry_source_kf(&mut route.state, &route.rtc_metrics, *retry, deadline);
+        assert_remote_keyframe_command(
+            &mut route.control_rx,
+            &route.source_session,
+            route.src_media,
+            route.target_id,
+            Some(selected_rid),
+        );
+    }
+    assert!(route.state.routes.next_kf_deadline().is_some());
 }
 
 #[test]
@@ -1583,23 +1630,16 @@ fn remote_keyframe_retry_clears_tracking_when_feedback_closes() {
     );
     route.request_kf();
     assert!(route.state.routes.next_kf_deadline().is_some());
-    let Some((source, control)) = route
-        .state
-        .routes
-        .remote_source(route.src_media)
-        .map(RemoteSourceRegistration::cloned_control_path)
-    else {
-        panic!("remote source should remain registered");
-    };
     route.control_rx.close();
-
-    request_kf_for_target(
+    retry_source_kf(
         &mut route.state,
         &route.rtc_metrics,
-        KeyframeRequestTarget::Remote(&source, &control),
-        None,
-        KeyframeRequestKind::Pli,
-        KeyframeRequestMode::Retry,
+        SourceKeyframeRequest {
+            src_media: route.src_media,
+            rid: None,
+            kind: KeyframeRequestKind::Pli,
+        },
+        Instant::now(),
     );
 
     assert!(route.state.routes.next_kf_deadline().is_none());
@@ -2147,17 +2187,14 @@ fn request_keyframe_ignores_wrong_source_owner() {
     let rtc_metrics = metrics.register_rtc_worker();
     let src_media = prepare_source_session(&mut state, &source_session, source_mid, 99_999);
 
-    request_kf_for_target(
+    assert!(!request_recovery_kf(
         &mut state,
         &rtc_metrics,
-        KeyframeRequestTarget::Local(&wrong_session, src_media),
+        &wrong_session,
+        src_media,
         None,
-        KeyframeRequestKind::Pli,
-        KeyframeRequestMode::Track {
-            now: Instant::now(),
-            origin: KeyframeRequestOrigin::ConsumerFeedback,
-        },
-    );
+        Instant::now()
+    ));
 
     assert!(drain_ready_sessions(&mut state).is_empty());
     let snapshot = metrics.snapshot();
