@@ -31,9 +31,9 @@ use super::{
     super::{
         state::TransportSessionHealth,
         test_support::{
-            DebugProbe, DebugRouteEntry, ObserveAudioActivityProbe, ReceiverBweTargetProbe,
-            RecordIncomingMediaProbe, RouteEntryByConsumerMidProbe, RouteEntryByMediaIdProbe,
-            RouteEntryProbe,
+            DebugProbe, DebugProbeUnavailable, DebugRouteEntry, ObserveAudioActivityProbe,
+            ReceiverBweTargetProbe, RecordIncomingMediaProbe, RouteEntryByConsumerMidProbe,
+            RouteEntryByMediaIdProbe, RouteEntryProbe,
         },
     },
     RtcWorker,
@@ -65,6 +65,7 @@ impl RtcWorker {
                     let _result = release_rx.recv();
                 })
                 .await
+                .ok()
         });
         entered_rx.await.ok()?;
         Some((release_tx, probe))
@@ -115,7 +116,7 @@ impl RtcWorker {
         snapshot_state.update_transport_quality(session_key, |sample| *sample = quality);
     }
 
-    async fn probe_debug_worker<P>(&self, probe: P) -> Option<P::Output>
+    async fn probe_debug_worker<P>(&self, probe: P) -> Result<P::Output, DebugProbeUnavailable>
     where
         P: DebugProbe,
     {
@@ -123,7 +124,7 @@ impl RtcWorker {
     }
 
     #[cfg(test)]
-    async fn read_debug_worker<F, Output>(&self, read: F) -> Option<Output>
+    async fn read_debug_worker<F, Output>(&self, read: F) -> Result<Output, DebugProbeUnavailable>
     where
         F: FnOnce(&PacketLoopState, &WorkerCommandContext<'_>) -> Output + Send + 'static,
         Output: Send + 'static,
@@ -132,17 +133,19 @@ impl RtcWorker {
     }
 
     #[cfg(test)]
-    pub async fn debug_resolve_mid(&self, transport_media_id: TransportMediaId) -> Option<Mid> {
+    pub async fn debug_resolve_mid(
+        &self,
+        transport_media_id: TransportMediaId,
+    ) -> Result<Option<Mid>, DebugProbeUnavailable> {
         self.read_debug_worker(move |state, _context| state.resolve_mid(transport_media_id))
             .await
-            .flatten()
     }
 
     #[cfg(test)]
     pub async fn debug_remote_addr_owner(
         &self,
         source_addr: SocketAddr,
-    ) -> Option<TransportSessionKey> {
+    ) -> Result<Option<TransportSessionKey>, DebugProbeUnavailable> {
         self.read_debug_worker(move |state, _context| {
             state
                 .remote_addr_demux
@@ -150,14 +153,12 @@ impl RtcWorker {
                 .cloned()
         })
         .await
-        .flatten()
     }
 
     #[cfg(test)]
-    pub async fn debug_has_any_remote_addr_session(&self) -> bool {
+    pub async fn debug_has_any_remote_addr_session(&self) -> Result<bool, DebugProbeUnavailable> {
         self.read_debug_worker(|state, _context| !state.remote_addr_demux.is_empty())
             .await
-            .unwrap_or(false)
     }
 
     #[cfg(test)]
@@ -165,13 +166,12 @@ impl RtcWorker {
         &self,
         source_addr: SocketAddr,
         session_key: &TransportSessionKey,
-    ) {
-        let _ = self
-            .probe_debug_worker(RememberRemoteAddrProbe {
-                source_addr,
-                session_key: session_key.clone(),
-            })
-            .await;
+    ) -> Result<(), DebugProbeUnavailable> {
+        self.probe_debug_worker(RememberRemoteAddrProbe {
+            source_addr,
+            session_key: session_key.clone(),
+        })
+        .await
     }
 
     #[cfg(test)]
@@ -179,13 +179,12 @@ impl RtcWorker {
         &self,
         session_key: &TransportSessionKey,
         mid: Mid,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>, DebugProbeUnavailable> {
         self.probe_debug_worker(SessionStreamRxSsrcProbe {
             session_key: session_key.clone(),
             mid,
         })
         .await
-        .flatten()
     }
 
     #[cfg(test)]
@@ -193,20 +192,19 @@ impl RtcWorker {
         &self,
         session_key: &TransportSessionKey,
         mid: Mid,
-    ) -> Option<(u32, Option<u32>)> {
+    ) -> Result<Option<(u32, Option<u32>)>, DebugProbeUnavailable> {
         self.probe_debug_worker(SessionStreamTxSsrcProbe {
             session_key: session_key.clone(),
             mid,
         })
         .await
-        .flatten()
     }
 
     #[cfg(test)]
     pub async fn debug_session_max_bitrate_in(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<Bitrate> {
+    ) -> Result<Option<Bitrate>, DebugProbeUnavailable> {
         let session_key = session_key.clone();
         self.read_debug_worker(move |state, _context| {
             state
@@ -215,14 +213,13 @@ impl RtcWorker {
                 .and_then(|session_state| session_state.max_bitrate_in)
         })
         .await
-        .flatten()
     }
 
     #[cfg(test)]
     pub async fn debug_session_max_bitrate_out(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<Bitrate> {
+    ) -> Result<Option<Bitrate>, DebugProbeUnavailable> {
         let session_key = session_key.clone();
         self.read_debug_worker(move |state, _context| {
             state
@@ -231,26 +228,24 @@ impl RtcWorker {
                 .and_then(|session_state| session_state.max_bitrate_out)
         })
         .await
-        .flatten()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
     pub async fn debug_session_receiver_bwe_target(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<Bitrate> {
+    ) -> Result<Option<Bitrate>, DebugProbeUnavailable> {
         self.probe_debug_worker(ReceiverBweTargetProbe {
             session_key: session_key.clone(),
         })
         .await
-        .flatten()
     }
 
     #[cfg(test)]
     pub async fn debug_session_receiver_bwe_str0m_update_count(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<u64> {
+    ) -> Result<Option<u64>, DebugProbeUnavailable> {
         let session_key = session_key.clone();
         self.read_debug_worker(move |state, _context| {
             state
@@ -259,7 +254,6 @@ impl RtcWorker {
                 .map(|session_state| session_state.receiver_bwe_str0m_update_count)
         })
         .await
-        .flatten()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
@@ -267,36 +261,33 @@ impl RtcWorker {
         &self,
         src_key: &TransportSessionKey,
         source_mid: Mid,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
         self.probe_debug_worker(RouteEntryProbe {
             src_key: src_key.clone(),
             source_mid,
         })
         .await
-        .flatten()
     }
 
     pub async fn debug_route_entry_by_consumer_mid(
         &self,
         consumer_key: &TransportSessionKey,
         consumer_mid: Mid,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
         self.probe_debug_worker(RouteEntryByConsumerMidProbe {
             consumer_key: consumer_key.clone(),
             consumer_mid,
         })
         .await
-        .flatten()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
     pub async fn debug_route_entry_by_media_id(
         &self,
         src_media: TransportMediaId,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
         self.probe_debug_worker(RouteEntryByMediaIdProbe { src_media })
             .await
-            .flatten()
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
@@ -304,21 +295,26 @@ impl RtcWorker {
     ///
     /// # Panics
     ///
-    /// Panics if the worker is unavailable or the publication counter is absent.
+    /// Panics if the publication counter is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` if the worker cannot answer the probe.
     pub async fn debug_record_incoming_media(
         &self,
         transport_media_id: TransportMediaId,
         payload_bytes: usize,
         now: Instant,
-    ) {
+    ) -> Result<(), DebugProbeUnavailable> {
         let recorded = self
             .probe_debug_worker(RecordIncomingMediaProbe {
                 transport_media_id,
                 payload_bytes,
                 now,
             })
-            .await;
-        assert_eq!(recorded, Some(true), "incoming media counter must exist");
+            .await?;
+        assert!(recorded, "incoming media counter must exist");
+        Ok(())
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
@@ -328,31 +324,34 @@ impl RtcWorker {
         voice_activity: Option<bool>,
         audio_level_dbov: Option<i8>,
         now: Instant,
-    ) {
-        let _ = self
-            .probe_debug_worker(ObserveAudioActivityProbe {
-                transport_media_id,
-                voice_activity,
-                audio_level_dbov,
-                now,
-            })
-            .await;
+    ) -> Result<(), DebugProbeUnavailable> {
+        self.probe_debug_worker(ObserveAudioActivityProbe {
+            transport_media_id,
+            voice_activity,
+            audio_level_dbov,
+            now,
+        })
+        .await
     }
 
     #[cfg(test)]
-    pub async fn debug_relay_target_count(&self, src_media: TransportMediaId) -> usize {
+    pub async fn debug_relay_target_count(
+        &self,
+        src_media: TransportMediaId,
+    ) -> Result<usize, DebugProbeUnavailable> {
         self.read_debug_worker(move |state, _context| state.routes.relay_target_count(src_media))
             .await
-            .unwrap_or(0)
     }
 
     #[cfg(test)]
-    pub async fn debug_active_relay_target_count(&self, src_media: TransportMediaId) -> usize {
+    pub async fn debug_active_relay_target_count(
+        &self,
+        src_media: TransportMediaId,
+    ) -> Result<usize, DebugProbeUnavailable> {
         self.read_debug_worker(move |state, _context| {
             state.routes.active_relay_target_count(src_media)
         })
         .await
-        .unwrap_or(0)
     }
 }
 

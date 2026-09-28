@@ -171,13 +171,15 @@ async fn assert_relay_target_counts(
     assert_eq!(
         source_worker
             .debug_relay_target_count(source_media_id)
-            .await,
+            .await
+            .expect("test probe must complete"),
         total
     );
     assert_eq!(
         source_worker
             .debug_active_relay_target_count(source_media_id)
-            .await,
+            .await
+            .expect("test probe must complete"),
         active
     );
 }
@@ -198,6 +200,7 @@ async fn assert_local_route_active(
     let Some(local_route_entry) = source_worker
         .debug_route_entry(source_session, Mid::from("aud-up"))
         .await
+        .expect("test probe must complete")
     else {
         panic!("local route entry should exist");
     };
@@ -218,6 +221,7 @@ async fn assert_remote_route_activity(
     let Some(remote_route_entry) = consumer_worker
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
     else {
         panic!("remote route entry should exist");
     };
@@ -525,6 +529,7 @@ async fn media_transport_plan_updates_source_route() {
         .test_api()
         .route_entry_by_media_id(route.source_transport_media_id())
         .await
+        .expect("test probe must complete")
         .unwrap_or_else(|| panic!("video route should survive planned route control"));
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Open);
     assert!(route_entry.source_active);
@@ -728,19 +733,24 @@ async fn rtc_active_speaker_source_snapshot_canonicalizes_worker_observations() 
 
     first_worker
         .debug_observe_audio_activity(repeated_media_id, Some(true), Some(-30), newest)
-        .await;
+        .await
+        .expect("test probe must complete");
     first_worker
         .debug_observe_audio_activity(tied_media_id, Some(true), Some(-40), middle)
-        .await;
+        .await
+        .expect("test probe must complete");
     second_worker
         .debug_observe_audio_activity(unique_media_id, Some(true), Some(-20), middle)
-        .await;
+        .await
+        .expect("test probe must complete");
     second_worker
         .debug_observe_audio_activity(tied_media_id, Some(true), Some(-5), middle)
-        .await;
+        .await
+        .expect("test probe must complete");
     second_worker
         .debug_observe_audio_activity(repeated_media_id, Some(true), Some(-10), oldest)
-        .await;
+        .await
+        .expect("test probe must complete");
 
     assert_eq!(
         adapter.active_speaker_source_snapshot().await,
@@ -809,17 +819,23 @@ async fn rtc_diagnostics_group_workers_and_preserve_media_ids() {
         (first_worker, sibling_media_id),
         (second_worker, second_media_id),
     ] {
-        worker.debug_record_incoming_media(media_id, 64, now).await;
+        worker
+            .debug_record_incoming_media(media_id, 64, now)
+            .await
+            .expect("test probe must complete");
     }
     first_worker
         .debug_observe_audio_activity(first_media_id, Some(true), None, now)
-        .await;
+        .await
+        .expect("test probe must complete");
     second_worker
         .debug_observe_audio_activity(second_media_id, Some(true), None, now)
-        .await;
+        .await
+        .expect("test probe must complete");
     first_worker
         .debug_observe_audio_activity(unrelated_media_id, Some(true), None, now)
-        .await;
+        .await
+        .expect("test probe must complete");
     let snapshot = adapter
         .source_diagnostics_snapshot(&[
             TransportSourceKey::new(first_session.clone(), first_media_id),
@@ -872,6 +888,7 @@ async fn rtc_rejects_stale_session_removal_without_dropping_consumer_handle() {
         .test_api()
         .route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
     else {
         panic!("source route entry should survive stale removal");
     };
@@ -897,6 +914,7 @@ async fn rtc_rejects_stale_session_removal_without_dropping_consumer_handle() {
             .test_api()
             .route_entry_by_media_id(source_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
 }
@@ -928,8 +946,20 @@ async fn media_transport_terminal_teardown_falls_back_and_continues_batch() {
         ])
         .await;
 
-    assert!(worker.debug_resolve_mid(source_media_id).await.is_some());
-    assert!(worker.debug_resolve_mid(later_media_id).await.is_none());
+    assert!(
+        worker
+            .debug_resolve_mid(source_media_id)
+            .await
+            .expect("test probe must complete")
+            .is_some()
+    );
+    assert!(
+        worker
+            .debug_resolve_mid(later_media_id)
+            .await
+            .expect("test probe must complete")
+            .is_none()
+    );
     assert!(
         adapter
             .create_initial_session_offer("test-room", &wrong_owner)

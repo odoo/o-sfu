@@ -292,7 +292,7 @@ impl GeneralCallScenario {
         self.run_media_time(Duration::from_secs(3)).await?;
 
         self.refresh_source_policy().await;
-        self.inspect_route_state().await;
+        self.inspect_route_state().await?;
         self.drain_outbound_events();
         Ok(self.stats)
     }
@@ -526,16 +526,16 @@ impl GeneralCallScenario {
         let ticks = usize::try_from(duration.as_millis() / u128::from(MEDIA_TICK_MS))
             .map_err(|error| anyhow!("synthetic media tick count overflowed: {error}"))?;
         for tick in 0..ticks {
-            self.observe_vad_tick(tick).await;
+            self.observe_vad_tick(tick).await?;
             if tick % POLICY_REFRESH_TICKS == 0 {
                 self.refresh_source_policy().await;
-                self.inspect_route_state().await;
+                self.inspect_route_state().await?;
             }
         }
         Ok(())
     }
 
-    async fn observe_vad_tick(&mut self, tick: usize) {
+    async fn observe_vad_tick(&mut self, tick: usize) -> Result<()> {
         let pattern_index = tick % SPEAKER_PATTERN.len();
         if let Some(raw_user_id) = SPEAKER_PATTERN.get(pattern_index).copied()
             && let Some(media_id) = self.media.audio.get(&raw_user_id).copied()
@@ -547,10 +547,11 @@ impl GeneralCallScenario {
                     audio_level_for_tick(tick),
                     self.synthetic_now,
                 )
-                .await;
+                .await?;
             self.stats.audio_observations = self.stats.audio_observations.saturating_add(1);
         }
         self.synthetic_now += Duration::from_millis(MEDIA_TICK_MS);
+        Ok(())
     }
 
     async fn refresh_source_policy(&mut self) {
@@ -564,7 +565,7 @@ impl GeneralCallScenario {
         self.stats.policy_refreshes = self.stats.policy_refreshes.saturating_add(1);
     }
 
-    async fn inspect_route_state(&mut self) {
+    async fn inspect_route_state(&mut self) -> Result<()> {
         let inspect = self.room.test_api();
         self.stats.producer_count = inspect.producer_count().await;
         self.stats.consumer_count = inspect.consumer_count().await;
@@ -592,12 +593,13 @@ impl GeneralCallScenario {
                 .media_transport
                 .test_api()
                 .route_entry_by_media_id(media_id)
-                .await
+                .await?
                 .is_some()
             {
                 self.stats.route_inspections = self.stats.route_inspections.saturating_add(1);
             }
         }
+        Ok(())
     }
 
     async fn producer_media_id(

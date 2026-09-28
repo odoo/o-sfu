@@ -58,13 +58,17 @@ async fn rtc_publish_media_uses_signaled_mid_and_ssrc() {
 
     let expected_mid: Mid = "aud-up".into();
     assert_eq!(
-        adapter.debug_resolve_mid(transport_media_id).await,
+        adapter
+            .debug_resolve_mid(transport_media_id)
+            .await
+            .expect("test probe must complete"),
         Some(expected_mid)
     );
     assert_eq!(
         adapter
             .debug_session_stream_rx_ssrc(&session_key, expected_mid)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(42_424)
     );
 }
@@ -76,7 +80,10 @@ async fn rtc_session_bootstrap_applies_configured_outgoing_bitrate_cap() {
 
     let _offer = expect_initial_offer(&adapter, &session_key).await;
     assert_eq!(
-        adapter.debug_session_max_bitrate_out(&session_key).await,
+        adapter
+            .debug_session_max_bitrate_out(&session_key)
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::from_kbps(2_500))
     );
 }
@@ -92,7 +99,8 @@ async fn rtc_receiver_bwe_batch_preserves_target_semantics() {
     assert_eq!(
         adapter
             .debug_session_receiver_bwe_target(&session_key)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::from_kbps(850))
     );
     assert_eq!(
@@ -102,7 +110,8 @@ async fn rtc_receiver_bwe_batch_preserves_target_semantics() {
     assert_eq!(
         adapter
             .debug_session_receiver_bwe_str0m_update_count(&session_key)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(1)
     );
     let zero = ReceiverBweTargetUpdate::new(session_key.clone(), Bitrate::zero());
@@ -110,7 +119,8 @@ async fn rtc_receiver_bwe_batch_preserves_target_semantics() {
     assert_eq!(
         adapter
             .debug_session_receiver_bwe_target(&session_key)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::zero())
     );
     let missing = ReceiverBweTargetUpdate::new(
@@ -132,7 +142,8 @@ async fn rtc_receiver_bwe_batch_preserves_target_semantics() {
     assert_eq!(
         capped
             .debug_session_receiver_bwe_target(&capped_session)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::from_kbps(500))
     );
 }
@@ -152,7 +163,10 @@ async fn rtc_recv_media_applies_configured_incoming_bitrate_cap() {
             .is_ok()
     );
     assert_eq!(
-        adapter.debug_session_max_bitrate_in(&session_key).await,
+        adapter
+            .debug_session_max_bitrate_in(&session_key)
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::from_bps(1_234_567))
     );
 }
@@ -195,7 +209,10 @@ async fn rtc_consume_media_uses_negotiated_mid_and_destination_ssrc() {
     };
 
     let expected_dest_mid: Mid = "aud-down".into();
-    let route_entry = adapter.debug_route_entry_by_media_id(source_media_id).await;
+    let route_entry = adapter
+        .debug_route_entry_by_media_id(source_media_id)
+        .await
+        .expect("test probe must complete");
     assert!(route_entry.is_some());
     let Some(route_entry) = route_entry else {
         return;
@@ -212,6 +229,7 @@ async fn rtc_consume_media_uses_negotiated_mid_and_destination_ssrc() {
         adapter
             .debug_session_stream_tx_pair(&consumer_key, expected_dest_mid)
             .await
+            .expect("test probe must complete")
             .is_some_and(|(ssrc, _)| ssrc != 61_000)
     );
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Open);
@@ -250,6 +268,7 @@ async fn rtc_consume_media_can_start_route_inactive() {
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("source route should exist");
     assert_eq!(route_entry.active_destination_count, 0);
     assert!(route_entry.destinations.iter().any(|dest| {
@@ -306,6 +325,7 @@ async fn rtc_consumer_routes_keep_the_aggregate_blocked_before_decoder_refresh()
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("route entry should exist after first consumer registration");
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Block);
 
@@ -323,6 +343,7 @@ async fn rtc_consumer_routes_keep_the_aggregate_blocked_before_decoder_refresh()
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("route entry should still exist after mixed policy registration");
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Block);
 }
@@ -367,6 +388,7 @@ async fn rtc_consumer_packet_gate_update_waits_for_live_rid_before_strict_aggreg
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("route entry should exist after consumer registration");
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Block);
 
@@ -390,6 +412,7 @@ async fn rtc_consumer_packet_gate_update_waits_for_live_rid_before_strict_aggreg
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("route entry should still exist after consumer gate update");
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Block);
 
@@ -407,6 +430,7 @@ async fn rtc_consumer_packet_gate_update_waits_for_live_rid_before_strict_aggreg
     let route_entry = adapter
         .debug_route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("route entry should still exist after opening the consumer gate");
     assert_eq!(route_entry.effective_packet_gate, DebugPacketGate::Block);
 }
@@ -428,7 +452,7 @@ async fn incoming_media_probe_does_not_register_missing_publications() {
         })
         .await;
 
-    assert_eq!(recorded, Some(false));
+    assert_eq!(recorded, Ok(false));
     assert!(
         adapter
             .test_handle()
@@ -460,7 +484,8 @@ async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
     ] {
         adapter
             .debug_record_incoming_media(transport_media_id, bytes, now + elapsed)
-            .await;
+            .await
+            .expect("test probe must complete");
     }
     let worker_handle = adapter.test_handle();
     let snapshot = worker_handle
@@ -499,7 +524,8 @@ async fn rtc_incoming_bitrate_snapshot_ignores_closed_sessions() {
     ] {
         adapter
             .debug_record_incoming_media(transport_media_id, bytes, now + elapsed)
-            .await;
+            .await
+            .expect("test probe must complete");
     }
     let worker_handle = adapter.test_handle();
     let before_close = worker_handle
@@ -553,7 +579,8 @@ async fn rtc_active_speaker_source_snapshot_orders_recent_audio_sources() {
     let now = Instant::now();
     adapter
         .debug_observe_audio_activity(first_media_id, Some(true), None, now)
-        .await;
+        .await
+        .expect("test probe must complete");
     adapter
         .debug_observe_audio_activity(
             second_media_id,
@@ -561,7 +588,8 @@ async fn rtc_active_speaker_source_snapshot_orders_recent_audio_sources() {
             None,
             now + Duration::from_millis(10),
         )
-        .await;
+        .await
+        .expect("test probe must complete");
 
     let snapshot = adapter.active_speaker_source_snapshot().await;
     assert_eq!(
@@ -589,7 +617,8 @@ async fn active_speaker_expiry_wakes_policy_without_input() {
     let room_instance_id = session_key.room_instance_id();
     adapter
         .debug_observe_audio_activity(media_id, Some(true), None, Instant::now())
-        .await;
+        .await
+        .expect("test probe must complete");
 
     let observed_rooms = timeout(Duration::from_secs(1), updates.wait_for_update())
         .await

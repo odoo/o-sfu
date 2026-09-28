@@ -355,7 +355,8 @@ async fn destination_state(
     media_transport
         .test_api()
         .route_entry_by_media_id(source_media_id)
-        .await?
+        .await
+        .expect("test probe must complete")?
         .destinations
         .into_iter()
         .find(|destination| destination.dest_session.user_id() == user_id)
@@ -601,6 +602,7 @@ async fn transport_consume_failure_releases_pending_setup_for_retry() {
             .test_api()
             .route_entry_by_media_id(source_media_id)
             .await
+            .expect("test probe must complete")
             .is_some_and(|entry| !entry.destinations.is_empty())
     );
 }
@@ -708,6 +710,7 @@ async fn committed_consumer_reaches_graph_topology_and_transport() {
             .test_api()
             .route_entry_by_media_id(source_media_id)
             .await
+            .expect("test probe must complete")
             .is_some_and(|entry| !entry.destinations.is_empty())
     );
 }

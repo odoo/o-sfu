@@ -439,6 +439,7 @@ async fn rtc_simulcast_publish_intent_preserves_negotiated_encoding_facts() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("simulcast publish should expose the staged mid");
 
     let (renegotiation_offer, upload_slots) = adapter
@@ -584,6 +585,7 @@ async fn rtc_simulcast_answer_rejects_unoffered_rid_alternatives() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("simulcast publish should expose the staged mid");
     let renegotiation_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -662,6 +664,7 @@ async fn rtc_simulcast_answer_rejects_unoffered_plain_rid() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("simulcast publish should expose the staged mid");
     let renegotiation_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -708,6 +711,7 @@ async fn rtc_simulcast_answer_rejects_larger_max_br_than_offer() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("simulcast publish should expose the staged mid");
     let renegotiation_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -757,6 +761,7 @@ async fn rtc_producer_answer_rejects_non_one_byte_extmap_id() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("producer media should expose its staged mid");
     let renegotiation_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -830,7 +835,7 @@ async fn rtc_initial_session_offer_rejects_overlapping_pending_offer() {
             },
         )
         .await
-        .flatten()
+        .expect("test probe must complete")
         .expect("repeated offer should retain its egress counter");
     assert!(Arc::ptr_eq(&first_counter, &repeated_counter));
     assert!(Arc::ptr_eq(&first_counter, &registered_counter));
@@ -863,6 +868,7 @@ async fn rtc_session_renegotiation_offer_stages_protocol_producer_additions() {
     let negotiated_mid = adapter
         .debug_resolve_mid(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("transport media should resolve to the server-assigned mid");
     assert!(renegotiation_sdp.contains(&format!("a=mid:{negotiated_mid}")));
 
@@ -890,12 +896,16 @@ async fn rtc_session_renegotiation_offer_stages_protocol_producer_additions() {
     assert_eq!(
         adapter
             .debug_session_stream_rx_ssrc(&session_key, negotiated_mid)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(fid_pair.0),
         "RID-less recv media should use the primary SSRC accepted from the answer"
     );
     assert_eq!(
-        adapter.debug_session_max_bitrate_in(&session_key).await,
+        adapter
+            .debug_session_max_bitrate_in(&session_key)
+            .await
+            .expect("test probe must complete"),
         Some(Bitrate::from_bps(2_222_222)),
         "renegotiated recv media should reapply the incoming bitrate cap after the answer lands"
     );
@@ -980,6 +990,7 @@ async fn rtc_protocol_publish_projects_rid_bindings_when_publish_intent_is_empty
         let negotiated_mid = adapter
             .debug_resolve_mid(transport_media_id)
             .await
+            .expect("test probe must complete")
             .expect("transport media should expose its negotiated mid");
         let answer_sdp = remote
             .sdp_api()
@@ -1124,6 +1135,7 @@ async fn rtc_session_renegotiation_offer_stages_protocol_consumer_additions() {
     let renegotiated_mid = adapter
         .debug_resolve_mid(consumer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("transport media should resolve to the server-assigned mid");
     assert!(renegotiation_sdp.contains(&format!("a=mid:{renegotiated_mid}")));
     let consumer_section = media_section_for_mid(&renegotiation_sdp, &renegotiated_mid)
@@ -1141,7 +1153,8 @@ async fn rtc_session_renegotiation_offer_stages_protocol_consumer_additions() {
     assert_eq!(
         adapter
             .debug_session_stream_tx_pair(&consumer_key, renegotiated_mid)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some((fid_pair.0, Some(fid_pair.1))),
         "consumer FID offer should match the str0m transmit stream"
     );
@@ -1176,6 +1189,7 @@ async fn rtc_session_answer_releases_declined_consumer_without_follow_up_offer()
     let consumer_mid = adapter
         .debug_resolve_mid(consumer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("consumer media should expose its staged mid");
     let addition_offer = adapter
         .create_session_renegotiation_offer(&consumer_key)
@@ -1199,20 +1213,30 @@ async fn rtc_session_answer_releases_declined_consumer_without_follow_up_offer()
     assert_eq!(applied.declined_consumers(), &[consumer_media_id]);
 
     assert_eq!(
-        adapter.debug_route_entry_by_media_id(source_media_id).await,
+        adapter
+            .debug_route_entry_by_media_id(source_media_id)
+            .await
+            .expect("test probe must complete"),
         None
     );
     assert_eq!(
         adapter
             .debug_session_stream_tx_pair(&consumer_key, consumer_mid)
-            .await,
+            .await
+            .expect("test probe must complete"),
         None
     );
     assert_eq!(
         adapter.remove_media(&consumer_key, consumer_media_id).await,
         Ok(())
     );
-    assert_eq!(adapter.debug_resolve_mid(consumer_media_id).await, None);
+    assert_eq!(
+        adapter
+            .debug_resolve_mid(consumer_media_id)
+            .await
+            .expect("test probe must complete"),
+        None
+    );
     assert_eq!(
         adapter
             .create_session_renegotiation_offer(&consumer_key)
@@ -1252,6 +1276,7 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
     let consumer_mid = adapter
         .debug_resolve_mid(consumer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("consumer media should expose its staged mid");
 
     let addition_offer = adapter
@@ -1273,7 +1298,10 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
             .is_ok()
     );
     assert_eq!(
-        adapter.debug_route_entry_by_media_id(source_media_id).await,
+        adapter
+            .debug_route_entry_by_media_id(source_media_id)
+            .await
+            .expect("test probe must complete"),
         None
     );
 
@@ -1360,6 +1388,7 @@ async fn rtc_session_renegotiation_stages_follow_up_removal_for_cancelled_pendin
     let producer_mid = adapter
         .debug_resolve_mid(producer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("producer media should expose its staged mid");
     let addition_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -1424,6 +1453,7 @@ async fn rtc_session_cleanup_releases_declined_staged_producer_without_follow_up
     let producer_mid = adapter
         .debug_resolve_mid(producer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("producer media should expose its staged mid");
     let addition_offer = adapter
         .create_session_renegotiation_offer(&session_key)
@@ -1514,7 +1544,8 @@ async fn rtc_session_renegotiation_queues_consumer_removal_while_answer_is_pendi
     assert_eq!(
         adapter
             .debug_route_entry_by_media_id(first_source_media_id)
-            .await,
+            .await
+            .expect("test probe must complete"),
         None
     );
     assert_eq!(
@@ -1880,6 +1911,7 @@ async fn add_negotiated_consumer_media(
     let consumer_mid = adapter
         .debug_resolve_mid(consumer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("consumer media should expose its staged mid");
     let addition_offer = adapter
         .create_session_renegotiation_offer(consumer_key)
@@ -1907,6 +1939,7 @@ async fn add_negotiated_producer_media(
     let producer_mid = adapter
         .debug_resolve_mid(producer_media_id)
         .await
+        .expect("test probe must complete")
         .expect("producer media should expose its staged mid");
     let addition_offer = adapter
         .create_session_renegotiation_offer(session_key)

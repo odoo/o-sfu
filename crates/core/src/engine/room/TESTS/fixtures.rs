@@ -238,6 +238,7 @@ impl StagedPublishScenario {
             .test_api()
             .route_entry_by_media_id(transport_media_id)
             .await
+            .expect("test probe must complete")
             .is_some()
     }
 }
@@ -486,7 +487,8 @@ impl SourcePolicyScenario {
                     DEFAULT_ACTIVE_SPEAKER_AUDIO_LEVEL_DBOV,
                     observed_at,
                 )
-                .await;
+                .await
+                .expect("test probe must complete");
         }
     }
 
@@ -503,7 +505,8 @@ impl SourcePolicyScenario {
                     audio_level_dbov,
                     observed_at,
                 )
-                .await;
+                .await
+                .expect("test probe must complete");
         }
     }
 

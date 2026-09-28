@@ -471,6 +471,7 @@ async fn publication_deactivation_updates_transport_route_activity() {
         .test_api()
         .route_entry_by_media_id(transport_media_id)
         .await
+        .expect("test probe must complete")
         .expect("published camera should still have a route entry");
     assert!(!route.source_active);
 }

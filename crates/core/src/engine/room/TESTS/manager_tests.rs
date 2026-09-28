@@ -525,6 +525,7 @@ async fn spillover_media_diagnostics_use_connection_worker() {
             .test_api()
             .route_entry_by_media_id(transport_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
     assert_user_exact(

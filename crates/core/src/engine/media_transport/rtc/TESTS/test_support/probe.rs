@@ -24,9 +24,9 @@
 //! production transport API, such as seeding demux state or injecting an
 //! audio activity observation
 
-use std::fmt;
 #[cfg(all(not(test), feature = "testing-transport"))]
 use std::time::Instant;
+use std::{error::Error, fmt};
 #[cfg(test)]
 use std::{net::SocketAddr, time::Instant};
 
@@ -42,6 +42,18 @@ use crate::{
     Bitrate,
     engine::media_transport::{TransportMediaId, TransportSessionKey},
 };
+
+/// A test probe did not complete its mailbox round trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DebugProbeUnavailable;
+
+impl fmt::Display for DebugProbeUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("RTC debug probe worker is unavailable")
+    }
+}
+
+impl Error for DebugProbeUnavailable {}
 
 const DEBUG_PROBE_CHANNEL_CAPACITY: usize = 64;
 
@@ -66,9 +78,9 @@ impl RtcWorkerDebugHandle {
     ///
     /// callers pass a concrete probe value and receive that probe's exact
     /// output type
-    /// `None` means the worker was unavailable, the probe could
-    /// not be queued or the worker task dropped the response before answering
-    pub async fn probe<P>(&self, probe: P) -> Option<P::Output>
+    /// Returns `DebugProbeUnavailable` when the request cannot reach the worker
+    /// or its response is dropped before delivery.
+    pub async fn probe<P>(&self, probe: P) -> Result<P::Output, DebugProbeUnavailable>
     where
         P: DebugProbe,
     {
@@ -76,8 +88,10 @@ impl RtcWorkerDebugHandle {
         self.tx
             .send(DebugProbeRequest::new(probe, response_tx))
             .await
-            .ok()?;
-        response_rx.await.ok()
+            .map_err(|_send_error| DebugProbeUnavailable)?;
+        response_rx
+            .await
+            .map_err(|_receive_error| DebugProbeUnavailable)
     }
 }
 
@@ -478,5 +492,54 @@ fn debug_packet_gate(packet_gate: &PacketLayerGate) -> DebugPacketGate {
         PacketLayerGate::Open => DebugPacketGate::Open,
         PacketLayerGate::Block => DebugPacketGate::Block,
         PacketLayerGate::Rid(rid) => DebugPacketGate::Rid(rid.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn closed_probe_mailbox_reports_unavailable() {
+        let channels = RtcWorkerDebugChannels::new();
+        let handle = channels.handle();
+        drop(channels);
+        assert_eq!(
+            handle
+                .probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| None::<u32>)
+                .await,
+            Err(DebugProbeUnavailable)
+        );
+    }
+
+    #[tokio::test]
+    async fn dropped_probe_response_reports_unavailable() {
+        let mut channels = RtcWorkerDebugChannels::new();
+        let handle = channels.handle();
+        let (result, ()) = tokio::join!(
+            handle.probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| 7_u32),
+            async {
+                let request = channels
+                    .rx
+                    .recv()
+                    .await
+                    .expect("probe request should arrive");
+                drop(request);
+            }
+        );
+        assert_eq!(result, Err(DebugProbeUnavailable));
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "negative assertion requires an available worker")]
+    async fn unavailable_worker_cannot_satisfy_negative_observation() {
+        let channels = RtcWorkerDebugChannels::new();
+        let handle = channels.handle();
+        drop(channels);
+        let observed = handle
+            .probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| None::<u32>)
+            .await
+            .expect("negative assertion requires an available worker");
+        assert_eq!(observed, None);
     }
 }

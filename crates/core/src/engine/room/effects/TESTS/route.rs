@@ -292,6 +292,7 @@ impl RouteFixture {
             .test_api()
             .route_entry_by_media_id(self.route.source_transport_media_id())
             .await
+            .map_err(io::Error::other)?
             .ok_or_else(|| io::Error::other("video route should exist"))
     }
 
