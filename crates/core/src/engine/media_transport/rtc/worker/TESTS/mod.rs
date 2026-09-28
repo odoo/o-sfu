@@ -12,6 +12,7 @@ mod scheduling;
 use std::{
     collections::BTreeSet,
     future::Future,
+    iter,
     net::{SocketAddr, UdpSocket as StdUdpSocket},
     sync::{
         Arc, Mutex, PoisonError,
@@ -3015,5 +3016,218 @@ fn packet_loop_observes_keyframe_before_draining_due_retry() -> Result<(), &'sta
     assert_eq!(snapshot.rtc_keyframe_requests_forwarded(), 1);
     assert_eq!(snapshot.rtc_keyframe_requests_cleared(), 1);
     assert_eq!(snapshot.rtc_keyframe_requests_retried(), 0);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one regression follows authenticated ICE, protected selection, pin eviction and bounded recovery"
+)]
+fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Result<(), &'static str>
+{
+    let mut harness = IngressRoutingHarness::new(50_101, 50_100);
+    let selected_session = test_transport_session_key(51, 0, 70, UserId::Integer(71));
+    let sibling_sessions: Vec<_> = (0_u64..4)
+        .map(|offset| {
+            test_transport_session_key(
+                51,
+                0,
+                72 + offset,
+                UserId::Integer(73 + i64::try_from(offset).unwrap_or(0)),
+            )
+        })
+        .collect();
+    for session_key in sibling_sessions.iter().chain(iter::once(&selected_session)) {
+        create_rtc_session(
+            &mut harness.packet_loop_state,
+            session_key,
+            harness.candidate_addr.port(),
+        );
+        let local_ufrag = harness
+            .packet_loop_state
+            .users
+            .get(session_key)
+            .ok_or("new RTC session should exist")?
+            .local_ice_ufrag
+            .clone();
+        assert!(
+            harness
+                .packet_loop_state
+                .remote_addr_demux
+                .remember_local_ice_ufrag(&local_ufrag, session_key,)
+        );
+    }
+    for (session_index, session_key) in sibling_sessions.iter().enumerate() {
+        for source_index in 0..17 {
+            let port = 52_000 + session_index * 32 + source_index;
+            let source = SocketAddr::from(([127, 0, 0, 1], u16::try_from(port).unwrap_or(0)));
+            assert!(
+                harness
+                    .packet_loop_state
+                    .remote_addr_demux
+                    .remember_remote_addr(source, session_key,)
+            );
+        }
+    }
+    let binding = authenticated_binding_packet(&mut harness.packet_loop_state, &selected_session)?;
+    let session_state = harness
+        .packet_loop_state
+        .users
+        .get_mut(&selected_session)
+        .ok_or("selected RTC session should exist")?;
+    let fingerprint = session_state
+        .rtc
+        .direct_api()
+        .local_dtls_fingerprint()
+        .clone();
+    session_state
+        .rtc
+        .direct_api()
+        .set_remote_fingerprint(fingerprint);
+    session_state
+        .rtc
+        .direct_api()
+        .start_dtls(true)
+        .map_err(|_error| "test DTLS should start")?;
+    assert!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .candidates_for_src_addr(harness.source_addr)
+            .is_none()
+    );
+    let now = Instant::now() + Duration::from_secs(1);
+    harness.route_at(&binding, now);
+    let bitrate_registry = Arc::new(Mutex::new(BitrateRegistry::default()));
+    let snapshot_state = Arc::new(Mutex::new(RtcSnapshotState::default()));
+    let source_policy_signal = SourcePolicySignal::default();
+    let context = super::session_drain::SessionDrainContext::new(
+        &snapshot_state,
+        &bitrate_registry,
+        &harness.metrics,
+        &harness.rtc_metrics,
+        &source_policy_signal,
+    );
+    let mut buffers = PacketLoopBuffers::new();
+    assert!(!super::session_drain::drain_ready_sessions(
+        &mut harness.packet_loop_state,
+        &context,
+        &mut buffers,
+        now,
+    ));
+    let selected_addr = harness.source_addr;
+    assert!(buffers.pending_transmits.iter().any(|transmit| {
+        transmit.destination == selected_addr
+            && transmit
+                .contents
+                .first()
+                .is_some_and(|first| (20..=63).contains(first))
+    }));
+    let viable_addr = SocketAddr::from(([127, 0, 0, 1], 50_102));
+    harness.source_addr = viable_addr;
+    let rtcp = rtp::rtcp_receiver_report_without_report_blocks(rtp::Ssrc::from(0));
+    let miss_key = PacketLoopRoutingMissKey::new(viable_addr, harness.candidate_addr, &rtcp);
+    harness.route_at(&rtcp, now + Duration::from_millis(1));
+    assert!(harness.demux.should_skip_scan(miss_key, &rtcp));
+    let credentials = harness
+        .packet_loop_state
+        .users
+        .get_mut(&selected_session)
+        .ok_or("selected RTC session should exist")?
+        .rtc
+        .direct_api()
+        .local_ice_credentials();
+    let username = format!("{}:{TEST_REMOTE_ICE_UFRAG}", credentials.ufrag);
+    // Higher ICE priority nominates B while the last non-STUN transmit still protects A.
+    let viable_binding = serialize_stun_message(
+        &StunMessage::binding_request(&username, TransId::new(), true, 1, 2, true),
+        Some(credentials.pass.as_bytes()),
+    )
+    .ok_or("peer-reflexive STUN binding should serialize")?;
+    harness.route_at(&viable_binding, now + Duration::from_millis(2));
+    assert!(harness.packet_loop_state.has_dirty_sessions());
+    assert_eq!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .session_key_for_remote_addr(viable_addr),
+        Some(&selected_session)
+    );
+    let context = super::session_drain::SessionDrainContext::new(
+        &snapshot_state,
+        &bitrate_registry,
+        &harness.metrics,
+        &harness.rtc_metrics,
+        &source_policy_signal,
+    );
+    assert!(!super::session_drain::drain_ready_sessions(
+        &mut harness.packet_loop_state,
+        &context,
+        &mut buffers,
+        now + Duration::from_millis(2),
+    ));
+    let viable_at = now + Duration::from_millis(2);
+    let receive = Receive::new(Protocol::Udp, viable_addr, harness.candidate_addr, &rtcp)
+        .map_err(|_error| "RTCP fixture should parse")?;
+    assert!(
+        harness
+            .packet_loop_state
+            .users
+            .get(&selected_session)
+            .ok_or("selected RTC session should exist")?
+            .rtc
+            .accepts(&Input::Receive(viable_at, receive))
+    );
+    assert!(!harness.demux.should_skip_scan(miss_key, &rtcp));
+    assert_eq!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .session_key_for_remote_addr(viable_addr),
+        Some(&selected_session)
+    );
+    for offset in 0..64 {
+        let churn_addr = SocketAddr::from(([127, 0, 0, 1], 51_000 + offset));
+        assert!(
+            harness
+                .packet_loop_state
+                .remote_addr_demux
+                .remember_remote_addr(churn_addr, &selected_session,)
+        );
+    }
+    assert_eq!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .session_key_for_remote_addr(selected_addr),
+        Some(&selected_session)
+    );
+    assert!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .session_key_for_remote_addr(viable_addr)
+            .is_none()
+    );
+    let routed_before = harness.metrics.snapshot().rtc_datagram_routes_scan();
+    harness.route_at(&rtcp, viable_at + Duration::from_millis(1));
+    assert!(!harness.demux.should_skip_scan(miss_key, &rtcp));
+    assert_eq!(
+        harness.metrics.snapshot().rtc_datagram_routes_scan(),
+        routed_before
+    );
+    harness.route_at(&rtcp, viable_at + Duration::from_millis(2));
+    assert_eq!(
+        harness.metrics.snapshot().rtc_datagram_routes_scan(),
+        routed_before + 1
+    );
+    assert_eq!(
+        harness
+            .packet_loop_state
+            .remote_addr_demux
+            .session_key_for_remote_addr(viable_addr),
+        Some(&selected_session)
+    );
     Ok(())
 }

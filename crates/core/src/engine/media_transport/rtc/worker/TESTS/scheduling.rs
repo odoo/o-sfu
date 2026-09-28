@@ -10,23 +10,27 @@ use tokio_util::sync::CancellationToken;
 use super::{
     packet_loop_config_for_test, sample_already_relayed_packet, test_transport_session_key,
 };
-use crate::engine::{
-    UserId,
-    media_transport::{
-        TransportMediaId,
-        rtc::{
-            commands::RtcWorkerCommand,
-            packet_loop::{
-                forwarded_packet::ForwardedPacket,
-                routing_miss::DemuxRecoveryState,
-                udp::{UdpDatagram, UdpIngress, test_support::completed_datagram_channel},
-            },
-            state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
-            worker::{
-                input::{PacketLoopControlInput, PacketLoopInputReceivers},
-                loop_driver::{
-                    PacketLoopApplyContext, PacketLoopConfig, PacketLoopTurn, PacketLoopTurnInput,
-                    WaitPhaseSnapshot,
+use crate::{
+    Bitrate,
+    engine::{
+        UserId,
+        media_transport::{
+            TransportMediaId,
+            rtc::{
+                bootstrap::test_support::ensure_session_rtc_state,
+                commands::RtcWorkerCommand,
+                packet_loop::{
+                    forwarded_packet::ForwardedPacket,
+                    routing_miss::DemuxRecoveryState,
+                    udp::{UdpDatagram, UdpIngress, test_support::completed_datagram_channel},
+                },
+                state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
+                worker::{
+                    input::{PacketLoopControlInput, PacketLoopInputReceivers},
+                    loop_driver::{
+                        PacketLoopApplyContext, PacketLoopConfig, PacketLoopTurn,
+                        PacketLoopTurnInput, WaitPhaseSnapshot,
+                    },
                 },
             },
         },
@@ -342,4 +346,79 @@ async fn shutdown_during_checkpoint_yield_preserves_queued_inputs() -> Result<()
     assert!(harness.ingress.try_recv().is_some());
     assert!(harness.inputs.try_recv_control().is_some());
     Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn observation_command_preserves_unknown_source_cooldown() -> Result<(), &'static str> {
+    use crate::engine::media_transport::rtc::packet_loop::routing_miss::PacketLoopRoutingMissKey;
+    let mut harness = SchedulingHarness::new();
+    let source_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 50_000));
+    let candidate_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 50_001));
+    let packet = [0x80, 0x60, 0, 1];
+    let miss_key = PacketLoopRoutingMissKey::new(source_addr, candidate_addr, &packet);
+    let now = Instant::now();
+    for _ in 0..4 {
+        harness
+            .demux
+            .record_miss(miss_key, &packet, source_addr, now);
+    }
+    assert!(harness.demux.is_source_blocked(source_addr, now));
+    harness.queue_control(1);
+    harness.apply_control(1).await?;
+    assert!(harness.demux.is_source_blocked(source_addr, now));
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn immediate_rtc_timeout_yields_to_queued_control_and_udp() -> Result<(), &'static str> {
+    let mut harness = SchedulingHarness::new();
+    let session = test_transport_session_key(7, 0, 8, UserId::Integer(9));
+    let candidate_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 48_000));
+    ensure_session_rtc_state(
+        &mut harness.state.users,
+        &session,
+        candidate_addr,
+        Bitrate::from_mbps(10),
+    )
+    .map_err(|_error| "RTC state should initialize")?;
+    harness.state.mark_session_dirty(&session);
+    harness.turn.force_immediate_timeout = true;
+    harness.queue_control(1);
+    harness.queue_datagram(b"waiting");
+
+    let snapshot = harness.turn.pump(
+        &mut harness.state,
+        &harness.bitrate_registry,
+        &harness.snapshot_state,
+        &harness.config,
+        &mut harness.demux,
+        &mut harness.inputs,
+    );
+    assert!(
+        snapshot
+            .next_timeout
+            .is_some_and(|deadline| deadline <= Instant::now())
+    );
+    assert!(!harness.state.has_dirty_sessions());
+
+    let input = harness
+        .next(snapshot.next_timeout)
+        .await
+        .ok_or("queued control should run")?;
+    assert_control(&input, 1);
+    harness.apply(input);
+    for _ in 0..=CHECKPOINT_INPUTS {
+        let input = harness
+            .next(snapshot.next_timeout)
+            .await
+            .ok_or("queued UDP should run after bounded timeout wakeups")?;
+        if matches!(input, PacketLoopTurnInput::Datagram(_)) {
+            assert_datagram(&input, b"waiting");
+            harness.apply(input);
+            return Ok(());
+        }
+        assert!(matches!(input, PacketLoopTurnInput::Timeout));
+        harness.apply(input);
+    }
+    Err("queued UDP starved after bounded timeout wakeups")
 }

@@ -556,7 +556,7 @@ fn route_pkt_by_session(
         return;
     }
     if route_packet_to_session(state, &session_key, route, input, "single-user-scan") {
-        demux.record_fallback_route_success(miss_key, route.packet, route.source_addr);
+        demux.record_fallback_route_success(route.source_addr);
     }
 }
 
@@ -593,11 +593,33 @@ fn route_pkt_by_recovery(
             session_key
         }
         IndexedSessionRecoveryOutcome::NoMatch { examined_sessions } => {
-            route
-                .metrics
-                .record_rtc_datagram_fallback_scan(examined_sessions);
-            record_no_user_miss(demux, miss_key, route);
-            return;
+            let (overflowed_match, overflowed_examined, complete) =
+                if route.packet.first().is_some_and(|first| *first >= 2) {
+                    scan_overflowed_sessions(state, &input)
+                } else {
+                    (None, 0, true)
+                };
+            route.metrics.record_rtc_datagram_fallback_scan(
+                examined_sessions.saturating_add(overflowed_examined),
+            );
+            if let Some(session_key) = overflowed_match {
+                session_key
+            } else {
+                if complete {
+                    record_no_user_miss(demux, miss_key, route);
+                } else {
+                    route
+                        .metrics
+                        .record_rtc_datagram_drop(RtcDatagramDropReason::NoUser);
+                    if demux.record_incomplete_probe(route.source_addr, route.now) {
+                        trace!(
+                            source = %route.source_addr,
+                            "entering rtc unknown-source recovery cooldown after incomplete bounded scan"
+                        );
+                    }
+                }
+                return;
+            }
         }
         IndexedSessionRecoveryOutcome::Malformed => {
             drop_malformed_fallback(route);
@@ -605,8 +627,40 @@ fn route_pkt_by_recovery(
         }
     };
     if route_packet_to_session(state, &session_key, route, input, "recovery-index") {
-        demux.record_fallback_route_success(miss_key, route.packet, route.source_addr);
+        demux.record_fallback_route_success(route.source_addr);
     }
+}
+
+/// Checks a fixed number of sessions whose accepted source pins overflowed.
+///
+/// A newly nominated address can be evicted before str0m emits non-STUN
+/// traffic that marks it as protected. A partial rotation is not proof of
+/// absence. Repeated packets continue at the next session while the source
+/// limiter bounds hostile probing.
+fn scan_overflowed_sessions(
+    state: &mut PacketLoopState,
+    input: &Input<'_>,
+) -> (Option<TransportSessionKey>, usize, bool) {
+    const MAX_OVERFLOW_PROBES_PER_PACKET: usize = 4;
+    let overflowed = state.remote_addr_demux.overflowed_session_count();
+    let probe_count = overflowed.min(MAX_OVERFLOW_PROBES_PER_PACKET);
+    for examined in 0..probe_count {
+        let Some(session_key) = state.remote_addr_demux.next_overflowed_session() else {
+            break;
+        };
+        if state
+            .users
+            .get(session_key)
+            .is_some_and(|session| session.rtc.accepts(input))
+        {
+            return (
+                Some(session_key.clone()),
+                examined + 1,
+                overflowed <= probe_count,
+            );
+        }
+    }
+    (None, probe_count, overflowed <= probe_count)
 }
 
 fn drop_malformed_fallback(route: &PacketRouteContext<'_>) {

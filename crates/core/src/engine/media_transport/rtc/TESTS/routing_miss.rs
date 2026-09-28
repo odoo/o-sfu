@@ -55,7 +55,24 @@ fn route_success_clears_source_rate_limit_state() {
 
     assert!(demux.is_source_blocked(source_addr, start + Duration::from_millis(4),));
 
-    demux.record_fallback_route_success(miss_key, &packet, source_addr);
+    demux.record_fallback_route_success(source_addr);
 
     assert!(!demux.is_source_blocked(source_addr, start + Duration::from_millis(5),));
+}
+
+#[test]
+fn accepted_source_invalidates_only_its_exact_misses() {
+    let accepted_source = SocketAddr::from((Ipv4Addr::LOCALHOST, 44_020));
+    let unrelated_source = SocketAddr::from((Ipv4Addr::LOCALHOST, 44_021));
+    let candidate = SocketAddr::from((Ipv4Addr::LOCALHOST, 44_022));
+    let mut demux = DemuxRecoveryState::new();
+    let packet = [0x80, 0x60, 0x00, 0x01];
+    let now = Instant::now();
+    let accepted_miss = PacketLoopRoutingMissKey::new(accepted_source, candidate, &packet);
+    let unrelated_miss = PacketLoopRoutingMissKey::new(unrelated_source, candidate, &packet);
+    demux.record_miss(accepted_miss, &packet, accepted_source, now);
+    demux.record_miss(unrelated_miss, &packet, unrelated_source, now);
+    demux.record_fallback_route_success(accepted_source);
+    assert!(!demux.should_skip_scan(accepted_miss, &packet));
+    assert!(demux.should_skip_scan(unrelated_miss, &packet));
 }

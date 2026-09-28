@@ -125,6 +125,8 @@ pub(crate) struct PacketLoopTurn {
     input_yield_budget: usize,
     ready_now_budget: usize,
     udp_burst_budget: usize,
+    #[cfg(test)]
+    pub(super) force_immediate_timeout: bool,
 }
 
 /// borrowed state needed to apply the input selected by the wait phase
@@ -150,6 +152,8 @@ impl PacketLoopTurn {
             input_yield_budget: MAX_INPUTS_BEFORE_YIELD,
             ready_now_budget: MAX_READY_NOW_INPUTS_BEFORE_YIELD,
             udp_burst_budget: MAX_UDP_DATAGRAMS_PER_TURN,
+            #[cfg(test)]
+            force_immediate_timeout: false,
         }
     }
 
@@ -257,6 +261,12 @@ impl PacketLoopTurn {
             &config.rtc_metrics,
             &config.source_policy_signal,
         );
+        #[cfg(test)]
+        let session_drain_context = {
+            let mut context = session_drain_context;
+            context.force_immediate_timeout = self.force_immediate_timeout;
+            context
+        };
         // Drain output from prior inputs before forwarding this batch. Local RTC
         // writes later in the pump requeue their sessions for the next turn.
         let topology_changed =
@@ -372,8 +382,8 @@ impl PacketLoopTurn {
 
     /// applies the event that woke the worker after the pump phase
     ///
-    /// control inputs mutate authoritative worker state and conservatively
-    /// invalidate ingress demux recovery hints
+    /// Session and ICE controls invalidate ingress demux recovery hints.
+    /// Other controls preserve miss throttles.
     /// queued UDP datagrams can resume following turns without another ingress await
     /// but every datagram still gets a pump between inputs
     /// relay input remains in the receiver bundle until the next pump
@@ -391,6 +401,7 @@ impl PacketLoopTurn {
         match next_input {
             PacketLoopTurnInput::Timeout | PacketLoopTurnInput::RelayPacket => {}
             PacketLoopTurnInput::Control(command) => {
+                let topology_may_change = command.may_change_demux_topology();
                 command.dispatch(
                     context.packet_loop_state,
                     &WorkerCommandContext {
@@ -403,9 +414,9 @@ impl PacketLoopTurn {
                         rtc_metrics: &context.config.rtc_metrics,
                     },
                 );
-                // Control can change session or ICE ownership. Clear misses before
-                // a queued datagram is routed against the new topology.
-                context.demux.clear_on_topology_change();
+                if topology_may_change {
+                    context.demux.clear_on_topology_change();
+                }
             }
             PacketLoopTurnInput::Datagram(datagram) => {
                 let packet = route_datagram_to_session(

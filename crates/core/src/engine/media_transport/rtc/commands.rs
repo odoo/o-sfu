@@ -405,4 +405,24 @@ impl RtcWorkerCommand {
             | Self::RouteControl { .. } => None,
         }
     }
+
+    pub(super) fn may_change_demux_topology(&self) -> bool {
+        match self {
+            Self::CreateInitialSessionOffer { .. }
+            | Self::ApplySessionAnswer { .. }
+            | Self::CloseSession { .. } => true,
+            Self::CreateSessionRenegotiationOffer { .. }
+            | Self::ActiveSpeakerSourceSnapshot { .. }
+            | Self::SourceDiagnosticsSnapshot { .. }
+            | Self::RemoveMedia { .. }
+            | Self::AddRecvMedia { .. }
+            | Self::AddSendMedia { .. }
+            | Self::ApplyMediaControlBatch { .. }
+            | Self::RouteControl { .. } => false,
+            #[cfg(test)]
+            Self::ResolveMediaMid { .. } => false,
+            #[cfg(test)]
+            Self::ResolveNegotiatedProducerParameters { .. } => false,
+        }
+    }
 }
