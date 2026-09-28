@@ -145,7 +145,7 @@ async fn manager_leave_user_removes_empty_room() -> Result<()> {
         media_transport
             .test_api()
             .route_entry_by_media_id(media)
-            .await
+            .await?
             .is_none()
     );
     // the last departure hands the empty room to the grace, so removal waits

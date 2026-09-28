@@ -1665,7 +1665,7 @@ async fn transport_health_events_use_session_room_id_and_deduplicate() {
             },
         )
         .await
-        .flatten();
+        .expect("test probe must complete");
     assert!(room_id.is_some(), "session should reach the packet loop");
     let Some(room_id) = room_id else {
         return;

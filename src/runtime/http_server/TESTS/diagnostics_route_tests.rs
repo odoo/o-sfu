@@ -263,7 +263,7 @@ async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult
     ] {
         transport_test
             .record_incoming_media(&source_key, bytes, observed_at + elapsed)
-            .await;
+            .await?;
     }
     let source_requests = || transport_test.source_diagnostics_request_count();
 

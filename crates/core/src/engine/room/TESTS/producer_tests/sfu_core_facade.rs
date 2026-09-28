@@ -133,6 +133,10 @@ async fn queued_publish_after_initial_offer_creates_a_follow_up_offer() {
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "decline and retry assertions share one RTC lifecycle fixture"
+)]
 async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     let ConsumerAnswerFixture {
         room,
@@ -150,7 +154,13 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     } = Box::pin(build_consumer_answer_fixture()).await;
     let inspect = room.test_api();
     let transport = media_transport.test_api();
-    assert_eq!(transport.source_relay_target_count(&source).await, 1);
+    assert_eq!(
+        transport
+            .source_relay_target_count(&source)
+            .await
+            .expect("test probe must complete"),
+        1
+    );
     assert_eq!(router_consumer_dependency_count(&room).await, 1);
 
     let offer = subscriber
@@ -187,9 +197,16 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     assert_eq!(media_mid, None);
     let tx_pair = transport
         .session_stream_tx_pair(&subscriber_session_key, declined_mid)
-        .await;
+        .await
+        .expect("test probe must complete");
     assert_eq!(tx_pair, None);
-    assert_eq!(transport.source_relay_target_count(&source).await, 0);
+    assert_eq!(
+        transport
+            .source_relay_target_count(&source)
+            .await
+            .expect("test probe must complete"),
+        0
+    );
     assert_eq!(router_consumer_dependency_count(&room).await, 0);
 
     assert!(
@@ -200,7 +217,13 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     let (replacement_media_id, replacement_mid) =
         consumer_destination_identity(&media_transport, source_media_id, &subscriber_user_id).await;
     assert_ne!(replacement_media_id, declined_media_id);
-    assert_eq!(transport.source_relay_target_count(&source).await, 1);
+    assert_eq!(
+        transport
+            .source_relay_target_count(&source)
+            .await
+            .expect("test probe must complete"),
+        1
+    );
     assert_eq!(router_consumer_dependency_count(&room).await, 1);
     let offer = subscriber
         .renegotiate()
@@ -216,7 +239,8 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
     assert_eq!(inspect.consumer_count().await, 1);
     let tx_pair = transport
         .session_stream_tx_pair(&subscriber_session_key, replacement_mid)
-        .await;
+        .await
+        .expect("test probe must complete");
     assert!(tx_pair.is_some());
 }
 
@@ -415,6 +439,7 @@ async fn replacement_drains_staged_publish_before_stale_close() {
             .test_api()
             .route_entry_by_media_id(staged_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
 

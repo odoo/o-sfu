@@ -164,99 +164,155 @@ impl MediaTransportTestApi<'_> {
             .debug_set_session_transport_quality(session_key, quality);
     }
 
+    /// Records incoming media on the source worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the source worker is absent or its
+    /// probe cannot complete.
     pub async fn record_incoming_media(
         self,
         source: &TransportSourceKey,
         payload_bytes: usize,
         now: Instant,
-    ) {
-        if let Some(worker) = self.transport.worker_for_user(source.session_key()) {
-            worker
-                .debug_record_incoming_media(source.transport_media_id(), payload_bytes, now)
-                .await;
-        }
+    ) -> Result<(), DebugProbeUnavailable> {
+        self.transport
+            .worker_for_user(source.session_key())
+            .ok_or(DebugProbeUnavailable)?
+            .debug_record_incoming_media(source.transport_media_id(), payload_bytes, now)
+            .await
     }
 
+    /// Returns a source route entry when that route exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the source worker is absent or its
+    /// probe cannot complete.
     pub async fn route_entry(
         self,
         source_session_key: &TransportSessionKey,
         source_mid: Mid,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
         self.transport
-            .worker_for_user(source_session_key)?
+            .worker_for_user(source_session_key)
+            .ok_or(DebugProbeUnavailable)?
             .debug_route_entry(source_session_key, source_mid)
             .await
     }
 
     /// Inspects a real RTC route by consumer mid in test builds.
     ///
-    /// This is exposed for integration assertions that need to prove routing
-    /// state without exposing worker internals to production callers.
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the consumer worker is absent or
+    /// its probe cannot complete.
     pub async fn route_entry_by_consumer_mid(
         self,
         consumer_session_key: &TransportSessionKey,
         consumer_mid: Mid,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
         self.transport
-            .worker_for_user(consumer_session_key)?
+            .worker_for_user(consumer_session_key)
+            .ok_or(DebugProbeUnavailable)?
             .debug_route_entry_by_consumer_mid(consumer_session_key, consumer_mid)
             .await
     }
 
+    /// Searches worker routes for a media ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when any worker probe cannot complete.
     pub async fn route_entry_by_media_id(
         self,
         source_transport_media_id: TransportMediaId,
-    ) -> Option<DebugRouteEntry> {
+    ) -> Result<Option<DebugRouteEntry>, DebugProbeUnavailable> {
+        let mut observed_worker = false;
         for worker in self.transport.all_workers() {
+            observed_worker = true;
             if let Some(entry) = worker
                 .debug_route_entry_by_media_id(source_transport_media_id)
-                .await
+                .await?
             {
-                return Some(entry);
+                return Ok(Some(entry));
             }
         }
-        None
+        if observed_worker {
+            Ok(None)
+        } else {
+            Err(DebugProbeUnavailable)
+        }
     }
 
     #[cfg(test)]
+    /// Returns a session's outbound SSRC pair when it exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the session worker is absent or
+    /// its probe cannot complete.
     pub async fn session_stream_tx_pair(
         self,
         session_key: &TransportSessionKey,
         mid: Mid,
-    ) -> Option<(u32, Option<u32>)> {
+    ) -> Result<Option<(u32, Option<u32>)>, DebugProbeUnavailable> {
         self.transport
-            .worker_for_user(session_key)?
+            .worker_for_user(session_key)
+            .ok_or(DebugProbeUnavailable)?
             .debug_session_stream_tx_pair(session_key, mid)
             .await
     }
 
     #[cfg(test)]
-    pub async fn source_relay_target_count(self, source: &TransportSourceKey) -> usize {
-        let Some(worker) = self.transport.worker_for_user(source.session_key()) else {
-            return 0;
-        };
-        worker
+    /// Counts the source's relay targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the source worker is absent or
+    /// its probe cannot complete.
+    pub async fn source_relay_target_count(
+        self,
+        source: &TransportSourceKey,
+    ) -> Result<usize, DebugProbeUnavailable> {
+        self.transport
+            .worker_for_user(source.session_key())
+            .ok_or(DebugProbeUnavailable)?
             .debug_relay_target_count(source.transport_media_id())
             .await
     }
 
+    /// Returns a session's receiver BWE target when one exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when the session worker is absent or
+    /// its probe cannot complete.
     pub async fn session_receiver_bwe_target(
         self,
         session_key: &TransportSessionKey,
-    ) -> Option<crate::Bitrate> {
+    ) -> Result<Option<crate::Bitrate>, DebugProbeUnavailable> {
         self.transport
-            .worker_for_user(session_key)?
+            .worker_for_user(session_key)
+            .ok_or(DebugProbeUnavailable)?
             .debug_session_receiver_bwe_target(session_key)
             .await
     }
 
+    /// Injects one audio activity observation into every worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DebugProbeUnavailable` when a worker probe cannot complete.
     pub async fn observe_audio_activity_with_level(
         self,
         transport_media_id: TransportMediaId,
         audio_level_dbov: i8,
         now: Instant,
-    ) {
+    ) -> Result<(), DebugProbeUnavailable> {
+        let mut observed_worker = false;
         for worker in self.transport.all_workers() {
+            observed_worker = true;
             worker
                 .debug_observe_audio_activity(
                     transport_media_id,
@@ -264,7 +320,12 @@ impl MediaTransportTestApi<'_> {
                     Some(audio_level_dbov),
                     now,
                 )
-                .await;
+                .await?;
+        }
+        if observed_worker {
+            Ok(())
+        } else {
+            Err(DebugProbeUnavailable)
         }
     }
 }

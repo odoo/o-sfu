@@ -19,7 +19,7 @@ pub(super) use media_routes::{
     test_consumer_session_key, test_consumer_session_key_on_worker, test_source_session_key,
 };
 #[cfg(any(test, feature = "testing-transport"))]
-pub use probe::{DebugPacketGate, DebugRouteDestination, DebugRouteEntry};
+pub use probe::{DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry};
 #[cfg(any(test, feature = "testing-transport"))]
 pub(super) use probe::{
     DebugProbe, DebugProbeRequest, ObserveAudioActivityProbe, ReceiverBweTargetProbe,

@@ -128,16 +128,31 @@ async fn rtc_transport_close_session_cleans_remote_addr_demux_state() {
     let source_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 45_000);
     adapter
         .debug_remember_remote_addr(source_addr, &session_key)
-        .await;
+        .await
+        .expect("test probe must complete");
     assert_eq!(
-        adapter.debug_remote_addr_owner(source_addr).await,
+        adapter
+            .debug_remote_addr_owner(source_addr)
+            .await
+            .expect("test probe must complete"),
         Some(session_key.clone())
     );
 
     assert!(adapter.close_session(&session_key).await.is_ok());
 
-    assert_eq!(adapter.debug_remote_addr_owner(source_addr).await, None);
-    assert!(!adapter.debug_has_any_remote_addr_session().await);
+    assert_eq!(
+        adapter
+            .debug_remote_addr_owner(source_addr)
+            .await
+            .expect("test probe must complete"),
+        None
+    );
+    assert!(
+        !adapter
+            .debug_has_any_remote_addr_session()
+            .await
+            .expect("test probe must complete")
+    );
 }
 
 #[tokio::test]
@@ -195,7 +210,10 @@ async fn rtc_worker_finishes_accepted_commands_and_cancelled_drop_is_nonblocking
         assert_eq!(probe.await.expect("probe task should complete"), Some(()));
         for (session, kbps) in updates {
             assert_eq!(
-                adapter.debug_session_receiver_bwe_target(&session).await,
+                adapter
+                    .debug_session_receiver_bwe_target(&session)
+                    .await
+                    .expect("test probe must complete"),
                 Some(Bitrate::from_kbps(kbps))
             );
         }

@@ -147,6 +147,7 @@ async fn missing_answered_producer_parameters_release_reserved_publish() {
             .test_api()
             .route_entry_by_media_id(transport_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
 }
@@ -171,6 +172,7 @@ async fn stale_connection_commit_rejects_and_releases_reserved_publish() {
             .test_api()
             .route_entry_by_media_id(transport_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
 }
@@ -197,6 +199,7 @@ async fn rollback_before_answer_consumes_reserved_publish_once() {
             .test_api()
             .route_entry_by_media_id(transport_media_id)
             .await
+            .expect("test probe must complete")
             .is_none()
     );
 }

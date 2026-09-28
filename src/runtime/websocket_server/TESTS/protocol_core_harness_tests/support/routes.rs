@@ -36,7 +36,8 @@ pub(crate) async fn real_rtc_route_activity(
         .media_transport
         .test_api()
         .route_entry_by_consumer_mid(&consumer_session_key, Mid::from(mid))
-        .await?;
+        .await
+        .expect("test probe must complete")?;
     Some(RealRtcRouteActivity {
         source_active: route_entry.source_active,
         consumer_active: route_entry.destinations.iter().any(|destination| {

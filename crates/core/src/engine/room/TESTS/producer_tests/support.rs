@@ -250,6 +250,7 @@ pub(super) async fn consumer_destination_identity(
         .test_api()
         .route_entry_by_media_id(source_media_id)
         .await
+        .expect("test probe must complete")
         .expect("source route should exist");
     let destination = entry
         .destinations
@@ -274,6 +275,7 @@ pub(super) async fn active_destination_receivers(
             .test_api()
             .route_entry_by_media_id(source_media_id)
             .await
+            .expect("test probe must complete")
         else {
             continue;
         };
@@ -303,7 +305,8 @@ pub(super) async fn assert_receiver_bwe_target(
         adapter
             .test_api()
             .session_receiver_bwe_target(&session_key)
-            .await,
+            .await
+            .expect("test probe must complete"),
         Some(expected_target)
     );
 }
