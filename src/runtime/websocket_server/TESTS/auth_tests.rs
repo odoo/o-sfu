@@ -1,7 +1,7 @@
 use std::iter::repeat_n;
 
 use o_sfu_protocol::wire::WebSocketCloseCode;
-use tokio::net::TcpSocket;
+use tokio::{net::TcpSocket, task::yield_now};
 use tungstenite::http::StatusCode;
 
 use super::fixtures::*;
@@ -9,6 +9,27 @@ use crate::runtime::{
     auth::{MAX_JWT_TOKEN_BYTES, duration_since_epoch},
     telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
 };
+
+async fn wait_for_pre_auth_permit(server: &TestServer) {
+    let released = timeout(Duration::from_secs(2), async {
+        loop {
+            if server
+                .state
+                .pre_auth_websocket_admission
+                .available_permits_for_test()
+                == 1
+            {
+                return;
+            }
+            yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        released.is_ok(),
+        "pre-auth permit should return after the first session ends"
+    );
+}
 
 // deliberately creates a startup snapshot large enough to exercise outbound backpressure
 const SLOW_READER_PEER_COUNT: usize = 48;
@@ -172,7 +193,7 @@ async fn websocket_pre_auth_permit_is_released_after_auth_timeout() {
         read_close_code(&mut first).await,
         Some(CloseCode::Library(4107)),
     );
-    sleep(Duration::from_millis(20)).await;
+    wait_for_pre_auth_permit(&server).await;
 
     let second = connect_websocket(&server).await;
     assert!(
@@ -209,7 +230,7 @@ async fn websocket_pre_auth_permit_is_released_after_auth_failure() {
         .await;
     assert!(send_result.is_ok());
     assert_eq!(read_close_code(&mut first).await, Some(CloseCode::Protocol));
-    sleep(Duration::from_millis(20)).await;
+    wait_for_pre_auth_permit(&server).await;
 
     let second = connect_websocket(&server).await;
     assert!(
@@ -235,7 +256,7 @@ async fn websocket_pre_auth_permit_is_released_after_early_client_close() {
     };
 
     assert!(first.close(None).await.is_ok());
-    sleep(Duration::from_millis(20)).await;
+    wait_for_pre_auth_permit(&server).await;
 
     let second = connect_websocket(&server).await;
     assert!(
@@ -702,7 +723,25 @@ async fn websocket_rejects_non_auth_handshake_frame_with_protocol_metric() {
         Some(CloseCode::Protocol),
     );
 
-    sleep(Duration::from_millis(20)).await;
+    let rejection_recorded = timeout(Duration::from_secs(2), async {
+        loop {
+            if server
+                .state
+                .metrics
+                .snapshot()
+                .ws_handshake_rejected_protocol_error()
+                == 1
+            {
+                break;
+            }
+            yield_now().await;
+        }
+    })
+    .await;
+    assert!(
+        rejection_recorded.is_ok(),
+        "protocol rejection metric should be recorded"
+    );
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_handshake_credentials_received(), 0);
     assert_eq!(metrics.ws_handshake_rejected_protocol_error(), 1);

@@ -180,8 +180,6 @@ async fn protocol_core_receives_protocol_broadcast_and_peer_updates() -> TestRes
     .await;
     assert!(close_result.is_ok());
     bob.websocket = None;
-    sleep(Duration::from_millis(50)).await;
-
     require_some(
         alice.read_server_frame().await,
         "alice should consume translated peer disconnect",

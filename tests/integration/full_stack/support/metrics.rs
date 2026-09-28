@@ -34,10 +34,14 @@ pub(crate) struct TransportUserLifetimeMetrics {
     pub(crate) sum_seconds: f64,
 }
 
-pub(crate) async fn wait_for_room_gauges(server: &TestServer, expected: RoomGaugeValues) -> bool {
-    timeout(super::Duration::from_secs(3), async {
+pub(crate) async fn wait_for_room_gauges(
+    server: &TestServer,
+    expected: RoomGaugeValues,
+) -> Result<(), Option<RoomGaugeValues>> {
+    let mut last_observed = None;
+    let result = timeout(super::Duration::from_secs(3), async {
         loop {
-            let actual = metrics_text(server).await.and_then(|text| {
+            last_observed = metrics_text(server).await.and_then(|text| {
                 Some(RoomGaugeValues {
                     rooms: parse_prometheus(&text, "osfu_rooms_active")?,
                     users: parse_prometheus(&text, "osfu_users_active")?,
@@ -46,14 +50,14 @@ pub(crate) async fn wait_for_room_gauges(server: &TestServer, expected: RoomGaug
                     recording_rooms: parse_prometheus(&text, "osfu_recording_rooms_active")?,
                 })
             });
-            if actual == Some(expected) {
+            if last_observed == Some(expected) {
                 return;
             }
             yield_now().await;
         }
     })
-    .await
-    .is_ok()
+    .await;
+    result.map_err(|_elapsed| last_observed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,37 +114,47 @@ impl LiveRtcMetrics {
 pub(crate) async fn wait_for_transport_lifetime_metrics(
     server: &TestServer,
     expected_count: u64,
-) -> Option<TransportUserLifetimeMetrics> {
-    timeout(super::Duration::from_secs(3), async {
+) -> Result<TransportUserLifetimeMetrics, Option<TransportUserLifetimeMetrics>> {
+    let mut last_observed = None;
+    let result = timeout(super::Duration::from_secs(3), async {
         loop {
-            let metrics = parse_transport_lifetime_metrics(&metrics_text(server).await?)?;
-            if metrics.count >= expected_count {
-                return Some(metrics);
+            if let Some(metrics) = metrics_text(server)
+                .await
+                .and_then(|text| parse_transport_lifetime_metrics(&text))
+            {
+                last_observed = Some(metrics);
+                if metrics.count >= expected_count {
+                    return metrics;
+                }
             }
             yield_now().await;
         }
     })
-    .await
-    .ok()
-    .flatten()
+    .await;
+    result.map_err(|_elapsed| last_observed)
 }
 
 pub(crate) async fn wait_for_live_rtc_metrics(
     server: &TestServer,
     expected_connected_users: i64,
-) -> Option<LiveRtcMetrics> {
-    timeout(super::Duration::from_secs(3), async {
+) -> Result<LiveRtcMetrics, Option<LiveRtcMetrics>> {
+    let mut last_observed = None;
+    let result = timeout(super::Duration::from_secs(3), async {
         loop {
-            let metrics = parse_live_rtc_metrics(&metrics_text(server).await?)?;
-            if metrics.connected_transport_users == expected_connected_users {
-                return Some(metrics);
+            if let Some(metrics) = metrics_text(server)
+                .await
+                .and_then(|text| parse_live_rtc_metrics(&text))
+            {
+                last_observed = Some(metrics);
+                if metrics.connected_transport_users == expected_connected_users {
+                    return metrics;
+                }
             }
             yield_now().await;
         }
     })
-    .await
-    .ok()
-    .flatten()
+    .await;
+    result.map_err(|_elapsed| last_observed)
 }
 
 fn parse_transport_lifetime_metrics(metrics_text: &str) -> Option<TransportUserLifetimeMetrics> {

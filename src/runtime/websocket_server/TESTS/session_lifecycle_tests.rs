@@ -76,8 +76,6 @@ async fn websocket_closes_when_pong_times_out() -> TestResult {
         "initial offer should arrive",
     )?;
 
-    sleep(Duration::from_millis(80)).await;
-
     assert_eq!(
         timeout(
             Duration::from_secs(1),
