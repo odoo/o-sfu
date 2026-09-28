@@ -435,10 +435,6 @@ pub(super) fn build_real_rtc_media_transport() -> MediaTransport {
     build_real_rtc_media_transport_with_metrics(Arc::new(RuntimeMetrics::default()))
 }
 
-#[expect(
-    clippy::panic,
-    reason = "the RTC room test fixture uses a valid test configuration and should fail loudly if it stops being valid"
-)]
 fn build_real_rtc_media_transport_with_metrics(metrics: Arc<RuntimeMetrics>) -> MediaTransport {
     let mut deps = test_media_transport_deps();
     deps.metrics = metrics;

@@ -125,24 +125,43 @@ impl MediaTransportTestApi<'_> {
     ///
     /// This is a route-test hook for failure injection and is not a production
     /// control-plane operation.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the required session worker is absent.
+    #[allow(
+        clippy::expect_used,
+        reason = "required test fixture mutations must fail when their session worker is absent"
+    )]
     pub fn set_session_transport_health(
         self,
         session_key: &TransportSessionKey,
         health: TransportSessionHealth,
     ) {
-        if let Some(worker) = self.transport.worker_for_user(session_key) {
-            worker.debug_set_session_transport_health(session_key, health);
-        }
+        self.transport
+            .worker_for_user(session_key)
+            .expect("test session worker must exist")
+            .debug_set_session_transport_health(session_key, health);
     }
 
+    /// Overrides a real RTC session quality snapshot in test builds.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the required session worker is absent.
+    #[allow(
+        clippy::expect_used,
+        reason = "required test fixture mutations must fail when their session worker is absent"
+    )]
     pub fn set_session_transport_quality(
         self,
         session_key: &TransportSessionKey,
         quality: TransportQualitySample,
     ) {
-        if let Some(worker) = self.transport.worker_for_user(session_key) {
-            worker.debug_set_session_transport_quality(session_key, quality);
-        }
+        self.transport
+            .worker_for_user(session_key)
+            .expect("test session worker must exist")
+            .debug_set_session_transport_quality(session_key, quality);
     }
 
     pub async fn record_incoming_media(
@@ -293,5 +312,22 @@ pub(crate) fn test_media_transport_deps() -> MediaTransportDeps {
     MediaTransportDeps {
         packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
         metrics: Arc::new(RuntimeMetrics::default()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::UserId;
+
+    #[test]
+    #[should_panic(expected = "test session worker must exist")]
+    fn required_session_health_fixture_rejects_missing_worker() {
+        let transport = test_media_transport(1, test_rtc_port_range())
+            .expect("test media transport should start");
+        let missing_session = test_transport_session_key(1, 2, 1, UserId::Integer(1));
+        transport
+            .test_api()
+            .set_session_transport_health(&missing_session, TransportSessionHealth::Connected);
     }
 }

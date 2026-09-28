@@ -77,29 +77,41 @@ impl RtcWorker {
         self.handle.packet_loop_delay.set_for_test(delay_ms);
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "test fixture mutation must fail when its snapshot lock is poisoned"
+    )]
     pub fn debug_set_session_transport_health(
         &self,
         session_key: &TransportSessionKey,
         health: TransportSessionHealth,
     ) {
-        let Ok(mut snapshot_state) = self.handle.snapshot_state.lock() else {
-            return;
-        };
-        let previous = snapshot_state.set_transport_health(session_key, health);
+        let previous = self
+            .handle
+            .snapshot_state
+            .lock()
+            .expect("test snapshot state must be available")
+            .set_transport_health(session_key, health);
         self.metrics.record_transport_health_transition(
             previous.map(metrics::transport_health_state),
             Some(metrics::transport_health_state(health)),
         );
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "test fixture mutation must fail when its snapshot lock is poisoned"
+    )]
     pub fn debug_set_session_transport_quality(
         &self,
         session_key: &TransportSessionKey,
         quality: TransportQualitySample,
     ) {
-        let Ok(mut snapshot_state) = self.handle.snapshot_state.lock() else {
-            return;
-        };
+        let mut snapshot_state = self
+            .handle
+            .snapshot_state
+            .lock()
+            .expect("test snapshot state must be available");
         snapshot_state.update_transport_quality(session_key, |sample| *sample = quality);
     }
 
@@ -347,10 +359,6 @@ impl RtcWorker {
 #[cfg(test)]
 impl RtcWorker {
     #[must_use]
-    #[expect(
-        clippy::expect_used,
-        reason = "test setup must fail when its RTC profile or worker cannot start"
-    )]
     pub(crate) fn for_test(config: MediaTransportConfig) -> Self {
         let profile = RtpProfile::compile(config.codec_flags, config.codec_preferences)
             .expect("test RTP profile should compile");

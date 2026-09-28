@@ -1,8 +1,3 @@
-#![allow(
-    clippy::panic,
-    reason = "media transport tests fail loudly when fixed test setup is invalid"
-)]
-
 use std::{
     net::{Ipv4Addr, SocketAddrV4, UdpSocket},
     time::{Duration, Instant},

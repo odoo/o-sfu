@@ -1,8 +1,3 @@
-#![allow(
-    clippy::expect_used,
-    reason = "profile invariants fail immediately when code-controlled projection is invalid"
-)]
-
 use std::collections::BTreeSet;
 
 use o_sfu_rfc::{rtp as rfc_rtp, webrtc};

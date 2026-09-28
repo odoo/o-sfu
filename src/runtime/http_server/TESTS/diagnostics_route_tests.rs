@@ -1,5 +1,4 @@
 #![expect(
-    clippy::indexing_slicing,
     clippy::too_many_lines,
     reason = "the diagnostics route tests keep one end-to-end diagnostics scenario with direct field assertions"
 )]

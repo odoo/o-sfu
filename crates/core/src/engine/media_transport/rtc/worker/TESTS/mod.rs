@@ -211,10 +211,6 @@ fn drain_ready_sessions(state: &mut PacketLoopState) -> Vec<TransportSessionKey>
     collect_ready_session_keys(state, Instant::now())
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test setup helpers should fail loudly when a required RTC fixture cannot be built"
-)]
 fn create_rtc_session(state: &mut PacketLoopState, session: &TransportSessionKey, port: u16) {
     let created = bootstrap::test_support::ensure_session_rtc_state(
         &mut state.users,
@@ -388,10 +384,6 @@ fn run_packet_loop_io_test(
         .block_on(test)
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "test setup helpers should fail loudly when a required RTC fixture is missing"
-)]
 fn declare_video_tx(
     state: &mut PacketLoopState,
     session: &TransportSessionKey,
@@ -553,10 +545,6 @@ fn set_source_route_active(
     state.routes.set_source_active(src_media, active).is_ok()
 }
 
-#[expect(
-    clippy::panic,
-    reason = "test setup helpers should fail loudly when a fixture queues the wrong command"
-)]
 fn drain_remote_packet_gate_setup(control_rx: &mut mpsc::Receiver<RtcWorkerCommand>) {
     loop {
         match control_rx.try_recv() {
@@ -572,10 +560,6 @@ fn drain_remote_packet_gate_setup(control_rx: &mut mpsc::Receiver<RtcWorkerComma
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "test assertion helpers should fail loudly when the command shape is wrong"
-)]
 fn recv_remote_keyframe_request(
     control_rx: &mut mpsc::Receiver<RtcWorkerCommand>,
 ) -> (
@@ -628,10 +612,6 @@ fn assert_remote_keyframe_request(
     assert_eq!(actual_kind, kind);
 }
 
-#[expect(
-    clippy::panic,
-    reason = "test assertion helpers should fail loudly when an unexpected command is queued"
-)]
 fn assert_no_remote_keyframe_request(control_rx: &mut mpsc::Receiver<RtcWorkerCommand>) {
     match control_rx.try_recv() {
         Err(mpsc::error::TryRecvError::Empty) => {}
@@ -812,10 +792,6 @@ impl PacketLoopHarness {
         }
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "test setup helpers should fail loudly when a required remote keyframe fixture cannot be built"
-    )]
     fn remote_keyframe_source(
         &mut self,
         src_media: TransportMediaId,
@@ -880,11 +856,6 @@ impl PacketLoopHarness {
 }
 
 fn packet_loop_config_for_test() -> PacketLoopConfig {
-    #![expect(
-        clippy::panic,
-        reason = "packet-loop test configs cannot return Result and must fail loudly when no RTC ports are available"
-    )]
-
     let metrics = Arc::new(RuntimeMetrics::default());
     let outbound_recorder = metrics.register_rtp_worker();
     let datagram_recorder = metrics.register_rtc_worker();

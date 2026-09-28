@@ -43,10 +43,6 @@ pub(super) struct RuntimeTestBuilder {
     config: Config,
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "runtime fixture durations are valid constants or explicit test inputs"
-)]
 impl RuntimeTestBuilder {
     pub(super) fn new() -> Self {
         Self {
@@ -152,10 +148,6 @@ impl RuntimeTestBuilder {
         self
     }
 
-    #[expect(
-        clippy::panic,
-        reason = "runtime tests use validated in-process RTC fixtures and should fail loudly if construction becomes invalid"
-    )]
     pub(super) fn build_state(self) -> RuntimeTestState {
         let services = RuntimeServices::default();
         let media_transport = match build_media_transport(&self.config, &services) {
@@ -201,10 +193,6 @@ pub(super) fn test_outbound_sender(
     )
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "the shared room fixture key is valid HS256 material"
-)]
 pub(super) fn test_room_key() -> secrecy::SecretSlice<u8> {
     super::auth::decode_signing_key(&TEST_ROOM_KEY.into())
         .expect("shared test room key should be valid")
