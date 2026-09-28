@@ -73,3 +73,9 @@ fn rejection_logs_have_one_fixed_budget_and_report_suppressed_count() {
     assert_eq!(budget.admit(next_window), Some(1000));
     assert_eq!(budget.admit(next_window), Some(0));
 }
+
+impl PreAuthWebSocketAdmission {
+    pub(crate) fn available_permits_for_test(&self) -> usize {
+        self.global.available_permits()
+    }
+}

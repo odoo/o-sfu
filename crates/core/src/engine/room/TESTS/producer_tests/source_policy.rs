@@ -33,13 +33,14 @@ fn plan_policy(
     state: &RoomState,
     speakers: &[ActiveSpeakerSource],
     bandwidth: &ReceiverBandwidthSnapshot,
+    now: Instant,
 ) -> Option<SourcePolicyTransaction> {
     SourcePolicyTransaction::plan(
         state,
         speakers,
         bandwidth,
         &TransportBitrateSnapshot::default(),
-        Instant::now(),
+        now,
     )
 }
 
@@ -277,6 +278,7 @@ async fn source_bitrate_cap_pause_survives_receiver_overload() {
             &state,
             &active_speaker_sources,
             &receiver_bandwidth_snapshot,
+            scenario.policy_now.get(),
         )
         .expect("source policy transaction should contain overload work")
     };
@@ -414,8 +416,13 @@ async fn source_policy_ignores_receiver_bandwidth_from_replaced_connection() {
     };
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &receiver_bandwidth_snapshot)
-            .expect("source policy transaction should contain current bandwidth work")
+        plan_policy(
+            &state,
+            &[],
+            &receiver_bandwidth_snapshot,
+            scenario.policy_now.get(),
+        )
+        .expect("source policy transaction should contain current bandwidth work")
     };
     tx.execute(&scenario.room, &scenario.adapter).await;
 
@@ -643,8 +650,16 @@ async fn audio_speaker_limit_ignores_foreign_and_inactive_sources() {
     ];
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &speakers, &ReceiverBandwidthSnapshot::default())
-            .expect("audio speaker limit should update the overflow route")
+        plan_policy(
+            &state,
+            &speakers,
+            &ReceiverBandwidthSnapshot::default(),
+            scenario
+                .policy_now
+                .get()
+                .max(observed_at + Duration::from_millis(2)),
+        )
+        .expect("audio speaker limit should update the overflow route")
     };
     tx.execute(&scenario.room, &scenario.adapter).await;
     scenario
@@ -1254,8 +1269,16 @@ async fn per_receiver_audio_reserve_excludes_own_and_counts_only_consumed_audio(
 
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &speakers, &receiver_bandwidth_snapshot)
-            .expect("policy pass should produce budget updates")
+        plan_policy(
+            &state,
+            &speakers,
+            &receiver_bandwidth_snapshot,
+            scenario
+                .policy_now
+                .get()
+                .max(observed_at + Duration::from_millis(2)),
+        )
+        .expect("policy pass should produce budget updates")
     };
     tx.execute(&scenario.room, &scenario.adapter).await;
 
@@ -1315,8 +1338,16 @@ async fn audio_only_receiver_reports_its_audio_reserve_as_bwe_demand() {
 
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &speakers, &ReceiverBandwidthSnapshot::default())
-            .expect("audio-only receiver should still report BWE demand")
+        plan_policy(
+            &state,
+            &speakers,
+            &ReceiverBandwidthSnapshot::default(),
+            scenario
+                .policy_now
+                .get()
+                .max(observed_at + Duration::from_millis(1)),
+        )
+        .expect("audio-only receiver should still report BWE demand")
     };
     tx.execute(&scenario.room, &scenario.adapter).await;
 
@@ -1363,8 +1394,13 @@ async fn overload_steps_thumbnail_down_one_layer_and_keeps_it_deliverable() {
 
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &receiver_bandwidth_snapshot)
-            .expect("overload should step the thumbnail down")
+        plan_policy(
+            &state,
+            &[],
+            &receiver_bandwidth_snapshot,
+            scenario.policy_now.get(),
+        )
+        .expect("overload should step the thumbnail down")
     };
     let transitions_before = route_transition_counts(&scenario.room);
     let selection_updates_before = source_selection_update_count(&scenario.room, "encoding");
@@ -1647,7 +1683,8 @@ async fn inactive_route_does_not_report_an_in_flight_degradation() {
     };
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &bandwidth).expect("overload should plan one route degradation")
+        plan_policy(&state, &[], &bandwidth, scenario.policy_now.get())
+            .expect("overload should plan one route degradation")
     };
     update_subscription_selection(
         &scenario.room,
@@ -1705,7 +1742,8 @@ async fn overload_steps_hidden_route_before_visible_thumbnail() {
     };
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &bandwidth).expect("overload should step the hidden route down")
+        plan_policy(&state, &[], &bandwidth, scenario.policy_now.get())
+            .expect("overload should step the hidden route down")
     };
     tx.execute(&scenario.room, &scenario.adapter).await;
 
@@ -1773,7 +1811,8 @@ async fn rejected_route_control_reconciles_sibling_budget_to_committed_selection
     };
     let tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &bandwidth).expect("overload should plan route degradation")
+        plan_policy(&state, &[], &bandwidth, scenario.policy_now.get())
+            .expect("overload should plan route degradation")
     };
     scenario
         .adapter
@@ -2295,7 +2334,7 @@ async fn source_policy_replaced_route_does_not_commit_stale_selector_update() {
     let bandwidth = bandwidth_for(&scenario, 2, 100).await;
     let pressure_tx = {
         let state = scenario.room.state.read().await;
-        plan_policy(&state, &[], &bandwidth).unwrap()
+        plan_policy(&state, &[], &bandwidth, scenario.policy_now.get()).unwrap()
     };
     let (replacement_tx, _replacement_rx) = test_sender();
     join_user_without_transport_teardown(
@@ -2420,6 +2459,7 @@ async fn source_policy_transaction_from_transport_snapshot(
         &state,
         &active_speaker_sources,
         &receiver_bandwidth_snapshot,
+        scenario.policy_now.get(),
     )
     .expect("source policy transaction should contain work before execution")
 }
