@@ -1,8 +1,3 @@
-#![allow(
-    clippy::panic,
-    reason = "test assertions use panic for clear failure messages"
-)]
-
 #[path = "auth_tests.rs"]
 mod auth_tests;
 #[path = "fixtures.rs"]

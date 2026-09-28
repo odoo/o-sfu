@@ -1,11 +1,3 @@
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    reason = "test assertions use panic, unwrap, expect, and direct indexing for clear failure messages"
-)]
-
 #[path = "fixtures.rs"]
 mod fixtures;
 #[path = "forwarding_planner_tests.rs"]
