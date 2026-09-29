@@ -5,6 +5,8 @@
 //! removal until the final mutation finishes. Reservation expiry removes only
 //! idle entries claimed by that gate.
 
+#[cfg(test)]
+use std::thread;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -13,6 +15,7 @@ use std::{
 
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::time::Instant;
+use tracing::error;
 
 use super::Room;
 use crate::engine::{RoomInstanceId, sync::lock_unpoisoned};
@@ -304,6 +307,15 @@ impl RoomLifecycleLease {
 
 impl Drop for RoomLifecycleLease {
     fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        error!("room lifecycle lease dropped without completing explicit cleanup");
+        #[cfg(test)]
+        assert!(
+            thread::panicking(),
+            "room lifecycle lease dropped without completing explicit cleanup"
+        );
         let _ = self.release(None, false);
     }
 }

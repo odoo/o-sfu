@@ -50,10 +50,11 @@ fn test_factory() -> RoomFactory {
 async fn an_expired_reservation_is_claimed_once_and_is_terminal() {
     let lifecycle = RoomLifecycle::new(TEST_RESERVATION_TTL, TEST_DEPARTURE_GRACE);
 
-    drop(
-        lifecycle
+    assert!(
+        !lifecycle
             .begin()
-            .expect("work should be accepted before the deadline"),
+            .expect("work should be accepted before the deadline")
+            .finish(None, false)
     );
     assert_eq!(
         lifecycle.claim_expired_room(),
@@ -65,10 +66,11 @@ async fn an_expired_reservation_is_claimed_once_and_is_terminal() {
 
     // a room stays available until a reaper pass claims it, so a passed
     // deadline on its own must not refuse work
-    drop(
-        lifecycle
+    assert!(
+        !lifecycle
             .begin()
-            .expect("work arriving before the reaper should still be accepted"),
+            .expect("work arriving before the reaper should still be accepted")
+            .finish(None, false)
     );
     assert_eq!(
         lifecycle.claim_expired_room(),
@@ -226,11 +228,11 @@ async fn an_elapsed_departure_grace_is_claimed_once_and_repeated_cleanup_cannot_
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_dropped_lease_neither_closes_an_occupied_room_nor_arms_a_grace() {
+async fn a_cancelled_lease_neither_closes_an_occupied_room_nor_arms_a_grace() {
     let lifecycle = RoomLifecycle::new(TEST_RESERVATION_TTL, TEST_DEPARTURE_GRACE);
     let first_join = lifecycle.begin().expect("a first join should be accepted");
     first_join.clear_expiration();
-    drop(first_join);
+    assert!(!first_join.finish(None, false));
 
     let departure = lifecycle
         .begin()
@@ -243,7 +245,7 @@ async fn a_dropped_lease_neither_closes_an_occupied_room_nor_arms_a_grace() {
 
     // the rejoin is cancelled, so it proves nothing about the room it leaves
     // behind and cannot consume the pending removal
-    drop(rejoin);
+    assert!(!rejoin.finish(None, false));
 
     assert!(
         !lifecycle.has_departure_grace_for_test(),
@@ -256,7 +258,9 @@ async fn a_dropped_lease_neither_closes_an_occupied_room_nor_arms_a_grace() {
         "a room the join retired a deadline for must survive the reaper"
     );
     assert!(
-        lifecycle.begin().is_some(),
+        lifecycle
+            .begin()
+            .is_some_and(|lease| !lease.finish(None, false)),
         "the room should still accept work"
     );
 }
