@@ -2,6 +2,8 @@
 mod fixtures;
 #[path = "forwarding_planner_tests.rs"]
 mod forwarding_planner_tests;
+#[path = "ice_tcp_candidate_conformance.rs"]
+mod ice_tcp_candidate_conformance;
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
 #[path = "media_flow_tests.rs"]
