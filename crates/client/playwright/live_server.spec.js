@@ -409,6 +409,10 @@ test("server queue overflow recovers sticky publish subscribe and info intents",
         bindPort: browserName === "firefox" ? 18090 : 18089,
         rtcMinPort: browserName === "firefox" ? 58456 : 58424,
         rtcMaxPort: browserName === "firefox" ? 58487 : 58455,
+        // Chromium can leave hi idle for these cameras. Keep even the probe
+        // ceiling below hi so recovery does not depend on that encoder starting.
+        maxBitrateOut: 1_000_000,
+        maxVideoBitrate: 4_000_000,
         outboundQueueByteCapacity: 8 * 1024
     });
     const { httpBaseUrl } = server;
@@ -457,7 +461,13 @@ test("server queue overflow recovers sticky publish subscribe and info intents",
                     streamType: "camera"
                 })
             )
-            .toMatchObject({ subscription: { layoutRole: "featured", state: "active" } });
+            .toMatchObject({
+                subscription: {
+                    layoutRole: "featured",
+                    state: "active",
+                    selection: { selectedRid: "mid" }
+                }
+            });
         await Promise.all([
             waitForDecodedRemoteVideoFrame(publisher, SUBSCRIBER_SESSION_ID, "camera"),
             waitForDecodedRemoteVideoFrame(subscriber, PUBLISHER_SESSION_ID, "camera")
@@ -501,7 +511,13 @@ test("server queue overflow recovers sticky publish subscribe and info intents",
                     }),
                 { timeout: 15_000 }
             )
-            .toMatchObject({ subscription: { layoutRole: "featured", state: "active" } });
+            .toMatchObject({
+                subscription: {
+                    layoutRole: "featured",
+                    state: "active",
+                    selection: { selectedRid: "mid" }
+                }
+            });
         await expect
             .poll(
                 () =>
