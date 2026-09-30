@@ -64,7 +64,7 @@ impl SchedulerBenchFixture {
             state,
             handles,
             session_keys,
-            ready_sessions: Vec::with_capacity(SCHEDULER_SESSION_COUNT),
+            ready_sessions: Vec::with_capacity(2 * SCHEDULER_SESSION_COUNT),
             now: Instant::now(),
             turn: 0,
         }
