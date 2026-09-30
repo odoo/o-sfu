@@ -1,6 +1,7 @@
 # o-sfu deployment
 
-This document is the operator contract for running `o-sfu` as the Odoo Discuss SFU.
+This document covers deploying `o-sfu` and [integrating it](#integration) with
+an application. Odoo Discuss uses the same HTTP and browser APIs described here.
 
 (for Odoo development, refer to [Odoo SFU Dev Deployment Guide](/.github/odoo_setup.md))
 
@@ -77,8 +78,9 @@ see [SECURITY.md](SECURITY.md) for privacy and vulnerability reporting
 
 ### credentials
 
-`AUTH_KEY` must match Odoo and be valid base64 that decodes to at least 32
-cryptographically random bytes. Generate it and `DIAGNOSTICS_AUTH_TOKEN`
+`AUTH_KEY` must match the application backend's signing key and be valid base64
+that decodes to at least 32 cryptographically random bytes. For Odoo, configure
+the same value as the RTC server key. Generate it and `DIAGNOSTICS_AUTH_TOKEN`
 independently by running this command for each:
 
 ```bash
@@ -646,3 +648,317 @@ feature flags:
 | `FEATURE_TRANSCRIPTION` | `false` | enables transcription intent flags, currently WIP |
 | `FEATURE_AUDIO_RECORDING` | `false` | enables audio recording intent flags, currently WIP |
 | `FEATURE_VIDEO_RECORDING` | `false` | enables video recording intent flags, currently WIP |
+
+## integration
+
+`o-sfu` can provide audio and video calls for any application that uses its
+HTTP API and browser client. It does not necessarily require an Odoo backend (even though Odoo is the main target).
+Your application authenticates users, decides who may join each call and issues
+their SFU credentials.
+
+After deployment, give your backend the public SFU address, such as
+`https://sfu.example.com`, and the configured `AUTH_KEY`. The proxy must route
+`GET /v1/channel` to the SFU and accept WebSocket upgrades at `/`. The browser
+must also be able to reach the advertised media address and ports described
+under [typical traffic model](#typical-traffic-model).
+
+```text
+Application backend -- AUTH_KEY-signed JWT --> GET /v1/channel
+Application backend <-- room UUID and URL -- o-sfu
+Application browser <-- room URL and user JWT -- application backend
+Application browser -- SfuClient / WebSocket / WebRTC --> o-sfu
+```
+
+Keep `AUTH_KEY`, key seeds, room signing keys and provisioning JWTs on the backend.
+The browser receives only its participant JWT and connection details. A JWT
+is signed rather than encrypted, so its claims are readable by its holder.
+
+### provision a room
+
+Choose a distinct `iss` string for each application call, including a tenant
+namespace when several tenants share the SFU. For example,
+`my-platform:tenant-42:call-123` identifies one call rather than every call in
+tenant 42. Prefer `keySeed` for provisioning. Generate 32 cryptographically
+random bytes once per call, base64-encode them and retain that seed on the
+backend. Reuse it for subsequent provisioning requests for the same call.
+
+Use a JWT library to sign the following payload with `HS256` and the
+**base64-decoded bytes of `AUTH_KEY`**. Do not use the base64 text as the HMAC
+key. Set the header to `{"alg":"HS256","typ":"JWT"}`. Construct the claims
+on your backend immediately before signing and sending the request. This
+JavaScript example gives the token a 60-second lifetime:
+
+```js
+const provisioningClaims = {
+    iss: "my-platform:tenant-42:call-123",
+    exp: Math.floor(Date.now() / 1000) + 60,
+    keySeed: "<base64-encoded per-call seed>",
+}
+```
+
+| Provisioning claim | Requirement | Meaning |
+| --- | --- | --- |
+| `iss` | Required string | Identifies the current room for this application call |
+| `exp` | Required number | Expiration in Unix seconds, strictly after the SFU's current time |
+| `keySeed` | Required unless `key` is supplied | Recommended. Nonempty base64 seed used to derive the room signing key |
+| `key` | Optional alternative to `keySeed` | Explicit base64 room signing key with at least 32 decoded bytes |
+| `nbf` | Optional number | Earliest acceptance time in Unix seconds |
+| `iat` | Optional number | Issue time in Unix seconds, at most 60 seconds ahead of the SFU clock |
+| `sub`, `jti` | Optional strings | Not used to authorize room creation |
+| `aud` | Optional string or string array | Not used to authorize room creation |
+
+For `keySeed`, both your backend and the SFU derive the same raw signing bytes:
+
+```text
+room_key = HMAC-SHA256(Base64Decode(AUTH_KEY), Base64Decode(keySeed))
+```
+
+`keySeed` takes precedence when both claims are present. Supply one key form
+and retain it for subsequent requests for the same call. Key and seed values
+accept standard or URL-safe base64, with or without padding. JWT segments use
+base64url without padding.
+
+Send the token in the `Authorization` header. This endpoint uses `GET` with
+query parameters and no request body. It does not accept the token in the URL.
+The legacy `Authorization: jwt <token>` form is also accepted.
+
+```bash
+curl --fail-with-body \
+  --header "Authorization: Bearer ${PROVISIONING_JWT}" \
+  'https://sfu.example.com/v1/channel?webRTC=true'
+```
+
+| Query parameter | Requirement | Meaning |
+| --- | --- | --- |
+| `webRTC` | Optional, defaults to `true` | Boolean `true` or `false`. Keep it enabled for browser audio and video |
+| `recordingAddress` | Optional string | Compatibility parameter. Recording is currently unavailable, so supplying it does not enable recording |
+
+A successful request returns `200 OK` and JSON:
+
+```json
+{
+  "uuid": "8e15fb78-b6b8-4b13-9bc4-92f47688691b",
+  "url": "https://sfu.example.com"
+}
+```
+
+Store the returned `uuid` alongside the call's issuer and seed or explicit
+room key. The UUID identifies the SFU room and is distinct from your `iss`.
+The returned `url` comes from the request host and scheme, including trusted
+proxy headers.
+Call the endpoint through the public SFU address and configure proxy forwarding
+so this URL is reachable by browsers.
+
+Repeating the request with the same `iss`, decoded room key and query
+configuration returns the current room. A different key or configuration for
+that issuer returns `409 Conflict`. Reuse the call's seed or explicit room key
+for every participant. Rooms reside in memory and can disappear after an
+empty-room timeout or server restart. Provision again when needed and use the new UUID
+in newly issued participant tokens. Until the first participant joins,
+`ROOM_RESERVATION_TTL` limits the reservation lifetime, which defaults to
+60 seconds. This room deadline is separate from JWT expiry. Provision close to
+the join attempt or renew the reservation with a matching request.
+After a successful join, the reservation deadline ends.
+The last participant's normal departure starts `ROOM_DEPARTURE_GRACE`.
+
+| HTTP status | Cause |
+| --- | --- |
+| `400 Bad Request` | Invalid query, no key claim or invalid room key or seed |
+| `401 Unauthorized` | Missing or invalid authorization, unsupported algorithm, bad signature or invalid time claims |
+| `403 Forbidden` | Verified provisioning JWT has no `iss` |
+| `409 Conflict` | Current room for `iss` has a different key or configuration |
+
+### issue a JWT for each participant
+
+After your backend authorizes a user to join the call, sign a participant JWT
+with `HS256` using the **raw room signing bytes** derived from `keySeed` by
+the HMAC above. If provisioning used an explicit `key`, decode its base64
+value instead. Do not sign participant JWTs with `AUTH_KEY` or the seed itself.
+
+Use the returned room UUID as `room_id` and a participant identifier unique
+within that room as `user_id`. Neither identifier needs to come from Odoo.
+Issue the token immediately before the browser connects. This backend example
+also gives it a 60-second admission lifetime:
+
+```js
+const participantClaims = {
+    room_id: "8e15fb78-b6b8-4b13-9bc4-92f47688691b",
+    user_id: "participant-7",
+    exp: Math.floor(Date.now() / 1000) + 60,
+}
+```
+
+| Participant claim | Requirement | Meaning |
+| --- | --- | --- |
+| `exp` | Required number | Expiration in Unix seconds |
+| `user_id` | Required unless `session_id` is supplied | Participant identity as an integer or string |
+| `session_id` | Optional alternative to `user_id` | Takes precedence when both are present, for example a connection identity separate from an account ID |
+| `room_id` | Required unless the client supplies `channelUUID` | SFU room UUID. `sfu_channel_uuid` is an accepted alias |
+| `label` | Optional string | Accepted but currently unused by room admission |
+| `permissions` | Optional object | Accepts `transcription`, `audioRecording` and `videoRecording` booleans. Currently not enforced and does not enable recording |
+| `nbf`, `iat` | Optional numbers | Same time validation as provisioning JWTs |
+| `iss`, `sub`, `jti` | Optional strings | Not used to authorize participant admission |
+| `aud` | Optional string or string array | Not used to authorize participant admission |
+
+Include `room_id` in new integrations. If both it and `channelUUID` are
+supplied, they must identify the same room. A string participant identity can
+contain at most 256 UTF-8 bytes. Numeric strings normalize to integers, so
+`"7"` and `7` identify the same participant. A new connection with the same
+identity replaces the existing connection. Use separate identities for
+simultaneous tabs or devices that should remain connected.
+
+Both token types require `exp` and accept only `HS256`. `nbf` cannot be in the
+future and `iat` can be omitted. Tokens are limited to 16 KiB. Expiry is checked
+when authenticating, including reconnections. It does not end an already
+authenticated call. Obtain fresh credentials from your backend when an expired
+token prevents reconnection.
+
+Return connection details to the authorized browser through an endpoint in
+your application. The browser example below assumes that endpoint returns:
+
+```json
+{
+  "url": "https://sfu.example.com",
+  "uuid": "8e15fb78-b6b8-4b13-9bc4-92f47688691b",
+  "jwt": "<participant JWT>"
+}
+```
+
+### serve the browser bundle
+
+Download `o-sfu-client-<tag>.js`, `o-sfu-client-<tag>.d.ts` and `SHA256SUMS` from the
+[GitHub release](https://github.com/odoo/o-sfu/releases) matching your deployed
+server version. Set `SFU_TAG` to that release tag and verify the downloaded
+client assets before renaming them:
+
+```bash
+gh attestation verify "o-sfu-client-${SFU_TAG}.js" -R odoo/o-sfu
+gh attestation verify "o-sfu-client-${SFU_TAG}.d.ts" -R odoo/o-sfu
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+`--ignore-missing` skips server and SBOM files when only the client was
+downloaded. Both client files must be present and report `OK`. See
+[release assets](#release-assets) for the complete release contents.
+
+Serve the JavaScript file with your application's static assets. If you rename
+it to `o-sfu-client.js`, rename the declaration to `o-sfu-client.d.ts` and keep
+the files together for TypeScript and editor support.
+
+The bundle is a browser ES module with embedded WASM. It does not require an
+Odoo JavaScript runtime or a separate `.wasm` download. Import it from a module
+script or your application's browser build, just sererve it along the rest of your front-end.
+Its content security policy must allow the bundle, WebAssembly execution and a connection to your SFU's `wss:` address.
+
+### connect and exchange media
+
+The following module assumes a call page with `#join` and `#leave` buttons and
+a `#remote-media` container. `/api/calls/123/join` belongs to your application,
+not to `o-sfu`. It authenticates the caller, checks call access and returns the
+connection details above. Use your application's normal request and CSRF
+handling for that endpoint.
+
+```js
+import { CLIENT_UPDATE, SfuClient } from "/static/o-sfu-client.js"
+
+const sfu = new SfuClient()
+const remoteMedia = new Map()
+const joinButton = document.querySelector("#join")
+const leaveButton = document.querySelector("#leave")
+leaveButton.disabled = true
+let localStream
+
+function releaseMedia() {
+    localStream?.getTracks().forEach((track) => track.stop())
+    localStream = undefined
+    for (const { element } of remoteMedia.values()) {
+        element.srcObject = null
+        element.remove()
+    }
+    remoteMedia.clear()
+    joinButton.disabled = false
+    leaveButton.disabled = true
+}
+
+sfu.addEventListener("stateChange", ({ detail }) => {
+    console.log("SFU state:", detail.state)
+    if (detail.state === "closed" || detail.state === "disconnected") {
+        releaseMedia()
+    }
+})
+sfu.addEventListener("handledError", ({ detail }) => {
+    console.error(detail.error)
+})
+sfu.addEventListener("update", ({ detail }) => {
+    if (detail.name === CLIENT_UPDATE.TRACK) {
+        const { sessionId, type, track, active } = detail.payload
+        const key = JSON.stringify([sessionId, type])
+        let entry = remoteMedia.get(key)
+        if (!entry) {
+            const element = document.createElement(type === "audio" ? "audio" : "video")
+            element.autoplay = true
+            element.controls = true
+            element.playsInline = true
+            document.querySelector("#remote-media").append(element)
+            entry = { sessionId, element }
+            remoteMedia.set(key, entry)
+        }
+        entry.element.srcObject = active ? new MediaStream([track]) : null
+    } else if (detail.name === CLIENT_UPDATE.DISCONNECT) {
+        for (const [key, entry] of remoteMedia) {
+            if (entry.sessionId === detail.payload.sessionId) {
+                entry.element.remove()
+                remoteMedia.delete(key)
+            }
+        }
+    }
+})
+
+joinButton.addEventListener("click", async () => {
+    joinButton.disabled = true
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        const response = await fetch("/api/calls/123/join", { method: "POST" })
+        if (!response.ok) throw new Error(`Join failed: ${response.status}`)
+        const { url, uuid, jwt } = await response.json()
+        sfu.connect(url, jwt, { channelUUID: uuid })
+        sfu.publish("audio", localStream.getAudioTracks()[0])
+        sfu.publish("camera", localStream.getVideoTracks()[0])
+        leaveButton.disabled = false
+    } catch (error) {
+        console.error(error)
+        sfu.disconnect()
+        releaseMedia()
+    }
+})
+leaveButton.addEventListener("click", () => {
+    sfu.disconnect()
+    releaseMedia()
+})
+```
+
+The example obtains microphone and camera permission before requesting the
+participant token so time spent in the permission prompt does not consume its
+admission lifetime.
+
+`connect()` returns before authentication and media negotiation finish. Listen
+for `stateChange` and `handledError` rather than awaiting it. The client sends
+the authentication frame and handles SDP negotiation. `https:` addresses are
+converted to `wss:`. `channelUUID` is optional when the JWT includes `room_id`.
+Pass `iceServers` in the same options object if your deployment provides STUN
+or TURN services.
+
+Remote publications are received by default and arrive through
+`CLIENT_UPDATE.TRACK`. Browser autoplay policy can require the user to start
+playback with the media controls. Use
+`sfu.subscribe(remoteParticipantId, { audio: true, camera: true, screen: false })`
+to change what a participant receives. Publish a screen capture with
+`sfu.publish("screen", screenTrack)` and pause a publication with
+`sfu.publish("camera", null)`.
+
+The example stops capture and clears remote media on leave or terminal
+disconnection. `sfu.disconnect()` alone does not release camera or microphone
+tracks captured by your application. Keep those tracks during `recovering`
+so the client can replay publication intent. Each new join requests fresh
+credentials. See the [client API reference](crates/client/API.md) for connection
+states, subscription options, screen sharing and event payloads.
