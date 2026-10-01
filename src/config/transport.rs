@@ -59,7 +59,7 @@ impl TransportConfig {
                 Ok(value)
             })
             .default(49_999)?;
-        let rtc_port_range = RtcPortRange::new(rtc_min_port, rtc_max_port);
+        let rtc_port_range = RtcPortRange::try_new(rtc_min_port, rtc_max_port)?;
         let rtc_udp_io_backend = env
             .var("RTC_UDP_IO_BACKEND")
             .check(supported_udp_io_backend)

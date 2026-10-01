@@ -6,7 +6,9 @@
 
 use std::time::Duration;
 
-use super::{Bitrate, RtcPortRange, VideoAdaptationTuning, VideoAdaptationTuningError};
+use super::{
+    Bitrate, RtcPortRange, RtcPortRangeError, VideoAdaptationTuning, VideoAdaptationTuningError,
+};
 
 #[test]
 fn video_adaptation_tuning_accepts_valid_knobs() {
@@ -133,33 +135,59 @@ fn video_adaptation_tuning_rejects_unrepresentable_deadlines() {
     );
 }
 
+fn port_range(min: u16, max: u16) -> RtcPortRange {
+    RtcPortRange::try_new(min, max).expect("valid range")
+}
+
+#[test]
+fn rtc_port_range_accepts_valid_bounds() {
+    for (min, max) in [(1, 1), (40_000, 49_999), (1, u16::MAX)] {
+        let range = port_range(min, max);
+        assert_eq!((range.min(), range.max()), (min, max));
+    }
+}
+
+#[test]
+fn rtc_port_range_rejects_invalid_bounds() {
+    for (min, max, error) in [
+        (0, 5, RtcPortRangeError::MinZero),
+        (5, 4, RtcPortRangeError::MinAboveMax),
+    ] {
+        assert_eq!(
+            RtcPortRange::try_new(min, max),
+            Err(error),
+            "min={min} max={max}"
+        );
+    }
+}
+
 #[test]
 fn rtc_port_range_splits_ports_across_workers() {
     // zero workers → None
-    assert_eq!(RtcPortRange::new(40_000, 40_000).split_for_workers(0), None,);
+    assert_eq!(port_range(40_000, 40_000).split_for_workers(0), None,);
     // more workers than ports → None
-    assert_eq!(RtcPortRange::new(40_000, 40_000).split_for_workers(2), None,);
+    assert_eq!(port_range(40_000, 40_000).split_for_workers(2), None,);
     // single worker → full range
     assert_eq!(
-        RtcPortRange::new(40_000, 40_003).split_for_workers(1),
-        Some(vec![RtcPortRange::new(40_000, 40_003)]),
+        port_range(40_000, 40_003).split_for_workers(1),
+        Some(vec![port_range(40_000, 40_003)]),
     );
     // workers == ports → one port each
     assert_eq!(
-        RtcPortRange::new(40_000, 40_002).split_for_workers(3),
+        port_range(40_000, 40_002).split_for_workers(3),
         Some(vec![
-            RtcPortRange::new(40_000, 40_000),
-            RtcPortRange::new(40_001, 40_001),
-            RtcPortRange::new(40_002, 40_002),
+            port_range(40_000, 40_000),
+            port_range(40_001, 40_001),
+            port_range(40_002, 40_002),
         ]),
     );
     // uneven split → earlier workers get the extras
     assert_eq!(
-        RtcPortRange::new(40_000, 40_004).split_for_workers(3),
+        port_range(40_000, 40_004).split_for_workers(3),
         Some(vec![
-            RtcPortRange::new(40_000, 40_001),
-            RtcPortRange::new(40_002, 40_003),
-            RtcPortRange::new(40_004, 40_004),
+            port_range(40_000, 40_001),
+            port_range(40_002, 40_003),
+            port_range(40_004, 40_004),
         ]),
     );
 }

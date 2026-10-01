@@ -6,7 +6,7 @@ mod routing;
 pub use codecs::{AudioCodecPreference, CodecPreferences, MediaCodecFlags, VideoCodecPreference};
 pub use features::RuntimeFeatureFlags;
 pub use media::{
-    RoomMediaLimits, RoomMediaLimitsError, RtcPortRange, RtcUdpIoBackend, SessionBitrateLimits,
-    VideoAdaptationTuning, VideoAdaptationTuningError, VideoBitrateLimits,
+    RoomMediaLimits, RoomMediaLimitsError, RtcPortRange, RtcPortRangeError, RtcUdpIoBackend,
+    SessionBitrateLimits, VideoAdaptationTuning, VideoAdaptationTuningError, VideoBitrateLimits,
 };
 pub use routing::RoomWorkerPolicy;

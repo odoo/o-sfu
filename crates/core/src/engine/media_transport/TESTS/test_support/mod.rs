@@ -348,10 +348,19 @@ impl MediaTransportTestApi<'_> {
 /// returns the RFC 6335 dynamic UDP port range for RTC tests and benchmarks
 ///
 /// each RTC worker binds the first available port in its assigned subrange
+///
+/// # Panics
+///
+/// Panics if the RFC dynamic range constants stop forming a valid range.
 #[cfg(any(test, feature = "testing-transport"))]
+#[allow(
+    clippy::expect_used,
+    reason = "the RFC dynamic range constants are a valid RTC port range"
+)]
 #[must_use]
-pub const fn test_rtc_port_range() -> RtcPortRange {
-    RtcPortRange::new(rfc_port::DYNAMIC_RANGE_START, rfc_port::DYNAMIC_RANGE_END)
+pub fn test_rtc_port_range() -> RtcPortRange {
+    RtcPortRange::try_new(rfc_port::DYNAMIC_RANGE_START, rfc_port::DYNAMIC_RANGE_END)
+        .expect("RFC dynamic port range should be a valid RTC range")
 }
 
 #[cfg(test)]

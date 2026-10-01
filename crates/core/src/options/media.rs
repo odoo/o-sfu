@@ -52,6 +52,15 @@ pub enum RoomMediaLimitsError {
     MaxVideoDownloadsPerReceiverZero,
 }
 
+/// Invalid RTC port range bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RtcPortRangeError {
+    #[error("RTC port range minimum must be greater than zero")]
+    MinZero,
+    #[error("RTC port range maximum must be greater than or equal to the minimum")]
+    MinAboveMax,
+}
+
 /// Inclusive UDP port range assigned across RTC workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtcPortRange {
@@ -60,14 +69,20 @@ pub struct RtcPortRange {
 }
 
 impl RtcPortRange {
-    /// Stores an inclusive RTC UDP port range without validation.
+    /// Builds a port range from its inclusive bounds.
     ///
-    /// Callers of [`Self::port_count`] or [`Self::split_for_workers`] must ensure
-    /// `min <= max` and exclude `0..=u16::MAX`, whose count is not representable
-    /// by `u16`.
-    #[must_use]
-    pub const fn new(min: u16, max: u16) -> Self {
-        Self { min, max }
+    /// # Errors
+    ///
+    /// Returns [`RtcPortRangeError::MinZero`] when `min` is zero, or
+    /// [`RtcPortRangeError::MinAboveMax`] when `max` is lower than `min`.
+    pub const fn try_new(min: u16, max: u16) -> Result<Self, RtcPortRangeError> {
+        if min == 0 {
+            return Err(RtcPortRangeError::MinZero);
+        }
+        if max < min {
+            return Err(RtcPortRangeError::MinAboveMax);
+        }
+        Ok(Self { min, max })
     }
 
     #[must_use]
@@ -81,10 +96,6 @@ impl RtcPortRange {
     }
 
     /// Returns the number of ports in the range.
-    ///
-    /// # Panics
-    ///
-    /// May panic when `min > max` or the range spans every `u16` port.
     #[must_use]
     pub const fn port_count(self) -> u16 {
         self.max - self.min + 1
@@ -98,10 +109,6 @@ impl RtcPortRange {
     ///
     /// Earlier workers receive one extra port when the range does not divide
     /// evenly. Returns `None` for zero workers or more workers than ports.
-    ///
-    /// # Panics
-    ///
-    /// May panic when `min > max` or the range spans every `u16` port.
     #[must_use]
     pub fn split_for_workers(self, worker_count: usize) -> Option<Vec<Self>> {
         if worker_count == 0 || worker_count > usize::from(self.port_count()) {
@@ -116,10 +123,13 @@ impl RtcPortRange {
             let worker_port_count = base_ports_per_worker + usize::from(worker_idx < extra_ports);
             let worker_port_count = u32::try_from(worker_port_count).ok()?;
             let max_inclusive = next_min + worker_port_count - 1;
-            ranges.push(Self::new(
-                u16::try_from(next_min).ok()?,
-                u16::try_from(max_inclusive).ok()?,
-            ));
+            ranges.push(
+                Self::try_new(
+                    u16::try_from(next_min).ok()?,
+                    u16::try_from(max_inclusive).ok()?,
+                )
+                .ok()?,
+            );
             next_min = max_inclusive + 1;
         }
         Some(ranges)

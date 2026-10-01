@@ -573,7 +573,7 @@ RTC transport:
 
 | variable | default | description |
 | --- | --- | --- |
-| `RTC_MIN_PORT` | `40000` | lower bound for the RTC UDP port range |
+| `RTC_MIN_PORT` | `40000` | lower bound for the RTC UDP port range, must be greater than zero |
 | `RTC_MAX_PORT` | `49999` | upper bound for the RTC UDP port range |
 | `RTC_UDP_IO_BACKEND` | `tokio` | UDP socket backend for RTC workers, either `tokio` or Linux-only `io_uring` |
 | `RTC_MEDIA_WORKER_COUNT` | available parallelism | number of RTC media workers, falling back to `1` when the host cannot report available parallelism |
