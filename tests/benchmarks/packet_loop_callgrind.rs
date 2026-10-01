@@ -3,7 +3,8 @@
 //! this suite measures fixed units of packet-loop work with `Ir` and
 //! `EstimatedCycles`, which are the instruction-count and simulated cycle-cost
 //! metrics reported by Callgrind
-//! each benchmark repeats one packet-loop operation with reusable buffers.
+//! most benchmarks repeat one packet-loop operation with reusable buffers.
+//! the interleaved case runs fixed command and packet turns on one worker state.
 //! RTC-engine setup and fixture destruction stay outside the measured function.
 //!
 //! the value of this target is base-versus-head review, not throughput proof
@@ -18,6 +19,11 @@
 //! keyframe-request coalescing without mixing socket waits into the instruction
 //! count
 
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
@@ -31,10 +37,10 @@ use gungraun::{library_benchmark, library_benchmark_group, main};
 use o_sfu_core::server::transport::benchmark_support::{
     ActiveSpeakerBenchFixture, ConsumerGateBatchBenchFixture, FanoutBenchTopology,
     IncomingObservationBenchFixture, IngressBurstBenchFixture, IngressRoutingBenchFixture,
-    KeyframeCoalescingBenchFixture, LocalRewriteBenchFixture, LocalSendBenchFixture,
-    PacketSinkFanoutBenchFixture, RelayDrainBenchFixture, RelayFanoutBenchFixture,
-    RelayPressureBenchFixture, RemoteGateRetryBenchFixture, RidReadinessBenchFixture,
-    SchedulerBenchFixture, SessionDrainBenchFixture, WorkerPacketCommandMixBenchFixture,
+    InterleavedRelayActivityBenchFixture, KeyframeCoalescingBenchFixture, LocalRewriteBenchFixture,
+    LocalSendBenchFixture, PacketSinkFanoutBenchFixture, RelayDrainBenchFixture,
+    RelayFanoutBenchFixture, RelayPressureBenchFixture, RemoteGateRetryBenchFixture,
+    RidReadinessBenchFixture, SchedulerBenchFixture, SessionDrainBenchFixture,
     routing_miss_packet_fingerprint,
 };
 
@@ -310,18 +316,18 @@ fn keyframe_coalesce_512(
     black_box(fixture)
 }
 
-// measures packet work interleaved with worker lifecycle commands
-//
-// the packet side reuses the deterministic fanout planner while the command
-// side goes through the real worker mailbox
-// this keeps the observation-lock cost visible in the regular base-versus-head
-// Callgrind suite without adding fake peer negotiation to the measured window
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::packet_cmd_mix(WorkerPacketCommandMixBenchFixture::packet_command_mix_current_thread())]
-fn interleaved_fanout(
-    mut fixture: WorkerPacketCommandMixBenchFixture,
-) -> WorkerPacketCommandMixBenchFixture {
-    black_box(fixture.run_packet_command_mix());
+// measures packet turns interleaved with source-activity commands on one
+// worker state, without OS-thread or mailbox-wait scheduling in the gate
+fn validate_interleaved_relay_activity(fixture: InterleavedRelayActivityBenchFixture) {
+    fixture.assert_coverage();
+}
+
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_interleaved_relay_activity)]
+#[bench::activity_gate(InterleavedRelayActivityBenchFixture::activity_gate())]
+fn interleaved_relay_activity_512(
+    mut fixture: InterleavedRelayActivityBenchFixture,
+) -> InterleavedRelayActivityBenchFixture {
+    fixture.run();
     black_box(fixture)
 }
 
@@ -364,7 +370,7 @@ library_benchmark_group!(
         local_send_512,
         active_speaker_policy,
         keyframe_coalesce_512,
-        interleaved_fanout,
+        interleaved_relay_activity_512,
         session_drain_128,
         relay_drain_256
 );

@@ -1,9 +1,8 @@
-//! investigation-only Callgrind coverage for the current-thread packet loop
+//! manual Callgrind coverage for worker commands
 //!
 //! this target complements the deterministic packet-loop slice gate
-//! it runs a real worker task on a current-thread Tokio runtime and measures
-//! mailbox-driven packet-loop turns after setup and warmup have already
-//! completed
+//! it runs a current-thread caller runtime and a separate worker thread
+//! after fixture setup and warmup
 //!
 //! the target is manual-only in CI
 //! it can produce DHAT, cache simulation, branch simulation and flamegraph
@@ -13,12 +12,17 @@
 //! `packet_loop_callgrind` stays the PR comparison target because its slices are
 //! small enough to compare across base and head
 //! this file is for manual profiling when those slices point at a regression or
-//! when scheduler and mailbox cost need a full worker context
+//! when scheduler or mailbox cost needs a full worker context
 //!
 //! the measured window is explicit
 //! `Callgrind` instrumentation starts after fixture setup and warmup
 //! instrumentation stops before control returns to the generated harness
 
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,

@@ -5,11 +5,18 @@
 //! each measured method calls the same RTC-engine helpers used by the worker
 //! packet loop
 
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
+
 mod active_speaker;
 mod consumer_gates;
 mod drain;
 mod fanout;
 mod ingress;
+mod interleaved;
 mod local_send;
 mod meeting;
 mod observation;
@@ -29,6 +36,7 @@ pub use ingress::{
     INGRESS_COMPLETED_BURST_DATAGRAMS, INGRESS_DEMUX_ATTEMPTS, IngressBurstBenchFixture,
     IngressRoutingBenchFixture,
 };
+pub use interleaved::{INTERLEAVED_RELAY_PACKETS, InterleavedRelayActivityBenchFixture};
 pub use local_send::LocalSendBenchFixture;
 pub use meeting::{
     MEETING_ADMITTED_AUDIO_SOURCES, MEETING_LONG_SECONDS, MEETING_PARTICIPANTS,
@@ -45,10 +53,7 @@ pub use video::{
     SELECTED_RID_DESTINATIONS,
 };
 #[cfg(feature = "internal-benchmarks")]
-pub use worker::{
-    WORKER_COMMAND_ROUNDTRIPS, WORKER_PACKET_COMMAND_MIX_PACKETS, WorkerLoopBenchFixture,
-    WorkerPacketCommandMixBenchFixture,
-};
+pub use worker::{WORKER_COMMAND_ROUNDTRIPS, WorkerLoopBenchFixture};
 
 pub use super::{
     consumer_egress::LocalRewriteBenchFixture,

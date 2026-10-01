@@ -12,6 +12,11 @@
 //! replace it
 
 #![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
+#![allow(
     clippy::needless_pass_by_value,
     reason = "Gungraun's generated harness owns setup values"
 )]

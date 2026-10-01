@@ -1,3 +1,9 @@
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
+
 use std::hint::black_box;
 
 use o_sfu_rfc::rtp::CodecName;

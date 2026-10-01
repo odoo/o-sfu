@@ -86,10 +86,6 @@ impl IncomingObservationBenchFixture {
         Self::build(VP8_KEYFRAME, VP8_INTERFRAME, &parameters)
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "the fixed benchmark fixture must fail if RTC setup is incomplete"
-    )]
     fn build(
         first_payload: &[u8],
         second_payload: &[u8],
@@ -205,11 +201,6 @@ impl IncomingObservationBenchFixture {
     ///
     /// Panics if the first packet did not learn its SSRC or the second packet
     /// did not resolve through that learned binding.
-    #[expect(
-        clippy::expect_used,
-        clippy::panic,
-        reason = "fixture validation must fail when the observation path is skipped"
-    )]
     pub fn assert_observation_coverage(&self) {
         let [first, second] = self.buffers.pending_packets.as_slice() else {
             panic!("observation fixture must contain two packets");

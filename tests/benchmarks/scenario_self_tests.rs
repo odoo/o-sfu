@@ -9,12 +9,18 @@
 //! gate, while a name filter that matches nothing exits zero, which would turn
 //! the gate into the silent no-op it exists to prevent
 
+#![allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
+)]
+
 #[path = "source_policy/mod.rs"]
 mod source_policy;
 
 use o_sfu_core::server::transport::benchmark_support::{
-    IncomingObservationBenchFixture, MeetingFlowBenchFixture, RELAY_MAILBOX_ATTEMPTS,
-    ROUTE_PLANNING_TURNS, RelayDrainBenchFixture, RelayFanoutBenchFixture,
+    IncomingObservationBenchFixture, InterleavedRelayActivityBenchFixture, MeetingFlowBenchFixture,
+    RELAY_MAILBOX_ATTEMPTS, ROUTE_PLANNING_TURNS, RelayDrainBenchFixture, RelayFanoutBenchFixture,
     RelayPressureBenchFixture, RemoteGateRetryBenchFixture, RidReadinessBenchFixture,
     SchedulerBenchFixture, SessionDrainBenchFixture,
 };
@@ -35,6 +41,13 @@ fn source_policy_scenario_filters_foreign_and_inactive_speakers() {
     let _ = fixture.run_policy_turns();
     fixture.assert_every_turn_planned();
     fixture.assert_speaker_selection();
+}
+
+#[test]
+fn interleaved_activity_controls_actual_relay_delivery() {
+    let mut fixture = InterleavedRelayActivityBenchFixture::activity_gate();
+    fixture.run();
+    fixture.assert_coverage();
 }
 
 #[test]

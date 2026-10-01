@@ -76,8 +76,6 @@
 #![allow(
     clippy::missing_panics_doc,
     clippy::must_use_candidate,
-    clippy::panic,
-    clippy::expect_used,
     clippy::too_many_lines,
     reason = "this benchmark-owned fixture is a readable fixed scenario that must fail loudly rather than a reusable public API"
 )]
