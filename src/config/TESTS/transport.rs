@@ -59,7 +59,7 @@ fn load_transport_config_accepts_public_ip_and_defaults() {
             max_bitrate_in: Bitrate::from_mbps(8),
             max_bitrate_out: Bitrate::from_mbps(10),
             video_bitrate_limits: VideoBitrateLimits::default(),
-            rtc_port_range: RtcPortRange::new(40_000, 49_999),
+            rtc_port_range: RtcPortRange::try_new(40_000, 49_999).expect("valid default range"),
             rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
             rtc_media_worker_count: worker_count,
             room_worker_policy: RoomWorkerPolicy::strict_single_router(),

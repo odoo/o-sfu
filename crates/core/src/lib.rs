@@ -64,7 +64,7 @@
 //!         Bitrate::from_mbps(3),
 //!     ),
 //!     video_bitrate_limits: VideoBitrateLimits::default(),
-//!     rtc_port_range: RtcPortRange::new(40_000, 40_099),
+//!     rtc_port_range: RtcPortRange::try_new(40_000, 40_099)?,
 //!     rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
 //!     codec_flags: MediaCodecFlags::default(),
 //!     codec_preferences: CodecPreferences::default(),

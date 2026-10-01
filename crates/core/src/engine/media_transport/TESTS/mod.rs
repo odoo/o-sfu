@@ -552,9 +552,13 @@ fn media_control_reconciliation_rejects_short_worker_results() {
     );
 }
 
+fn port_range(min: u16, max: u16) -> RtcPortRange {
+    RtcPortRange::try_new(min, max).expect("test port range should be valid")
+}
+
 #[test]
 fn media_transport_build_rejects_invalid_worker_count() {
-    let config = test_media_transport_config(0, RtcPortRange::new(46_210, 46_211));
+    let config = test_media_transport_config(0, port_range(46_210, 46_211));
     let result = MediaTransport::build(config, test_media_transport_deps());
 
     assert_eq!(
@@ -593,7 +597,7 @@ fn media_transport_build_bounds_programmatic_sampling_intervals()
 
 #[test]
 fn media_transport_build_rejects_invalid_port_split() {
-    let config = test_media_transport_config(3, RtcPortRange::new(46_220, 46_221));
+    let config = test_media_transport_config(3, port_range(46_220, 46_221));
     let result = MediaTransport::build(config, test_media_transport_deps());
 
     assert_eq!(
@@ -616,11 +620,7 @@ fn media_transport_build_rejects_occupied_port_range() {
     let deps = test_media_transport_deps();
     let metrics = Arc::clone(&deps.metrics);
     assert_eq!(
-        MediaTransport::build(
-            test_media_transport_config(1, RtcPortRange::new(port, port)),
-            deps,
-        )
-        .err(),
+        MediaTransport::build(test_media_transport_config(1, port_range(port, port)), deps,).err(),
         Some(MediaTransportBuildError::WorkerStartup { worker_index: 0 })
     );
     assert_eq!(
@@ -647,8 +647,7 @@ async fn media_transport_io_uring_worker_binds_before_first_offer() {
         .local_addr()
         .unwrap_or_else(|error| panic!("test RTC port should expose its address: {error}"))
         .port();
-    let mut blocked_config =
-        test_media_transport_config(1, RtcPortRange::new(blocked_port, blocked_port));
+    let mut blocked_config = test_media_transport_config(1, port_range(blocked_port, blocked_port));
     blocked_config.rtc_udp_io_backend = RtcUdpIoBackend::IoUring;
     assert_eq!(
         MediaTransport::build(blocked_config, test_media_transport_deps()).err(),
@@ -672,7 +671,7 @@ async fn media_transport_io_uring_worker_binds_before_first_offer() {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn media_transport_build_rejects_non_linux_io_uring_backend() {
-    let mut config = test_media_transport_config(1, RtcPortRange::new(46_230, 46_230));
+    let mut config = test_media_transport_config(1, port_range(46_230, 46_230));
     config.rtc_udp_io_backend = RtcUdpIoBackend::IoUring;
 
     let result = MediaTransport::build(config, test_media_transport_deps());

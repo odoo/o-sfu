@@ -94,7 +94,9 @@ impl WorkerLoopBenchFixture {
         else {
             panic!("failed to build current-thread benchmark runtime")
         };
-        let rtc_port_range = RtcPortRange::new(46_200, 46_220);
+        let Ok(rtc_port_range) = RtcPortRange::try_new(46_200, 46_220) else {
+            panic!("benchmark port range should be valid")
+        };
         let session_key = test_transport_session_key(91, 0, 92, UserId::Integer(93));
         let fixture = Self {
             runtime,
@@ -196,7 +198,9 @@ impl WorkerPacketCommandMixBenchFixture {
         else {
             panic!("failed to build current-thread benchmark runtime")
         };
-        let rtc_port_range = RtcPortRange::new(46_200, 46_220);
+        let Ok(rtc_port_range) = RtcPortRange::try_new(46_200, 46_220) else {
+            panic!("benchmark port range should be valid")
+        };
         let mut fixture = Self {
             runtime,
             worker: benchmark_worker(rtc_port_range),
