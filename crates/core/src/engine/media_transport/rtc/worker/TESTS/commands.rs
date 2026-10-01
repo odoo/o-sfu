@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
+#[cfg(test)]
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
+#[cfg(test)]
 use str0m::media::MediaKind;
 #[cfg(test)]
 use {
     super::super::commands::ParsedSessionAnswer,
-    crate::engine::media_transport::{AppliedSessionAnswer, TransportSourceKey},
+    crate::engine::media_transport::{AppliedSessionAnswer, TransportMediaId, TransportSourceKey},
 };
 
 use super::{
     super::commands::{RtcSessionOffer, RtcWorkerCommand},
     RtcWorker,
 };
-use crate::engine::media_transport::{
-    SessionOffer, TransportAdapterError, TransportMediaId, TransportSessionKey,
-};
+use crate::engine::media_transport::{SessionOffer, TransportAdapterError, TransportSessionKey};
 
 impl RtcWorker {
     pub async fn create_initial_session_offer(
@@ -73,6 +73,7 @@ impl RtcWorker {
         })
         .await
     }
+    #[cfg(test)]
     pub async fn remove_media(
         &self,
         session_key: &TransportSessionKey,
@@ -102,6 +103,7 @@ impl RtcWorker {
         .await
     }
 
+    #[cfg(test)]
     pub async fn add_recv_media(
         &self,
         session_key: &TransportSessionKey,

@@ -1,5 +1,4 @@
 #![allow(
-    clippy::expect_used,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::must_use_candidate,
@@ -171,10 +170,6 @@ impl SourcePolicyFixture {
     ///
     /// Four turns spanning 750 ms at full headroom settle initial selections so the
     /// measured turns are all bandwidth-driven changes
-    #[expect(
-        clippy::panic,
-        reason = "benchmark setup must fail loudly when deterministic room setup is invalid"
-    )]
     pub fn new() -> Self {
         let runtime = build_runtime();
         let scenario = match runtime.block_on(SourcePolicyScenario::new()) {
@@ -228,10 +223,6 @@ impl SourcePolicyFixture {
     }
 
     /// runs the measured source-policy turns and returns the accumulated work
-    #[expect(
-        clippy::panic,
-        reason = "benchmark execution must fail loudly when the fixed room flow stops being valid"
-    )]
     pub fn run_policy_turns(&mut self) -> usize {
         let Self { runtime, scenario } = self;
         match runtime.block_on(scenario.run()) {
@@ -264,10 +255,6 @@ impl SourcePolicyFixture {
     /// subscription is not on the top layer" are true even with no bandwidth at
     /// all, because thumbnails are supposed to sit on a low layer. only comparing
     /// a relaxed run against a pressured one proves the budget changed the plan
-    #[expect(
-        clippy::panic,
-        reason = "a scenario that stopped constraining the plan must fail loudly"
-    )]
     pub fn assert_budget_pressure_observed(&mut self) {
         let Self { runtime, scenario } = self;
         let (relaxed, pressured) = match runtime.block_on(async {
@@ -286,10 +273,6 @@ impl SourcePolicyFixture {
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "benchmark setup must fail loudly when the current-thread runtime cannot boot"
-)]
 fn build_runtime() -> Runtime {
     match Builder::new_current_thread()
         .enable_io()

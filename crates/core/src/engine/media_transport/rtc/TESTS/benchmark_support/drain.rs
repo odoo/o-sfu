@@ -1,6 +1,5 @@
 #![allow(
     clippy::unwrap_used,
-    clippy::panic,
     clippy::missing_panics_doc,
     clippy::cast_lossless,
     clippy::as_conversions,

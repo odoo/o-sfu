@@ -95,10 +95,6 @@ impl FanoutBenchTopology {
     }
 
     #[inline(never)]
-    #[expect(
-        clippy::expect_used,
-        reason = "setup verifies that every packet has cached route facts"
-    )]
     fn plan_single_turn(&mut self) -> usize {
         for packet in &mut self.pending_packets {
             let visits_origin = packet.visits_origin_sinks();
@@ -190,10 +186,6 @@ impl RelayFanoutBenchFixture {
     /// # Panics
     ///
     /// Panics if planning or delivery no longer follows the fixture's target gates.
-    #[expect(
-        clippy::panic,
-        reason = "fixture validation must reject a non-relay destination"
-    )]
     pub fn assert_gate_selection(&mut self) {
         assert_eq!(self.topology.plan_packet_send(), 2);
         let [packet] = self.topology.pending_packets.as_slice() else {

@@ -104,10 +104,6 @@ impl Default for GeneralCallFixture {
 }
 
 impl GeneralCallFixture {
-    #[expect(
-        clippy::panic,
-        reason = "benchmark setup must fail loudly when deterministic core-room setup is invalid"
-    )]
     pub fn new() -> Self {
         let runtime = build_runtime();
         let scenario = match runtime.block_on(GeneralCallScenario::new()) {
@@ -117,10 +113,6 @@ impl GeneralCallFixture {
         Self { scenario, runtime }
     }
 
-    #[expect(
-        clippy::panic,
-        reason = "benchmark execution must fail loudly when the fixed room flow stops being valid"
-    )]
     pub fn run_total_work(&mut self) -> usize {
         match self.runtime.block_on(self.scenario.run()) {
             Ok(stats) => stats.total_work(),
@@ -129,10 +121,6 @@ impl GeneralCallFixture {
     }
 }
 
-#[expect(
-    clippy::panic,
-    reason = "benchmark setup must fail loudly when the current-thread runtime cannot boot"
-)]
 fn build_runtime() -> Runtime {
     match Builder::new_current_thread()
         .enable_io()
