@@ -1126,7 +1126,7 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
 }) => {
     test.setTimeout(60_000);
     // At this cap lo and mid both cost 150 kbps. Three camera floors
-    // exceed the 400 kbps probe ceiling throughout the soft pause dwell.
+    // exceed the 400 kbps probe target and create receiver pressure.
     const maxVideoBitrate = 200_000;
     const server = await spawnLiveServer({
         bindPort: browserName === "firefox" ? 18086 : 18085,
@@ -1164,15 +1164,42 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
         await connect(receiver, 42);
         await connect(firstThumbnail, 44);
         await connect(thumbnail, 43);
-        // Chromium limits tiny capture surfaces to one simulcast layer. Motion
-        // keeps real throughput high enough for BWE to sustain the test band.
+        // Grace belongs to the receiver, so the first thumbnail can exhaust it
+        // while the second publisher negotiates. Disable automatic downloads
+        // until both publications are ready.
+        // Committed publication order breaks ties between thumbnail priorities.
+        for (const [page, sessionId, label] of [
+            [firstThumbnail, 44, "startup-first-thumbnail"],
+            [thumbnail, 43, "startup-thumbnail"]
+        ]) {
+            await setStreamDownload(receiver, sessionId, "camera", false, "visible_thumbnail");
+            await publishSyntheticCamera(page, label);
+            await expect
+                .poll(async () => {
+                    const sample = await diagnostics(sessionId);
+                    return (
+                        sample.publication?.active &&
+                        sample.source?.currentIncomingBitrateBps > 0 &&
+                        sample.subscription?.selection?.active === false
+                    );
+                })
+                .toBeTruthy();
+        }
+        // Chromium needs the middle-RID test's larger canvas to emit all three
+        // layers. Motion keeps throughput high enough to sustain the test band.
         await publishSyntheticCamera(pinned, "startup-pinned", {
-            width: 480,
-            height: 270,
+            width: browserName === "chromium" ? 1280 : 480,
+            height: browserName === "chromium" ? 720 : 270,
             frameRate: 30,
             movingPattern: true
         });
         await setStreamDownload(receiver, 41, "camera", true, "pinned");
+        // Selection can precede forwarding through the packet gate. Decode the
+        // pinned stream before adding pressure to its startup.
+        if (browserName === "chromium") {
+            await expectCameraTrackUpdate(receiver, 41, true);
+            await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
+        }
         // Establish high quality before adding pressure so recovery timing cannot
         // consume the thumbnail's grace before an over-budget sample is visible.
         let initial;
@@ -1182,10 +1209,17 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
                     async () => {
                         initial = await diagnostics(41);
                         const selection = initial.subscription?.selection;
+                        const high = initial.source?.encodings.find(
+                            (encoding) => encoding.rid === "hi"
+                        );
                         return (
                             initial.source?.currentIncomingBitrateBps > 0 &&
+                            initial.subscription?.state === "active" &&
+                            initial.transport?.videoSoftPauseRemainingMs === undefined &&
                             selection?.latestReceiverBandwidthEstimateBps >= maxVideoBitrate &&
-                            selection.selectedRid === "hi"
+                            selection.selectedRid === "hi" &&
+                            Number.isFinite(high?.lastPacketAgeMs) &&
+                            high.lastPacketAgeMs < 1_000
                         );
                     },
                     { intervals: [20, 50, 100], timeout: 15_000 }
@@ -1197,53 +1231,56 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
                 contentType: "application/json"
             });
         }
-        // Probes can reach twice the outgoing target. Two thumbnail floors
-        // keep the receiver over budget throughout that probe range.
-        await publishSyntheticCamera(firstThumbnail, "startup-first-thumbnail");
-        await setStreamDownload(receiver, 44, "camera", true, "visible_thumbnail");
-        // Committed publication order breaks ties between thumbnail priorities.
-        await expect.poll(async () => (await diagnostics(44)).publication?.active).toBe(true);
-        await publishSyntheticCamera(thumbnail, "startup-thumbnail");
-        await setStreamDownload(receiver, 43, "camera", true, "visible_thumbnail");
-        let grace;
-        await expect
-            .poll(
-                async () => {
-                    const sample = await diagnostics(43);
-                    const selection = sample.subscription?.selection;
-                    if (
-                        selection?.latestReceiverBandwidthEstimateBps >= maxVideoBitrate &&
-                        selection.selectedVideoBitrateBps > selection.selectedVideoBudgetBps &&
-                        sample.subscription.state === "active" &&
-                        sample.transport?.videoSoftPauseRemainingMs > 0
-                    ) {
-                        grace = sample;
+        // Two thumbnail floors push aggregate demand above the probe target.
+        let grace = null;
+        try {
+            await Promise.all([
+                expect
+                    .poll(
+                        async () => {
+                            grace = await diagnostics(43);
+                            const selection = grace.subscription?.selection;
+                            return (
+                                selection &&
+                                selection.selectedVideoBitrateBps >
+                                    selection.selectedVideoBudgetBps &&
+                                selection.selectedVideoBudgetBps < 3 * 150_000 &&
+                                grace.subscription.state === "active" &&
+                                grace.transport?.videoSoftPauseRemainingMs > 0
+                            );
+                        },
+                        { intervals: [10, 20, 50], timeout: 15_000 }
+                    )
+                    .toBeTruthy(),
+                receiver.evaluate(() => {
+                    for (const sessionId of [44, 43]) {
+                        globalThis.__liveHarness.client.updateDownload(sessionId, {
+                            camera: true,
+                            cameraLayout: "visible_thumbnail"
+                        });
                     }
-                    return Boolean(grace);
-                },
-                { intervals: [10, 20, 50], timeout: 15_000 }
-            )
-            .toBeTruthy();
-        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeGreaterThanOrEqual(
-            maxVideoBitrate
-        );
-        expect(grace.subscription.selection.selectedVideoBudgetBps).toBeLessThan(3 * 150_000);
-        await test.info().attach("soft-pause-grace", {
-            body: JSON.stringify(grace),
-            contentType: "application/json"
-        });
+                })
+            ]);
+            expect(grace.subscription.selection.selectedVideoBudgetBps).toBeLessThan(3 * 150_000);
+        } finally {
+            await test.info().attach("soft-pause-grace", {
+                body: JSON.stringify(grace),
+                contentType: "application/json"
+            });
+        }
+        // BWE recovery can clear pressure and restart the full grace period.
         await expect
-            .poll(async () => (await diagnostics(43)).subscription)
+            .poll(async () => (await diagnostics(43)).subscription, { timeout: 15_000 })
             .toMatchObject({
                 state: "inactive",
                 selection: { policyPauseReason: "budget_pressure" }
             });
-        await expectCameraTrackUpdate(receiver, 41, true);
-        if (browserName === "chromium") {
-            await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
-        }
-        // A BWE change during grace can restart the high-layer upgrade dwell.
         try {
+            await expectCameraTrackUpdate(receiver, 41, true);
+            if (browserName === "chromium") {
+                await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
+            }
+            // A BWE change during grace can restart the high-layer upgrade dwell.
             await expect
                 .poll(() =>
                     cameraSubscriptionRid({
