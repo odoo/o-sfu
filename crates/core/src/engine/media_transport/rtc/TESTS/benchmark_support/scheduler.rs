@@ -1,4 +1,6 @@
 use std::{
+    cmp::Reverse,
+    hint::black_box,
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -59,13 +61,28 @@ impl SchedulerBenchFixture {
         state
             .timeout_queue
             .reserve_exact(2 * SCHEDULER_SESSION_COUNT);
+        let mut ready_sessions = Vec::with_capacity(2 * SCHEDULER_SESSION_COUNT);
+        let now = Instant::now();
+        // Warm scratch storage before measurement to avoid allocator-dependent first-touch misses.
+        for &handle in &handles {
+            state.dirty_sessions.push(handle);
+            state.timeout_queue.push(Reverse((now, handle)));
+            state.timeout_queue.push(Reverse((now, handle)));
+            ready_sessions.extend([handle; 2]);
+        }
+        black_box(&state.dirty_sessions);
+        black_box(&state.timeout_queue);
+        black_box(&ready_sessions);
+        state.dirty_sessions.clear();
+        state.timeout_queue.clear();
+        ready_sessions.clear();
 
         Self {
             state,
             handles,
             session_keys,
-            ready_sessions: Vec::with_capacity(2 * SCHEDULER_SESSION_COUNT),
-            now: Instant::now(),
+            ready_sessions,
+            now,
             turn: 0,
         }
     }
@@ -73,23 +90,26 @@ impl SchedulerBenchFixture {
     #[must_use]
     pub fn collect_ready_and_next_timeout(&mut self) -> usize {
         let now = self.now + Duration::from_millis(u64::from(self.turn) * 100);
+        let due = now + Duration::from_nanos(1);
+        let next_timeout = now + Duration::from_millis(10);
+        let replacement_timeout = now + Duration::from_millis(20);
         self.turn = self.turn.wrapping_add(1);
         for (session_key, handle) in self.session_keys.iter().zip(&self.handles) {
             self.state.mark_session_dirty(session_key);
             self.state
                 .update_session_timeout_by_handle(*handle, Some(now));
             self.state
-                .update_session_timeout_by_handle(*handle, Some(now + Duration::from_nanos(1)));
+                .update_session_timeout_by_handle(*handle, Some(due));
         }
 
         self.ready_sessions.clear();
         self.state
-            .collect_ready_sessions(now + Duration::from_nanos(1), &mut self.ready_sessions);
+            .collect_ready_sessions(due, &mut self.ready_sessions);
         for handle in &self.handles {
             self.state
-                .update_session_timeout_by_handle(*handle, Some(now + Duration::from_millis(10)));
+                .update_session_timeout_by_handle(*handle, Some(next_timeout));
             self.state
-                .update_session_timeout_by_handle(*handle, Some(now + Duration::from_millis(20)));
+                .update_session_timeout_by_handle(*handle, Some(replacement_timeout));
         }
         let ready = self.ready_sessions.len();
         let next_deadline = usize::from(self.state.next_timeout_deadline().is_some());
