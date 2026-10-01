@@ -228,7 +228,15 @@ impl SourcePolicyTransaction {
         (!tx.is_empty()).then_some(tx)
     }
 
-    pub(super) fn push_state_update(&mut self, update: ConsumerPacketSelectionUpdate) {
+    pub(super) fn push_state_update(
+        &mut self,
+        update: ConsumerPacketSelectionUpdate,
+        max_video_updates: usize,
+    ) {
+        // One eligible video route can contribute at most one state update.
+        if self.state_updates.is_empty() {
+            self.state_updates.reserve(max_video_updates);
+        }
         self.state_updates.push(update);
     }
 

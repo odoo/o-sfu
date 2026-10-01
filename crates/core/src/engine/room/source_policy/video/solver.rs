@@ -157,6 +157,7 @@ pub(in crate::engine::room::source_policy) fn append_receiver_video_policy(
     now: Instant,
 ) {
     let routes = receiver_video_routes(state, input);
+    let max_video_updates = routes.len();
     let max_video_downloads_per_receiver = input.media_limits.max_video_downloads_per_receiver();
     let tuning = input.video_adaptation_tuning;
     // `committed_consumer_routes` is ordered by `SubscriptionKey` with
@@ -180,6 +181,7 @@ pub(in crate::engine::room::source_policy) fn append_receiver_video_policy(
             let video_demand = append_receiver_policy_updates(
                 tx,
                 routes,
+                max_video_updates,
                 max_video_downloads_per_receiver,
                 tuning,
                 user.video_soft_pause_deadline,
@@ -213,6 +215,7 @@ pub(in crate::engine::room::source_policy) fn append_receiver_video_policy(
 fn append_receiver_policy_updates<'a>(
     tx: &mut SourcePolicyTransaction,
     receiver_routes: &'a [ReceiverVideoRouteInput<'a>],
+    max_video_updates: usize,
     max_video_downloads_per_receiver: usize,
     tuning: VideoAdaptationTuning,
     current_soft_pause_deadline: Option<Instant>,
@@ -274,7 +277,7 @@ fn append_receiver_policy_updates<'a>(
         if update.requires_media_transport_effect() {
             tx.push_route_update(update);
         } else {
-            tx.push_state_update(update);
+            tx.push_state_update(update, max_video_updates);
         }
     }
     eventual_admitted_video_bitrate.max(planned_budget.selected_video_bitrate())

@@ -31,8 +31,18 @@ mod callgrind_config;
 use std::hint::black_box;
 
 use callgrind_config::callgrind_config;
-use gungraun::{library_benchmark, library_benchmark_group, main};
+use gungraun::{LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use source_policy::SourcePolicyFixture;
+
+/// Uses allocation-driven jemalloc cache collection during measured turns.
+fn source_policy_config() -> LibraryBenchmarkConfig {
+    let mut config = callgrind_config(2.0);
+    config.env(
+        "_RJEM_MALLOC_CONF",
+        "abort_conf:true,experimental_tcache_gc:false",
+    );
+    config
+}
 
 // teardown runs the differential budget-pressure check outside the measured
 // window, so the benchmark cannot keep reporting stable counts after the
@@ -42,7 +52,7 @@ fn validate_budget_pressure(mut fixture: SourcePolicyFixture) {
     fixture.assert_budget_pressure_observed();
 }
 
-#[library_benchmark(config = callgrind_config(2.0), teardown = validate_budget_pressure)]
+#[library_benchmark(config = source_policy_config(), teardown = validate_budget_pressure)]
 #[bench::budget_pressure(SourcePolicyFixture::new())]
 fn policy_recomputation(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
     black_box(fixture.run_policy_turns());
@@ -54,7 +64,7 @@ fn validate_mixed_speakers(fixture: SourcePolicyFixture) {
     fixture.assert_speaker_selection();
 }
 
-#[library_benchmark(config = callgrind_config(2.0), teardown = validate_mixed_speakers)]
+#[library_benchmark(config = source_policy_config(), teardown = validate_mixed_speakers)]
 #[bench::mixed_speakers(SourcePolicyFixture::mixed_speakers())]
 fn speaker_policy_recomputation(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
     black_box(fixture.run_policy_turns());
