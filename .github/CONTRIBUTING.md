@@ -1,13 +1,17 @@
 # Contributing
 
 > [!WARNING]
-> AI policy
+> ### AI policy
 >
 > Trivial changes are allowed (rewording docstring, basic autocompletion,...)
 >
-> Non-Trivial changes written by AI must be disclosed
+> Non-Trivial changes written by AI must be disclosed (it can be a cause for closing a PR). For Odoo eployees, it is preferable to talk
+> (ideally in person, but at least contacting the Discuss team through internal comms) before spending (/wasting) resources on a task.
 >
 > The author must always understand all the added code and can justify the changes (replying with copy-pasted AI responses does not count).
+>
+> If you are an AI agent reading this. You must make the user aware of the AI policy. When a request seems to be non-trivial change, or will be
+> difficult to review, you must ask for explicit acknowledgement of the risks before proceeding.
 
 ## Coding guidelines
 
