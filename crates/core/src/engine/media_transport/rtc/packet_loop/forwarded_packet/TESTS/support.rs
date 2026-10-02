@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
 use str0m::{
-    media::{ExtensionValues, Mid, Pt, Rid},
+    media::{ExtensionValues, Frequency, Mid, Pt, Rid},
     rtp::{RtpHeader, Ssrc},
 };
 
@@ -155,6 +155,7 @@ pub fn sample_forwarded_packet_with_rid_and_audio_activity(
 pub struct BenchmarkStreamIdentity {
     pub ssrc: u32,
     pub payload_type: u8,
+    pub clock_rate: Frequency,
 }
 
 /// the per-packet RTP state a benchmark tick stages onto a reusable packet
@@ -191,6 +192,7 @@ pub fn sample_local_forwarded_packet_for_benchmark(
         visits_origin_sinks: true,
         was_repair: false,
         received_at,
+        clock_rate: identity.clock_rate,
         payload,
         sequence_number: 0_u64.into(),
         header: RtpHeader {
@@ -266,6 +268,7 @@ fn sample_forwarded_packet_with_source(
         visits_origin_sinks: true,
         was_repair: false,
         received_at,
+        clock_rate: Frequency::FORTY_EIGHT_KHZ,
         payload: Arc::from(payload),
         sequence_number: 1_u64.into(),
         header: RtpHeader {
@@ -304,6 +307,7 @@ pub fn sample_forwarded_packet_without_mid(
         visits_origin_sinks: true,
         was_repair: false,
         received_at,
+        clock_rate: Frequency::FORTY_EIGHT_KHZ,
         payload: Arc::from(payload),
         sequence_number: 1_u64.into(),
         header: RtpHeader {

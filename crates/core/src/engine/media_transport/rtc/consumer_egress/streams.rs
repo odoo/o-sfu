@@ -22,7 +22,7 @@ use std::{
 
 use str0m::{
     Rtc,
-    media::Mid,
+    media::{Frequency, Mid},
     rtp::{SeqNo, Ssrc},
 };
 
@@ -37,6 +37,7 @@ use super::super::{
 pub const RTX_CACHE_MAX_PACKETS: usize = 1_000;
 pub const RTX_CACHE_LIFETIME: Duration = Duration::from_secs(3);
 const RTX_RATIO_CAP: Option<f32> = Some(0.15);
+const TIMESTAMP_HALF_CYCLE: u32 = 1 << 31;
 
 /// receiver identity state for one consumer route
 ///
@@ -50,6 +51,7 @@ pub(super) struct ConsumerStream {
     queued_primary_writes: usize,
     stale_primary_writes: usize,
     rtx_cache_deadline: Option<Instant>,
+    clock: Option<SourceClock>,
     rtp: RtpProjection,
     codec: codec::Projection,
 }
@@ -232,74 +234,50 @@ impl ConsumerStreamStore {
             .map(|stream| (stream.queued_primary_writes, stream.stale_primary_writes))
     }
 
-    /// Projects one source packet into receiver RTP and codec identity.
+    /// Projects source RTP and its clock pair into one receiver stream.
     ///
-    /// The browser receiver sees one RTP identity as the SFU dynamically switches upstream
-    /// publishers, switches simulcast RID layers, or unpauses delivery.
+    /// # Projection rules
     ///
-    /// # Projection Rules
+    /// Same-source packets preserve sequence and timestamp deltas. Gaps remain
+    /// visible as loss. Source switches and delivery resumes use the next receiver
+    /// sequence and advance timestamps by elapsed time at the source clock rate.
+    /// A zero or sub-tick gap still advances one tick to separate switched frames.
     ///
-    /// 1. **Steady State (Same SSRC)**: Consecutive packets advance receiver sequence numbers
-    ///    by 1 and preserve source inter-frame timestamp deltas:
-    ///    `dst_ts = dst_ts_anchor + (source_ts - src_ts_anchor)`.
-    /// 2. **Source Gaps or Reordering (Same SSRC)**: Sequence numbers and timestamps use
-    ///    their source-anchor deltas. Accepted repairs therefore keep their projected
-    ///    identity instead of advancing the receiver high-water marks.
-    /// 3. **SSRC Switch or Route Resume (New Layer / Epoch)**: Layer switches (e.g. simulcast
-    ///    upswitch) or SFU unpauses advance receiver sequence by 1 and re-anchor timestamps
-    ///    (`dst_ts = highest_ts + 1`), compacting intentional SFU gaps.
+    /// Example at 90 kHz with a 100 ms gap from the latest frame reference:
     ///
     /// ```text
-    /// incoming source streams:
-    ///   publisher A (SSRC 1000): [ seq: 10, ts: 1000 ] -> [ seq: 11, ts: 1960 ] (steady state)
-    ///                                 |
-    ///                    (publisher or simulcast switch)
-    ///                                 v
-    ///   new source (SSRC 2000):  [ seq:  1, ts: 5000 ] -> [ seq:  2, ts: 5960 ] (independent SSRC/clock)
-    ///
-    /// ConsumerStream timeline mapping:
-    ///   +-------------------------------------------------------------------------+
-    ///   | Case 1: Same SSRC (in-order)                                            |
-    ///   |   dst_seq = next_seq_no++                                               |
-    ///   |   dst_ts  = dst_ts_anchor + (src_ts - src_ts_anchor)                    |
-    ///   +-------------------------------------------------------------------------+
-    ///   | Case 2: SSRC Switch or New Generation (re-anchor)                       |
-    ///   |   dst_seq = next_seq_no++                                               |
-    ///   |   dst_ts  = highest_ts + 1  (monotonic re-anchor)                       |
-    ///   |   re-anchor: src_seq_anchor = src_seq, dst_seq_anchor = dst_seq         |
-    ///   |              src_ts_anchor  = src_ts,  dst_ts_anchor  = dst_ts          |
-    ///   +-------------------------------------------------------------------------+
-    ///                                 |
-    ///                                 v
-    /// receiver projected egress:
-    ///   [ seq: 100, ts: 90000 ] <--- from SSRC 1000 (existing destination anchor)
-    ///   [ seq: 101, ts: 90960 ] <--- from SSRC 1000 (delta +960 preserved)
-    ///   [ seq: 102, ts: 90961 ] <--- from SSRC 2000 (switched: +1 step, re-anchor)
-    ///   [ seq: 103, ts: 91921 ] <--- from SSRC 2000 (delta +960 preserved)
+    /// source packet                 receiver packet
+    /// A: seq 10, ts 90000  ------->  seq 0, ts  90000
+    /// A: seq 11, ts 93000  ------->  seq 1, ts  93000  (+3000 source ticks)
+    ///                |
+    ///                | switch after 100 ms: 90000 * 0.1 = 9000 ticks
+    ///                v
+    /// B: seq  1, ts  5000  ------->  seq 2, ts 102000  (+9000 elapsed ticks)
+    /// B: seq  2, ts  8000  ------->  seq 3, ts 105000  (+3000 source ticks)
     /// ```
     ///
-    /// Source gaps, reordered packets and accepted repairs use anchor-relative sequence
-    /// numbers, so receiver sequence numbers are not globally monotonic in arrival order.
-    /// A repair is accepted only for an earlier sequence in the active same-SSRC and
-    /// delivery-generation projection window. This does not prove that packet was lost.
+    /// A newer primary timestamp refreshes the arrival-based clock reference.
+    /// Equal timestamps reuse its time. Older packets reconstruct a historical
+    /// time without moving the reference. An ahead repair's inferred time is
+    /// capped at arrival to keep str0m's clock in the past. That cap can shift
+    /// the report estimate. Arrival jitter remains.
     ///
-    /// Returns `None` for a stale handle, an older delivery generation, a repair outside
-    /// that window, a source sequence outside the representable projection range or
-    /// an advancing packet without a representable receiver successor.
+    /// Reordering means receiver sequences are not monotonic in arrival order.
+    /// Repairs require an earlier sequence in the active SSRC and delivery
+    /// generation window. Admission does not prove the packet was lost.
+    ///
+    /// Returns `None` for stale handles or generations, repairs outside that
+    /// window, ambiguous half-cycle timestamps and
+    /// unrepresentable sequence or clock arithmetic.
     pub(super) fn project_identity(
         &mut self,
         stream_handle: ConsumerStreamHandle,
         source: SourceRtpIdentity,
         codec_identity: codec::PacketIdentity,
     ) -> Option<ProjectedIdentity> {
-        self.streams.get_mut(stream_handle)?.project(
-            source.delivery_generation,
-            source.ssrc,
-            source.seq_no,
-            source.timestamp,
-            codec_identity,
-            source.was_repair,
-        )
+        self.streams
+            .get_mut(stream_handle)?
+            .project(source, codec_identity)
     }
 }
 
@@ -309,111 +287,160 @@ pub struct SourceRtpIdentity {
     pub ssrc: Ssrc,
     pub seq_no: SeqNo,
     pub timestamp: u32,
+    pub arrived_at: Instant,
+    pub clock_rate: Frequency,
     pub was_repair: bool,
 }
 
+/// Source timestamp paired with the first arrival of its frame.
+#[derive(Debug, Clone, Copy)]
+struct SourceClock {
+    timestamp: u32,
+    at: Instant,
+}
+
+struct ProjectedClock {
+    at: Instant,
+    timestamp_anchor: u32,
+    advances: bool,
+}
+
 impl ConsumerStream {
-    /// projects one packet after handle validation
-    ///
-    /// sequence numbers are always receiver-local
-    /// timestamp and encoded payload identity follow source deltas until the publisher SSRC
-    /// changes
     fn project(
         &mut self,
-        delivery_generation: u64,
-        source_ssrc: Ssrc,
-        source_seq_no: SeqNo,
-        source_timestamp: u32,
-        codec_identity: codec::PacketIdentity,
-        was_repair: bool,
-    ) -> Option<ProjectedIdentity> {
-        if delivery_generation != self.delivery_generation {
-            if was_repair {
-                return None;
-            }
-            return self.project_new_generation(
-                delivery_generation,
-                source_ssrc,
-                source_seq_no,
-                source_timestamp,
-                codec_identity,
-            );
-        }
-        let projected = self.rtp.project(
-            source_ssrc,
-            source_seq_no,
-            source_timestamp,
-            false,
-            was_repair,
-        )?;
-        // Source switches advance the high-water mark. Separate returns keep
-        // codec reanchoring specialized for each transition.
-        match projected.outcome {
-            RtpProjectionOutcome::Advanced => Some(ProjectedIdentity {
-                seq_no: projected.seq_no,
-                rtp_timestamp: projected.rtp_timestamp,
-                codec: self.codec.project(codec_identity, false),
-                transition: SourceTransition::Unchanged,
-                resets_rtx_cache: false,
-            }),
-            RtpProjectionOutcome::Observed => {
-                let mut observed_codec = self.codec;
-                Some(ProjectedIdentity {
-                    seq_no: projected.seq_no,
-                    rtp_timestamp: projected.rtp_timestamp,
-                    codec: observed_codec.project(codec_identity, false),
-                    transition: SourceTransition::Unchanged,
-                    resets_rtx_cache: false,
-                })
-            }
-            RtpProjectionOutcome::Switched { previous_ssrc } => Some(ProjectedIdentity {
-                seq_no: projected.seq_no,
-                rtp_timestamp: projected.rtp_timestamp,
-                codec: self.codec.project(codec_identity, true),
-                transition: SourceTransition::Switched { previous_ssrc },
-                resets_rtx_cache: false,
-            }),
-        }
-    }
-
-    /// Requires a primary packet from a different delivery generation.
-    ///
-    /// Rejects older generations before changing RTP or codec identity.
-    #[cold]
-    #[inline(never)]
-    fn project_new_generation(
-        &mut self,
-        delivery_generation: u64,
-        source_ssrc: Ssrc,
-        source_seq_no: SeqNo,
-        source_timestamp: u32,
+        source: SourceRtpIdentity,
         codec_identity: codec::PacketIdentity,
     ) -> Option<ProjectedIdentity> {
-        // Compare wrapping generations as serial numbers. Older delivery epochs
-        // cannot re-anchor receiver identity.
-        let generation_delta = delivery_generation.wrapping_sub(self.delivery_generation);
-        if generation_delta > u64::MAX / 2 {
+        let reanchor = source.delivery_generation != self.delivery_generation;
+        if reanchor
+            && (source.was_repair
+                || source
+                    .delivery_generation
+                    .wrapping_sub(self.delivery_generation)
+                    > u64::MAX / 2)
+        {
             return None;
         }
-        let projected =
-            self.rtp
-                .project(source_ssrc, source_seq_no, source_timestamp, true, false)?;
-        let codec = self.codec.project(codec_identity, true);
-        self.delivery_generation = delivery_generation;
-        let transition = match projected.outcome {
-            RtpProjectionOutcome::Switched { previous_ssrc } => {
-                SourceTransition::Switched { previous_ssrc }
+        // Prepare fallible clock arithmetic before committing RTP or codec identity.
+        let clock = self.project_clock(&source, reanchor)?;
+        let projected = self.rtp.project(
+            source.ssrc,
+            source.seq_no,
+            source.timestamp,
+            reanchor,
+            source.was_repair,
+            clock.timestamp_anchor,
+        )?;
+        let codec = match projected.outcome {
+            RtpProjectionOutcome::Observed => {
+                let mut codec = self.codec;
+                codec.project(codec_identity, false)
             }
-            RtpProjectionOutcome::Observed | RtpProjectionOutcome::Advanced => {
-                SourceTransition::Unchanged
+            RtpProjectionOutcome::Advanced if !reanchor => {
+                self.codec.project(codec_identity, false)
+            }
+            RtpProjectionOutcome::Advanced | RtpProjectionOutcome::Switched { .. } => {
+                self.codec.project(codec_identity, true)
             }
         };
+        if clock.advances {
+            self.clock = Some(SourceClock {
+                timestamp: source.timestamp,
+                at: clock.at,
+            });
+        }
+        self.delivery_generation = source.delivery_generation;
         Some(ProjectedIdentity {
             seq_no: projected.seq_no,
             rtp_timestamp: projected.rtp_timestamp,
+            wallclock: clock.at,
             codec,
-            transition,
-            resets_rtx_cache: true,
+            transition: match projected.outcome {
+                RtpProjectionOutcome::Switched { previous_ssrc } => {
+                    SourceTransition::Switched { previous_ssrc }
+                }
+                RtpProjectionOutcome::Observed | RtpProjectionOutcome::Advanced => {
+                    SourceTransition::Unchanged
+                }
+            },
+            resets_rtx_cache: reanchor,
+        })
+    }
+
+    /// str0m replaces its report clock on every write. Reuse the frame reference
+    /// or estimate a delayed packet's sampling time from it.
+    /// New primary timestamps use arrival time, which retains network jitter
+    /// and does not establish capture-time synchronization (RFC 3550 section 5.1).
+    // Keep both inputs borrowed to avoid stack copies in the inlined packet path.
+    fn project_clock(&self, source: &SourceRtpIdentity, reanchor: bool) -> Option<ProjectedClock> {
+        let Some(clock) = self.clock.as_ref() else {
+            return Some(ProjectedClock {
+                at: source.arrived_at,
+                timestamp_anchor: source.timestamp,
+                advances: true,
+            });
+        };
+        let RtpTimeline::Active {
+            ssrc,
+            src_timestamp_anchor,
+            dst_timestamp_anchor,
+            ..
+        } = &self.rtp.timeline
+        else {
+            return None;
+        };
+        if *ssrc == source.ssrc && !reanchor {
+            let delta = source.timestamp.wrapping_sub(clock.timestamp);
+            let (at, advances) = if delta == 0 {
+                (clock.at, false)
+            } else if delta >= TIMESTAMP_HALF_CYCLE || source.was_repair {
+                cold_path();
+                // Timestamp order is defined within half an RTP clock cycle.
+                if delta == TIMESTAMP_HALF_CYCLE {
+                    return None;
+                }
+                let ahead = delta < TIMESTAMP_HALF_CYCLE;
+                let ticks = if ahead {
+                    delta
+                } else {
+                    clock.timestamp.wrapping_sub(source.timestamp)
+                };
+                // str0m extrapolates with whole microseconds. Round the offset up.
+                let micros =
+                    (u64::from(ticks) * 1_000_000).div_ceil(u64::from(source.clock_rate.get()));
+                let offset = Duration::from_micros(micros);
+                let at = if ahead {
+                    // Decode order can put a repair ahead of the primary timestamp.
+                    // str0m requires a past clock, so bound the estimate by arrival.
+                    clock.at.checked_add(offset)?.min(source.arrived_at)
+                } else {
+                    clock.at.checked_sub(offset)?
+                };
+                (at, false)
+            } else {
+                (source.arrived_at, true)
+            };
+            return Some(ProjectedClock {
+                at,
+                timestamp_anchor: source.timestamp,
+                advances,
+            });
+        }
+        cold_path();
+        let elapsed = source.arrived_at.saturating_duration_since(clock.at);
+        let rate = u64::from(source.clock_rate.get());
+        let ticks = elapsed
+            .as_secs()
+            .checked_mul(rate)?
+            .checked_add(u64::from(elapsed.subsec_nanos()) * rate / 1_000_000_000)?;
+        // A distinct switched frame still needs a tick at zero or sub-tick spacing.
+        let advance = u32::try_from(ticks & u64::from(u32::MAX)).ok()?.max(1);
+        let previous =
+            dst_timestamp_anchor.wrapping_add(clock.timestamp.wrapping_sub(*src_timestamp_anchor));
+        Some(ProjectedClock {
+            at: source.arrived_at,
+            timestamp_anchor: previous.wrapping_add(advance),
+            advances: true,
         })
     }
 }
@@ -464,7 +491,8 @@ impl RtpProjection {
     /// source deltas outside the representable receiver sequence range or
     /// advancement whose receiver successor would exceed `u64::MAX`.
     /// Reordered packets and accepted repairs remain projectable after exhaustion.
-    /// The caller validates the delivery generation before requesting reanchoring.
+    /// The caller validates the delivery generation and prepares the timestamp
+    /// anchor before requesting reanchoring.
     // Outlining this transition adds a call frame to every primary packet.
     #[inline]
     fn project(
@@ -474,6 +502,7 @@ impl RtpProjection {
         source_timestamp: u32,
         reanchor: bool,
         was_repair: bool,
+        timestamp_anchor: u32,
     ) -> Option<ProjectedRtp> {
         if was_repair && !self.accepts_repair(source_ssrc, source_seq_no) {
             return None;
@@ -490,7 +519,6 @@ impl RtpProjection {
                     highest_src_seq: source_seq_no,
                     src_timestamp_anchor: source_timestamp,
                     dst_timestamp_anchor: source_timestamp,
-                    highest_timestamp: source_timestamp,
                 };
                 Some(ProjectedRtp {
                     seq_no,
@@ -503,7 +531,6 @@ impl RtpProjection {
                 highest_src_seq,
                 src_timestamp_anchor,
                 dst_timestamp_anchor,
-                highest_timestamp,
                 ..
             } => {
                 if *ssrc == source_ssrc && !reanchor {
@@ -519,7 +546,6 @@ impl RtpProjection {
                     *highest_src_seq = source_seq_no;
                     let rtp_timestamp = dst_timestamp_anchor
                         .wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
-                    *highest_timestamp = rtp_timestamp;
                     return Some(ProjectedRtp {
                         seq_no,
                         rtp_timestamp,
@@ -529,7 +555,7 @@ impl RtpProjection {
                 let previous_ssrc = *ssrc;
                 let seq_no = self.next_seq_no;
                 self.next_seq_no = (*seq_no).checked_add(1)?.into();
-                let rtp_timestamp = highest_timestamp.wrapping_add(1);
+                let rtp_timestamp = timestamp_anchor;
                 self.timeline = RtpTimeline::Active {
                     ssrc: source_ssrc,
                     src_seq_anchor: source_seq_no,
@@ -537,7 +563,6 @@ impl RtpProjection {
                     highest_src_seq: source_seq_no,
                     src_timestamp_anchor: source_timestamp,
                     dst_timestamp_anchor: rtp_timestamp,
-                    highest_timestamp: rtp_timestamp,
                 };
                 let outcome = if previous_ssrc == source_ssrc {
                     RtpProjectionOutcome::Advanced
@@ -587,7 +612,6 @@ impl RtpProjection {
             highest_src_seq,
             src_timestamp_anchor,
             dst_timestamp_anchor,
-            highest_timestamp,
             ..
         } = &mut self.timeline
         else {
@@ -598,10 +622,9 @@ impl RtpProjection {
         let rtp_timestamp =
             dst_timestamp_anchor.wrapping_add(source_timestamp.wrapping_sub(*src_timestamp_anchor));
         let outcome = if source_seq_no > *highest_src_seq {
-            // Reject an unrepresentable successor before committing either high-water mark.
+            // Reject an unrepresentable successor before committing sequence state.
             let next_seq_no = (*seq_no).checked_add(1)?.into();
             *highest_src_seq = source_seq_no;
-            *highest_timestamp = rtp_timestamp;
             self.next_seq_no = next_seq_no;
             RtpProjectionOutcome::Advanced
         } else {
@@ -624,14 +647,14 @@ struct ProjectedRtp {
 
 /// Accepted changes to receiver RTP identity.
 ///
-/// A source switch always advances the receiver high-water marks.
+/// A source switch always advances the receiver sequence high-water mark.
 #[derive(Debug, Clone, Copy)]
 enum RtpProjectionOutcome {
-    /// Receiver high-water marks advanced without changing publisher SSRC.
+    /// Receiver sequence high-water mark advanced without changing publisher SSRC.
     Advanced,
-    /// Packet identity was projected without advancing receiver high-water marks.
+    /// Packet identity was projected without advancing the receiver sequence high-water mark.
     Observed,
-    /// Publisher SSRC changed and receiver high-water marks advanced.
+    /// Publisher SSRC changed and the receiver sequence high-water mark advanced.
     Switched { previous_ssrc: Ssrc },
 }
 
@@ -647,7 +670,6 @@ enum RtpTimeline {
         highest_src_seq: SeqNo,
         src_timestamp_anchor: u32,
         dst_timestamp_anchor: u32,
-        highest_timestamp: u32,
     },
 }
 
@@ -658,6 +680,8 @@ pub struct ProjectedIdentity {
     pub seq_no: SeqNo,
     /// receiver-local RTP timestamp after SSRC switch smoothing
     pub rtp_timestamp: u32,
+    /// Time paired with this timestamp for str0m sender reports.
+    pub wallclock: Instant,
     /// projected encoded payload identity used by the codec rewrite boundary
     pub codec: codec::ProjectedPacket,
     /// source switch observed by local forwarding

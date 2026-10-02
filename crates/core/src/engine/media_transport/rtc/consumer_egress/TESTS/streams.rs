@@ -3,7 +3,7 @@
     reason = "local send rewrite tests use panic only for mandatory fixture setup failures"
 )]
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::LazyLock};
 
 use o_sfu_rfc::rtp::{CodecName, RTP_SEQUENCE_NUMBER_MODULUS};
 use o_sfu_router::{
@@ -82,18 +82,21 @@ fn projected_packet(
     identity
 }
 
-const fn source_identity(
+fn source_identity(
     delivery_generation: u64,
     ssrc: Ssrc,
     seq_no: SeqNo,
     timestamp: u32,
     was_repair: bool,
 ) -> SourceRtpIdentity {
+    static ARRIVAL: LazyLock<Instant> = LazyLock::new(Instant::now);
     SourceRtpIdentity {
         delivery_generation,
         ssrc,
         seq_no,
         timestamp,
+        arrived_at: *ARRIVAL,
+        clock_rate: Frequency::NINETY_KHZ,
         was_repair,
     }
 }
@@ -103,6 +106,120 @@ fn allocate_at(streams: &mut ConsumerStreamStore, next_seq_no: u64) -> ConsumerS
         rtp: RtpProjection::new(next_seq_no.into()),
         ..ConsumerStream::default()
     })
+}
+
+#[test]
+fn switches_and_resumes_use_elapsed_frame_time() {
+    for (clock_rate, short_ticks, long_ticks) in [
+        (Frequency::NINETY_KHZ, 2_970, 450_000),
+        (Frequency::FORTY_EIGHT_KHZ, 1_584, 240_000),
+        (Frequency::EIGHT_KHZ, 264, 40_000),
+    ] {
+        for (gap, advance) in [
+            (Duration::ZERO, 1),
+            (Duration::from_nanos(500), 1),
+            (Duration::from_millis(33), short_ticks),
+            (Duration::from_secs(5), long_ticks),
+        ] {
+            for (ssrc, generation) in [(222, 0), (111, 1)] {
+                let mut stream = ConsumerStream::default();
+                let first = SourceRtpIdentity {
+                    clock_rate,
+                    ..source_identity(0, 111.into(), 10.into(), u32::MAX - 100, false)
+                };
+                let first_output = stream.project(first, codec::PacketIdentity::default());
+                assert!(first_output.is_some());
+                let same_frame = SourceRtpIdentity {
+                    seq_no: 11.into(),
+                    arrived_at: first.arrived_at + gap / 2,
+                    ..first
+                };
+                assert_eq!(
+                    stream
+                        .project(same_frame, codec::PacketIdentity::default())
+                        .map(|p| p.wallclock),
+                    Some(first.arrived_at)
+                );
+                let switched = SourceRtpIdentity {
+                    delivery_generation: generation,
+                    ssrc: ssrc.into(),
+                    seq_no: 20.into(),
+                    timestamp: 5_000,
+                    arrived_at: first.arrived_at + gap,
+                    ..first
+                };
+                let Some(output) = stream.project(switched, codec::PacketIdentity::default())
+                else {
+                    panic!("switch or resume should project");
+                };
+                assert_eq!(output.rtp_timestamp, first.timestamp.wrapping_add(advance));
+                assert_eq!(output.wallclock, switched.arrived_at);
+                let same_frame = SourceRtpIdentity {
+                    seq_no: 21.into(),
+                    arrived_at: switched.arrived_at + Duration::from_millis(1),
+                    ..switched
+                };
+                let next = stream.project(same_frame, codec::PacketIdentity::default());
+                assert_eq!(
+                    next.map(|p| (p.rtp_timestamp, p.wallclock)),
+                    Some((output.rtp_timestamp, output.wallclock))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn clock_admission_preserves_the_next_projection() {
+    let mut stream = ConsumerStream::default();
+    let first = source_identity(0, 111.into(), 10.into(), 10_000, false);
+    assert!(
+        stream
+            .project(first, codec::PacketIdentity::default())
+            .is_some()
+    );
+    let advanced = SourceRtpIdentity {
+        seq_no: 12.into(),
+        timestamp: 20_000,
+        ..first
+    };
+    assert!(
+        stream
+            .project(advanced, codec::PacketIdentity::default())
+            .is_some()
+    );
+    let mut control = stream;
+    let ambiguous = SourceRtpIdentity {
+        seq_no: 13.into(),
+        timestamp: 20_000_u32.wrapping_add(1 << 31),
+        ..first
+    };
+    assert!(
+        stream
+            .project(ambiguous, codec::PacketIdentity::default())
+            .is_none()
+    );
+    let ahead_repair = SourceRtpIdentity {
+        seq_no: 11.into(),
+        timestamp: 21_000,
+        was_repair: true,
+        ..first
+    };
+    assert_eq!(
+        stream
+            .project(ahead_repair, codec::PacketIdentity::default())
+            .map(|packet| packet.wallclock),
+        Some(first.arrived_at)
+    );
+    let switched = SourceRtpIdentity {
+        ssrc: 222.into(),
+        arrived_at: first.arrived_at + Duration::from_secs(1),
+        ..first
+    };
+    assert_eq!(
+        stream.project(switched, codec::PacketIdentity::default()),
+        control.project(switched, codec::PacketIdentity::default())
+    );
 }
 
 fn vp8_inspector() -> codec::PacketInspector {
@@ -625,12 +742,8 @@ fn rejected_source_deltas_preserve_the_next_valid_projection() {
         assert!(
             stream
                 .project(
-                    0,
-                    source_ssrc,
-                    source_anchor.into(),
-                    10_000,
-                    vp8_packet(&inspector, 10, 10).identity(),
-                    false,
+                    source_identity(0, source_ssrc, source_anchor.into(), 10_000, false),
+                    vp8_packet(&inspector, 10, 10).identity()
                 )
                 .is_some()
         );
@@ -638,12 +751,8 @@ fn rejected_source_deltas_preserve_the_next_valid_projection() {
         assert!(
             stream
                 .project(
-                    0,
-                    source_ssrc,
-                    rejected_sequence.into(),
-                    50_000,
-                    vp8_packet(&inspector, 100, 100).identity(),
-                    false,
+                    source_identity(0, source_ssrc, rejected_sequence.into(), 50_000, false),
+                    vp8_packet(&inspector, 100, 100).identity()
                 )
                 .is_none()
         );
@@ -661,9 +770,14 @@ fn rejected_source_deltas_preserve_the_next_valid_projection() {
                 vp8_packet(&inspector, 1, 1).identity(),
             ),
         ] {
-            let actual = stream.project(0, ssrc, sequence.into(), timestamp, codec_identity, false);
-            let expected =
-                control.project(0, ssrc, sequence.into(), timestamp, codec_identity, false);
+            let actual = stream.project(
+                source_identity(0, ssrc, sequence.into(), timestamp, false),
+                codec_identity,
+            );
+            let expected = control.project(
+                source_identity(0, ssrc, sequence.into(), timestamp, false),
+                codec_identity,
+            );
             assert!(expected.is_some());
             assert_eq!(actual, expected);
         }
@@ -680,12 +794,8 @@ fn exhausted_sequence_preserves_observations() {
     };
     for (sequence, timestamp, picture_id) in [(0_u64, 10_000, 10), (u64::MAX - 1, 20_000, 12)] {
         let Some(projected) = stream.project(
-            0,
-            source_ssrc,
-            sequence.into(),
-            timestamp,
+            source_identity(0, source_ssrc, sequence.into(), timestamp, false),
             vp8_packet(&inspector, u16::from(picture_id), picture_id).identity(),
-            false,
         ) else {
             panic!("a representable receiver successor should be accepted");
         };
@@ -701,12 +811,8 @@ fn exhausted_sequence_preserves_observations() {
         assert!(
             stream
                 .project(
-                    generation,
-                    ssrc,
-                    sequence.into(),
-                    50_000,
-                    vp8_packet(&inspector, 100, 100).identity(),
-                    false,
+                    source_identity(generation, ssrc, sequence.into(), 50_000, false),
+                    vp8_packet(&inspector, 100, 100).identity()
                 )
                 .is_none()
         );
@@ -715,12 +821,8 @@ fn exhausted_sequence_preserves_observations() {
         assert!(
             stream
                 .project(
-                    0,
-                    source_ssrc,
-                    (u64::MAX - 1).into(),
-                    20_000,
-                    vp8_packet(&inspector, 12, 12).identity(),
-                    true,
+                    source_identity(0, source_ssrc, (u64::MAX - 1).into(), 20_000, true),
+                    vp8_packet(&inspector, 12, 12).identity()
                 )
                 .is_none()
         );
@@ -728,20 +830,12 @@ fn exhausted_sequence_preserves_observations() {
         {
             let identity = vp8_packet(&inspector, 11, 11).identity();
             let actual = stream.project(
-                0,
-                source_ssrc,
-                sequence.into(),
-                11_000,
+                source_identity(0, source_ssrc, sequence.into(), 11_000, was_repair),
                 identity,
-                was_repair,
             );
             let expected = control.project(
-                0,
-                source_ssrc,
-                sequence.into(),
-                11_000,
+                source_identity(0, source_ssrc, sequence.into(), 11_000, was_repair),
                 identity,
-                was_repair,
             );
             assert!(expected.is_some());
             assert_eq!(actual, expected);
@@ -757,7 +851,7 @@ fn exhausted_sequence_preserves_observations() {
     let mut empty = RtpProjection::new(u64::MAX.into());
     assert!(
         empty
-            .project(source_ssrc, 0_u64.into(), 0, false, false)
+            .project(source_ssrc, 0_u64.into(), 0, false, false, 0)
             .is_none()
     );
     assert_eq!(empty.next_seq_no, u64::MAX.into());
@@ -776,31 +870,19 @@ fn repair_admission_preserves_the_active_projection_window() {
     assert!(
         stream
             .project(
-                0,
-                source_ssrc,
-                9_u64.into(),
-                9_000,
-                vp8_packet(&inspector, 9, 9).identity(),
-                true,
+                source_identity(0, source_ssrc, 9_u64.into(), 9_000, true),
+                vp8_packet(&inspector, 9, 9).identity()
             )
             .is_none()
     );
     for sequence in [10_u64, 12] {
         let actual = stream.project(
-            0,
-            source_ssrc,
-            sequence.into(),
-            12_000,
+            source_identity(0, source_ssrc, sequence.into(), 12_000, false),
             vp8_packet(&inspector, 12, 12).identity(),
-            false,
         );
         let expected = control.project(
-            0,
-            source_ssrc,
-            sequence.into(),
-            12_000,
+            source_identity(0, source_ssrc, sequence.into(), 12_000, false),
             vp8_packet(&inspector, 12, 12).identity(),
-            false,
         );
         assert!(expected.is_some());
         assert_eq!(actual, expected);
@@ -815,24 +897,16 @@ fn repair_admission_preserves_the_active_projection_window() {
         assert!(
             stream
                 .project(
-                    generation,
-                    ssrc,
-                    sequence.into(),
-                    50_000,
-                    vp8_packet(&inspector, 100, 100).identity(),
-                    true,
+                    source_identity(generation, ssrc, sequence.into(), 50_000, true),
+                    vp8_packet(&inspector, 100, 100).identity()
                 )
                 .is_none()
         );
     }
     for (sequence, expected_receiver_sequence) in [(10_u64, 0_u64), (11, 1)] {
         let Some(repair) = stream.project(
-            0,
-            source_ssrc,
-            sequence.into(),
-            11_000,
+            source_identity(0, source_ssrc, sequence.into(), 11_000, true),
             vp8_packet(&inspector, 11, 11).identity(),
-            true,
         ) else {
             panic!("repairs within the source projection window should be admitted");
         };
@@ -841,20 +915,12 @@ fn repair_admission_preserves_the_active_projection_window() {
         assert!(!repair.resets_rtx_cache);
     }
     let actual = stream.project(
-        0,
-        Ssrc::from(222),
-        1_u64.into(),
-        1_000,
+        source_identity(0, Ssrc::from(222), 1_u64.into(), 1_000, false),
         vp8_packet(&inspector, 1, 1).identity(),
-        false,
     );
     let expected = control.project(
-        0,
-        Ssrc::from(222),
-        1_u64.into(),
-        1_000,
+        source_identity(0, Ssrc::from(222), 1_u64.into(), 1_000, false),
         vp8_packet(&inspector, 1, 1).identity(),
-        false,
     );
     assert!(expected.is_some());
     assert_eq!(actual, expected);
@@ -868,22 +934,14 @@ fn delivery_generation_wrap_preserves_serial_order() {
         ..ConsumerStream::default()
     };
     let Some(before_wrap) = stream.project(
-        u64::MAX,
-        source_ssrc,
-        10_u64.into(),
-        10_000,
+        source_identity(u64::MAX, source_ssrc, 10_u64.into(), 10_000, false),
         codec::PacketIdentity::default(),
-        false,
     ) else {
         panic!("current delivery generation should initialize the projection");
     };
     let Some(after_wrap) = stream.project(
-        0,
-        source_ssrc,
-        100_u64.into(),
-        100_000,
+        source_identity(0, source_ssrc, 100_u64.into(), 100_000, false),
         codec::PacketIdentity::default(),
-        false,
     ) else {
         panic!("generation zero should follow the maximum wrapping generation");
     };
@@ -894,30 +952,18 @@ fn delivery_generation_wrap_preserves_serial_order() {
     assert!(
         stream
             .project(
-                u64::MAX,
-                source_ssrc,
-                11_u64.into(),
-                11_000,
-                codec::PacketIdentity::default(),
-                false,
+                source_identity(u64::MAX, source_ssrc, 11_u64.into(), 11_000, false),
+                codec::PacketIdentity::default()
             )
             .is_none()
     );
     let actual = stream.project(
-        0,
-        source_ssrc,
-        101_u64.into(),
-        101_000,
+        source_identity(0, source_ssrc, 101_u64.into(), 101_000, false),
         codec::PacketIdentity::default(),
-        false,
     );
     let expected = control.project(
-        0,
-        source_ssrc,
-        101_u64.into(),
-        101_000,
+        source_identity(0, source_ssrc, 101_u64.into(), 101_000, false),
         codec::PacketIdentity::default(),
-        false,
     );
     assert!(expected.is_some());
     assert_eq!(actual, expected);

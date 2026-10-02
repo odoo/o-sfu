@@ -34,7 +34,7 @@ use serde_json::Value;
 use str0m::{
     Event, IceConnectionState, IceCreds, Input, Output,
     ice::{StunMessage, TransId},
-    media::{KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
+    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
     net::{Protocol, Receive},
     rtp::Ssrc,
     stats::{MediaEgressStats, MediaIngressStats},
@@ -1517,6 +1517,7 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
         .ok_or("consumer session missing after setup")?;
     let consumer_stream = consumer.consumer_streams.allocate(consumer_mid);
     // A repair is admissible only after primary RTP exposes its gap.
+    let arrived_at = Instant::now();
     let mut project_primary = |sequence_number: u64, timestamp: u32| {
         project_identity(
             &mut consumer.consumer_streams,
@@ -1526,6 +1527,8 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
                 ssrc: Ssrc::from(PRIMARY_SSRC),
                 seq_no: sequence_number.into(),
                 timestamp,
+                arrived_at,
+                clock_rate: Frequency::NINETY_KHZ,
                 was_repair: false,
             },
             codec::PacketIdentity::default(),

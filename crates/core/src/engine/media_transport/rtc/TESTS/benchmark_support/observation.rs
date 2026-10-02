@@ -9,7 +9,7 @@ use o_sfu_router::{
     rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType, StreamBinding},
 };
 use str0m::{
-    media::{Mid, Pt, Rid},
+    media::{Frequency, Mid, Pt, Rid},
     rtp::{Ssrc, Vp8Descriptor},
 };
 
@@ -128,6 +128,7 @@ impl IncomingObservationBenchFixture {
         let identity = BenchmarkStreamIdentity {
             ssrc: 4321,
             payload_type: 111,
+            clock_rate: Frequency::NINETY_KHZ,
         };
         let mut first_packet = sample_local_forwarded_packet_for_benchmark(
             session_handle,

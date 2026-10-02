@@ -23,7 +23,7 @@ use o_sfu_router::{
     },
 };
 use str0m::{
-    media::{KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
+    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
     rtp::Ssrc,
 };
 use tokio::sync::mpsc;
@@ -1313,6 +1313,8 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
                         ssrc: source_ssrc,
                         seq_no: u64::from(sequence_number).into(),
                         timestamp: sequence_number,
+                        arrived_at: now,
+                        clock_rate: Frequency::NINETY_KHZ,
                         was_repair: false,
                     },
                     codec::PacketIdentity::default(),
@@ -1350,6 +1352,8 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
                 ssrc: source_ssrc,
                 seq_no: u64::from(sequence_number).into(),
                 timestamp: sequence_number,
+                arrived_at: now,
+                clock_rate: Frequency::NINETY_KHZ,
                 was_repair,
             },
             codec::PacketIdentity::default(),
