@@ -54,7 +54,7 @@ use super::{
             forwarded_packet::ForwardedPacket,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
             routing_miss::DemuxRecoveryState,
-            udp::{UdpDatagram, UdpIngress},
+            udp::{IngressPacket, UdpIngress},
         },
         recovery::{drain_due_kf_retries, drain_due_publisher_kf, flush_pending_kf_reqs_at},
         state::{PacketLoopState, RtcSnapshotState, SharedRtcSocket, bitrate::BitrateRegistry},
@@ -104,7 +104,7 @@ pub(crate) enum PacketLoopTurnInput {
     Timeout,
     Control(PacketLoopControlInput),
     RelayPacket,
-    Datagram(UdpDatagram),
+    Datagram(IngressPacket),
 }
 
 #[cfg(feature = "internal-benchmarks")]
@@ -583,19 +583,26 @@ fn route_datagram_to_session(
     packet_loop_state: &mut PacketLoopState,
     demux: &mut DemuxRecoveryState,
     rtc_metrics: &RtcMetricsRecorder,
-    datagram: UdpDatagram,
+    datagram: IngressPacket,
 ) -> Vec<u8> {
-    let UdpDatagram {
+    let IngressPacket {
         source_addr,
         candidate_addr,
         received_at,
         packet,
+        protocol,
     } = datagram;
     route_pkt_to_session_at(
         packet_loop_state,
         demux,
         rtc_metrics,
-        PacketRouteDatagram::new(source_addr, candidate_addr, packet.as_slice(), received_at),
+        PacketRouteDatagram::new(
+            source_addr,
+            candidate_addr,
+            packet.as_slice(),
+            received_at,
+            protocol,
+        ),
     );
     packet
 }

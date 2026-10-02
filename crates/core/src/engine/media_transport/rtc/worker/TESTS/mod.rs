@@ -189,7 +189,13 @@ impl IngressRoutingHarness {
             &mut self.packet_loop_state,
             &mut self.demux,
             &self.rtc_metrics,
-            PacketRouteDatagram::new(self.source_addr, self.candidate_addr, packet, now),
+            PacketRouteDatagram::new(
+                self.source_addr,
+                self.candidate_addr,
+                packet,
+                now,
+                Protocol::Udp,
+            ),
         );
     }
 }

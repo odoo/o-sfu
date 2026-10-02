@@ -398,6 +398,7 @@ impl LocalWriteDrainFixture {
                 datagram.destination,
                 &datagram.contents,
                 received_at,
+                Protocol::Udp,
             ),
         );
         assert!(self.state.has_dirty_sessions());
@@ -766,6 +767,7 @@ impl NackDrainFixture {
                 datagram.destination,
                 &datagram.contents,
                 now,
+                Protocol::Udp,
             ),
         );
     }
