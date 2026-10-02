@@ -4,7 +4,10 @@
     reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
 )]
 
-use std::hint::black_box;
+use std::{
+    hint::black_box,
+    time::{Duration, Instant},
+};
 
 use o_sfu_rfc::rtp::CodecName;
 use o_sfu_router::{
@@ -12,7 +15,7 @@ use o_sfu_router::{
     rtp::{MediaFormat, MediaStream, PayloadType},
 };
 use str0m::{
-    media::{Mid, Pt},
+    media::{Frequency, Mid, Pt},
     rtp::{SeqNo, Ssrc},
 };
 
@@ -31,6 +34,7 @@ struct RewriteInput {
     source_ssrc: Ssrc,
     sequence_number: SeqNo,
     timestamp: u32,
+    arrived_at: Instant,
     codec_identity: codec::PacketIdentity,
 }
 
@@ -77,11 +81,13 @@ impl LocalRewriteBenchFixture {
                     ssrc: input.source_ssrc,
                     seq_no: input.sequence_number,
                     timestamp: input.timestamp,
+                    arrived_at: input.arrived_at,
+                    clock_rate: Frequency::NINETY_KHZ,
                     was_repair: false,
                 },
                 input.codec_identity,
             ) {
-                black_box(identity.codec);
+                black_box((identity.codec, identity.wallclock));
                 checksum = checksum
                     .wrapping_add(u64::from(identity.rtp_timestamp))
                     .wrapping_add(u64::from(u8::from(matches!(
@@ -106,6 +112,7 @@ fn rewrite_inputs(mode: RewriteMode) -> Vec<RewriteInput> {
         vec![],
     );
     let inspector = codec::PacketInspector::from_parameters(&parameters);
+    let start = Instant::now();
     let mut inputs = Vec::with_capacity(RTP_REWRITE_PACKETS);
     for pkt_idx in 0..RTP_REWRITE_PACKETS {
         let pkt_idx_u32 = u32::try_from(pkt_idx).unwrap_or(0);
@@ -130,6 +137,7 @@ fn rewrite_inputs(mode: RewriteMode) -> Vec<RewriteInput> {
             source_ssrc,
             sequence_number: u64::try_from(pkt_idx).unwrap_or(0).into(),
             timestamp: 90_000_u32.wrapping_add(pkt_idx_u32),
+            arrived_at: start + Duration::from_micros(u64::from(pkt_idx_u32) * 1_000_000 / 90_000),
             codec_identity: inspector.inspect(Pt::from(96), &payload, true).identity(),
         });
     }
