@@ -69,11 +69,6 @@ impl MediaBitrateCounter {
         }
     }
 
-    /// The packet loop is the only writer. Cross-thread readers consume the
-    /// completed sample and freshness atomics, never the in-progress byte bucket.
-    ///
-    /// Exact saturating addition is not part of the observable contract because
-    /// one RTP bitrate window cannot approach `u64::MAX`.
     pub(in super::super) fn record(
         &self,
         now: Instant,
@@ -88,29 +83,30 @@ impl MediaBitrateCounter {
                 now_nanos.saturating_sub(previous_observed) >= BITRATE_WINDOW_NANOS;
             if ingress_started {
                 self.window_start_nanos.store(now_nanos, Ordering::Release);
-                self.bytes_in_window.store(payload_bytes, Ordering::Release);
+                self.bytes_in_window.store(payload_bytes, Ordering::Relaxed);
                 self.completed_bps.store(0, Ordering::Release);
                 IncomingBitrateObservation::IngressStarted
             } else {
                 let window_start = self.window_start_nanos.load(Ordering::Acquire);
                 let elapsed_nanos = now_nanos.saturating_sub(window_start);
                 if elapsed_nanos >= BITRATE_WINDOW_NANOS {
-                    let completed_bytes =
-                        self.bytes_in_window.swap(payload_bytes, Ordering::AcqRel);
+                    let completed_bytes = self.bytes_in_window.load(Ordering::Relaxed);
+                    self.bytes_in_window.store(payload_bytes, Ordering::Relaxed);
                     let completed_bps = bitrate_per_second(completed_bytes, elapsed_nanos);
                     self.completed_bps
                         .store(completed_bps.as_bps(), Ordering::Release);
                     self.window_start_nanos.store(now_nanos, Ordering::Release);
                     IncomingBitrateObservation::SampleUpdated
                 } else {
+                    let bytes = self.bytes_in_window.load(Ordering::Relaxed);
                     self.bytes_in_window
-                        .fetch_add(payload_bytes, Ordering::Release);
+                        .store(bytes.wrapping_add(payload_bytes), Ordering::Relaxed);
                     IncomingBitrateObservation::Unchanged
                 }
             }
         } else {
             self.window_start_nanos.store(now_nanos, Ordering::Release);
-            self.bytes_in_window.store(payload_bytes, Ordering::Release);
+            self.bytes_in_window.store(payload_bytes, Ordering::Relaxed);
             IncomingBitrateObservation::IngressStarted
         };
         self.last_observed_nanos.store(now_nanos, Ordering::Release);
