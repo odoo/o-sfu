@@ -13,6 +13,7 @@ use tokio::{
     net::TcpListener,
     runtime::Builder,
     signal::ctrl_c,
+    sync::Semaphore,
     task::JoinHandle,
     time::{MissedTickBehavior, interval, sleep},
 };
@@ -58,10 +59,10 @@ pub enum ServeError {
     Io(#[from] io::Error),
     /// The deadline elapsed before runtime drainage finished.
     #[error(
-        "runtime shutdown exceeded its deadline with {remaining_sessions} WebSocket sessions remaining"
+        "runtime shutdown exceeded its deadline with {remaining_sessions} sessions or HTTP mutations remaining"
     )]
     ShutdownIncomplete {
-        /// Tracked WebSocket sessions whose finalizers had not returned.
+        /// Tracked WebSocket sessions and HTTP mutations that had not returned.
         remaining_sessions: usize,
     },
 }
@@ -86,6 +87,7 @@ pub(super) struct RuntimeState {
     pre_auth_websocket_admission: websocket_server::PreAuthWebSocketAdmission,
     session_shutdown: CancellationToken,
     session_tasks: TaskTracker,
+    http_mutation_admission: Arc<Semaphore>,
 }
 
 #[derive(Default)]
@@ -295,6 +297,7 @@ impl RuntimeState {
             config.auth.max_pre_auth_websocket_sessions,
             config.auth.max_pre_auth_websocket_sessions_per_origin,
         );
+        let http_mutation_admission = Arc::new(Semaphore::new(config.http.max_http_connections));
         Self {
             config,
             room_manager: rooms,
@@ -304,6 +307,7 @@ impl RuntimeState {
             pre_auth_websocket_admission,
             session_shutdown,
             session_tasks,
+            http_mutation_admission,
         }
     }
 }
