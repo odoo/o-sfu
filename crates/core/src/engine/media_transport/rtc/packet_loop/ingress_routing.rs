@@ -82,6 +82,7 @@ pub struct PacketRouteDatagram<'a> {
     candidate_addr: SocketAddr,
     packet: &'a [u8],
     now: Instant,
+    protocol: Protocol,
 }
 
 impl<'a> PacketRouteDatagram<'a> {
@@ -90,12 +91,14 @@ impl<'a> PacketRouteDatagram<'a> {
         candidate_addr: SocketAddr,
         packet: &'a [u8],
         now: Instant,
+        protocol: Protocol,
     ) -> Self {
         Self {
             source_addr,
             candidate_addr,
             packet,
             now,
+            protocol,
         }
     }
 }
@@ -177,6 +180,7 @@ pub fn route_pkt_to_session_at(
         datagram.candidate_addr,
         datagram.packet,
         datagram.now,
+        datagram.protocol,
     ) {
         CachedRouteOutcome::Routed => {
             metrics.record_rtc_datagram_route(RtcDatagramRoutePath::Indexed);
@@ -215,6 +219,7 @@ pub fn route_pkt_to_session_at(
         candidate_addr: datagram.candidate_addr,
         packet: datagram.packet,
         now: datagram.now,
+        protocol: datagram.protocol,
     };
     // With one session, packet shape cannot narrow the candidate set. Calling
     // `Rtc::accepts()` directly avoids duplicate classification.
@@ -233,6 +238,7 @@ fn route_cached_pkt(
     candidate_addr: SocketAddr,
     packet: &[u8],
     now: Instant,
+    protocol: Protocol,
 ) -> CachedRouteOutcome {
     let Some(session_key) = state
         .remote_addr_demux
@@ -244,7 +250,7 @@ fn route_cached_pkt(
         state.remote_addr_demux.forget_remote_addr(source_addr);
         return CachedRouteOutcome::NotMatched;
     };
-    let Ok(receive) = Receive::new(Protocol::Udp, source_addr, candidate_addr, packet) else {
+    let Ok(receive) = Receive::new(protocol, source_addr, candidate_addr, packet) else {
         log_malformed_datagram(source_addr);
         return CachedRouteOutcome::Malformed;
     };
@@ -406,8 +412,9 @@ fn receive_input(
     source_addr: SocketAddr,
     candidate_addr: SocketAddr,
     packet: &[u8],
+    protocol: Protocol,
 ) -> Option<Input<'_>> {
-    let receive = Receive::new(Protocol::Udp, source_addr, candidate_addr, packet).ok()?;
+    let receive = Receive::new(protocol, source_addr, candidate_addr, packet).ok()?;
     Some(Input::Receive(now, receive))
 }
 
@@ -461,6 +468,7 @@ struct PacketRouteContext<'a> {
     candidate_addr: SocketAddr,
     packet: &'a [u8],
     now: Instant,
+    protocol: Protocol,
 }
 
 /// Feeds a previously accepted datagram into its session and learns its source
@@ -542,6 +550,7 @@ fn route_pkt_by_session(
         route.source_addr,
         route.candidate_addr,
         route.packet,
+        route.protocol,
     ) else {
         drop_malformed_fallback(route);
         return;
@@ -571,6 +580,7 @@ fn route_pkt_by_recovery(
         route.source_addr,
         route.candidate_addr,
         route.packet,
+        route.protocol,
     ) else {
         drop_malformed_fallback(route);
         return;

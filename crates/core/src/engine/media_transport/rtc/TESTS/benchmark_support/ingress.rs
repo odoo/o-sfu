@@ -4,7 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use str0m::ice::{StunMessage, TransId};
+use str0m::{
+    ice::{StunMessage, TransId},
+    net::Protocol,
+};
 
 use super::super::{
     bootstrap,
@@ -164,6 +167,7 @@ impl IngressRoutingBenchFixture {
                 self.candidate_addr,
                 &self.packet,
                 self.now,
+                Protocol::Udp,
             ),
         );
     }

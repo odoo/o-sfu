@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use str0m::net::Protocol;
+
 use super::{
     bootstrap,
     packet_loop::{PacketRouteDatagram, route_pkt_to_session_at, routing_miss::DemuxRecoveryState},
@@ -110,7 +112,13 @@ impl IngressDemuxFuzzFixture {
             &mut self.state,
             &mut self.demux,
             &self.rtc_metrics,
-            PacketRouteDatagram::new(self.source_addr, self.candidate_addr, packet, self.now),
+            PacketRouteDatagram::new(
+                self.source_addr,
+                self.candidate_addr,
+                packet,
+                self.now,
+                Protocol::Udp,
+            ),
         );
     }
 }

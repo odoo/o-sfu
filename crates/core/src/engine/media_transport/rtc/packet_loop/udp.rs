@@ -18,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use str0m::net::Protocol;
 use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc, time::sleep};
 #[cfg(target_os = "linux")]
 use tokio_uring::net::UdpSocket as TokioUringUdpSocket;
@@ -63,7 +64,7 @@ pub enum RtcUdpSocket {
 ///
 /// The backend receive APIs supply only the peer address. `candidate_addr`
 /// preserves the local candidate identity needed by [`str0m::Input::Receive`].
-pub(crate) struct UdpDatagram {
+pub(crate) struct IngressPacket {
     pub(in super::super) source_addr: SocketAddr,
     pub(in super::super) candidate_addr: SocketAddr,
     /// Socket-completion time captured before ingress-queue backpressure.
@@ -71,11 +72,14 @@ pub(crate) struct UdpDatagram {
     /// str0m uses this clock for jitter and bandwidth timing.
     pub(in super::super) received_at: Instant,
     pub(in super::super) packet: Vec<u8>,
+    /// Protocol of the socket the packet was received on, which str0m matches against
+    /// its local candidates.
+    pub(in super::super) protocol: Protocol,
 }
 
 /// Receive-side datagram pump for one worker socket.
 pub struct UdpIngress {
-    rx: mpsc::Receiver<UdpDatagram>,
+    rx: mpsc::Receiver<IngressPacket>,
     recycle_tx: mpsc::Sender<Vec<u8>>,
     shutdown: CancellationToken,
     wake_addr: SocketAddr,
@@ -83,7 +87,7 @@ pub struct UdpIngress {
 
 #[cfg(feature = "internal-benchmarks")]
 pub struct UdpIngressBenchHarness {
-    tx: mpsc::Sender<UdpDatagram>,
+    tx: mpsc::Sender<IngressPacket>,
     ingress: UdpIngress,
     recycle_rx: mpsc::Receiver<Vec<u8>>,
 }
@@ -162,11 +166,11 @@ impl UdpIngress {
         }
     }
 
-    pub(in super::super) fn try_recv(&mut self) -> Option<UdpDatagram> {
+    pub(in super::super) fn try_recv(&mut self) -> Option<IngressPacket> {
         self.rx.try_recv().ok()
     }
 
-    pub(in super::super) async fn recv(&mut self) -> Option<UdpDatagram> {
+    pub(in super::super) async fn recv(&mut self) -> Option<IngressPacket> {
         self.rx.recv().await
     }
 
@@ -211,11 +215,12 @@ impl UdpIngressBenchHarness {
         let mut packet = receive_buffer(&mut self.recycle_rx);
         packet.extend_from_slice(payload);
         self.tx
-            .try_send(UdpDatagram {
+            .try_send(IngressPacket {
                 source_addr,
                 candidate_addr,
                 received_at,
                 packet,
+                protocol: Protocol::Udp,
             })
             .is_ok()
     }
@@ -237,7 +242,7 @@ impl Drop for UdpIngress {
 fn spawn_ingress(
     socket: RtcUdpSocket,
     candidate_addr: SocketAddr,
-    tx: mpsc::Sender<UdpDatagram>,
+    tx: mpsc::Sender<IngressPacket>,
     recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
     metrics: Arc<RtcMetricsRecorder>,
@@ -270,7 +275,7 @@ fn spawn_ingress(
 async fn run_tokio_ingress(
     socket: Arc<TokioUdpSocket>,
     candidate_addr: SocketAddr,
-    tx: mpsc::Sender<UdpDatagram>,
+    tx: mpsc::Sender<IngressPacket>,
     mut recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
     metrics: Arc<RtcMetricsRecorder>,
@@ -306,7 +311,7 @@ async fn run_tokio_ingress(
 async fn run_io_uring_ingress(
     socket: Rc<TokioUringUdpSocket>,
     candidate_addr: SocketAddr,
-    tx: mpsc::Sender<UdpDatagram>,
+    tx: mpsc::Sender<IngressPacket>,
     mut recycle_rx: mpsc::Receiver<Vec<u8>>,
     shutdown: CancellationToken,
     metrics: Arc<RtcMetricsRecorder>,
@@ -343,7 +348,7 @@ async fn ingress_should_stop(
     mut packet: Vec<u8>,
     candidate_addr: SocketAddr,
     received_at: Instant,
-    tx: &mpsc::Sender<UdpDatagram>,
+    tx: &mpsc::Sender<IngressPacket>,
     shutdown: &CancellationToken,
     failures: &mut ReceiveFailureControl,
 ) -> bool {
@@ -351,11 +356,12 @@ async fn ingress_should_stop(
         Ok((received_size, source_addr)) => {
             failures.backoff = Duration::from_millis(1);
             packet.truncate(received_size);
-            let datagram = UdpDatagram {
+            let datagram = IngressPacket {
                 source_addr,
                 candidate_addr,
                 received_at,
                 packet,
+                protocol: Protocol::Udp,
             };
             // If queue backpressure suspends `send`, ready cancellation wins when
             // both branches are polled again. The losing send drops the datagram.

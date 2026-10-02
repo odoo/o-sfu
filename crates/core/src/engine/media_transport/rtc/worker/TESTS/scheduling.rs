@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use str0m::net::Protocol;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -22,7 +23,7 @@ use crate::{
                 packet_loop::{
                     forwarded_packet::ForwardedPacket,
                     routing_miss::DemuxRecoveryState,
-                    udp::{UdpDatagram, UdpIngress, test_support::completed_datagram_channel},
+                    udp::{IngressPacket, UdpIngress, test_support::completed_datagram_channel},
                 },
                 state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
                 worker::{
@@ -49,7 +50,7 @@ struct SchedulingHarness {
     demux: DemuxRecoveryState,
     inputs: PacketLoopInputReceivers,
     ingress: UdpIngress,
-    datagram_tx: mpsc::Sender<UdpDatagram>,
+    datagram_tx: mpsc::Sender<IngressPacket>,
     command_tx: mpsc::Sender<RtcWorkerCommand>,
     relay_tx: mpsc::Sender<ForwardedPacket>,
     shutdown: CancellationToken,
@@ -93,11 +94,12 @@ impl SchedulingHarness {
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         assert!(
             self.datagram_tx
-                .try_send(UdpDatagram {
+                .try_send(IngressPacket {
                     source_addr: addr,
                     candidate_addr: addr,
                     received_at: Instant::now(),
                     packet: payload.to_vec(),
+                    protocol: Protocol::Udp,
                 })
                 .is_ok()
         );
