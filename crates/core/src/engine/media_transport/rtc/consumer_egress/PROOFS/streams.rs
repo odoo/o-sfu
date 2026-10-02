@@ -1,4 +1,6 @@
-use super::{ProjectedRtp, RtpProjection, RtpProjectionOutcome, RtpTimeline};
+use str0m::rtp::SeqNo;
+
+use super::{ProjectedRtp, RtpMapping, RtpPacket, RtpProjectionOutcome};
 
 const SEQUENCE_LIMIT: u128 = (1_u128 << 64) - 1;
 const TIMESTAMP_MODULUS: u64 = 1_u64 << 32;
@@ -10,6 +12,7 @@ struct Packet {
     timestamp: u32,
     reanchor: bool,
     repair: bool,
+    timestamp_anchor: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +23,6 @@ struct Mapping {
     highest_source: u128,
     source_timestamp: u64,
     destination_timestamp: u64,
-    highest_timestamp: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,13 +39,15 @@ struct Projected {
     previous_ssrc: Option<u32>,
 }
 
-/// Proof for `RtpProjection::project`.
-/// Checks full-width sequence/timestamp inputs and the optimized packet path,
-/// including overflow boundaries that regression tests only sample. Rejection
-/// and observation preserve all projection state.
+/// Proves `RtpMapping::start` and `RtpMapping::project` against affine RTP math.
+/// Checks full-width sequence/timestamp inputs, arbitrary transition anchors,
+/// the optimized packet path and overflow boundaries. Rejection and observation
+/// preserve numeric mapping state.
 ///
-/// `Model::valid` is inductive and includes exhausted states. Assumes repairs
-/// do not reanchor. Excludes generation admission, codec commits and RTC I/O.
+/// The driver selects only empty or active storage. Production methods select
+/// sources, reanchors and repairs. Rejected packets do not request switch timing.
+/// Excludes generation admission, clock estimation/commits, codec commits and
+/// RTC I/O. Repairs do not reanchor.
 #[kani::proof]
 fn rtp_projection_matches_affine_model() {
     let mut projection = arbitrary_projection();
@@ -55,70 +59,92 @@ fn rtp_projection_matches_affine_model() {
         timestamp: kani::any(),
         reanchor: kani::any(),
         repair: kani::any(),
+        timestamp_anchor: kani::any(),
     };
     kani::assume(!packet.repair || !packet.reanchor);
     let mut expected_state = before;
     let expected = expected_state.project(packet);
+    let mut requested_switch_time = false;
     let actual = projection
         .project(
-            packet.ssrc.into(),
-            packet.sequence.into(),
-            packet.timestamp,
+            RtpPacket {
+                ssrc: packet.ssrc.into(),
+                seq_no: packet.sequence.into(),
+                timestamp: packet.timestamp,
+                was_repair: packet.repair,
+            },
             packet.reanchor,
-            packet.repair,
+            |_| {
+                requested_switch_time = true;
+                packet.timestamp_anchor
+            },
         )
         .map(projected_snapshot);
     let after = snapshot(projection);
     assert_eq!(actual, expected);
     assert_eq!(after, expected_state);
     assert!(after.valid());
+    let replaces = before
+        .mapping
+        .is_some_and(|line| packet.ssrc != line.ssrc || packet.reanchor);
+    assert_eq!(requested_switch_time, actual.is_some() && replaces);
     if actual.is_none_or(|output| !output.advances) {
         assert_eq!(after, before);
     }
     cover_transitions(before, after, packet, actual);
 }
 
-fn arbitrary_projection() -> RtpProjection {
-    let timeline = if kani::any() {
-        RtpTimeline::Active {
+#[derive(Clone, Copy)]
+struct Projection {
+    next_seq_no: SeqNo,
+    mapping: Option<RtpMapping>,
+}
+
+impl Projection {
+    fn project(
+        &mut self,
+        source: RtpPacket,
+        reanchor: bool,
+        switch_timestamp: impl FnOnce(&RtpMapping) -> u32,
+    ) -> Option<ProjectedRtp> {
+        if let Some(mapping) = &mut self.mapping {
+            return mapping.project(&mut self.next_seq_no, source, reanchor, switch_timestamp);
+        }
+        let (mapping, projected) =
+            RtpMapping::start(&mut self.next_seq_no, source, || source.timestamp)?;
+        self.mapping = Some(mapping);
+        Some(projected)
+    }
+}
+
+fn arbitrary_projection() -> Projection {
+    let mapping = if kani::any() {
+        Some(RtpMapping {
             ssrc: kani::any::<u32>().into(),
             src_seq_anchor: kani::any::<u64>().into(),
             dst_seq_anchor: kani::any::<u64>().into(),
             highest_src_seq: kani::any::<u64>().into(),
             src_timestamp_anchor: kani::any(),
             dst_timestamp_anchor: kani::any(),
-            highest_timestamp: kani::any(),
-        }
+        })
     } else {
-        RtpTimeline::Empty
+        None
     };
-    RtpProjection {
+    Projection {
         next_seq_no: kani::any::<u64>().into(),
-        timeline,
+        mapping,
     }
 }
 
-fn snapshot(projection: RtpProjection) -> Model {
-    let mapping = match projection.timeline {
-        RtpTimeline::Empty => None,
-        RtpTimeline::Active {
-            ssrc,
-            src_seq_anchor,
-            dst_seq_anchor,
-            highest_src_seq,
-            src_timestamp_anchor,
-            dst_timestamp_anchor,
-            highest_timestamp,
-        } => Some(Mapping {
-            ssrc: *ssrc,
-            source: u128::from(*src_seq_anchor),
-            destination: u128::from(*dst_seq_anchor),
-            highest_source: u128::from(*highest_src_seq),
-            source_timestamp: u64::from(src_timestamp_anchor),
-            destination_timestamp: u64::from(dst_timestamp_anchor),
-            highest_timestamp: u64::from(highest_timestamp),
-        }),
-    };
+fn snapshot(projection: Projection) -> Model {
+    let mapping = projection.mapping.map(|line| Mapping {
+        ssrc: *line.ssrc,
+        source: u128::from(*line.src_seq_anchor),
+        destination: u128::from(*line.dst_seq_anchor),
+        highest_source: u128::from(*line.highest_src_seq),
+        source_timestamp: u64::from(line.src_timestamp_anchor),
+        destination_timestamp: u64::from(line.dst_timestamp_anchor),
+    });
     Model {
         next: u128::from(*projection.next_seq_no),
         mapping,
@@ -175,9 +201,8 @@ impl Model {
         } else {
             (
                 self.next,
-                self.mapping.map_or(source_timestamp, |line| {
-                    (line.highest_timestamp + 1) % TIMESTAMP_MODULUS
-                }),
+                self.mapping
+                    .map_or(source_timestamp, |_| u64::from(packet.timestamp_anchor)),
                 true,
             )
         };
@@ -192,7 +217,6 @@ impl Model {
             self.next = sequence + 1;
             self.mapping = Some(Mapping {
                 highest_source: source,
-                highest_timestamp: timestamp,
                 ..continued.unwrap_or(Mapping {
                     ssrc: packet.ssrc,
                     source,
@@ -200,7 +224,6 @@ impl Model {
                     highest_source: source,
                     source_timestamp,
                     destination_timestamp: timestamp,
-                    highest_timestamp: timestamp,
                 })
             });
         }
@@ -237,12 +260,8 @@ fn cover_transitions(before: Model, after: Model, packet: Packet, output: Option
         "gapped primary"
     );
     kani::cover!(
-        continued
-            && primary
-            && source == line.highest_source
-            && output.is_some_and(|projected| projected.timestamp != line.highest_timestamp)
-            && accepted,
-        "duplicate with changed timestamp"
+        continued && primary && source == line.highest_source && accepted,
+        "duplicate primary"
     );
     kani::cover!(
         continued && primary && source < line.highest_source && accepted,
@@ -311,8 +330,15 @@ fn cover_transitions(before: Model, after: Model, packet: Packet, output: Option
         "source timestamp rollover"
     );
     kani::cover!(
-        !continued && line.highest_timestamp + 1 == TIMESTAMP_MODULUS && accepted,
+        !continued
+            && packet.timestamp_anchor == 0
+            && line.destination_timestamp + 1 == TIMESTAMP_MODULUS
+            && accepted,
         "receiver timestamp rollover on reanchor"
+    );
+    kani::cover!(
+        !continued && packet.timestamp_anchor == u32::MAX && accepted,
+        "maximum receiver timestamp on reanchor"
     );
     kani::cover!(
         continued && primary && line.highest_source == SEQUENCE_LIMIT && source == 0 && !accepted,

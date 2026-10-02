@@ -15,7 +15,7 @@ use std::{sync::Arc, time::Instant};
 #[cfg(test)]
 use str0m::media::Pt;
 use str0m::{
-    media::{Mid, Rid},
+    media::{Frequency, Mid, Rid},
     rtp::{RtpHeader, RtpPacket, SeqNo, Ssrc},
 };
 
@@ -67,6 +67,8 @@ pub struct ForwardedPacket {
     was_repair: bool,
     /// packet timestamp used for bitrate, activity and egress metrics
     received_at: Instant,
+    /// Negotiated wire clock shared by same-codec forwarding and relay fanout.
+    clock_rate: Frequency,
     /// source payload bytes shared by relay and local fanout
     payload: Arc<[u8]>,
     /// source RTP header used by observation and destination rewriting
@@ -148,6 +150,7 @@ impl ForwardedPacket {
             visits_origin_sinks: true,
             was_repair,
             received_at: rtp_packet.timestamp,
+            clock_rate: rtp_packet.time.frequency(),
             payload: rtp_packet.payload,
             header: rtp_packet.header,
             sequence_number: rtp_packet.seq_no,
@@ -341,6 +344,7 @@ impl ForwardedPacket {
             visits_origin_sinks: false,
             was_repair: self.was_repair,
             received_at: self.received_at,
+            clock_rate: self.clock_rate,
             payload: Arc::clone(&self.payload),
             header: self.header.clone(),
             sequence_number: self.sequence_number,
@@ -389,6 +393,7 @@ impl ForwardedPacket {
             &self.header,
             self.sequence_number,
             self.received_at,
+            self.clock_rate,
             &self.payload,
             self.was_repair,
         )

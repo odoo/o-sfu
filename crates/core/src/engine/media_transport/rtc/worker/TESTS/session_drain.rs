@@ -14,6 +14,8 @@ use str0m::{
 };
 use tokio::sync::oneshot;
 
+#[path = "session_clock_mapping.rs"]
+mod clock_mapping;
 #[path = "session_drain_ingress.rs"]
 mod ingress;
 

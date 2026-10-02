@@ -104,6 +104,8 @@ pub(in crate::engine::media_transport::rtc) struct Projection {
 }
 
 impl Projection {
+    // Keep the caller's constant reanchor choice visible to VP8 projection.
+    #[inline]
     pub(in crate::engine::media_transport::rtc) fn project(
         &mut self,
         identity: PacketIdentity,

@@ -94,7 +94,7 @@ use o_sfu_router::{
 use str0m::{
     Event,
     bwe::{Bitrate as Str0mBitrate, BweKind},
-    media::{KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
+    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
     rtp::{Ssrc, Vp8Descriptor},
 };
 use tokio::sync::mpsc;
@@ -1306,6 +1306,7 @@ impl MeetingFlowBenchFixture {
             BenchmarkStreamIdentity {
                 ssrc: audio_up_ssrc(participant),
                 payload_type: AUDIO_PAYLOAD_TYPE,
+                clock_rate: Frequency::FORTY_EIGHT_KHZ,
             },
             Arc::from([0_u8; AUDIO_PAYLOAD_BYTES].as_slice()),
         );
@@ -1340,6 +1341,7 @@ impl MeetingFlowBenchFixture {
             let identity = BenchmarkStreamIdentity {
                 ssrc: video_up_ssrc(participant, layer_idx),
                 payload_type: VIDEO_PAYLOAD_TYPE,
+                clock_rate: Frequency::NINETY_KHZ,
             };
             let packets = (0..layer.packets_per_frame)
                 .map(|packet| {

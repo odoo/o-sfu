@@ -24,7 +24,7 @@ use std::{sync::Arc, time::Instant};
 
 use str0m::{
     Rtc,
-    media::{ExtensionValues, Mid, Pt},
+    media::{ExtensionValues, Frequency, Mid, Pt},
     rtp::{RtpHeader, RtpWrite, SeqNo, StreamTx},
 };
 use tracing::debug;
@@ -58,6 +58,7 @@ pub(super) struct LocalForwardedRtp<'a> {
     header: &'a RtpHeader,
     sequence_number: SeqNo,
     timestamp: Instant,
+    clock_rate: Frequency,
     payload: &'a Arc<[u8]>,
     was_repair: bool,
 }
@@ -67,6 +68,7 @@ impl<'a> LocalForwardedRtp<'a> {
         header: &'a RtpHeader,
         sequence_number: SeqNo,
         timestamp: Instant,
+        clock_rate: Frequency,
         payload: &'a Arc<[u8]>,
         was_repair: bool,
     ) -> Self {
@@ -74,6 +76,7 @@ impl<'a> LocalForwardedRtp<'a> {
             header,
             sequence_number,
             timestamp,
+            clock_rate,
             payload,
             was_repair,
         }
@@ -124,6 +127,8 @@ impl LocalPacketDestination {
                     ssrc: header.ssrc,
                     seq_no: rtp.sequence_number,
                     timestamp: header.timestamp,
+                    arrived_at: rtp.timestamp,
+                    clock_rate: rtp.clock_rate,
                     was_repair: rtp.was_repair,
                 },
                 codec_identity,
@@ -188,7 +193,7 @@ impl LocalPacketDestination {
             payload_type,
             identity.seq_no,
             identity.rtp_timestamp,
-            rtp.timestamp,
+            identity.wallclock,
             payload,
         )
         .marker(header.marker)
