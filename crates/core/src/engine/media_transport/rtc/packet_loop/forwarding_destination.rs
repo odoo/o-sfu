@@ -134,26 +134,22 @@ impl LocalRtcPacketDestination {
         Self { src_media, dst_idx }
     }
 
-    /// Queues one packet and returns its payload length.
-    ///
-    /// The compact handle is valid only within the current flush. Returns `None`
-    /// when the route slot, destination session or RTP stream is missing or local
-    /// RTP identity projection rejects the packet.
-    ///
-    /// Successful writes clone the destination session key only after `str0m`
-    /// queues the packet, so stale local sends do not affect dirty scheduling.
+    /// Returns the queued payload length, or `None` if the route, session or RTP
+    /// stream is missing or identity projection rejects the packet.
     pub(in super::super) fn send(
         &self,
         state: &mut PacketLoopState,
         packet: &ForwardedPacket,
     ) -> Option<usize> {
-        let (payload_bytes, session_key) = {
+        let (payload_bytes, session_handle) = {
             let route_destination = state
                 .routes
                 .local_route(self.src_media)
                 .and_then(|route_entry| route_entry.destinations.get(self.dst_idx))?;
-            let session_key = &route_destination.dest_session;
-            let session_state = state.users.get_mut(session_key)?;
+            let session_handle = state
+                .users
+                .handle_for_key(&route_destination.dest_session)?;
+            let session_state = state.users.get_mut_by_handle(session_handle)?;
             let sender = LocalPacketDestination::new(
                 route_destination.dest_transport_media_id,
                 route_destination.dest_stream,
@@ -171,9 +167,9 @@ impl LocalRtcPacketDestination {
             session_state
                 .egress_bitrate
                 .record(packet.received_at(), payload_bytes);
-            (payload_bytes, session_key.clone())
+            (payload_bytes, session_handle)
         };
-        state.mark_session_dirty(&session_key);
+        state.mark_session_dirty_by_handle(session_handle);
         Some(payload_bytes)
     }
 }

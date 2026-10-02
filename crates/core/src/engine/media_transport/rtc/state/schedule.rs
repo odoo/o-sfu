@@ -16,6 +16,11 @@ impl PacketLoopState {
         let Some(session_handle) = self.users.handle_for_key(session_key) else {
             return;
         };
+        self.mark_session_dirty_by_handle(session_handle);
+    }
+
+    /// Ignores stale handles.
+    pub(in super::super) fn mark_session_dirty_by_handle(&mut self, session_handle: SessionHandle) {
         let Some(session_state) = self.users.get_mut_by_handle(session_handle) else {
             return;
         };
