@@ -7,7 +7,7 @@
 //! fire-and-forget route controls are best-effort because they may target a
 //! worker that has already torn down the corresponding relay or session
 
-use std::sync::Arc;
+use std::{fmt::Write as _, sync::Arc};
 
 use o_sfu_rfc::webrtc::sdp;
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
@@ -195,9 +195,14 @@ impl RtcSessionOffer {
     }
 
     pub(in crate::engine::media_transport) fn into_session_offer(self) -> SessionOffer {
-        let mut sdp = self.offer.to_sdp_string();
-        let media_line_start = sdp.find("\r\nm=").map_or(sdp.len(), |index| index + 2);
-        sdp.insert_str(media_line_start, sdp::EOC_LINE);
+        // ICE-lite bootstrap adds the session's only host candidate before any
+        // offer, so every server-authored offer carries the complete set.
+        // https://www.rfc-editor.org/rfc/rfc8840.html#section-8
+        let mut sdp = self.offer.session.to_string();
+        sdp.push_str(sdp::EOC_LINE);
+        for media in &self.offer.media_lines {
+            let _ = write!(sdp, "{media}");
+        }
         SessionOffer::new(sdp).with_upload_slots(self.upload_slots)
     }
 }
