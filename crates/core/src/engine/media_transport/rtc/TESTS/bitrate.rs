@@ -1,8 +1,5 @@
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering as AtomicOrdering},
-    },
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -10,10 +7,9 @@ use super::*;
 use crate::engine::{UserId, media_transport::rtc::test_support::test_transport_session_key};
 
 #[test]
-fn incoming_media_bitrate_reports_a_completed_window() {
+fn incoming_media_bitrate_reports_consecutive_windows() {
     let now = Instant::now();
     let bitrate = MediaBitrateCounter::new(now);
-
     assert_eq!(
         bitrate.record(now, 120),
         IncomingBitrateObservation::IngressStarted
@@ -24,10 +20,22 @@ fn incoming_media_bitrate_reports_a_completed_window() {
         bitrate.record(now + Duration::from_secs(1), 30),
         IncomingBitrateObservation::SampleUpdated
     );
-
     assert_eq!(
         bitrate.snapshot(now + Duration::from_secs(1)),
         Bitrate::from_bps(1_920)
+    );
+    assert_eq!(
+        bitrate.record(now + Duration::from_millis(900), 20),
+        IncomingBitrateObservation::Unchanged
+    );
+    bitrate.record(now + Duration::from_millis(1_500), 50);
+    assert_eq!(
+        bitrate.record(now + Duration::from_secs(2), 5),
+        IncomingBitrateObservation::SampleUpdated
+    );
+    assert_eq!(
+        bitrate.snapshot(now + Duration::from_secs(2)),
+        Bitrate::from_bps(800)
     );
 }
 
@@ -53,14 +61,29 @@ fn incoming_media_bitrate_normalizes_partial_second_windows() {
 fn incoming_media_bitrate_resets_after_inactivity() {
     let now = Instant::now();
     let bitrate = MediaBitrateCounter::new(now);
-
     bitrate.record(now, 64);
-    let observation = bitrate.record(now + Duration::from_secs(1), 32);
-
-    assert_eq!(observation, IncomingBitrateObservation::IngressStarted);
+    bitrate.record(now + Duration::from_millis(500), 64);
+    bitrate.record(now + Duration::from_secs(1), 32);
     assert_eq!(
         bitrate.snapshot(now + Duration::from_secs(1)),
+        Bitrate::from_bps(1_024)
+    );
+    assert_eq!(
+        bitrate.record(now + Duration::from_secs(2), 16),
+        IncomingBitrateObservation::IngressStarted
+    );
+    assert_eq!(
+        bitrate.snapshot(now + Duration::from_secs(2)),
         Bitrate::zero()
+    );
+    bitrate.record(now + Duration::from_millis(2_500), 48);
+    assert_eq!(
+        bitrate.record(now + Duration::from_secs(3), 1),
+        IncomingBitrateObservation::SampleUpdated
+    );
+    assert_eq!(
+        bitrate.snapshot(now + Duration::from_secs(3)),
+        Bitrate::from_bps(512)
     );
 }
 
@@ -68,18 +91,30 @@ fn incoming_media_bitrate_resets_after_inactivity() {
 fn incoming_media_bitrate_expires_after_the_window() {
     let now = Instant::now();
     let bitrate = MediaBitrateCounter::new(now);
-
     bitrate.record(now, 64);
     bitrate.record(now + Duration::from_millis(500), 64);
     bitrate.record(now + Duration::from_secs(1), 64);
-
     assert_eq!(
-        bitrate.snapshot(now + Duration::from_secs(1)),
+        bitrate.snapshot(now + Duration::new(1, 999_999_999)),
         Bitrate::from_bps(1_024)
     );
     assert_eq!(
         bitrate.snapshot(now + Duration::from_secs(2)),
         Bitrate::zero()
+    );
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn incoming_media_bitrate_wraps_byte_accumulation() {
+    let now = Instant::now();
+    let bitrate = MediaBitrateCounter::new(now);
+    bitrate.record(now, usize::MAX);
+    bitrate.record(now + Duration::from_millis(500), 11);
+    bitrate.record(now + Duration::from_secs(1), 1);
+    assert_eq!(
+        bitrate.snapshot(now + Duration::from_secs(1)),
+        Bitrate::from_bps(80)
     );
 }
 
@@ -113,37 +148,20 @@ fn incoming_media_bitrate_first_observation_fires_once() {
 #[test]
 fn bitrate_snapshot_observes_packet_loop_thread_writes() {
     let now = Instant::now();
-    let bitrate = Arc::new(MediaBitrateCounter::new(now));
-    let writer = Arc::clone(&bitrate);
-    let started = Arc::new(AtomicBool::new(false));
-    let writer_started = Arc::clone(&started);
-
-    let handle = thread::spawn(move || {
-        writer_started.store(true, AtomicOrdering::Release);
-        writer.record(now, 10);
-        for _ in 0..1024 {
-            writer.record(now + Duration::from_millis(500), 10);
-        }
-        writer.record(now + Duration::from_secs(1), 10);
+    let bitrate = MediaBitrateCounter::new(now);
+    thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            bitrate.record(now, 10);
+            bitrate.record(now + Duration::from_millis(500), 20);
+            bitrate.record(now + Duration::from_secs(1), 30);
+        });
+        let sample = bitrate.snapshot(now + Duration::from_secs(1));
+        assert!(sample == Bitrate::zero() || sample == Bitrate::from_bps(240));
+        assert!(writer.join().is_ok());
     });
-
-    while !started.load(AtomicOrdering::Acquire) {
-        thread::yield_now();
-    }
-
-    let mut observed_bitrate = Bitrate::zero();
-    for _ in 0..1024 {
-        observed_bitrate = bitrate.snapshot(now + Duration::from_secs(1));
-        if observed_bitrate > Bitrate::zero() {
-            break;
-        }
-        thread::yield_now();
-    }
-
-    assert!(handle.join().is_ok());
-    assert!(
-        observed_bitrate > Bitrate::zero()
-            || bitrate.snapshot(now + Duration::from_secs(1)) > Bitrate::zero()
+    assert_eq!(
+        bitrate.snapshot(now + Duration::from_secs(1)),
+        Bitrate::from_bps(240)
     );
 }
 
