@@ -47,16 +47,11 @@ pub(in super::super) struct SessionSlot;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in super::super) struct ConsumerStreamSlot;
 
-/// generation-checked session handle used by packet-loop scheduler queues
 pub(in super::super) type SessionHandle = SlotHandle<SessionSlot>;
 
 /// generation-checked handle stored on route destinations for local RTP rewrite state
 pub(in super::super) type ConsumerStreamHandle = SlotHandle<ConsumerStreamSlot>;
 
-/// session table keyed by the public session identity at the worker boundary
-///
-/// commands enter through [`TransportSessionKey`]
-/// the packet loop converts that key into [`SessionHandle`] only for queued work
 pub(in super::super) type SessionStore =
     KeyedSlotStore<TransportSessionKey, RtcSessionState, SessionSlot>;
 

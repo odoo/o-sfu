@@ -248,14 +248,17 @@ fn packet_loop_state_ignores_stale_dirty_handle_after_session_replacement() {
     let mut state = PacketLoopState::default();
     let session_key = transport_key_on_worker(1, 0, 37, UserId::Integer(37));
     let now = Instant::now();
-
     insert_live_session(&mut state, &session_key);
+    let old_handle = state
+        .users
+        .handle_for_key(&session_key)
+        .expect("session handle");
     state.mark_session_dirty(&session_key);
     replace_live_session(&mut state, &session_key);
-
     let ready_sessions = collect_ready_session_keys(&mut state, now);
-
     assert!(ready_sessions.is_empty());
+    state.mark_session_dirty_by_handle(old_handle);
+    assert!(!state.has_dirty_sessions());
 }
 
 #[test]
