@@ -344,9 +344,22 @@ fn session_drain_128(mut fixture: SessionDrainBenchFixture) -> SessionDrainBench
 }
 
 // measures relay channel packet draining
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
+fn validate_relay_drain(fixture: RelayDrainBenchFixture) {
+    fixture.assert_drained();
+}
+
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_relay_drain)]
 #[bench::drain(RelayDrainBenchFixture::new())]
+#[bench::retained_capacity(RelayDrainBenchFixture::warmed(256))]
 fn relay_drain_256(mut fixture: RelayDrainBenchFixture) -> RelayDrainBenchFixture {
+    black_box(fixture.drain_relay());
+    black_box(fixture)
+}
+
+// The production relay budget with staging capacity retained from a prior turn.
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_relay_drain)]
+#[bench::retained_capacity(RelayDrainBenchFixture::warmed(64))]
+fn relay_drain_64(mut fixture: RelayDrainBenchFixture) -> RelayDrainBenchFixture {
     black_box(fixture.drain_relay());
     black_box(fixture)
 }
@@ -372,7 +385,8 @@ library_benchmark_group!(
         keyframe_coalesce_512,
         interleaved_relay_activity_512,
         session_drain_128,
-        relay_drain_256
+        relay_drain_256,
+        relay_drain_64
 );
 
 main!(library_benchmark_groups = packet_loop);

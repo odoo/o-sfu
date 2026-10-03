@@ -39,6 +39,13 @@ When changing a scenario, verify that removing its required work fails its self-
 cargo test --locked -p o-sfu-tests --test benchmark_scenarios
 ```
 
+The relay drain keeps its cold-growth case and measures retained staging capacity
+at 64 and 256 packets separately. Meeting cases keep arrival fallback separate
+from `sampled_meeting_flow`, which supplies shared-CNAME sender reports once per
+second and models video arriving 400 ms after sampling. That fixture includes
+registry report handling and interpolation but excludes authenticated RTCP parsing
+and feedback staging. New cases have no comparison until the base contains them.
+
 The worker target is manual investigation only. Thread scheduling makes its
 instruction counts unsuitable for the PR comparison gate:
 

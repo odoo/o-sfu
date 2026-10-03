@@ -7,12 +7,13 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     mem,
-    time::Instant,
+    sync::Arc,
+    time::{Instant, SystemTime},
 };
 
 use o_sfu_router::rtp::MediaStream;
 use str0m::{
-    media::{Mid, Rid},
+    media::{Frequency, Mid, Rid, SenderFeedback},
     rtp::Ssrc,
 };
 
@@ -27,6 +28,10 @@ use crate::engine::{
     RoomInstanceId,
     media_transport::{TransportMediaId, TransportSessionKey},
 };
+
+mod clock;
+
+use clock::{ClockAnchor, MAX_REPORT_AGE, PublisherClock, SenderClock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in super::super) enum RegisteredMediaHandle {
@@ -87,12 +92,28 @@ pub enum ProducerSsrcUpdate {
     Rejected,
 }
 
+#[derive(Clone, Copy)]
+pub(in super::super) struct ProducerPacketTime {
+    pub timestamp: u32,
+    pub clock_rate: Frequency,
+    pub received_at: Instant,
+    pub was_repair: bool,
+}
+
+pub(in super::super) struct ProducerPacketAdmission {
+    pub media: TransportMediaId,
+    pub room_instance_id: RoomInstanceId,
+    pub update: ProducerSsrcUpdate,
+    pub sampled_at: Option<Instant>,
+}
+
 #[derive(Debug, Clone)]
 struct ProducerEncoding {
     rid: Option<Rid>,
     primary: Option<Ssrc>,
     repair: Option<Ssrc>,
     previous_primary: Option<Ssrc>,
+    clock: PublisherClock,
 }
 
 impl RegisteredMediaHandle {
@@ -177,39 +198,38 @@ impl SessionMediaLookup {
     }
 }
 
-fn bind_producer_stream(
-    mid_registry: &mut MediaStore,
+fn bind_producer_stream<'a>(
+    mid_registry: &'a mut MediaStore,
     lookup: &mut SessionMediaLookup,
     routes: &mut RouteTable,
     session_key: &TransportSessionKey,
     transport_media_id: TransportMediaId,
     binding: ProducerStreamBinding,
-) -> ProducerSsrcUpdate {
-    let Some(registered) = mid_registry
+) -> Option<(ProducerSsrcUpdate, &'a mut PublisherClock)> {
+    let registered = mid_registry
         .get_mut(&transport_media_id)
-        .filter(|registered| registered.is_producer_for(session_key))
-    else {
-        return ProducerSsrcUpdate::Rejected;
-    };
+        .filter(|registered| registered.is_producer_for(session_key))?;
     if binding.repair == Some(binding.primary) {
-        return ProducerSsrcUpdate::Rejected;
+        return None;
     }
     let encodings = &mut registered.producer_encodings;
-    let Some(encoding) = encodings
-        .iter_mut()
-        .find(|encoding| encoding.rid == binding.rid)
-    else {
-        return ProducerSsrcUpdate::Rejected;
-    };
+    let encoding_idx = encodings
+        .iter()
+        .position(|encoding| encoding.rid == binding.rid)?;
+    let encoding = encodings.get(encoding_idx)?;
     if encoding.primary == Some(binding.primary) && encoding.repair == binding.repair {
-        return ProducerSsrcUpdate::Unchanged;
+        return Some((
+            ProducerSsrcUpdate::Unchanged,
+            &mut encodings.get_mut(encoding_idx)?.clock,
+        ));
     }
+    let encoding = encodings.get_mut(encoding_idx)?;
     // str0m 0.23.1 can recreate a refused preceding SSRC in
     // map_dynamic_finish. Keep its intended anti-flap rule even when the
     // delayed packet is emitted as a second authenticated receive stream.
     // https://docs.rs/str0m/0.23.1/src/str0m/streams/mod.rs.html
     if encoding.previous_primary == Some(binding.primary) {
-        return ProducerSsrcUpdate::Rejected;
+        return None;
     }
     for (ssrc, role) in [
         (Some(binding.primary), ProducerSsrcRole::Primary),
@@ -223,7 +243,7 @@ fn bind_producer_stream(
                     role,
                 })
         {
-            return ProducerSsrcUpdate::Rejected;
+            return None;
         }
     }
     let outcome = match (encoding.primary, encoding.repair) {
@@ -236,6 +256,7 @@ fn bind_producer_stream(
     }
     if encoding.primary != Some(binding.primary) {
         encoding.previous_primary = encoding.primary;
+        encoding.clock.replace_primary(binding.primary);
     }
     encoding.primary = Some(binding.primary);
     encoding.repair = binding.repair;
@@ -261,7 +282,26 @@ fn bind_producer_stream(
             .flat_map(|encoding| [encoding.primary, encoding.repair])
             .flatten(),
     );
-    outcome
+    Some((outcome, &mut encodings.get_mut(encoding_idx)?.clock))
+}
+
+fn set_publisher_group_anchor(
+    media_store: &mut MediaStore,
+    lookup: &SessionMediaLookup,
+    cname: &str,
+    anchor: ClockAnchor,
+) {
+    for (_, media) in &lookup.producer_mids.entries {
+        if let Some(registered) = media_store.get_mut(media) {
+            for encoding in &mut registered.producer_encodings {
+                if let Some(sender) = encoding.clock.sender.as_mut()
+                    && sender.cname.as_ref() == cname
+                {
+                    sender.reanchor(anchor);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -536,25 +576,26 @@ impl PacketLoopState {
             .and_then(|(_media, rid)| rid)
     }
 
-    /// Resolves and admits one authenticated local packet in the session's media index.
+    /// Admits an authenticated local packet and prepares its sampling time.
     ///
     /// Cached media precedes MID and SSRC. An indexed binding for that media
     /// supplies the current RID, including RID-less after renegotiation.
+    /// Invalid clock metadata uses arrival fallback without rejecting media.
     pub(in super::super) fn bind_producer_packet(
         &mut self,
         session_handle: SessionHandle,
         cached_media: Option<TransportMediaId>,
         mid: Option<Mid>,
         binding: &mut ProducerStreamBinding,
-    ) -> Option<(TransportMediaId, RoomInstanceId, ProducerSsrcUpdate)> {
+        time: ProducerPacketTime,
+    ) -> Option<ProducerPacketAdmission> {
         let session_key = self.users.key_for_handle(session_handle)?;
         let Some(lookup) = self.session_media.get_mut(session_key) else {
-            return cached_media.map(|media| {
-                (
-                    media,
-                    session_key.room_instance_id(),
-                    ProducerSsrcUpdate::Rejected,
-                )
+            return cached_media.map(|media| ProducerPacketAdmission {
+                media,
+                room_instance_id: session_key.room_instance_id(),
+                update: ProducerSsrcUpdate::Rejected,
+                sampled_at: None,
             });
         };
         let indexed = lookup.producer_ssrcs.get(&binding.primary);
@@ -565,15 +606,31 @@ impl PacketLoopState {
         if let Some(indexed) = indexed.filter(|indexed| indexed.transport_media_id == media) {
             binding.rid = indexed.rid;
         }
-        let update = bind_producer_stream(
+        let mut admission = ProducerPacketAdmission {
+            media,
+            room_instance_id: session_key.room_instance_id(),
+            update: ProducerSsrcUpdate::Rejected,
+            sampled_at: None,
+        };
+        let Some((update, clock)) = bind_producer_stream(
             &mut self.mid_registry,
             lookup,
             &mut self.routes,
             session_key,
             media,
             *binding,
-        );
-        Some((media, session_key.room_instance_id(), update))
+        ) else {
+            return Some(admission);
+        };
+        admission.update = update;
+        let (sampled_at, rebased) = clock.prepare_packet(binding.primary, time);
+        admission.sampled_at = sampled_at;
+        if rebased && let Some(sender) = clock.sender.as_ref() {
+            let cname = Arc::clone(&sender.cname);
+            let anchor = sender.anchor();
+            set_publisher_group_anchor(&mut self.mid_registry, lookup, &cname, anchor);
+        }
+        Some(admission)
     }
 
     /// Commits the current primary and repair identities for one negotiated encoding.
@@ -608,6 +665,101 @@ impl PacketLoopState {
             transport_media_id,
             binding,
         )
+        .map_or(ProducerSsrcUpdate::Rejected, |(update, _clock)| update)
+    }
+
+    /// Associates sender clocks only across this session's active CNAME members.
+    /// Removed encodings and changed CNAMEs retain no group registry entries.
+    pub(in super::super) fn record_producer_sender_feedback(
+        &mut self,
+        session_key: &TransportSessionKey,
+        feedback: SenderFeedback,
+        cname: Arc<str>,
+    ) {
+        // str0m represents an unknown all-zero NTP timestamp as UNIX_EPOCH.
+        if cname.is_empty() || feedback.sender_info.ntp_time == SystemTime::UNIX_EPOCH {
+            return;
+        }
+        let Some(lookup) = self.session_media.get(session_key) else {
+            return;
+        };
+        let Some(media) = lookup.producer_mids.get(&feedback.mid) else {
+            return;
+        };
+        let indexed = lookup.producer_ssrcs.get(&feedback.sender_info.ssrc);
+        if indexed.is_some_and(|binding| {
+            binding.transport_media_id != media || binding.role != ProducerSsrcRole::Primary
+        }) {
+            return;
+        }
+        let rid = indexed.map_or(feedback.rid, |binding| binding.rid);
+        let Some(encoding) = self.mid_registry.get(&media).and_then(|registered| {
+            registered
+                .producer_encodings
+                .iter()
+                .find(|encoding| encoding.rid == rid)
+        }) else {
+            return;
+        };
+        if encoding
+            .primary
+            .is_some_and(|primary| primary != feedback.sender_info.ssrc)
+            || encoding.previous_primary == Some(feedback.sender_info.ssrc)
+            || encoding
+                .clock
+                .sender
+                .as_ref()
+                .is_some_and(|sender| sender.cname == cname && sender.rejects(&feedback))
+        {
+            return;
+        }
+        let mut anchor = lookup
+            .producer_mids
+            .entries
+            .iter()
+            .filter_map(|(_, media)| self.mid_registry.get(media))
+            .flat_map(|registered| &registered.producer_encodings)
+            .filter_map(|encoding| encoding.clock.sender.as_ref())
+            .find(|sender| sender.cname == cname)
+            .map_or(
+                ClockAnchor {
+                    remote: feedback.sender_info.ntp_time,
+                    local: feedback.received_at,
+                },
+                SenderClock::anchor,
+            );
+        let Some(mapped_report) = anchor.project(feedback.sender_info.ntp_time) else {
+            return;
+        };
+        if mapped_report
+            .saturating_duration_since(feedback.received_at)
+            .max(
+                feedback
+                    .received_at
+                    .saturating_duration_since(mapped_report),
+            )
+            > MAX_REPORT_AGE
+        {
+            return;
+        }
+        if mapped_report > feedback.received_at {
+            let Some(local) = anchor
+                .local
+                .checked_sub(mapped_report - feedback.received_at)
+            else {
+                return;
+            };
+            anchor.local = local;
+            set_publisher_group_anchor(&mut self.mid_registry, lookup, &cname, anchor);
+        }
+        if let Some(encoding) = self.mid_registry.get_mut(&media).and_then(|registered| {
+            registered
+                .producer_encodings
+                .iter_mut()
+                .find(|encoding| encoding.rid == rid)
+        }) {
+            encoding.clock.sender = Some(SenderClock::new(cname, feedback, anchor));
+        }
     }
 
     #[cfg(any(test, feature = "testing-transport"))]
@@ -795,6 +947,7 @@ impl PacketLoopState {
                 primary: None,
                 repair: None,
                 previous_primary: None,
+                clock: PublisherClock::default(),
             });
         }
         if let Some(registered) = self.mid_registry.get_mut(&transport_media_id) {
@@ -828,6 +981,7 @@ impl PacketLoopState {
                     && encoding.primary.is_some()
                 {
                     encoding.previous_primary = if previous.primary == encoding.primary {
+                        encoding.clock.clone_from(&previous.clock);
                         previous.previous_primary
                     } else {
                         previous.primary
@@ -942,3 +1096,7 @@ impl PacketLoopState {
 #[cfg(test)]
 #[path = "../TESTS/media_registry.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../TESTS/publisher_clock.rs"]
+mod clock_tests;

@@ -255,11 +255,12 @@ impl ConsumerStreamStore {
     /// B: seq  2, ts  8000  ------->  seq 3, ts 105000  (+3000 source ticks)
     /// ```
     ///
-    /// A newer primary timestamp refreshes the arrival-based clock reference.
-    /// Equal timestamps reuse its time. Older packets reconstruct a historical
-    /// time without moving the reference. An ahead repair's inferred time is
+    /// A newer primary timestamp refreshes the sampling reference from a prepared
+    /// publisher time or arrival. Equal timestamps keep the first chosen time.
+    /// Older packets use publisher time or reconstruct a historical time without
+    /// moving the reference. An ahead repair's inferred fallback time is
     /// capped at arrival to keep str0m's clock in the past. That cap can shift
-    /// the report estimate. Arrival jitter remains.
+    /// the report estimate. Arrival fallback retains network jitter.
     ///
     /// Reordering means receiver sequences are not monotonic in arrival order.
     /// Repairs require an earlier sequence in the active SSRC and delivery
@@ -287,11 +288,13 @@ pub struct SourceRtpIdentity {
     pub seq_no: SeqNo,
     pub timestamp: u32,
     pub arrived_at: Instant,
+    /// Prepared publisher sampling time, bounded by arrival, from sender reports.
+    pub sampled_at: Option<Instant>,
     pub clock_rate: Frequency,
     pub was_repair: bool,
 }
 
-/// Source timestamp paired with the first arrival of its frame.
+/// Source timestamp paired with the first chosen sampling time of its frame.
 #[derive(Debug, Clone, Copy)]
 struct SourceClock {
     timestamp: u32,
@@ -350,19 +353,23 @@ impl ConsumerStream {
 
 impl SourceClock {
     /// str0m replaces its report clock on every write. Reuse the frame reference
-    /// or estimate a delayed packet's sampling time from it. New primary frames
-    /// retain arrival jitter rather than establishing capture-time synchronization.
+    /// or estimate a delayed packet's sampling time from it. Prepared publisher
+    /// times preserve the shared clock despite unequal packet delays.
     fn project(&mut self, source: &SourceRtpIdentity) -> Instant {
         let delta = source.timestamp.wrapping_sub(self.timestamp);
         if delta == 0 {
+            // A newly received sender report must not change a frame already written.
             return self.at;
         }
         if delta < TIMESTAMP_HALF_CYCLE && !source.was_repair {
             *self = Self {
                 timestamp: source.timestamp,
-                at: source.arrived_at,
+                at: source.sampled_at.unwrap_or(source.arrived_at),
             };
             return self.at;
+        }
+        if let Some(sampled_at) = source.sampled_at {
+            return sampled_at;
         }
         cold_path();
         // An ambiguous or unrepresentable estimate must not discard media or
@@ -477,7 +484,7 @@ impl RtpProjection {
                 cold_path();
                 let (mapping, projected) =
                     RtpMapping::start(&mut self.next_seq_no, packet, || packet.timestamp)?;
-                let sampled_at = source.arrived_at;
+                let sampled_at = source.sampled_at.unwrap_or(source.arrived_at);
                 self.timeline = RtpTimeline::Active {
                     mapping,
                     clock: SourceClock {
@@ -490,7 +497,9 @@ impl RtpProjection {
             RtpTimeline::Active { mapping, clock } => {
                 let projected =
                     mapping.project(&mut self.next_seq_no, packet, reanchor, |previous| {
-                        let sampled_at = source.arrived_at;
+                        // A layer without its own usable SR falls back to arrival,
+                        // so switching from a sampled layer can include network delay.
+                        let sampled_at = source.sampled_at.unwrap_or(source.arrived_at);
                         let timestamp_anchor = clock.switch_timestamp(
                             sampled_at.saturating_duration_since(clock.at),
                             source.clock_rate,

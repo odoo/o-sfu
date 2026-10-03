@@ -11,7 +11,9 @@
 //! Values stored here are staged work that must either be flushed during the
 //! current turn or dropped as part of clearing the turn.
 
-use str0m::net::Transmit;
+use std::sync::Arc;
+
+use str0m::{media::SenderFeedback, net::Transmit};
 
 use super::super::{
     packet_loop::forwarded_packet::ForwardedPacket,
@@ -27,6 +29,7 @@ pub(in super::super) struct SessionDrainCheckpoint {
     transmits: usize,
     packets: usize,
     keyframe_requests: usize,
+    sender_feedback: usize,
 }
 
 /// per-worker scratch buffers reused across packet-loop turns
@@ -46,6 +49,8 @@ pub struct PacketLoopBuffers {
     pub pending_packets: Vec<ForwardedPacket>,
     /// raw keyframe feedback emitted by consumer sessions before source lookup
     pub pending_keyframe_requests: Vec<(TransportSessionKey, PendingKeyframeRequest)>,
+    /// Sender reports and SDES names staged until the session drain succeeds.
+    pub(in super::super) pending_sender_feedback: Vec<(SenderFeedback, Arc<str>)>,
     /// sessions ready for polling after dirty and timeout scheduling is merged
     pub(in super::super) ready_sessions: Vec<SessionHandle>,
     /// source-keyed feedback after duplicate requests are merged
@@ -66,6 +71,7 @@ impl PacketLoopBuffers {
             pending_transmits: Vec::with_capacity(64),
             pending_packets: Vec::with_capacity(32),
             pending_keyframe_requests: Vec::with_capacity(8),
+            pending_sender_feedback: Vec::with_capacity(4),
             ready_sessions: Vec::with_capacity(32),
             coalesced_keyframe_requests: Vec::with_capacity(8),
             keyframe_retries: Vec::with_capacity(8),
@@ -77,6 +83,7 @@ impl PacketLoopBuffers {
         self.pending_transmits.clear();
         self.pending_packets.clear();
         self.pending_keyframe_requests.clear();
+        self.pending_sender_feedback.clear();
         self.ready_sessions.clear();
         self.coalesced_keyframe_requests.clear();
         self.keyframe_retries.clear();
@@ -88,6 +95,7 @@ impl PacketLoopBuffers {
             transmits: self.pending_transmits.len(),
             packets: self.pending_packets.len(),
             keyframe_requests: self.pending_keyframe_requests.len(),
+            sender_feedback: self.pending_sender_feedback.len(),
         }
     }
 
@@ -96,5 +104,7 @@ impl PacketLoopBuffers {
         self.pending_packets.truncate(checkpoint.packets);
         self.pending_keyframe_requests
             .truncate(checkpoint.keyframe_requests);
+        self.pending_sender_feedback
+            .truncate(checkpoint.sender_feedback);
     }
 }

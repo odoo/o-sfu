@@ -80,9 +80,22 @@ fn relay_mailbox_scenarios_reach_expected_pressure() {
 
 #[test]
 fn relay_drain_scenario_consumes_only_queued_packets() {
-    let mut fixture = RelayDrainBenchFixture::new();
-    assert_eq!(fixture.drain_relay(), 256);
-    assert_eq!(fixture.drain_relay(), 0);
+    for (mut fixture, packet_count, warmed) in [
+        (RelayDrainBenchFixture::new(), 256, false),
+        (RelayDrainBenchFixture::warmed(256), 256, true),
+        (RelayDrainBenchFixture::warmed(64), 64, true),
+    ] {
+        let capacity = fixture.staging_capacity();
+        if warmed {
+            assert!(capacity >= packet_count);
+        }
+        assert_eq!(fixture.drain_relay(), packet_count);
+        fixture.assert_drained();
+        if warmed {
+            assert_eq!(fixture.staging_capacity(), capacity);
+        }
+        assert_eq!(fixture.drain_relay(), 0);
+    }
 }
 
 #[test]
@@ -99,10 +112,14 @@ fn rid_readiness_scenario_activates_pending_gates_once() {
 /// counts, which is exactly the failure mode the scenario replaces
 #[test]
 fn meeting_scenario_exercises_the_whole_packet_loop() {
-    let mut fixture = MeetingFlowBenchFixture::short_meeting();
-    let total_work = fixture.run_meeting();
-    assert!(total_work > 0, "meeting scenario produced no work");
-    fixture.assert_packet_loop_coverage();
+    fn verify<const SAMPLED: bool>() {
+        let mut fixture = MeetingFlowBenchFixture::<SAMPLED>::short_meeting();
+        let total_work = fixture.run_meeting();
+        assert!(total_work > 0, "meeting scenario produced no work");
+        fixture.assert_packet_loop_coverage();
+    }
+    verify::<false>();
+    verify::<true>();
 }
 
 /// saturated control mailboxes must leave every source's packet gate pending

@@ -146,8 +146,9 @@ impl Default for SessionDrainBenchFixture {
 }
 
 pub struct RelayDrainBenchFixture {
+    packet_count: usize,
     rx: mpsc::Receiver<ForwardedPacket>,
-    _tx: mpsc::Sender<ForwardedPacket>,
+    tx: mpsc::Sender<ForwardedPacket>,
     buffers: PacketLoopBuffers,
     rtc_metrics: Arc<RtcMetricsRecorder>,
 }
@@ -155,7 +156,11 @@ pub struct RelayDrainBenchFixture {
 impl RelayDrainBenchFixture {
     #[must_use]
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel(256);
+        Self::with_packets(256)
+    }
+
+    fn with_packets(packet_count: usize) -> Self {
+        let (tx, rx) = mpsc::channel(packet_count);
         let source_session = test_transport_session_key(2, 0, 3, UserId::Integer(4));
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
@@ -169,11 +174,33 @@ impl RelayDrainBenchFixture {
         {}
 
         Self {
+            packet_count,
             rx,
-            _tx: tx,
+            tx,
             buffers: PacketLoopBuffers::new(),
             rtc_metrics,
         }
+    }
+
+    /// Retains staging capacity after one complete relay burst.
+    #[must_use]
+    pub fn warmed(packet_count: usize) -> Self {
+        let mut fixture = Self::with_packets(packet_count);
+        assert_eq!(fixture.drain_relay(), packet_count);
+        for packet in fixture.buffers.pending_packets.drain(..) {
+            fixture.tx.try_send(packet).unwrap();
+        }
+        fixture
+    }
+
+    #[must_use]
+    pub fn staging_capacity(&self) -> usize {
+        self.buffers.pending_packets.capacity()
+    }
+
+    pub fn assert_drained(&self) {
+        assert_eq!(self.buffers.pending_packets.len(), self.packet_count);
+        assert!(self.rx.is_empty());
     }
 
     pub fn drain_relay(&mut self) -> usize {
@@ -181,7 +208,7 @@ impl RelayDrainBenchFixture {
         drain_relay_packets(
             &mut self.rx,
             &mut self.buffers.pending_packets,
-            256,
+            self.packet_count,
             &self.rtc_metrics,
         )
     }

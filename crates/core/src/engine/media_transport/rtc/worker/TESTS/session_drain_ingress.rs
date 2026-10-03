@@ -8,7 +8,7 @@ use o_sfu_router::rtp::{MediaStream, StreamBinding};
 use str0m::{
     Input, Rtc,
     format::{Codec, PayloadParams},
-    media::{MediaKind, Mid, Pt, Rid},
+    media::{Frequency, MediaKind, Mid, Pt, Rid},
     rtp::{RtpHeader, RtpWrite, Ssrc},
 };
 
@@ -273,6 +273,68 @@ impl ProducerIngressFixture {
             Some([primary].as_slice())
         );
     }
+}
+
+#[test]
+fn authenticated_sender_report_maps_delayed_producer_and_relay_packets() -> Result<(), &'static str>
+{
+    let primary = Ssrc::from(4_321);
+    let mut fixture = ProducerIngressFixture::new(primary)?;
+    let (initial, initial_header) = fixture.write(primary, 100, b"initial")?;
+    let initial_at = fixture.now;
+    fixture.forward(&initial)?;
+    fixture.assert_binding(primary);
+    fixture.now += fixture.receiver_report_interval;
+    fixture
+        .peer
+        .handle_input(Input::Timeout(fixture.now))
+        .map_err(|_error| "publisher sender-report timeout should apply")?;
+    let reports = take_rtcp(&mut fixture.peer, fixture.now)?;
+    assert!(!reports.is_empty());
+    // Keep authenticated SR and SDES output queued until the delayed RTP arrives.
+    // The successful worker drain must apply both before source admission.
+    let server = &mut fixture
+        .state
+        .users
+        .get_mut(&fixture.session)
+        .ok_or("producer RTC should retain its receive stream")?
+        .rtc;
+    for report in reports {
+        report.deliver(server, fixture.now)?;
+    }
+    let (delayed, delayed_header) = fixture.write(primary, 101, b"delayed")?;
+    fixture.now += Duration::from_millis(400);
+    let packets = fixture.forward(&delayed)?;
+    let packet = packets
+        .first()
+        .ok_or("delayed producer RTP should be staged")?;
+    let sampled_at = packet
+        .sampled_at()
+        .ok_or("authenticated SR and SDES should prepare sampling time")?;
+    let expected = initial_at
+        + Duration::from_nanos(
+            u64::from(
+                delayed_header
+                    .timestamp
+                    .wrapping_sub(initial_header.timestamp),
+            ) * 1_000_000_000
+                / u64::from(Frequency::NINETY_KHZ.get()),
+        );
+    let error = sampled_at
+        .saturating_duration_since(expected)
+        .max(expected.saturating_duration_since(sampled_at));
+    // The outgoing report rounds its extrapolated timestamp to one 90 kHz tick.
+    assert!(
+        error <= Duration::from_micros(12),
+        "prepared sampling error: {error:?}"
+    );
+    assert_eq!(packet.received_at(), fixture.now);
+    assert!(fixture.now.saturating_duration_since(sampled_at) > Duration::from_millis(400));
+    let relay = packet
+        .share_for_relay(&fixture.state, fixture.media)
+        .ok_or("admitted packet should preserve its relay metadata")?;
+    assert_eq!(relay.sampled_at(), Some(sampled_at));
+    Ok(())
 }
 
 #[test]

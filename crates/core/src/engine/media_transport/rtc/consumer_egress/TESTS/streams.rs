@@ -96,6 +96,7 @@ fn source_identity(
         seq_no,
         timestamp,
         arrived_at: *ARRIVAL,
+        sampled_at: None,
         clock_rate: Frequency::NINETY_KHZ,
         was_repair,
     }
@@ -231,6 +232,52 @@ fn clock_fallback_preserves_the_primary_reference() {
     assert_eq!(
         stream.project(switched, codec::PacketIdentity::default()),
         control.project(switched, codec::PacketIdentity::default())
+    );
+}
+
+#[test]
+fn publisher_sampling_times_preserve_frames_repairs_and_switch_gaps() {
+    let now = Instant::now();
+    let at = |millis| now + Duration::from_millis(millis);
+    let mut stream = ConsumerStream::default();
+    let mut project =
+        |ssrc: u32, sequence: u64, timestamp, arrived_ms, sampled_ms: Option<u64>, was_repair| {
+            stream
+                .project(
+                    SourceRtpIdentity {
+                        arrived_at: at(arrived_ms),
+                        sampled_at: sampled_ms.map(at),
+                        ..source_identity(0, ssrc.into(), sequence.into(), timestamp, was_repair)
+                    },
+                    codec::PacketIdentity::default(),
+                )
+                .map(|packet| (packet.rtp_timestamp, packet.wallclock))
+        };
+    assert_eq!(
+        project(111, 10, 90_000, 1_000, None, false),
+        Some((90_000, at(1_000)))
+    );
+    // A report acquired mid-frame must not replace the arrival fallback already used.
+    assert_eq!(
+        project(111, 11, 90_000, 1_100, Some(900), false),
+        Some((90_000, at(1_000)))
+    );
+    assert_eq!(
+        project(111, 13, 93_000, 1_200, Some(1_030), false),
+        Some((93_000, at(1_030)))
+    );
+    assert_eq!(
+        project(111, 12, 92_000, 1_300, Some(1_020), true),
+        Some((92_000, at(1_020)))
+    );
+    assert_eq!(
+        project(111, 12, 94_000, 1_400, Some(1_040), true),
+        Some((94_000, at(1_040)))
+    );
+    // Repairs leave the primary reference intact. Sampling time gives a 100 ms gap.
+    assert_eq!(
+        project(222, 20, 5_000, 2_000, Some(1_130), false),
+        Some((102_000, at(1_130)))
     );
 }
 
