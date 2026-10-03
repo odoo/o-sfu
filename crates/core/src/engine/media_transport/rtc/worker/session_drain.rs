@@ -165,6 +165,15 @@ pub fn drain_ready_sessions(
         };
         match outcome {
             SessionDrainOutcome::Drained(session_timeout) => {
+                if !buffers.pending_sender_feedback.is_empty() {
+                    // Discard nonempty feedback even if its session has disappeared.
+                    let sender_feedback = buffers.pending_sender_feedback.drain(..);
+                    if let Some(session_key) = state.users.key_for_handle(session_handle).cloned() {
+                        for (feedback, cname) in sender_feedback {
+                            state.record_producer_sender_feedback(&session_key, feedback, cname);
+                        }
+                    }
+                }
                 state.update_session_timeout_by_handle(session_handle, session_timeout);
             }
             SessionDrainOutcome::Exhausted(session_key, limit) => {
@@ -299,6 +308,25 @@ fn drain_single_session(
                         mid,
                         binding,
                     ));
+            }
+            Ok(Output::Event(Event::SenderFeedback(feedback))) => {
+                // Sharing the general logger outlined its call on ordinary RTC events.
+                trace!(
+                    user_id = ?session_key.user_id(),
+                    media_worker_id = session_key.media_worker_id().as_usize(),
+                    ?feedback,
+                    "rtc sender feedback"
+                );
+                let mut api = session_state.rtc.direct_api();
+                if let Some(cname) = api
+                    .stream_rx(&feedback.sender_info.ssrc)
+                    .filter(|stream| stream.ssrc() == feedback.sender_info.ssrc)
+                    .and_then(|stream| stream.cname())
+                {
+                    buffers
+                        .pending_sender_feedback
+                        .push((feedback, Arc::from(cname)));
+                }
             }
             Ok(Output::Event(Event::KeyframeRequest(request))) => {
                 // Consumer MID/RID names the receiving leg. Preserve session_key

@@ -24,7 +24,7 @@ use super::super::{
     consumer_egress::LocalForwardedRtp,
     state::{
         PacketLoopState,
-        media_registry::{ProducerSsrcUpdate, ProducerStreamBinding},
+        media_registry::{ProducerPacketTime, ProducerSsrcUpdate, ProducerStreamBinding},
         slots::SessionHandle,
     },
 };
@@ -67,6 +67,8 @@ pub struct ForwardedPacket {
     was_repair: bool,
     /// packet timestamp used for bitrate, activity and egress metrics
     received_at: Instant,
+    /// Publisher sampling clock prepared once by the origin worker.
+    sampled_at: Option<Instant>,
     /// Negotiated wire clock shared by same-codec forwarding and relay fanout.
     clock_rate: Frequency,
     /// source payload bytes shared by relay and local fanout
@@ -150,6 +152,7 @@ impl ForwardedPacket {
             visits_origin_sinks: true,
             was_repair,
             received_at: rtp_packet.timestamp,
+            sampled_at: None,
             clock_rate: rtp_packet.time.frequency(),
             payload: rtp_packet.payload,
             header: rtp_packet.header,
@@ -182,6 +185,12 @@ impl ForwardedPacket {
     #[must_use]
     pub const fn received_at(&self) -> Instant {
         self.received_at
+    }
+
+    #[cfg(any(test, feature = "internal-benchmarks"))]
+    #[must_use]
+    pub(in super::super) const fn sampled_at(&self) -> Option<Instant> {
+        self.sampled_at
     }
 
     #[must_use]
@@ -300,18 +309,30 @@ impl ForwardedPacket {
         if let Some(facts) = self.facts.as_ref() {
             return Some(state.bind_producer_stream(&self.source, facts.src_media, binding));
         }
-        let (media, room_instance_id, update) = state.bind_producer_packet(
+        let admission = state.bind_producer_packet(
             session_handle,
             self.src_media,
             self.header.ext_vals.mid,
             &mut binding,
+            ProducerPacketTime {
+                timestamp: self.header.timestamp,
+                clock_rate: self.clock_rate,
+                received_at: self.received_at,
+                was_repair: self.was_repair,
+            },
         )?;
-        self.src_media = Some(media);
+        self.src_media = Some(admission.media);
         self.header.ext_vals.rid = binding.rid;
-        if update != ProducerSsrcUpdate::Rejected {
-            self.cache_facts(state, media, binding.rid, room_instance_id);
+        if admission.update != ProducerSsrcUpdate::Rejected {
+            self.sampled_at = admission.sampled_at;
+            self.cache_facts(
+                state,
+                admission.media,
+                binding.rid,
+                admission.room_instance_id,
+            );
         }
-        Some(update)
+        Some(admission.update)
     }
 
     pub(in super::super) const fn source_binding(&self) -> Option<ProducerStreamBinding> {
@@ -344,6 +365,7 @@ impl ForwardedPacket {
             visits_origin_sinks: false,
             was_repair: self.was_repair,
             received_at: self.received_at,
+            sampled_at: self.sampled_at,
             clock_rate: self.clock_rate,
             payload: Arc::clone(&self.payload),
             header: self.header.clone(),
@@ -393,6 +415,7 @@ impl ForwardedPacket {
             &self.header,
             self.sequence_number,
             self.received_at,
+            self.sampled_at,
             self.clock_rate,
             &self.payload,
             self.was_repair,

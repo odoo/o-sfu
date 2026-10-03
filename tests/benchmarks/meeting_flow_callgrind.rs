@@ -45,16 +45,31 @@ fn validate_packet_loop_coverage(mut fixture: MeetingFlowBenchFixture) {
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_packet_loop_coverage)]
-#[bench::meeting_2s(MeetingFlowBenchFixture::short_meeting())]
-#[bench::meeting_12s(MeetingFlowBenchFixture::long_meeting())]
+#[bench::meeting_2s(MeetingFlowBenchFixture::<false>::short_meeting())]
+#[bench::meeting_12s(MeetingFlowBenchFixture::<false>::long_meeting())]
 fn meeting_flow(mut fixture: MeetingFlowBenchFixture) -> MeetingFlowBenchFixture {
+    black_box(fixture.run_meeting());
+    black_box(fixture)
+}
+
+// New cases have no pre-feature baseline and measure usable reports separately.
+fn validate_sampled_coverage(mut fixture: MeetingFlowBenchFixture<true>) {
+    fixture.assert_packet_loop_coverage();
+}
+
+#[library_benchmark(config = callgrind_config(1.0), teardown = validate_sampled_coverage)]
+#[bench::meeting_2s(MeetingFlowBenchFixture::<true>::short_meeting())]
+#[bench::meeting_12s(MeetingFlowBenchFixture::<true>::long_meeting())]
+fn sampled_meeting_flow(
+    mut fixture: MeetingFlowBenchFixture<true>,
+) -> MeetingFlowBenchFixture<true> {
     black_box(fixture.run_meeting());
     black_box(fixture)
 }
 
 library_benchmark_group!(
     name = meeting;
-    benchmarks = meeting_flow
+    benchmarks = meeting_flow, sampled_meeting_flow
 );
 
 main!(library_benchmark_groups = meeting);

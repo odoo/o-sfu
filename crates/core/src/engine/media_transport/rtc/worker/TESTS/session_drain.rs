@@ -2,15 +2,15 @@ use std::{
     io,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use str0m::{
     Rtc,
     format::{Codec, PayloadParams},
-    media::{KeyframeRequestKind, MediaKind, Mid, Pt},
+    media::{KeyframeRequestKind, MediaKind, MediaTime, Mid, Pt, SenderFeedback},
     net::{Protocol, Transmit},
-    rtp::{RtpWrite, Ssrc},
+    rtp::{RtpWrite, Ssrc, rtcp::SenderInfo},
 };
 use tokio::sync::oneshot;
 
@@ -190,8 +190,22 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() -> Result<(), &'s
             kind: KeyframeRequestKind::Pli,
         },
     ));
+    let feedback = SenderFeedback {
+        mid: Mid::from("healthy"),
+        rid: None,
+        received_at: Instant::now(),
+        sender_info: SenderInfo {
+            ssrc: Ssrc::from(11),
+            ntp_time: SystemTime::UNIX_EPOCH,
+            rtp_time: MediaTime::ZERO,
+            sender_packet_count: 0,
+            sender_octet_count: 0,
+        },
+    };
+    buffers
+        .pending_sender_feedback
+        .push((feedback, Arc::from("healthy")));
     let checkpoint = buffers.checkpoint_session_drain();
-
     buffers.pending_transmits.push(test_transmit(
         SocketAddr::from(([127, 0, 0, 1], 46_002)),
         destination,
@@ -210,9 +224,10 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() -> Result<(), &'s
             kind: KeyframeRequestKind::Fir,
         },
     ));
-
+    buffers
+        .pending_sender_feedback
+        .push((feedback, Arc::from("offender")));
     buffers.rollback_session_drain(&checkpoint);
-
     assert_eq!(buffers.pending_transmits.len(), 1);
     let transmit = buffers
         .pending_transmits
@@ -237,6 +252,14 @@ fn session_drain_rollback_preserves_the_prior_session_prefix() -> Result<(), &'s
             .first()
             .map(|(session_key, _request)| session_key),
         Some(&healthy_session)
+    );
+    assert_eq!(buffers.pending_sender_feedback.len(), 1);
+    assert_eq!(
+        buffers
+            .pending_sender_feedback
+            .first()
+            .map(|(_, cname)| cname.as_ref()),
+        Some("healthy")
     );
     Ok(())
 }

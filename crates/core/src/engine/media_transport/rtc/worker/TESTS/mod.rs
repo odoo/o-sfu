@@ -1494,8 +1494,7 @@ fn flush_packet_forwards_records_closed_relays_and_keeps_later_destinations() {
 #[test]
 fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Result<(), &'static str>
 {
-    const PRIMARY_SSRC: u32 = 4_321;
-
+    let primary_ssrc = Ssrc::from(4_321);
     let repair_sequence = u64::from(rtp::RTP_SEQUENCE_NUMBER_MODULUS);
     let producer_session = test_transport_session_key(219, 0, 222, UserId::Integer(223));
     let consumer_session = test_transport_session_key(219, 0, 224, UserId::Integer(225));
@@ -1530,10 +1529,11 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
             consumer_stream,
             SourceRtpIdentity {
                 delivery_generation: 0,
-                ssrc: Ssrc::from(PRIMARY_SSRC),
+                ssrc: primary_ssrc,
                 seq_no: sequence_number.into(),
                 timestamp,
                 arrived_at,
+                sampled_at: None,
                 clock_rate: Frequency::NINETY_KHZ,
                 was_repair: false,
             },
@@ -1559,7 +1559,6 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
     harness.add_local(src_media, 0);
     harness.add_relay(src_media, relay_mailbox);
     harness.add_recording_sink(src_media, &sink);
-
     flush_only_packet_forwards(
         &mut harness.state,
         &harness.metrics,
@@ -1568,7 +1567,6 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
         &harness.buffers,
         &harness.forwards,
     );
-
     let local_write = harness
         .state
         .users
@@ -1591,11 +1589,7 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
     assert_eq!(relay_packet.payload(), normalized_payload);
     assert_eq!(
         relay_packet.repair_identity(),
-        Some((
-            Pt::from(111),
-            Ssrc::from(PRIMARY_SSRC),
-            repair_sequence.into()
-        ))
+        Some((Pt::from(111), primary_ssrc, repair_sequence.into()))
     );
     Ok(())
 }

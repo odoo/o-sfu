@@ -45,6 +45,11 @@
 //! the whole turn runs on the synthetic clock, drain included, so no phase can
 //! cross a deadline just because the host was slow
 //!
+//! The sampled variant records shared-CNAME sender reports once per second
+//! through the production registry. It includes report handling and per-frame
+//! interpolation with video sampling 400 ms before arrival. It excludes RTCP
+//! authentication and session-drain staging. The fallback variants omit reports.
+//!
 //! staged ingress carries the source shape of local ingress, a worker-local
 //! session handle with origin fanout enabled, so source resolution pays the same
 //! slot lookup production pays for a publisher's own packets
@@ -83,7 +88,7 @@
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use o_sfu_rfc::rtp::{CodecName, vp8};
@@ -94,8 +99,8 @@ use o_sfu_router::{
 use str0m::{
     Event,
     bwe::{Bitrate as Str0mBitrate, BweKind},
-    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
-    rtp::{Ssrc, Vp8Descriptor},
+    media::{Frequency, KeyframeRequestKind, MediaKind, MediaTime, Mid, Pt, Rid, SenderFeedback},
+    rtp::{Ssrc, Vp8Descriptor, rtcp::SenderInfo},
 };
 use tokio::sync::mpsc;
 
@@ -363,6 +368,27 @@ struct MeetingStream {
 }
 
 impl MeetingStream {
+    fn clock_rate(&self) -> Frequency {
+        match self.kind {
+            MeetingStreamKind::Audio => Frequency::FORTY_EIGHT_KHZ,
+            MeetingStreamKind::Video => Frequency::NINETY_KHZ,
+        }
+    }
+
+    fn sampling_delay(&self) -> Duration {
+        match self.kind {
+            MeetingStreamKind::Audio => Duration::ZERO,
+            MeetingStreamKind::Video => Duration::from_millis(400),
+        }
+    }
+
+    fn sampled_timestamp(&self, tick: usize) -> u64 {
+        let millis = u64::try_from(tick).unwrap_or(0) * MEETING_TICK_MS;
+        let delay_ms = u64::try_from(self.sampling_delay().as_millis()).unwrap_or(0);
+        let rate = u64::from(self.clock_rate().get());
+        1_000_000 + millis * rate / 1_000 - delay_ms * rate / 1_000
+    }
+
     fn emits_on(&self, tick: usize) -> bool {
         tick.wrapping_add(self.frame_offset)
             .is_multiple_of(self.frame_period)
@@ -427,7 +453,9 @@ struct MeetingParticipant {
     audio_source: TransportSourceKey,
 }
 
-pub struct MeetingFlowBenchFixture {
+/// `SAMPLED` adds publisher clock reports and 400 ms video arrival delay.
+/// Const selection keeps report fixture work out of the existing fallback cases.
+pub struct MeetingFlowBenchFixture<const SAMPLED: bool = false> {
     state: PacketLoopState,
     snapshot_state: Arc<Mutex<RtcSnapshotState>>,
     metrics: Arc<RuntimeMetrics>,
@@ -465,7 +493,7 @@ pub struct MeetingFlowBenchFixture {
     profile: MeetingWorkProfile,
 }
 
-impl MeetingFlowBenchFixture {
+impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
     /// builds the two-second case used as a cheap pull-request gate
     pub fn short_meeting() -> Self {
         Self::twelve_person_meeting(MEETING_SHORT_SECONDS)
@@ -564,6 +592,9 @@ impl MeetingFlowBenchFixture {
     }
 
     fn run_tick(&mut self, tick: usize) {
+        if SAMPLED && tick.is_multiple_of(ticks_for_seconds(1)) {
+            self.record_sender_reports(tick);
+        }
         self.rotate_audio_floor(tick);
         self.refresh_audio_plan(tick);
         // every session is marked dirty up front the way an ingress packet would
@@ -707,6 +738,50 @@ impl MeetingFlowBenchFixture {
         }
     }
 
+    // Start at the authenticated feedback boundary. SR parsing and session-drain
+    // staging are covered by transport tests and excluded from this fixture.
+    fn record_sender_reports(&mut self, tick: usize) {
+        let elapsed = Duration::from_millis(u64::try_from(tick).unwrap_or(0) * MEETING_TICK_MS);
+        for stream in &self.streams {
+            let packet = stream
+                .packets
+                .first()
+                .and_then(Option::as_ref)
+                .unwrap_or_else(|| panic!("sender report requires a reusable source packet"));
+            let binding = packet
+                .source_binding()
+                .unwrap_or_else(|| panic!("sender report requires local producer identity"));
+            let mid = match stream.kind {
+                MeetingStreamKind::Audio => audio_up_mid(stream.participant),
+                MeetingStreamKind::Video => video_up_mid(stream.participant),
+            };
+            self.state.record_producer_sender_feedback(
+                &self
+                    .participants
+                    .get(stream.participant)
+                    .unwrap_or_else(|| panic!("sender report requires a publisher session"))
+                    .session_key,
+                SenderFeedback {
+                    mid,
+                    rid: binding.rid,
+                    received_at: self.now,
+                    sender_info: SenderInfo {
+                        ssrc: binding.primary,
+                        ntp_time: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000) + elapsed
+                            - stream.sampling_delay(),
+                        rtp_time: MediaTime::new(
+                            stream.sampled_timestamp(tick),
+                            stream.clock_rate(),
+                        ),
+                        sender_packet_count: 0,
+                        sender_octet_count: 0,
+                    },
+                },
+                Arc::from("meeting-publisher"),
+            );
+        }
+    }
+
     fn stage_tick_packets(&mut self, tick: usize) -> Vec<ForwardedPacket> {
         let Self {
             streams,
@@ -738,7 +813,11 @@ impl MeetingFlowBenchFixture {
                 MeetingStreamKind::Video => VIDEO_RTP_TICK_STRIDE
                     .saturating_mul(u32::try_from(stream.frame_period).unwrap_or(1)),
             };
-            stream.rtp_timestamp = stream.rtp_timestamp.wrapping_add(frame_stride);
+            stream.rtp_timestamp = if SAMPLED {
+                u32::try_from(stream.sampled_timestamp(tick)).unwrap_or(0)
+            } else {
+                stream.rtp_timestamp.wrapping_add(frame_stride)
+            };
             stream.frame_cursor = stream.frame_cursor.wrapping_add(1);
             let frame_cursor = stream.frame_cursor;
             let packets_per_frame = stream.packets.len();
@@ -1816,7 +1895,7 @@ fn video_down_ssrc(receiver: usize, publisher: usize) -> u32 {
     40_000 + u32::try_from(receiver.saturating_mul(MEETING_PARTICIPANTS) + publisher).unwrap_or(0)
 }
 
-impl MeetingFlowBenchFixture {
+impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
     /// asserts the run reached every path the scenario exists to measure
     ///
     /// counters the fixture computed itself only prove intent, so the checks that
@@ -1827,6 +1906,17 @@ impl MeetingFlowBenchFixture {
     ///
     /// panics when the scenario stopped reaching one of those paths
     pub fn assert_packet_loop_coverage(&mut self) {
+        if SAMPLED {
+            for stream in &self.streams {
+                for packet in stream.packets.iter().flatten() {
+                    assert_eq!(
+                        packet.sampled_at(),
+                        packet.received_at().checked_sub(stream.sampling_delay()),
+                        "every admitted frame fragment must retain publisher sampling time"
+                    );
+                }
+            }
+        }
         let profile = self.profile;
         assert!(
             profile.observed_packets >= ticks_for_seconds(MEETING_SHORT_SECONDS),

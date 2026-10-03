@@ -82,6 +82,7 @@ impl LocalRewriteBenchFixture {
                     seq_no: input.sequence_number,
                     timestamp: input.timestamp,
                     arrived_at: input.arrived_at,
+                    sampled_at: None,
                     clock_rate: Frequency::NINETY_KHZ,
                     was_repair: false,
                 },
