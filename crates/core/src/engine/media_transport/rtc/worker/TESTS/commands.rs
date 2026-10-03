@@ -7,7 +7,10 @@ use str0m::media::MediaKind;
 #[cfg(test)]
 use {
     super::super::commands::ParsedSessionAnswer,
-    crate::engine::media_transport::{AppliedSessionAnswer, TransportMediaId, TransportSourceKey},
+    crate::engine::{
+        media_transport::{AppliedSessionAnswer, TransportMediaId, TransportSourceKey},
+        source_model::SourceSyncPolicy,
+    },
 };
 
 use super::{
@@ -132,6 +135,7 @@ impl RtcWorker {
             consumer_key: consumer_key.clone(),
             media_kind,
             source,
+            sync: SourceSyncPolicy::Independent,
             remote_source_control: None,
             consumer_rtp_parameters: consumer_rtp_parameters.clone(),
             active,

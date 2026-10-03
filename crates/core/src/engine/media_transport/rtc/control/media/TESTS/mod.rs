@@ -9,6 +9,7 @@ mod decoder_delivery;
 mod fixtures;
 
 use std::{
+    collections::BTreeSet,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -85,6 +86,7 @@ use crate::{
         metrics::{
             RtcMetricsRecorder, RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
         },
+        source_model::SourceSyncPolicy,
     },
 };
 
@@ -2211,6 +2213,7 @@ fn add_send_media_rolls_back_remote_source_registration_when_consumer_session_is
         AddSendMediaRequest {
             consumer_key: &consumer_session,
             media_kind: MediaKind::Video,
+            sync: SourceSyncPolicy::Independent,
             source: &source,
             remote_source_control: Some(remote_source_control),
             consumer_rtp_parameters: &consumer_rtp_parameters,
@@ -2220,6 +2223,82 @@ fn add_send_media_rolls_back_remote_source_registration_when_consumer_session_is
 
     assert_eq!(result, Err(TransportAdapterError::TransportUnavailable));
     assert!(state.routes.remote_source(src_media).is_none());
+}
+
+#[test]
+fn consumer_sdp_groups_only_selected_publisher_tracks() {
+    use SourceSyncPolicy::{Independent, Publisher};
+    let consumer = test_transport_session_key(151, 0, 158, UserId::Integer(159));
+    let publisher = test_transport_session_key(151, 0, 156, UserId::Integer(157));
+    let other = test_transport_session_key(151, 0, 160, UserId::Integer(161));
+    let replacement = test_transport_session_key(151, 0, 162, UserId::Integer(157));
+    let mut state = PacketLoopState::default();
+    bootstrap::test_support::ensure_session_rtc_state(
+        &mut state.users,
+        &consumer,
+        SocketAddr::from(([127, 0, 0, 1], 47_101)),
+        Bitrate::from_mbps(10),
+    )
+    .expect("consumer session must initialize");
+    state
+        .users
+        .get_mut(&consumer)
+        .expect("consumer session must exist")
+        .sdp_negotiation
+        .initial_offer_applied = true;
+    let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
+    // Declare the screen first so receiver stream order cannot make it the mic's pair.
+    for (mid, kind, sync, source, ssrc) in [
+        ("screen", MediaKind::Video, Independent, &publisher, 71_000),
+        ("audio", MediaKind::Audio, Publisher, &publisher, 71_001),
+        ("video", MediaKind::Video, Publisher, &publisher, 71_002),
+        ("other", MediaKind::Audio, Publisher, &other, 71_003),
+        (
+            "replacement",
+            MediaKind::Video,
+            Publisher,
+            &replacement,
+            71_004,
+        ),
+    ] {
+        let media = prepare_source_session(&mut state, source, Mid::from(mid), ssrc);
+        worker_add_send_media(
+            &mut state,
+            AddSendMediaRequest {
+                consumer_key: &consumer,
+                media_kind: kind,
+                sync,
+                source: &TransportSourceKey::new(source.clone(), media),
+                remote_source_control: None,
+                consumer_rtp_parameters: &parameters,
+                active: true,
+            },
+        )
+        .expect("consumer media must be staged");
+    }
+    let offer = state
+        .users
+        .get(&consumer)
+        .and_then(|session| session.sdp_negotiation.staged_offer.as_ref())
+        .expect("consumer media must produce an offer")
+        .to_sdp_string();
+    let tracks: Vec<_> = offer
+        .lines()
+        .filter_map(|line| line.strip_prefix("a=msid:")?.split_once(' '))
+        .collect();
+    assert_eq!(tracks.len(), 5);
+    assert_ne!(tracks[0].0, tracks[1].0);
+    assert_eq!(tracks[1].0, tracks[2].0);
+    assert_ne!(tracks[1].0, tracks[3].0);
+    assert_ne!(tracks[1].0, tracks[4].0);
+    assert_eq!(
+        tracks
+            .iter()
+            .map(|track| track.1)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        5
+    );
 }
 
 #[test]
@@ -2266,6 +2345,7 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
         AddSendMediaRequest {
             consumer_key: &consumer_session,
             media_kind: MediaKind::Video,
+            sync: SourceSyncPolicy::Independent,
             source: &source,
             remote_source_control: None,
             consumer_rtp_parameters: &consumer_rtp_parameters,
@@ -2368,6 +2448,7 @@ fn add_send_media_declares_a_destination_local_primary_and_repair_pair() {
             AddSendMediaRequest {
                 consumer_key: &consumer_session,
                 media_kind: MediaKind::Video,
+                sync: SourceSyncPolicy::Independent,
                 source: &source,
                 remote_source_control: None,
                 consumer_rtp_parameters: &consumer_rtp_parameters,
@@ -2454,6 +2535,7 @@ fn add_send_media_blocks_initial_video_until_a_decoder_refresh() {
             AddSendMediaRequest {
                 consumer_key: &consumer_session,
                 media_kind: MediaKind::Video,
+                sync: SourceSyncPolicy::Independent,
                 source: &source,
                 remote_source_control: None,
                 consumer_rtp_parameters: &consumer_rtp_parameters,

@@ -21,7 +21,7 @@ use crate::engine::{
         TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
         TransportSourceActivityEffect, TransportSourceKey,
     },
-    source_model::{PublishedSourceId, UserStreamId},
+    source_model::{PublishedSourceId, SourceSyncPolicy, UserStreamId},
 };
 
 #[derive(Debug)]
@@ -31,6 +31,7 @@ pub struct ConsumerSetupTarget {
     pub source_id: PublishedSourceId,
     pub stream: UserStreamId,
     pub kind: RouterMediaKind,
+    pub sync: SourceSyncPolicy,
     pub routed: RoutedProducerId,
 }
 
@@ -196,8 +197,8 @@ impl PendingConsumerSetup {
             .consume_media_with_mid(
                 &self.target.session,
                 self.target.kind,
-                self.target.source.session_key(),
-                self.target.source.transport_media_id(),
+                &self.target.source,
+                self.target.sync,
                 &self.rtp,
                 self.reservation.declared_activity(),
             )
@@ -234,6 +235,7 @@ impl ConsumerSetupTarget {
             source_id: source.descriptor.source_id(),
             stream: source.descriptor.stream_id().clone(),
             kind: source.descriptor.media_kind(),
+            sync: source.descriptor.policy().sync(),
             routed: source.routed,
         }
     }

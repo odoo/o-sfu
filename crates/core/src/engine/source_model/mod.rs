@@ -41,7 +41,7 @@ pub use intent::{SourceDeactivateIntent, SourcePublishIntent, SourceSubscription
 pub use policy::{
     ActiveSpeakerGroup, ActiveSpeakerPolicy, ActiveSpeakerSourceRole, PolicyPauseReason,
     SourceAdaptationPolicy, SourceLayoutPolicy, SourcePolicy, SourceRoomPolicySelector,
-    SourceRoutePriority, UploadLayerPolicyRole,
+    SourceRoutePriority, SourceSyncPolicy, UploadLayerPolicyRole,
 };
 pub use selection::{ConsumerSourceSelection, SourceSelector};
 

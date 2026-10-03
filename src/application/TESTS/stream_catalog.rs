@@ -64,6 +64,7 @@ fn assert_audio_policy(intent: &SourcePublishIntent) {
     assert_eq!(intent.media_kind(), MediaKind::Audio);
 
     let policy = intent.policy();
+    assert_eq!(policy.sync(), SourceSyncPolicy::Publisher);
     assert_eq!(policy.layout(), None);
     assert_eq!(policy.adaptation(), SourceAdaptationPolicy::None);
     assert_eq!(policy.video_bitrate_cap(), None);
@@ -82,6 +83,7 @@ fn assert_camera_policy(intent: &SourcePublishIntent) {
     assert!(matches!(intent.presence(), Some(info) if info.is_camera_on == Some(true)));
 
     let policy = intent.policy();
+    assert_eq!(policy.sync(), SourceSyncPolicy::Publisher);
     assert_eq!(policy.adaptation(), SourceAdaptationPolicy::ScalableVideo);
     assert_eq!(policy.video_bitrate_cap(), None);
     assert_eq!(
@@ -114,6 +116,7 @@ fn assert_screen_policy(intent: &SourcePublishIntent) {
     assert!(matches!(intent.presence(), Some(info) if info.is_screen_sharing_on == Some(true)));
 
     let policy = intent.policy();
+    assert_eq!(policy.sync(), SourceSyncPolicy::Independent);
     assert_eq!(policy.adaptation(), SourceAdaptationPolicy::ReadableDetail);
     assert_eq!(policy.active_speaker(), None);
     assert_eq!(policy.video_bitrate_cap(), None);
