@@ -11,7 +11,7 @@ pub use crate::{
             ActiveSpeakerGroup, ActiveSpeakerPolicy, ActiveSpeakerSourceRole,
             SourceAdaptationPolicy, SourceDeactivateIntent, SourceLayoutPolicy, SourcePolicy,
             SourcePublishIntent, SourceRoomPolicySelector, SourceRoutePriority,
-            SourceSubscriptionIntent, UploadLayerPolicyRole, UserStreamId,
+            SourceSubscriptionIntent, SourceSyncPolicy, UploadLayerPolicyRole, UserStreamId,
         },
     },
     options::{

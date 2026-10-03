@@ -13,6 +13,7 @@ pub struct SourcePolicy {
     adaptation: SourceAdaptationPolicy,
     active_speaker: Option<ActiveSpeakerPolicy>,
     video_bitrate_cap: Option<Bitrate>,
+    sync: SourceSyncPolicy,
 }
 
 impl SourcePolicy {
@@ -27,6 +28,7 @@ impl SourcePolicy {
             adaptation,
             active_speaker,
             video_bitrate_cap: None,
+            sync: SourceSyncPolicy::Independent,
         }
     }
 
@@ -36,6 +38,17 @@ impl SourcePolicy {
             video_bitrate_cap: Some(max_bitrate),
             ..self
         }
+    }
+
+    /// Sets SDP grouping for newly declared consumers.
+    #[must_use]
+    pub const fn with_sync(self, sync: SourceSyncPolicy) -> Self {
+        Self { sync, ..self }
+    }
+
+    #[must_use]
+    pub const fn sync(self) -> SourceSyncPolicy {
+        self.sync
     }
 
     #[must_use]
@@ -62,6 +75,16 @@ impl SourcePolicy {
     pub const fn video_bitrate_cap(self) -> Option<Bitrate> {
         self.video_bitrate_cap
     }
+}
+
+/// Receiver playback synchronization within one publisher connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceSyncPolicy {
+    /// Separate SDP stream, without delaying another source for this one.
+    Independent,
+    /// Shared SDP stream for one audio/video pair, such as microphone and camera.
+    /// Additional videos must stay independent because browsers sync only one pair.
+    Publisher,
 }
 
 /// default receiver-layout role for one source

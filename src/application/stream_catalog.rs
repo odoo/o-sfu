@@ -6,7 +6,7 @@ use o_sfu_router::MediaKind;
 use crate::core::prelude::{
     ActiveSpeakerGroup, ActiveSpeakerPolicy, ActiveSpeakerSourceRole, SourceAdaptationPolicy,
     SourceDeactivateIntent, SourceLayoutPolicy, SourcePolicy, SourcePublishIntent,
-    SourceRoomPolicySelector, SourceSubscriptionIntent, UserStreamId,
+    SourceRoomPolicySelector, SourceSubscriptionIntent, SourceSyncPolicy, UserStreamId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,8 @@ impl DiscussStream {
                         ActiveSpeakerGroup::MAIN,
                         ActiveSpeakerSourceRole::Detector,
                     )),
-                ),
+                )
+                .with_sync(SourceSyncPolicy::Publisher),
             },
             StreamType::Camera => Self {
                 stream_type,
@@ -52,7 +53,8 @@ impl DiscussStream {
                         ActiveSpeakerGroup::MAIN,
                         ActiveSpeakerSourceRole::Promotable,
                     )),
-                ),
+                )
+                .with_sync(SourceSyncPolicy::Publisher),
             },
             StreamType::Screen => Self {
                 stream_type,

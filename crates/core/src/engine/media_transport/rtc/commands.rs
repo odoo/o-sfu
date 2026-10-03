@@ -36,6 +36,7 @@ use crate::engine::{
         RtcMetricsRecorder, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
         RtcWorkerObservationKind,
     },
+    source_model::SourceSyncPolicy,
 };
 
 /// command handle used by remote consumers to push control back to a source worker
@@ -368,6 +369,7 @@ pub enum RtcWorkerCommand {
         consumer_key: TransportSessionKey,
         media_kind: MediaKind,
         source: TransportSourceKey,
+        sync: SourceSyncPolicy,
         remote_source_control: Option<RemoteSourceControl>,
         consumer_rtp_parameters: RouterRtpParameters,
         active: bool,

@@ -26,17 +26,20 @@ use tracing::{debug, warn};
 use super::{super::negotiation, AddSendMediaRequest};
 use crate::{
     Bitrate, VideoBitrateLimits,
-    engine::media_transport::{
-        SessionUploadSlot, TransportAdapterError, TransportMediaId, TransportResult,
-        TransportSessionKey,
-        rtc::{
-            RtpProfile, codec,
-            state::{
-                ConsumerRouteRegistration, PacketLoopState, PendingRecvStream, RtcSessionState,
-                bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
-                slots::ConsumerStreamHandle, source_route::RemoteSourceRegistration,
+    engine::{
+        media_transport::{
+            SessionUploadSlot, TransportAdapterError, TransportMediaId, TransportResult,
+            TransportSessionKey,
+            rtc::{
+                RtpProfile, codec,
+                state::{
+                    ConsumerRouteRegistration, PacketLoopState, PendingRecvStream, RtcSessionState,
+                    bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
+                    slots::ConsumerStreamHandle, source_route::RemoteSourceRegistration,
+                },
             },
         },
+        source_model::SourceSyncPolicy,
     },
 };
 
@@ -359,6 +362,7 @@ pub fn worker_add_send_media(
         consumer_key,
         media_kind,
         source,
+        sync,
         remote_source_control,
         consumer_rtp_parameters,
         active,
@@ -392,14 +396,19 @@ pub fn worker_add_send_media(
         remote_source_rollback.rollback(state);
         return Err(TransportAdapterError::TransportUnavailable);
     };
-    let (mid, consumer_stream, should_mark_dirty) =
-        match declare_consumer_stream(session_state, media_kind, consumer_rtp_parameters) {
-            Ok(consumer_stream) => consumer_stream,
-            Err(error) => {
-                remote_source_rollback.rollback(state);
-                return Err(error);
-            }
-        };
+    let (mid, consumer_stream, should_mark_dirty) = match declare_consumer_stream(
+        session_state,
+        src_key,
+        media_kind,
+        sync,
+        consumer_rtp_parameters,
+    ) {
+        Ok(consumer_stream) => consumer_stream,
+        Err(error) => {
+            remote_source_rollback.rollback(state);
+            return Err(error);
+        }
+    };
     if should_mark_dirty {
         state.mark_session_dirty(consumer_key);
     }
@@ -431,11 +440,13 @@ pub fn worker_add_send_media(
 
 fn declare_consumer_stream(
     session_state: &mut RtcSessionState,
+    source: &TransportSessionKey,
     media_kind: MediaKind,
+    sync: SourceSyncPolicy,
     consumer_rtp_parameters: &RouterRtpParameters,
 ) -> TransportResult<(Mid, ConsumerStreamHandle, bool)> {
     let mid = if session_state.sdp_negotiation.initial_offer_applied {
-        worker_stage_native_send_media(session_state, media_kind)?
+        worker_stage_native_send_media(session_state, source, media_kind, sync)?
     } else {
         let mid = transport_mid(consumer_rtp_parameters).unwrap_or_default();
         declare_direct_send_media(session_state, mid, media_kind, consumer_rtp_parameters);
@@ -460,7 +471,9 @@ fn declare_consumer_stream(
 /// apply the staged change.
 fn worker_stage_native_send_media(
     session_state: &mut RtcSessionState,
+    source: &TransportSessionKey,
     media_kind: MediaKind,
+    sync: SourceSyncPolicy,
 ) -> TransportResult<Mid> {
     if offer_is_awaiting_answer(session_state) {
         warn!(
@@ -480,7 +493,18 @@ fn worker_stage_native_send_media(
     if let Some(pending_offer) = existing_pending_offer {
         sdp_api.merge(pending_offer);
     }
-    let mid = sdp_api.add_media(media_kind, Direction::SendOnly, None, None, None);
+    // Browsers synchronize only one audio/video pair per SDP stream. Sources
+    // outside that pair need independent IDs so they cannot displace its video.
+    // https://webrtc.googlesource.com/src/+/refs/heads/main/call/call.cc
+    let stream_id = match sync {
+        SourceSyncPolicy::Independent => None,
+        SourceSyncPolicy::Publisher => Some(format!(
+            "sfu-{}-{}",
+            source.room_instance_id(),
+            source.connection_id()
+        )),
+    };
+    let mid = sdp_api.add_media(media_kind, Direction::SendOnly, stream_id, None, None);
     let Some((offer, pending_offer)) = sdp_api.apply() else {
         return Err(TransportAdapterError::TransportUnavailable);
     };

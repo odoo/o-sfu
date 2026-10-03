@@ -78,7 +78,7 @@ pub(crate) use types::{SourceActivityRevision, SourceActivityUpdate};
 
 pub(crate) use self::workers::WorkerPlacementState;
 use self::workers::signaling_to_str0m_media_kind;
-use crate::engine::metrics::RuntimeMetrics;
+use crate::engine::{metrics::RuntimeMetrics, source_model::SourceSyncPolicy};
 
 /// Opaque runtime media transport handle.
 ///
@@ -331,8 +331,8 @@ impl MediaTransport {
         self.consume_media_with_mid(
             consumer_session_key,
             media_kind,
-            source_session_key,
-            source_media_id,
+            &TransportSourceKey::new(source_session_key.clone(), source_media_id),
+            SourceSyncPolicy::Independent,
             consumer_rtp_parameters,
             initial_activity,
         )
@@ -350,11 +350,13 @@ impl MediaTransport {
         &self,
         consumer_session_key: &TransportSessionKey,
         media_kind: MediaKind,
-        source_session_key: &TransportSessionKey,
-        source_media_id: TransportMediaId,
+        source: &TransportSourceKey,
+        sync: SourceSyncPolicy,
         consumer_rtp_parameters: &RouterRtpParameters,
         initial_activity: ConsumerActivity,
     ) -> Result<(TransportMediaId, String), TransportAdapterError> {
+        let source_session_key = source.session_key();
+        let source_media_id = source.transport_media_id();
         let result = async {
             Self::ensure_same_room(consumer_session_key, source_session_key)?;
             let consumer_worker = self.require_worker_for_user(consumer_session_key)?;
@@ -365,7 +367,8 @@ impl MediaTransport {
                 .request_worker(|response| RtcWorkerCommand::AddSendMedia {
                     consumer_key: consumer_session_key.clone(),
                     media_kind: signaling_to_str0m_media_kind(media_kind),
-                    source: TransportSourceKey::new(source_session_key.clone(), source_media_id),
+                    source: source.clone(),
+                    sync,
                     remote_source_control,
                     consumer_rtp_parameters: consumer_rtp_parameters.clone(),
                     active: initial_activity.is_active(),

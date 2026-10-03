@@ -22,12 +22,16 @@ use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::media::MediaKind;
 
 use super::super::commands::RemoteSourceControl;
-use crate::engine::media_transport::{TransportSessionKey, TransportSourceKey};
+use crate::engine::{
+    media_transport::{TransportSessionKey, TransportSourceKey},
+    source_model::SourceSyncPolicy,
+};
 
 pub(super) struct AddSendMediaRequest<'a> {
     pub consumer_key: &'a TransportSessionKey,
     pub media_kind: MediaKind,
     pub source: &'a TransportSourceKey,
+    pub sync: SourceSyncPolicy,
     pub remote_source_control: Option<RemoteSourceControl>,
     pub consumer_rtp_parameters: &'a RouterRtpParameters,
     pub active: bool,

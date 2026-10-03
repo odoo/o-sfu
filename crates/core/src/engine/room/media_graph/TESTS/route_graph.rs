@@ -24,7 +24,7 @@ use crate::{
         },
         source_model::{
             PolicyPauseReason, PublishedSourceId, ReceiverVideoBudgetDiagnostics, SourceEncodingId,
-            SourceSelector, SourceSubscriptionIntent, UserStreamId,
+            SourceSelector, SourceSubscriptionIntent, SourceSyncPolicy, UserStreamId,
         },
     },
 };
@@ -54,6 +54,7 @@ fn target(receiver: i64, connection: u64, source_id: PublishedSourceId) -> Consu
         source_id,
         stream: UserStreamId::from("camera"),
         kind: MediaKind::Video,
+        sync: SourceSyncPolicy::Independent,
         routed: RoutedProducerId::for_test(RouterId(1), source_connection, ProducerId(10)),
     }
 }
