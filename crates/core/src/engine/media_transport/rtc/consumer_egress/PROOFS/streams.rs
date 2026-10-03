@@ -10,6 +10,7 @@ struct Packet {
     timestamp: u32,
     reanchor: bool,
     repair: bool,
+    timestamp_anchor: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,7 +21,6 @@ struct Mapping {
     highest_source: u128,
     source_timestamp: u64,
     destination_timestamp: u64,
-    highest_timestamp: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +38,13 @@ struct Projected {
 }
 
 /// Proof for `RtpProjection::project`.
-/// Checks full-width sequence/timestamp inputs and the optimized packet path,
-/// including overflow boundaries that regression tests only sample. Rejection
-/// and observation preserve all projection state.
+/// Checks full-width sequence/timestamp inputs and transition anchors.
+/// Includes the optimized packet path and overflow boundaries that regression
+/// tests only sample. Rejection and observation preserve all projection state.
 ///
 /// `Model::valid` is inductive and includes exhausted states. Assumes repairs
-/// do not reanchor. Excludes generation admission, codec commits and RTC I/O.
+/// do not reanchor. Excludes generation admission, clock preparation, codec
+/// commits and RTC I/O.
 #[kani::proof]
 fn rtp_projection_matches_affine_model() {
     let mut projection = arbitrary_projection();
@@ -55,6 +56,7 @@ fn rtp_projection_matches_affine_model() {
         timestamp: kani::any(),
         reanchor: kani::any(),
         repair: kani::any(),
+        timestamp_anchor: kani::any(),
     };
     kani::assume(!packet.repair || !packet.reanchor);
     let mut expected_state = before;
@@ -66,6 +68,7 @@ fn rtp_projection_matches_affine_model() {
             packet.timestamp,
             packet.reanchor,
             packet.repair,
+            packet.timestamp_anchor,
         )
         .map(projected_snapshot);
     let after = snapshot(projection);
@@ -87,7 +90,6 @@ fn arbitrary_projection() -> RtpProjection {
             highest_src_seq: kani::any::<u64>().into(),
             src_timestamp_anchor: kani::any(),
             dst_timestamp_anchor: kani::any(),
-            highest_timestamp: kani::any(),
         }
     } else {
         RtpTimeline::Empty
@@ -108,7 +110,6 @@ fn snapshot(projection: RtpProjection) -> Model {
             highest_src_seq,
             src_timestamp_anchor,
             dst_timestamp_anchor,
-            highest_timestamp,
         } => Some(Mapping {
             ssrc: *ssrc,
             source: u128::from(*src_seq_anchor),
@@ -116,7 +117,6 @@ fn snapshot(projection: RtpProjection) -> Model {
             highest_source: u128::from(*highest_src_seq),
             source_timestamp: u64::from(src_timestamp_anchor),
             destination_timestamp: u64::from(dst_timestamp_anchor),
-            highest_timestamp: u64::from(highest_timestamp),
         }),
     };
     Model {
@@ -175,9 +175,8 @@ impl Model {
         } else {
             (
                 self.next,
-                self.mapping.map_or(source_timestamp, |line| {
-                    (line.highest_timestamp + 1) % TIMESTAMP_MODULUS
-                }),
+                self.mapping
+                    .map_or(source_timestamp, |_| u64::from(packet.timestamp_anchor)),
                 true,
             )
         };
@@ -192,7 +191,6 @@ impl Model {
             self.next = sequence + 1;
             self.mapping = Some(Mapping {
                 highest_source: source,
-                highest_timestamp: timestamp,
                 ..continued.unwrap_or(Mapping {
                     ssrc: packet.ssrc,
                     source,
@@ -200,7 +198,6 @@ impl Model {
                     highest_source: source,
                     source_timestamp,
                     destination_timestamp: timestamp,
-                    highest_timestamp: timestamp,
                 })
             });
         }
@@ -237,12 +234,8 @@ fn cover_transitions(before: Model, after: Model, packet: Packet, output: Option
         "gapped primary"
     );
     kani::cover!(
-        continued
-            && primary
-            && source == line.highest_source
-            && output.is_some_and(|projected| projected.timestamp != line.highest_timestamp)
-            && accepted,
-        "duplicate with changed timestamp"
+        continued && primary && source == line.highest_source && accepted,
+        "duplicate primary"
     );
     kani::cover!(
         continued && primary && source < line.highest_source && accepted,
@@ -311,8 +304,15 @@ fn cover_transitions(before: Model, after: Model, packet: Packet, output: Option
         "source timestamp rollover"
     );
     kani::cover!(
-        !continued && line.highest_timestamp + 1 == TIMESTAMP_MODULUS && accepted,
+        !continued
+            && packet.timestamp_anchor == 0
+            && line.destination_timestamp + 1 == TIMESTAMP_MODULUS
+            && accepted,
         "receiver timestamp rollover on reanchor"
+    );
+    kani::cover!(
+        !continued && packet.timestamp_anchor == u32::MAX && accepted,
+        "maximum receiver timestamp on reanchor"
     );
     kani::cover!(
         continued && primary && line.highest_source == SEQUENCE_LIMIT && source == 0 && !accepted,

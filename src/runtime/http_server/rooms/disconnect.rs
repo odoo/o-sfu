@@ -10,7 +10,9 @@ use axum::{
     routing::{MethodRouter, post},
 };
 use secrecy::SecretString;
-use tracing::Instrument;
+use tokio::sync::Semaphore;
+use tokio_util::task::TaskTracker;
+use tracing::{Instrument, warn};
 
 use crate::runtime::{
     MediaTransport, RuntimeMetrics, RuntimeState,
@@ -30,6 +32,8 @@ struct Services {
     room_manager: Arc<RoomManager>,
     media_transport: MediaTransport,
     metrics: Arc<RuntimeMetrics>,
+    mutations: TaskTracker,
+    admission: Arc<Semaphore>,
 }
 
 impl FromRef<RuntimeState> for Services {
@@ -38,6 +42,8 @@ impl FromRef<RuntimeState> for Services {
             room_manager: Arc::clone(&state.room_manager),
             media_transport: state.media_transport.clone(),
             metrics: Arc::clone(&state.metrics),
+            mutations: state.session_tasks.clone(),
+            admission: Arc::clone(&state.http_mutation_admission),
         }
     }
 }
@@ -61,18 +67,35 @@ async fn disconnect(
     State(services): State<Services>,
     VerifiedDisconnectClaims(claims): VerifiedDisconnectClaims,
 ) -> Response {
-    async {
-        for (room_id, user_ids) in &claims.user_ids_by_room {
-            services
-                .room_manager
-                .disconnect_users(room_id, user_ids, &services.media_transport)
-                .await;
+    let permit = match services.admission.acquire_owned().await {
+        Ok(permit) => permit,
+        Err(error) => {
+            warn!(?error, "HTTP mutation admission closed unexpectedly");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
-        services.metrics.record_http_disconnect_success();
-        StatusCode::OK.into_response()
+    };
+    // Request loss must not cancel post-commit effects or free mutation capacity.
+    let task = services.mutations.spawn(
+        async move {
+            let _permit = permit;
+            for (room_id, user_ids) in &claims.user_ids_by_room {
+                services
+                    .room_manager
+                    .disconnect_users(room_id, user_ids, &services.media_transport)
+                    .await;
+            }
+            services.metrics.record_http_disconnect_success();
+            StatusCode::OK.into_response()
+        }
+        .instrument(telemetry::http_request_span("disconnect")),
+    );
+    match task.await {
+        Ok(response) => response,
+        Err(error) => {
+            warn!(?error, "HTTP disconnect task stopped unexpectedly");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
-    .instrument(telemetry::http_request_span("disconnect"))
-    .await
 }
 
 impl FromRequest<RuntimeState> for VerifiedDisconnectClaims {

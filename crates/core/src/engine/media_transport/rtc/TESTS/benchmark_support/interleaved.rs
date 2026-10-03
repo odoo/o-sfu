@@ -14,7 +14,7 @@ use std::{
 };
 
 use o_sfu_router::rtp::{MediaStream as RouterRtpParameters, StreamBinding};
-use str0m::media::Mid;
+use str0m::media::{Frequency, Mid};
 use tokio::sync::{mpsc, oneshot};
 
 use super::super::{
@@ -327,6 +327,7 @@ fn packet(session_handle: SessionHandle, sequence: usize, now: Instant) -> Forwa
         BenchmarkStreamIdentity {
             ssrc: SOURCE_SSRC,
             payload_type: 111,
+            clock_rate: Frequency::NINETY_KHZ,
         },
         Arc::from(payload_for_sequence(sequence)),
     );

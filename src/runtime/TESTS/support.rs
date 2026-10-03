@@ -126,6 +126,11 @@ impl RuntimeTestBuilder {
         self
     }
 
+    pub(super) fn max_http_connections(mut self, value: usize) -> Self {
+        self.config.http.max_http_connections = value;
+        self
+    }
+
     pub(super) fn room_reservation_ttl(mut self, value: Duration) -> Self {
         self.config.user.room_reservation_ttl = value;
         self
