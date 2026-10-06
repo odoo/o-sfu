@@ -227,29 +227,33 @@
 //!
 //! # Packet Path
 //!
-//! [`core::server::transport::MediaTransport`] owns the media workers, which hold the packet loops. These loops receive UDP datagrams, drive WebRTC state (`str0m`), apply route tables and forward RTP.
+//! Each [`core::server::transport::MediaTransport`] worker drives `str0m`, routes
+//! RTP and hands complete network transmits to `RtcEgress`.
 //!
 //! ```text
-//! UDP datagram
-//!     |
-//!     v
-//! worker ingress and `str0m` drain
-//!     |
-//!     v
-//! packet facts (source, RID and codec)
-//!     |
-//!     +-> origin packet sinks
-//!     |
-//!     +-> source and destination packet gates
-//!              |
-//!              +-> relay fanout
-//!              +-> local RTC -> RTP identity and codec rewrite
+//! UDP IN -> UdpIngress -> str0m
+//!                           |
+//!                           +-> RTP packet
+//!                           |     |
+//!                           |     +-> origin sinks
+//!                           |     |
+//!                           |     +-> route gates
+//!                           |           |
+//!                           |           +-> relay fanout
+//!                           |           +-> local RTC (str0m, next drain)
+//!                           |
+//!                           +-> Transmit -> RtcEgress
+//!                                              |
+//!                                              +-> UDP
+//!                                              |     |
+//!                                              |     +-> Tokio -> UDP OUT
+//!                                              |     +-> io_uring (Linux) -> UDP OUT
+//!                                              |
+//!                                              +-> non-UDP -> rejected (WIP)
 //! ```
 //!
-//! Registered origin packet sinks observe publisher packets before route gates,
-//! including publishers without active receivers. Source, relay and receiver
-//! gates then narrow routed fanout. Same-process relays share payload data with
-//! another worker for local delivery.
+//! `RtcEgress` separates RTC output from network I/O: the packet loop stages
+//! complete transmits while egress handles protocol dispatch and socket sends.
 //!
 //! Worker BWE and audio observations feed into room source policy, which updates route gates for later packets.
 //!
@@ -272,15 +276,23 @@
 //!
 //! # Scaling
 //!
-//! Rooms use one [`o_sfu_router::Router`] facade and default to one local router.
-//! [`config::RoomWorkerPolicy`] can enable additional same-process local routers.
-//! Only running workers are eligible. Joins prefer assigned workers with a known
-//! delay below the configured threshold. When none qualifies, a join may attach
-//! an unused healthy worker within the router cap and worker count. Otherwise,
-//! joins reuse a running assigned worker even when it exceeds the delay threshold.
-//! Placements on failed workers do not count toward the cap. If no assigned worker
-//! is running, a later join can attach a fresh placement on another running worker
-//! even under the single-router policy. Admission fails when no worker is running.
+//! Rooms start with one worker. [`config::RoomWorkerPolicy`] can spread new
+//! joins across more workers in the same process, under one [`o_sfu_router::Router`].
+//!
+//! ```text
+//!                        Room -- Router
+//!                         |
+//!                   MediaTransport
+//!              +----------+----------+
+//!              |                     |
+//!         worker A <--- relay ---> worker B
+//!          default                spillover
+//! ```
+//!
+//! Joins reuse a healthy room worker or expand within the cap. Healthy means a
+//! known packet-loop delay below the threshold. Under load, running room workers
+//! remain usable. Failed placements free capacity for replacement.
+//! Admission fails when no worker is running.
 //!
 //! # Feature Flags
 //!
