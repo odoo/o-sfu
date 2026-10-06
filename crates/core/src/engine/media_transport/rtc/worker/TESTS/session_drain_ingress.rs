@@ -39,10 +39,8 @@ use crate::{
                 worker::TESTS::CountingSink,
             },
         },
-        metrics::{
-            RtcMetricsRecorder, RtpForwardDestinationKind, RtpMetricsRecorder, RuntimeMetrics,
-        },
-        packet_sink_registry::RoomPacketSinkRegistry,
+        metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
+        packet_sink_registry::{PacketSinkKind, RoomPacketSinkRegistry},
     },
 };
 
@@ -129,7 +127,7 @@ impl ProducerIngressFixture {
         packet_sinks.register_room(
             session.room_instance_id(),
             Arc::<CountingSink>::clone(&sink),
-            RtpForwardDestinationKind::Recording,
+            PacketSinkKind::Recording,
         );
         Ok(Self {
             state,

@@ -36,10 +36,10 @@ use crate::engine::{
         },
     },
     metrics::{
-        RtcMetricsRecorder, RtpForwardDestinationKind, RtpMetricsRecorder, RuntimeMetrics,
+        RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics,
         test_support::RuntimeMetricsSnapshotTestExt,
     },
-    packet_sink_registry::{PacketSink, RoomPacketSinkRegistry},
+    packet_sink_registry::{PacketSink, PacketSinkKind, RoomPacketSinkRegistry},
 };
 
 #[derive(Default)]
@@ -204,12 +204,12 @@ fn batch_does_not_reuse_a_previous_packets_sink_or_media() {
     harness.packet_sinks.register_room(
         first_session.room_instance_id(),
         Arc::<CapturingSink>::clone(&first_sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     harness.packet_sinks.register_room(
         second_session.room_instance_id(),
         Arc::<CapturingSink>::clone(&second_sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     harness.forward(&mut [
         sample_forwarded_packet(first_session.clone(), "aud-up", b"first"),
@@ -249,13 +249,13 @@ fn successive_batches_refresh_added_replaced_and_removed_sinks() {
     harness.packet_sinks.register_room(
         session.room_instance_id(),
         Arc::<CapturingSink>::clone(&first_sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     harness.forward(&mut [sample_forwarded_packet(session.clone(), "aud-up", b"first")]);
     harness.packet_sinks.register_room(
         session.room_instance_id(),
         Arc::<CapturingSink>::clone(&replacement_sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     harness.forward(&mut [sample_forwarded_packet(
         session.clone(),
@@ -311,7 +311,7 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
     harness.packet_sinks.register_room(
         producer.room_instance_id(),
         Arc::<CapturingSink>::clone(&sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     let updates = harness.source_policy_signal.subscribe();
     let mut packets = [

@@ -33,7 +33,7 @@ pub mod recording {
 /// the registry keeps that routing concern out of packet-loop callers
 pub mod packet_sinks {
     pub use crate::engine::packet_sink_registry::{
-        PacketSink, RegisteredPacketSink, RoomPacketSinkRegistry,
+        PacketSink, PacketSinkKind, RegisteredPacketSink, RoomPacketSinkRegistry,
     };
 }
 

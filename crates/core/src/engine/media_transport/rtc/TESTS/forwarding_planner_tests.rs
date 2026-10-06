@@ -25,7 +25,7 @@ use crate::engine::{
     media_transport::{TransportMediaId, TransportSessionKey},
     metrics::{RtcRouteControlOutcome, RtpForwardDestinationKind, RuntimeMetrics},
     packet_sink_registry::{
-        PacketSink as MediaPacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry,
+        PacketSink as MediaPacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
     },
 };
 
@@ -144,7 +144,7 @@ fn plan_forwards_keeps_recording_and_local_rtc_destinations_together() {
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
         Arc::new(PlannerSink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     let forwards = plan_forwards(
         &state,
@@ -278,7 +278,7 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
         Arc::new(PlannerSink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     state
         .routes
@@ -381,7 +381,7 @@ fn plan_forwards_keeps_relay_packets_out_of_recording_and_second_hop_relay_sinks
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
         Arc::new(PlannerSink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     state
         .routes
@@ -684,7 +684,7 @@ fn plan_forwards_gates_only_the_selected_source_media() {
     packet_sink_registry.register_room(
         gated_producer_session.room_instance_id(),
         Arc::new(PlannerSink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     state
         .routes
@@ -749,7 +749,7 @@ fn plan_forwards_omits_gate_metrics_without_routed_destinations() {
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
         Arc::new(PlannerSink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     populate_forward_routes(
         &state,

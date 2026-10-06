@@ -148,7 +148,6 @@ fn sample_metrics() -> RuntimeMetrics {
     metrics.record_recording_captured_stream();
     let packet_recorder = metrics.register_rtp_worker();
     packet_recorder.record_ingress(1200);
-    packet_recorder.record_egress(900);
     packet_recorder.record_decoder_refresh(RtpDecoderRefreshScope::Rid);
     packet_recorder.record_decoder_refresh(RtpDecoderRefreshScope::Source);
     packet_recorder.record_forwarded(RtpForwardDestinationKind::LocalRtc, 900);
@@ -261,41 +260,70 @@ fn producer_ssrc_binding_metrics_aggregate_workers_with_bounded_outcomes() {
 fn prometheus_export_keeps_rtp_shape_for_worker_recorders() {
     let metrics = RuntimeMetrics::default();
     let first_worker = metrics.register_rtp_worker_for_media_worker(0);
+    let repeated_worker = metrics.register_rtp_worker_for_media_worker(0);
     let second_worker = metrics.register_rtp_worker_for_media_worker(1);
-
+    let unlabeled_worker = metrics.register_rtp_worker();
     first_worker.record_ingress(1200);
-    first_worker.record_egress(900);
     first_worker.record_forwarded(RtpForwardDestinationKind::LocalRtc, 900);
+    repeated_worker.record_ingress(100);
+    repeated_worker.record_forwarded(RtpForwardDestinationKind::LocalRtc, 0);
     second_worker.record_ingress(300);
     second_worker.record_forwarded(RtpForwardDestinationKind::Recording, 300);
-
+    second_worker.record_forwarded(RtpForwardDestinationKind::IntraNodeRelay, 200);
+    unlabeled_worker.record_ingress(50);
+    unlabeled_worker.record_forwarded(RtpForwardDestinationKind::LocalRtc, 25);
     let rendered = render_prometheus(&metrics, RoomGaugeValues::default());
-
-    assert!(rendered.contains("osfu_rtp_packets_total{direction=\"ingress\"} 2"));
-    assert!(rendered.contains("osfu_rtp_payload_bytes_total{direction=\"ingress\"} 1500"));
-    assert!(rendered.contains("osfu_rtp_forwarded_packets_total{destination=\"local_rtc\"} 1"));
-    assert!(
-        rendered.contains("osfu_rtp_forwarded_payload_bytes_total{destination=\"recording\"} 300")
-    );
-    assert!(
-        rendered.contains(
-            "osfu_worker_rtp_packets_total{media_worker_id=\"0\",direction=\"ingress\"} 1"
-        )
-    );
-    assert!(
-        rendered.contains(
-            "osfu_worker_rtp_packets_total{media_worker_id=\"1\",direction=\"ingress\"} 1"
-        )
-    );
-    assert!(rendered.contains(
-        "osfu_worker_rtp_payload_bytes_total{media_worker_id=\"0\",direction=\"egress\"} 900"
-    ));
-    assert!(rendered.contains(
-        "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"0\",destination=\"local_rtc\"} 1"
-    ));
-    assert!(
-        rendered
-            .contains("osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"1\",destination=\"recording\"} 300")
+    let samples = rendered
+        .lines()
+        .filter(|line| {
+            [
+                "osfu_rtp_packets_total{",
+                "osfu_rtp_payload_bytes_total{",
+                "osfu_rtp_forwarded_packets_total{",
+                "osfu_rtp_forwarded_payload_bytes_total{",
+                "osfu_worker_rtp_packets_total{",
+                "osfu_worker_rtp_payload_bytes_total{",
+                "osfu_worker_rtp_forwarded_packets_total{",
+                "osfu_worker_rtp_forwarded_payload_bytes_total{",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        samples,
+        [
+            "osfu_rtp_packets_total{direction=\"ingress\"} 4",
+            "osfu_rtp_packets_total{direction=\"egress\"} 3",
+            "osfu_rtp_payload_bytes_total{direction=\"ingress\"} 1650",
+            "osfu_rtp_payload_bytes_total{direction=\"egress\"} 925",
+            "osfu_rtp_forwarded_packets_total{destination=\"local_rtc\"} 3",
+            "osfu_rtp_forwarded_packets_total{destination=\"recording\"} 1",
+            "osfu_rtp_forwarded_packets_total{destination=\"intra_node_relay\"} 1",
+            "osfu_rtp_forwarded_payload_bytes_total{destination=\"local_rtc\"} 925",
+            "osfu_rtp_forwarded_payload_bytes_total{destination=\"recording\"} 300",
+            "osfu_rtp_forwarded_payload_bytes_total{destination=\"intra_node_relay\"} 200",
+            "osfu_worker_rtp_packets_total{media_worker_id=\"0\",direction=\"ingress\"} 2",
+            "osfu_worker_rtp_packets_total{media_worker_id=\"0\",direction=\"egress\"} 2",
+            "osfu_worker_rtp_packets_total{media_worker_id=\"1\",direction=\"ingress\"} 1",
+            "osfu_worker_rtp_packets_total{media_worker_id=\"1\",direction=\"egress\"} 0",
+            "osfu_worker_rtp_payload_bytes_total{media_worker_id=\"0\",direction=\"ingress\"} 1300",
+            "osfu_worker_rtp_payload_bytes_total{media_worker_id=\"0\",direction=\"egress\"} 900",
+            "osfu_worker_rtp_payload_bytes_total{media_worker_id=\"1\",direction=\"ingress\"} 300",
+            "osfu_worker_rtp_payload_bytes_total{media_worker_id=\"1\",direction=\"egress\"} 0",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"0\",destination=\"local_rtc\"} 2",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"0\",destination=\"recording\"} 0",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"0\",destination=\"intra_node_relay\"} 0",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"1\",destination=\"local_rtc\"} 0",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"1\",destination=\"recording\"} 1",
+            "osfu_worker_rtp_forwarded_packets_total{media_worker_id=\"1\",destination=\"intra_node_relay\"} 1",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"0\",destination=\"local_rtc\"} 900",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"0\",destination=\"recording\"} 0",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"0\",destination=\"intra_node_relay\"} 0",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"1\",destination=\"local_rtc\"} 0",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"1\",destination=\"recording\"} 300",
+            "osfu_worker_rtp_forwarded_payload_bytes_total{media_worker_id=\"1\",destination=\"intra_node_relay\"} 200",
+        ]
     );
 }
 
