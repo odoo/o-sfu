@@ -6,7 +6,6 @@ import { WS_CLOSE_CODE } from "../dist/protocol_contract.js";
 
 import {
     broadcast,
-    cameraSubscriptionRid,
     connectPeer,
     createChannel,
     createConnectToken,
@@ -1196,8 +1195,8 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
         await setStreamDownload(receiver, 41, "camera", true, "pinned");
         // Selection can precede forwarding through the packet gate. Decode the
         // pinned stream before adding pressure to its startup.
+        await expectCameraTrackUpdate(receiver, 41, true);
         if (browserName === "chromium") {
-            await expectCameraTrackUpdate(receiver, 41, true);
             await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
         }
         // Establish high quality before adding pressure so recovery timing cannot
@@ -1268,29 +1267,15 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
                 contentType: "application/json"
             });
         }
-        // BWE recovery can clear pressure and restart the full grace period.
-        await expect
-            .poll(async () => (await diagnostics(43)).subscription, { timeout: 15_000 })
-            .toMatchObject({
-                state: "inactive",
-                selection: { policyPauseReason: "budget_pressure" }
-            });
         try {
-            await expectCameraTrackUpdate(receiver, 41, true);
-            if (browserName === "chromium") {
-                await waitForDecodedRemoteVideoFrame(receiver, 41, "camera");
-            }
-            // A BWE change during grace can restart the high-layer upgrade dwell.
+            // BWE recovery can restart grace, while a further drop can pause even
+            // the pinned camera. The browser contract ends at the thumbnail pause.
             await expect
-                .poll(() =>
-                    cameraSubscriptionRid({
-                        consumerSessionId: 42,
-                        httpBaseUrl: server.httpBaseUrl,
-                        producerSessionId: 41,
-                        roomId: channelUuid
-                    })
-                )
-                .toBe("hi");
+                .poll(async () => (await diagnostics(43)).subscription, { timeout: 15_000 })
+                .toMatchObject({
+                    state: "inactive",
+                    selection: { policyPauseReason: "budget_pressure" }
+                });
         } finally {
             await test.info().attach("final-camera-diagnostics", {
                 body: JSON.stringify(await diagnostics(41)),

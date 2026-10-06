@@ -483,22 +483,6 @@ export async function latestTrackUpdate(page, targetSessionId, targetType) {
     );
 }
 
-export async function cameraSubscriptionRid({
-    consumerSessionId,
-    httpBaseUrl = TEST_SFU_HTTP_BASE_URL,
-    producerSessionId,
-    roomId
-}) {
-    const room = await fetchRoomDiagnostics(httpBaseUrl, roomId);
-    const subscription = room
-        ? cameraSubscription(room, consumerSessionId, producerSessionId)
-        : null;
-    if (!subscription || subscription.state !== "active") {
-        return null;
-    }
-    return subscription.selection?.selectedRid ?? null;
-}
-
 export async function roomUserInfo({ httpBaseUrl = TEST_SFU_HTTP_BASE_URL, roomId, sessionId }) {
     const room = await fetchRoomDiagnostics(httpBaseUrl, roomId);
     const user = room?.users.find((candidate) => userIdsMatch(candidate.userId, sessionId));
@@ -805,16 +789,6 @@ async function fetchRoomDiagnostics(httpBaseUrl, roomId) {
         return null;
     }
     return response.json();
-}
-
-function cameraSubscription(room, consumerSessionId, producerSessionId) {
-    return room.users
-        .find((user) => userIdsMatch(user.userId, consumerSessionId))
-        ?.subscriptions.find(
-            (subscription) =>
-                userIdsMatch(subscription.producerUserId, producerSessionId) &&
-                subscription.streamId === "camera"
-        );
 }
 
 function userIdsMatch(actual, expected) {
