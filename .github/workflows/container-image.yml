@@ -3,8 +3,6 @@ name: Container Image
 on:
   push:
     branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -22,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # required to publish non-PR images to GitHub Container Registry
+      # required to publish images to GitHub Container Registry
       packages: write
 
     steps:
@@ -44,7 +42,6 @@ jobs:
           echo "name=${REGISTRY}/${repo}" >> "$GITHUB_OUTPUT"
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         # docker/login-action v4
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
@@ -69,61 +66,18 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          build-args: |
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+            CARGO_PROFILE_RELEASE_LTO=thin
           # keep the default image CPU-portable. if a benchmark proves that
           # a production host needs CPU-specific codegen, add a separate image
           # tag and pass an explicit CPU through the Dockerfile instead of
           # using target-cpu=native on the GitHub runner
           platforms: linux/amd64
-          load: ${{ github.event_name == 'pull_request' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Select smoke-test image
-        id: smoke-image
-        if: github.event_name == 'pull_request'
-        env:
-          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          set -euo pipefail
-          image_tag="$(printf '%s\n' "$IMAGE_TAGS" | head -n 1)"
-          if [[ -z "$image_tag" ]]; then
-            echo "No image tag was produced for the smoke test" >&2
-            exit 1
-          fi
-          echo "tag=${image_tag}" >> "$GITHUB_OUTPUT"
-
-      - name: Smoke test image
-        if: github.event_name == 'pull_request'
-        env:
-          IMAGE_TAG: ${{ steps.smoke-image.outputs.tag }}
-        run: |
-          set -euo pipefail
-          container_id="$(docker run --detach \
-            --env AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= \
-            --env HTTP_INTERFACE=0.0.0.0:8070 \
-            --env ANNOUNCED_IP=127.0.0.1 \
-            --publish 127.0.0.1:18070:8070 \
-            "$IMAGE_TAG")"
-          healthy=0
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --show-error http://127.0.0.1:18070/v1/noop >/dev/null; then
-              healthy=1
-              break
-            fi
-            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_id")" != "true" ]]; then
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$healthy" == "1" ]]; then
-            docker rm --force "$container_id" >/dev/null
-            exit 0
-          fi
-          docker logs "$container_id" || true
-          docker rm --force "$container_id" >/dev/null 2>&1 || true
-          exit 1

@@ -178,8 +178,8 @@ service. the tag is selected by the `image` value in the compose file after
 environment interpolation, not by the service name.
 
 only release-tag image builds carry Docker provenance, SBOM and GitHub image
-attestations. `master`, commit-addressable `sha-<commit>` images and pull
-request smoke-test images are intentionally not attested.
+attestations. `master` and commit-addressable `sha-<commit>` images are
+intentionally not attested.
 
 you can verify a release image before updating production:
 
