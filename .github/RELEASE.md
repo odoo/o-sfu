@@ -12,8 +12,8 @@ commits.
 
 the `Release` workflow also publishes the version-tag container image. only
 those version-tag image builds get Docker provenance, SBOM and GitHub image
-attestations. `master`, commit-addressable `sha-<commit>` images and pull
-request smoke-test images are intentionally not attested.
+attestations. `master` and commit-addressable `sha-<commit>` images are
+intentionally not attested.
 
 suffixed tags, such as `v0.3.1-rc.1` or `v0.3.1-test.20260605`, are
 published as GitHub prereleases and are explicitly not marked as the latest
