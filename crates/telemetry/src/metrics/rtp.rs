@@ -4,11 +4,10 @@ use std::{
 };
 
 use super::{
-    counter::{MetricLabel, PaddedCounterFamily},
+    counter::{MetricLabel, PaddedCounter, PaddedCounterFamily},
     labels::{RtpDecoderRefreshScope, RtpFlowDirection, RtpForwardDestinationKind},
 };
 
-const RTP_FLOW_DIRECTION_COUNT: usize = <RtpFlowDirection as MetricLabel>::COUNT;
 const RTP_FORWARD_DESTINATION_COUNT: usize = <RtpForwardDestinationKind as MetricLabel>::COUNT;
 const RTP_DECODER_REFRESH_SCOPE_COUNT: usize = <RtpDecoderRefreshScope as MetricLabel>::COUNT;
 
@@ -19,8 +18,8 @@ const RTP_DECODER_REFRESH_SCOPE_COUNT: usize = <RtpDecoderRefreshScope as Metric
 /// registered recorders during scrape capture.
 #[derive(Debug, Default)]
 pub struct RtpMetricsRecorder {
-    packets: PaddedCounterFamily<RtpFlowDirection>,
-    payload_bytes: PaddedCounterFamily<RtpFlowDirection>,
+    ingress_packets: PaddedCounter,
+    ingress_payload_bytes: PaddedCounter,
     forwarded_packets: PaddedCounterFamily<RtpForwardDestinationKind>,
     forwarded_payload_bytes: PaddedCounterFamily<RtpForwardDestinationKind>,
     decoder_refreshes: PaddedCounterFamily<RtpDecoderRefreshScope>,
@@ -28,17 +27,16 @@ pub struct RtpMetricsRecorder {
 
 impl RtpMetricsRecorder {
     pub fn record_ingress(&self, payload_bytes: usize) {
-        self.packets.increment(RtpFlowDirection::Ingress);
-        self.payload_bytes
-            .add(RtpFlowDirection::Ingress, payload_bytes);
+        self.ingress_packets.increment();
+        self.ingress_payload_bytes.add(payload_bytes);
     }
 
-    pub fn record_egress(&self, payload_bytes: usize) {
-        self.packets.increment(RtpFlowDirection::Egress);
-        self.payload_bytes
-            .add(RtpFlowDirection::Egress, payload_bytes);
-    }
-
+    /// Records one RTP forwarding event supplied by the caller.
+    ///
+    /// `LocalRtc` means successful local RTC queuing and also supplies the
+    /// egress series. Pass the payload length returned by the local send.
+    /// Socket delivery is not counted.
+    /// Updates are additive and safe for concurrent callers.
     pub fn record_forwarded(&self, destination: RtpForwardDestinationKind, payload_bytes: usize) {
         self.forwarded_packets.increment(destination);
         self.forwarded_payload_bytes.add(destination, payload_bytes);
@@ -152,22 +150,27 @@ impl RtpWorkerMetricsSnapshot {
 
 #[derive(Debug, Default)]
 pub(super) struct RtpTrafficSnapshot {
-    packets: [u64; RTP_FLOW_DIRECTION_COUNT],
-    payload_bytes: [u64; RTP_FLOW_DIRECTION_COUNT],
+    ingress_packets: u64,
+    ingress_payload_bytes: u64,
     forwarded_packets: [u64; RTP_FORWARD_DESTINATION_COUNT],
     forwarded_payload_bytes: [u64; RTP_FORWARD_DESTINATION_COUNT],
 }
 
 impl RtpTrafficSnapshot {
     pub(super) fn packets(&self, direction: RtpFlowDirection) -> u64 {
-        self.packets.get(direction.as_index()).copied().unwrap_or(0)
+        match direction {
+            RtpFlowDirection::Ingress => self.ingress_packets,
+            RtpFlowDirection::Egress => self.forwarded_packets(RtpForwardDestinationKind::LocalRtc),
+        }
     }
 
     pub(super) fn payload_bytes(&self, direction: RtpFlowDirection) -> u64 {
-        self.payload_bytes
-            .get(direction.as_index())
-            .copied()
-            .unwrap_or(0)
+        match direction {
+            RtpFlowDirection::Ingress => self.ingress_payload_bytes,
+            RtpFlowDirection::Egress => {
+                self.forwarded_payload_bytes(RtpForwardDestinationKind::LocalRtc)
+            }
+        }
     }
 
     pub(super) fn forwarded_packets(&self, destination: RtpForwardDestinationKind) -> u64 {
@@ -185,42 +188,17 @@ impl RtpTrafficSnapshot {
     }
 
     fn add_recorder(&mut self, recorder: &RtpMetricsRecorder) {
-        for direction in <RtpFlowDirection as MetricLabel>::VARIANTS {
-            self.add_flow(
-                *direction,
-                recorder.packets.load(*direction),
-                recorder.payload_bytes.load(*direction),
-            );
-        }
-        for destination in <RtpForwardDestinationKind as MetricLabel>::VARIANTS {
-            self.add_forwarded(
-                *destination,
-                recorder.forwarded_packets.load(*destination),
-                recorder.forwarded_payload_bytes.load(*destination),
-            );
-        }
-    }
-
-    fn add_flow(&mut self, direction: RtpFlowDirection, packets: u64, payload_bytes: u64) {
-        if let Some(counter) = self.packets.get_mut(direction.as_index()) {
-            *counter = counter.saturating_add(packets);
-        }
-        if let Some(counter) = self.payload_bytes.get_mut(direction.as_index()) {
-            *counter = counter.saturating_add(payload_bytes);
-        }
-    }
-
-    fn add_forwarded(
-        &mut self,
-        destination: RtpForwardDestinationKind,
-        packets: u64,
-        payload_bytes: u64,
-    ) {
-        if let Some(counter) = self.forwarded_packets.get_mut(destination.as_index()) {
-            *counter = counter.saturating_add(packets);
-        }
-        if let Some(counter) = self.forwarded_payload_bytes.get_mut(destination.as_index()) {
-            *counter = counter.saturating_add(payload_bytes);
-        }
+        self.ingress_packets = self
+            .ingress_packets
+            .saturating_add(recorder.ingress_packets.load());
+        self.ingress_payload_bytes = self
+            .ingress_payload_bytes
+            .saturating_add(recorder.ingress_payload_bytes.load());
+        recorder
+            .forwarded_packets
+            .accumulate_into(&mut self.forwarded_packets);
+        recorder
+            .forwarded_payload_bytes
+            .accumulate_into(&mut self.forwarded_payload_bytes);
     }
 }

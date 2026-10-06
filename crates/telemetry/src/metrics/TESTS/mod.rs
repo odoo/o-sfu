@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Barrier, thread, time::Duration};
 
 use o_sfu_model::WebSocketCloseCode;
 
@@ -341,7 +341,6 @@ fn metrics_snapshot_tracks_live_gauges_and_rtp_counters() {
     metrics.record_recording_captured_stream();
     let packet_recorder = metrics.register_rtp_worker();
     packet_recorder.record_ingress(1200);
-    packet_recorder.record_egress(900);
     packet_recorder.record_decoder_refresh(RtpDecoderRefreshScope::Rid);
     packet_recorder.record_decoder_refresh(RtpDecoderRefreshScope::Source);
     packet_recorder.record_forwarded(RtpForwardDestinationKind::LocalRtc, 900);
@@ -422,6 +421,32 @@ fn metrics_snapshot_keeps_rtp_counts_after_worker_handle_drop() {
 
     assert_eq!(snapshot.rtp_packets_ingress(), 2);
     assert_eq!(snapshot.rtp_payload_bytes_ingress(), 150);
+}
+
+#[test]
+fn concurrent_local_forwarding_preserves_totals() {
+    const EVENTS_PER_WRITER: u64 = 4096;
+    let metrics = RuntimeMetrics::default();
+    let recorder = metrics.register_rtp_worker_for_media_worker(7);
+    let start = Barrier::new(3);
+    thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                start.wait();
+                for event in 0..EVENTS_PER_WRITER {
+                    recorder.record_forwarded(RtpForwardDestinationKind::LocalRtc, 5);
+                    if event % 64 == 0 {
+                        // Concurrent captures must not consume recorded traffic.
+                        drop(metrics.snapshot());
+                    }
+                }
+            });
+        }
+        start.wait();
+    });
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot.rtp_packets_egress(), 2 * EVENTS_PER_WRITER);
+    assert_eq!(snapshot.rtp_payload_bytes_egress(), 10 * EVENTS_PER_WRITER);
 }
 
 #[test]

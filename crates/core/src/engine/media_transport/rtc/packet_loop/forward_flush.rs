@@ -488,7 +488,6 @@ pub(in super::super) fn flush_packet_forwards(
         match destination {
             ForwardingDestination::LocalRtc(destination) => {
                 if let Some(payload_len) = destination.send(state, packet) {
-                    rtp_metrics.record_egress(payload_len);
                     rtp_metrics.record_forwarded(RtpForwardDestinationKind::LocalRtc, payload_len);
                 }
             }

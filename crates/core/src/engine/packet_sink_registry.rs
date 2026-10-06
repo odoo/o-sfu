@@ -40,21 +40,25 @@ pub trait PacketSink: Send + Sync {
     );
 }
 
+/// Forwarding labels available to source-side packet sinks.
+///
+/// Local RTC egress requires a successful RTC send and cannot be reported by a sink.
+#[derive(Clone, Copy, Debug)]
+pub enum PacketSinkKind {
+    Recording,
+    IntraNodeRelay,
+}
+
 #[derive(Clone)]
 pub struct RegisteredPacketSink {
     sink: Arc<dyn PacketSink>,
-    forward_destination_kind: RtpForwardDestinationKind,
+    kind: PacketSinkKind,
 }
 
 impl RegisteredPacketSink {
-    pub fn new(
-        sink: Arc<dyn PacketSink>,
-        forward_destination_kind: RtpForwardDestinationKind,
-    ) -> Self {
-        Self {
-            sink,
-            forward_destination_kind,
-        }
+    /// Registers a source-side sink without local RTC egress accounting.
+    pub fn new(sink: Arc<dyn PacketSink>, kind: PacketSinkKind) -> Self {
+        Self { sink, kind }
     }
 
     pub fn record_packet(
@@ -70,7 +74,10 @@ impl RegisteredPacketSink {
 
     #[must_use]
     pub const fn forward_destination_kind(&self) -> RtpForwardDestinationKind {
-        self.forward_destination_kind
+        match self.kind {
+            PacketSinkKind::Recording => RtpForwardDestinationKind::Recording,
+            PacketSinkKind::IntraNodeRelay => RtpForwardDestinationKind::IntraNodeRelay,
+        }
     }
 }
 
@@ -78,7 +85,7 @@ impl fmt::Debug for RegisteredPacketSink {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RegisteredPacketSink")
-            .field("forward_destination_kind", &self.forward_destination_kind)
+            .field("kind", &self.kind)
             .finish_non_exhaustive()
     }
 }
@@ -162,13 +169,10 @@ impl RoomPacketSinkRegistry {
         &self,
         room_instance_id: RoomInstanceId,
         sink: Arc<dyn PacketSink>,
-        forward_destination_kind: RtpForwardDestinationKind,
+        kind: PacketSinkKind,
     ) {
         let mut active_rooms = write_unpoisoned(&self.active_rooms);
-        active_rooms.insert(
-            room_instance_id,
-            RegisteredPacketSink::new(sink, forward_destination_kind),
-        );
+        active_rooms.insert(room_instance_id, RegisteredPacketSink::new(sink, kind));
         self.any_active.store(true, Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
         drop(active_rooms);

@@ -99,13 +99,12 @@ use crate::{
             TransportMediaId, TransportSessionKey, TransportSourceKey,
         },
         metrics::{
-            RtcMetricsRecorder, RtcNackDirection, RtcRouteControlOutcome,
-            RtpForwardDestinationKind, RtpMetricsRecorder, RuntimeMetrics,
-            test_support::RuntimeMetricsSnapshotTestExt,
+            RtcMetricsRecorder, RtcNackDirection, RtcRouteControlOutcome, RtpMetricsRecorder,
+            RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
         },
         packet_sink_registry::{
-            PacketSink as MediaPacketSink, PacketSinkRouteCache, RegisteredPacketSink,
-            RoomPacketSinkRegistry,
+            PacketSink as MediaPacketSink, PacketSinkKind, PacketSinkRouteCache,
+            RegisteredPacketSink, RoomPacketSinkRegistry,
         },
         room::TESTS::tracing::{assert_exact, capture},
     },
@@ -843,10 +842,7 @@ impl PacketLoopHarness {
         self.assert_only_packet();
         self.forwards.push(ForwardingDestination::from_packet_sink(
             src_media,
-            RegisteredPacketSink::new(
-                Arc::<CountingSink>::clone(sink),
-                RtpForwardDestinationKind::Recording,
-            ),
+            RegisteredPacketSink::new(Arc::<CountingSink>::clone(sink), PacketSinkKind::Recording),
         ));
     }
 
@@ -1147,7 +1143,7 @@ fn recording_forward_destination_captures_packets_without_bypassing_the_contract
     packet_sink_registry.register_room(
         producer_session.room_instance_id(),
         Arc::<CountingSink>::clone(&sink),
-        RtpForwardDestinationKind::Recording,
+        PacketSinkKind::Recording,
     );
     harness
         .buffers
@@ -1359,6 +1355,66 @@ fn inactive_source_ignores_late_rid_readiness_and_first_ingress_feedback() {
 }
 
 #[test]
+fn flush_packet_forwards_counts_each_local_queue_once() -> Result<(), &'static str> {
+    for fanout in [0_u64, 1, 8] {
+        let producer = test_transport_session_key(81, 0, 1, UserId::Integer(1));
+        let src_media = TransportMediaId::new(81);
+        let mid = Mid::from("cam-down");
+        let mut harness = PacketLoopHarness::new();
+        for index in 0..fanout {
+            let consumer = test_transport_session_key(81, 0, index + 2, UserId::Integer(2));
+            declare_video_tx(&mut harness.state, &consumer, 45_053, mid, 227_001);
+            let stream = harness
+                .state
+                .users
+                .get_mut(&consumer)
+                .ok_or("consumer session missing")?
+                .consumer_streams
+                .allocate(mid);
+            insert_open_route(
+                &mut harness.state,
+                src_media,
+                &consumer,
+                TransportMediaId::new(index + 82),
+                stream,
+                mid,
+            );
+            harness
+                .forwards
+                .push(ForwardingDestination::from_local_route_destination(
+                    src_media,
+                    usize::try_from(index).map_err(|_error| "fanout index")?,
+                ));
+        }
+        let mut packets = 0;
+        let mut bytes = 0;
+        for payload in [b"short".as_slice(), b"a longer payload".as_slice()] {
+            harness.buffers.pending_packets.clear();
+            harness
+                .buffers
+                .pending_packets
+                .push(sample_forwarded_packet(producer.clone(), "cam-up", payload));
+            flush_only_packet_forwards(
+                &mut harness.state,
+                &harness.metrics,
+                &harness.rtp_metrics,
+                &harness.rtc_metrics,
+                &harness.buffers,
+                &harness.forwards,
+            );
+            packets += fanout;
+            bytes += fanout * u64::try_from(payload.len()).map_err(|_error| "payload length")?;
+            let snapshot = harness.metrics.snapshot();
+            assert_eq!(snapshot.rtp_packets_egress(), packets);
+            assert_eq!(snapshot.rtp_payload_bytes_egress(), bytes);
+            assert_eq!(snapshot.rtp_forwarded_packets_local_rtc(), packets);
+            assert_eq!(snapshot.rtp_forwarded_payload_bytes_local_rtc(), bytes);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn flush_packet_forwards_records_non_local_forwarding_volume_by_destination() {
     let source_session = test_transport_session_key(118, 0, 119, UserId::Integer(120));
     let src_media = TransportMediaId::new(121);
@@ -1396,6 +1452,7 @@ fn flush_packet_forwards_records_non_local_forwarding_volume_by_destination() {
     assert_eq!(snapshot.rtp_forwarded_payload_bytes_local_rtc(), 0);
     assert_eq!(snapshot.rtp_forwarded_payload_bytes_recording(), 7);
     assert_eq!(snapshot.rtp_forwarded_payload_bytes_intra_node_relay(), 7);
+    assert_eq!(snapshot.rtp_packets_egress(), 0);
     assert_eq!(snapshot.rtp_payload_bytes_egress(), 0);
     assert_eq!(snapshot.rtc_relay_enqueue_intra_node_enqueued(), 1);
     assert_eq!(snapshot.rtc_relay_mailbox_depth_samples(), 1);
@@ -1638,10 +1695,11 @@ fn flush_packet_forwards_drops_stale_local_consumer_stream_handle() -> Result<()
     );
 
     assert!(drain_ready_sessions(&mut harness.state).is_empty());
-    assert_eq!(
-        harness.metrics.snapshot().rtp_forwarded_packets_local_rtc(),
-        0
-    );
+    let snapshot = harness.metrics.snapshot();
+    assert_eq!(snapshot.rtp_forwarded_packets_local_rtc(), 0);
+    assert_eq!(snapshot.rtp_forwarded_payload_bytes_local_rtc(), 0);
+    assert_eq!(snapshot.rtp_packets_egress(), 0);
+    assert_eq!(snapshot.rtp_payload_bytes_egress(), 0);
     assert_eq!(egress_bitrate.last_observed_age(received_at), None);
     Ok(())
 }

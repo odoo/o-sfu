@@ -13,7 +13,9 @@ use crate::engine::{
         test_support::{ForwardedPacket, sample_forwarded_packet, test_transport_session_key},
     },
     metrics::RtpForwardDestinationKind,
-    packet_sink_registry::{PacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry},
+    packet_sink_registry::{
+        PacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
+    },
 };
 
 struct CountingSink {
@@ -47,7 +49,7 @@ fn register_recording_sink<T>(
 ) where
     T: PacketSink + 'static,
 {
-    registry.register_room(room_instance_id, sink, RtpForwardDestinationKind::Recording);
+    registry.register_room(room_instance_id, sink, PacketSinkKind::Recording);
 }
 
 fn write_packet(
@@ -79,17 +81,28 @@ fn packet_sink_registry_exposes_the_active_room_sink_for_forwarding_destinations
             .sink_for_room(RoomInstanceId::from_raw(10))
             .is_none()
     );
-    register_recording_sink(
-        &registry,
-        RoomInstanceId::from_raw(10),
-        Arc::<CountingSink>::clone(&sink),
-    );
-
-    assert!(
-        registry
-            .sink_for_room(RoomInstanceId::from_raw(10))
-            .is_some()
-    );
+    for (kind, expected) in [
+        (
+            PacketSinkKind::Recording,
+            RtpForwardDestinationKind::Recording,
+        ),
+        (
+            PacketSinkKind::IntraNodeRelay,
+            RtpForwardDestinationKind::IntraNodeRelay,
+        ),
+    ] {
+        registry.register_room(
+            RoomInstanceId::from_raw(10),
+            Arc::<CountingSink>::clone(&sink),
+            kind,
+        );
+        assert_eq!(
+            registry
+                .sink_for_room(RoomInstanceId::from_raw(10))
+                .map(|sink| sink.forward_destination_kind()),
+            Some(expected),
+        );
+    }
     assert!(
         registry
             .sink_for_room(RoomInstanceId::from_raw(11))

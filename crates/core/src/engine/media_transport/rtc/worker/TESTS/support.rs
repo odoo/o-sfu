@@ -399,10 +399,8 @@ mod worker_exit_tests {
                     test_support::{sample_already_relayed_packet, test_transport_session_key},
                 },
             },
-            metrics::{
-                MetricName, RtpForwardDestinationKind, test_support::RuntimeMetricsSnapshotLookup,
-            },
-            packet_sink_registry::{PacketSink, RegisteredPacketSink},
+            metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+            packet_sink_registry::{PacketSink, PacketSinkKind, RegisteredPacketSink},
         },
     };
 
@@ -427,10 +425,7 @@ mod worker_exit_tests {
         let other_worker = RtcWorker::default();
         let session_key = test_transport_session_key(1, 0, 1, UserId::Integer(1));
         assert_eq!(failed_worker.session_transport_health(&session_key), None);
-        let sink = RegisteredPacketSink::new(
-            Arc::new(PanickingSink),
-            RtpForwardDestinationKind::Recording,
-        );
+        let sink = RegisteredPacketSink::new(Arc::new(PanickingSink), PacketSinkKind::Recording);
         let metrics = Arc::clone(&failed_worker.metrics);
         let packet_recorder = metrics.register_rtp_worker();
         let control_recorder = metrics.register_rtc_worker();

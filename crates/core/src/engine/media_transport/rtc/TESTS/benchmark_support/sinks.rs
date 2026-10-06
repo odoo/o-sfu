@@ -19,11 +19,10 @@ use super::super::{
 use crate::engine::{
     UserId,
     media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::{
-        RtcMetricsRecorder, RtcRouteControlOutcome, RtpForwardDestinationKind, RtpMetricsRecorder,
-        RuntimeMetrics,
+    metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RtpMetricsRecorder, RuntimeMetrics},
+    packet_sink_registry::{
+        PacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
     },
-    packet_sink_registry::{PacketSink, PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
 
 pub const PACKET_SINK_FANOUT_TURNS: usize = 512;
@@ -91,7 +90,7 @@ impl PacketSinkFanoutBenchFixture {
         packet_sinks.register_room(
             source_session.room_instance_id(),
             Arc::<CountingPacketSink>::clone(&sink),
-            RtpForwardDestinationKind::Recording,
+            PacketSinkKind::Recording,
         );
         let mut packet_sink_cache = PacketSinkRouteCache::default();
         packet_sink_cache.refresh_from(&packet_sinks);
