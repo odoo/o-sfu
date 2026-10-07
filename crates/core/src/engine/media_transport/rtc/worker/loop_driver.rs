@@ -67,7 +67,7 @@ use super::{
 #[cfg(feature = "internal-benchmarks")]
 use crate::engine::media_transport::TransportSessionKey;
 use crate::engine::{
-    media_transport::SourcePolicySignal,
+    media_transport::{SourcePolicySignal, rtc::UfragWorkerMap},
     metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
     packet_sink_registry::RoomPacketSinkRegistry,
 };
@@ -520,11 +520,13 @@ pub async fn run_packet_loop(
     bitrate_registry: Arc<Mutex<BitrateRegistry>>,
     snapshot_state: Arc<Mutex<RtcSnapshotState>>,
     mut inputs: PacketLoopInputReceivers,
+    ufrag_worker_map: UfragWorkerMap,
 ) {
     // transport media ids must start from the worker-assigned range so relay
     // maps can use the media id alone across workers
     let mut packet_loop_state = PacketLoopState {
         next_media_id: config.worker.media_id_base,
+        ufrag_worker_map,
         ..PacketLoopState::default()
     };
     // demux recovery is cached outside durable RTC state because any topology

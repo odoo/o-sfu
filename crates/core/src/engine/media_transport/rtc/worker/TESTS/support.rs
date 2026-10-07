@@ -4,7 +4,7 @@ use str0m::media::Mid;
 #[cfg(test)]
 use {
     super::super::{
-        RtpProfile,
+        RtpProfile, WorkerAssignment,
         test_support::{
             RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
         },
@@ -38,6 +38,8 @@ use super::{
     },
     RtcWorker,
 };
+#[cfg(test)]
+use crate::engine::media_transport::rtc::UfragWorkerMap;
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::media_transport::{TransportMediaId, TransportQualitySample};
 use crate::{
@@ -157,7 +159,33 @@ impl RtcWorker {
 
     #[cfg(test)]
     pub async fn debug_has_any_remote_addr_session(&self) -> Result<bool, DebugProbeUnavailable> {
-        self.read_debug_worker(|state, _context| !state.remote_addr_demux.is_empty())
+        self.read_debug_worker(|state, _context| {
+            !state.remote_addr_demux.is_empty() || !state.ufrag_registry.is_empty()
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn debug_session_ufrag(
+        &self,
+        session_key: &TransportSessionKey,
+    ) -> Result<Option<String>, DebugProbeUnavailable> {
+        let owned_session_key = session_key.clone();
+        self.read_debug_worker(move |state, _context| {
+            state
+                .users
+                .get(&owned_session_key)
+                .map(|session_state| session_state.local_ice_ufrag.clone())
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn debug_ufrag_worker(
+        &self,
+        ufrag: String,
+    ) -> Result<Option<MediaWorkerId>, DebugProbeUnavailable> {
+        self.read_debug_worker(move |state, _context| state.ufrag_worker_map.get(&ufrag))
             .await
     }
 
@@ -364,11 +392,14 @@ impl RtcWorker {
         Self::start(
             &config,
             Arc::new(profile),
-            config.rtc_port_range,
+            WorkerAssignment {
+                rtc_port_range: config.rtc_port_range,
+                media_id_base: 0,
+                media_worker_id: MediaWorkerId::from_raw(0),
+            },
             &test_media_transport_deps(),
             SourcePolicySignal::default(),
-            0,
-            MediaWorkerId::from_raw(0),
+            UfragWorkerMap::default(),
         )
         .expect("test RTC worker should start")
     }

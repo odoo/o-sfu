@@ -9,7 +9,10 @@ use super::{
     config::{MediaTransportConfig, MediaTransportDeps},
     rtc::{RtcWorker, RtpProfile},
 };
-use crate::{MediaWorkerId, RtcUdpIoBackend};
+use crate::{
+    MediaWorkerId, RtcUdpIoBackend,
+    engine::media_transport::rtc::{UfragWorkerMap, WorkerAssignment},
+};
 
 /// Per-worker [`TransportMediaId`](crate::engine::media_transport::TransportMediaId)
 /// allocation stride.
@@ -64,6 +67,7 @@ impl MediaTransport {
                 .map_err(|_error| MediaTransportBuildError::InvalidRtpProfile)?,
         );
         let source_policy_signal = SourcePolicySignal::default();
+        let ufrag_worker_map = UfragWorkerMap::default();
         let workers: Arc<[_]> = (0_u16..u16::MAX)
             .zip(worker_ranges)
             .map(|(worker_index, range)| {
@@ -72,11 +76,14 @@ impl MediaTransport {
                 RtcWorker::start(
                     &config,
                     Arc::clone(&profile),
-                    range,
+                    WorkerAssignment {
+                        rtc_port_range: range,
+                        media_id_base: u64::from(worker_index) * MEDIA_ID_STRIDE,
+                        media_worker_id: MediaWorkerId::from_raw(usize::from(worker_index)),
+                    },
                     &deps,
                     source_policy_signal.clone(),
-                    u64::from(worker_index) * MEDIA_ID_STRIDE,
-                    MediaWorkerId::from_raw(usize::from(worker_index)),
+                    ufrag_worker_map.clone(),
                 )
                 .map_err(|_error| MediaTransportBuildError::WorkerStartup {
                     worker_index: usize::from(worker_index),

@@ -33,7 +33,10 @@ use super::{
     routing_miss::{DemuxRecoveryState, PacketLoopRoutingMissKey},
 };
 use crate::engine::{
-    media_transport::TransportSessionKey,
+    media_transport::{
+        TransportSessionKey,
+        rtc::{UfragWorkerMap, state::ufrag_registry::UfragRegistry},
+    },
     metrics::{RtcDatagramDropReason, RtcDatagramRoutePath, RtcMetricsRecorder},
 };
 
@@ -297,17 +300,17 @@ fn route_cached_pkt(
 fn indexed_session_for_pkt(
     sessions: &SessionStore,
     remote_addr_demux: &mut RemoteAddrDemux,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: &[u8],
+    route: &PacketRouteContext<'_>,
+    ufrag_registry: &mut UfragRegistry,
+    ufrag_worker_map: &UfragWorkerMap,
     input: &Input<'_>,
 ) -> IndexedSessionRecoveryOutcome {
-    let Some(packet_index_probe) = packet_index_probe(source_addr, packet) else {
+    let Some(packet_index_probe) = packet_index_probe(route.source_addr, route.packet) else {
         return IndexedSessionRecoveryOutcome::Malformed;
     };
     let candidate_session_keys = match &packet_index_probe {
         PacketIndexProbe::LocalIceUfrag(local_ice_ufrag) => {
-            CandidateSessionKeys::Single(remote_addr_demux.session_for_local_ufrag(local_ice_ufrag))
+            CandidateSessionKeys::Single(ufrag_registry.session_for(local_ice_ufrag))
         }
         PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => remote_addr_demux
             .candidates_for_src_addr(*remote_candidate_addr)
@@ -340,12 +343,14 @@ fn indexed_session_for_pkt(
     };
     for stale_session_key in &stale_session_keys {
         remote_addr_demux.forget_user_remote_candidates(stale_session_key);
-        remote_addr_demux.forget_user_local_ice_ufrag(stale_session_key);
+        if let Some(ufrag) = ufrag_registry.forget_session(stale_session_key) {
+            ufrag_worker_map.remove(&ufrag);
+        }
     }
     if let Some(matched_session_key) = matched_session_key {
         debug!(
-            source_addr = %source_addr,
-            candidate_addr = %candidate_addr,
+            source_addr = %route.source_addr,
+            candidate_addr = %route.candidate_addr,
             probe = %packet_index_probe,
             user_id = ?matched_session_key.user_id(),
             media_worker_id = matched_session_key.media_worker_id().as_usize(),
@@ -358,8 +363,8 @@ fn indexed_session_for_pkt(
         };
     }
     debug!(
-        source_addr = %source_addr,
-        candidate_addr = %candidate_addr,
+        source_addr = %route.source_addr,
+        candidate_addr = %route.candidate_addr,
         probe = %packet_index_probe,
         examined_sessions,
         "packet probe did not match any rtc user"
@@ -588,9 +593,9 @@ fn route_pkt_by_recovery(
     let session_key = match indexed_session_for_pkt(
         &state.users,
         &mut state.remote_addr_demux,
-        route.source_addr,
-        route.candidate_addr,
-        route.packet,
+        route,
+        &mut state.ufrag_registry,
+        &state.ufrag_worker_map,
         &input,
     ) {
         IndexedSessionRecoveryOutcome::Matched {

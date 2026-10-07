@@ -318,3 +318,30 @@ async fn rtc_transport_concurrent_last_session_close_keeps_worker_reusable() {
     let next_session_key = transport_key(4, 303, UserId::Integer(303));
     let _offer = expect_initial_offer(&adapter, &next_session_key).await;
 }
+
+#[tokio::test]
+async fn rtc_transport_close_session_cleans_ufrag_worker_map() {
+    let adapter = RtcWorker::default();
+    let session_key = transport_key(1, 140, UserId::Integer(140));
+    let _offer = expect_initial_offer(&adapter, &session_key).await;
+    let ufrag = adapter
+        .debug_session_ufrag(&session_key)
+        .await
+        .expect("test probe must complete")
+        .expect("session should have a local ICE ufrag");
+    assert_eq!(
+        adapter
+            .debug_ufrag_worker(ufrag.clone())
+            .await
+            .expect("test probe must complete"),
+        Some(session_key.media_worker_id())
+    );
+    assert!(adapter.close_session(&session_key).await.is_ok());
+    assert_eq!(
+        adapter
+            .debug_ufrag_worker(ufrag)
+            .await
+            .expect("test probe must complete"),
+        None
+    );
+}

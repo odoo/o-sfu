@@ -11,13 +11,16 @@ use std::sync::Arc;
 
 use tokio::runtime::{Builder, Runtime};
 
-use super::super::{RtcWorker, RtpProfile, test_support::test_transport_session_key};
+use super::super::{
+    RtcWorker, RtpProfile, WorkerAssignment, test_support::test_transport_session_key,
+};
 use crate::{
     MediaWorkerId, RtcPortRange,
     engine::{
         UserId,
         media_transport::{
             SourcePolicySignal, TransportSessionKey,
+            rtc::UfragWorkerMap,
             test_support::{test_media_transport_config, test_media_transport_deps},
         },
     },
@@ -36,11 +39,14 @@ fn benchmark_worker(rtc_port_range: RtcPortRange) -> RtcWorker {
     RtcWorker::start(
         &config,
         Arc::new(profile),
-        rtc_port_range,
+        WorkerAssignment {
+            rtc_port_range,
+            media_id_base: 0,
+            media_worker_id: MediaWorkerId::from_raw(0),
+        },
         &test_media_transport_deps(),
         SourcePolicySignal::default(),
-        0,
-        MediaWorkerId::from_raw(0),
+        UfragWorkerMap::default(),
     )
     .expect("benchmark RTC worker should start")
 }

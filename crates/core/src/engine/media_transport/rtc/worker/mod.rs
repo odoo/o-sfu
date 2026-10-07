@@ -34,6 +34,7 @@ pub use self::{
 pub use self::{
     delay::PacketLoopDelaySnapshot,
     input::PacketLoopInputReceivers,
+    lifecycle::WorkerAssignment,
     loop_driver::{PacketLoopConfig, run_packet_loop},
 };
 

@@ -518,9 +518,13 @@ fn ensure_session_ready_for_offer(
             bitrate.register_session_egress(session_key, Arc::clone(&session_state.egress_bitrate));
         }
         let local_ice_ufrag_changed = state
-            .remote_addr_demux
-            .remember_local_ice_ufrag(&session_state.local_ice_ufrag, session_key);
+            .ufrag_registry
+            .remember(&session_state.local_ice_ufrag, session_key);
         if created_session || local_ice_ufrag_changed {
+            state.ufrag_worker_map.insert(
+                &session_state.local_ice_ufrag,
+                session_key.media_worker_id(),
+            );
             debug!(
                 user_id = ?session_key.user_id(),
                 media_worker_id = session_key.media_worker_id().as_usize(),
