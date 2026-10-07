@@ -3110,8 +3110,8 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
         assert!(
             harness
                 .packet_loop_state
-                .remote_addr_demux
-                .remember_local_ice_ufrag(&local_ufrag, session_key,)
+                .ufrag_registry
+                .remember(&local_ufrag, session_key,)
         );
     }
     for (session_index, session_key) in sibling_sessions.iter().enumerate() {

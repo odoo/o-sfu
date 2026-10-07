@@ -59,11 +59,11 @@ pub(super) use commands::{ParsedSessionAnswer, RtcSessionOffer};
 pub use commands::{
     RtcWorkerCommand, RtcWorkerResponse, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
 };
-pub use worker::RtcWorker;
+pub use worker::{RtcWorker, WorkerAssignment};
 
 #[cfg(any(test, feature = "testing-transport"))]
 pub use self::packet_loop::forwarded_packet::ForwardedPacket;
-pub(super) use self::state::route_control::PacketLayerGate;
+pub(super) use self::state::{route_control::PacketLayerGate, ufrag_worker_map::UfragWorkerMap};
 
 #[derive(Clone, Debug)]
 struct RtcWorkerConfig {

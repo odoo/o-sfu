@@ -44,6 +44,8 @@ pub(super) mod route_control;
 pub(super) mod route_table;
 pub(super) mod slots;
 pub(super) mod source_route;
+pub(super) mod ufrag_registry;
+pub(super) mod ufrag_worker_map;
 
 pub(super) use consumer_routes::ConsumerRouteRegistration;
 pub(super) use session::{
@@ -64,8 +66,11 @@ use self::{
     slots::{SessionHandle, SessionStore},
 };
 use super::{egress::RtcEgress, packet_loop::UdpIngress};
-use crate::engine::media_transport::TransportMediaId;
 pub use crate::engine::media_transport::TransportSessionHealth;
+use crate::engine::media_transport::{
+    TransportMediaId,
+    rtc::{UfragWorkerMap, state::ufrag_registry::UfragRegistry},
+};
 
 /// shared UDP socket owned by one RTC worker
 ///
@@ -112,4 +117,9 @@ pub(super) struct PacketLoopState {
     pub(super) timeout_queue: BinaryHeap<Reverse<(Instant, SessionHandle)>>,
     /// next worker-local media id from the disjoint range assigned at boot
     pub(super) next_media_id: u64,
+    /// local ICE ufrag to session registry.
+    pub(super) ufrag_registry: UfragRegistry,
+    /// handle shared across workers, already protected by an Arc<Mutex<>>. Written by
+    /// workers and read from the TCP acceptor thread.
+    pub(super) ufrag_worker_map: UfragWorkerMap,
 }

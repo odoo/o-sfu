@@ -1,9 +1,10 @@
 //! Worker-local indexes for UDP ingress routing.
 //!
-//! Learned source addresses provide fast-path session pins. Local ICE ufrags
-//! and signaled candidate addresses narrow unknown-source recovery while
-//! `Rtc::accepts()` remains the ownership authority. Mutations update forward
-//! and reverse indexes together so session teardown cannot leave routing hints.
+//! Learned source addresses provide fast-path session pins and signaled candidate
+//! addresses narrow unknown-source recovery while `Rtc::accepts()` remains the ownership
+//! authority. Mutations update forward and reverse indexes together so session teardown
+//! cannot leave routing hints.
+//! Local ICE ufrags are indexed separately by `UfragRegistry`.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -30,10 +31,6 @@ pub struct RemoteAddrDemux {
     remote_addrs_by_session: BTreeMap<TransportSessionKey, SessionRemoteAddrs>,
     /// sessions that evicted an accepted source and may still accept that tuple
     overflowed_sessions: VecDeque<TransportSessionKey>,
-    /// local ICE ufrag to session recovery hint
-    local_ice_ufrag_index: HashMap<String, TransportSessionKey>,
-    /// reverse lookup for replacing or removing a session local ICE ufrag
-    local_ice_ufrag_by_session: BTreeMap<TransportSessionKey, String>,
     /// signaled remote candidate address to possible sessions
     remote_candidate_addr_index: HashMap<SocketAddr, Vec<TransportSessionKey>>,
     /// reverse lookup for candidate hint cleanup after renegotiation or teardown
@@ -142,51 +139,6 @@ impl RemoteAddrDemux {
         self.overflowed_sessions.len()
     }
 
-    /// returns the session advertised by a local ICE ufrag
-    ///
-    /// this index is used to narrow STUN recovery when the USERNAME attribute
-    /// names the local fragment
-    /// the returned session is still only a candidate for `Rtc::accepts()`
-    pub(in super::super) fn session_for_local_ufrag(
-        &self,
-        local_ice_ufrag: &str,
-    ) -> Option<&TransportSessionKey> {
-        self.local_ice_ufrag_index.get(local_ice_ufrag)
-    }
-
-    /// replaces the local ICE ufrag registered for a session
-    ///
-    /// each session owns at most one local ufrag
-    /// each local ufrag maps to at most one session
-    /// returning `false` means the existing mapping already expressed that
-    /// contract
-    pub(in super::super) fn remember_local_ice_ufrag(
-        &mut self,
-        local_ice_ufrag: &str,
-        session_key: &TransportSessionKey,
-    ) -> bool {
-        if self
-            .local_ice_ufrag_index
-            .get(local_ice_ufrag)
-            .is_some_and(|current_session| current_session == session_key)
-        {
-            return false;
-        }
-        let previous_ufrag = self
-            .local_ice_ufrag_by_session
-            .insert(session_key.clone(), local_ice_ufrag.to_owned());
-        if let Some(previous_ufrag) = previous_ufrag {
-            self.local_ice_ufrag_index.remove(&previous_ufrag);
-        }
-        let previous_session = self
-            .local_ice_ufrag_index
-            .insert(local_ice_ufrag.to_owned(), session_key.clone());
-        if let Some(previous_session) = previous_session {
-            self.local_ice_ufrag_by_session.remove(&previous_session);
-        }
-        true
-    }
-
     /// Returns sessions whose signaled candidates match the observed source.
     ///
     /// Candidate addresses are weaker than learned source pins because every
@@ -255,17 +207,6 @@ impl RemoteAddrDemux {
         }
     }
 
-    /// removes the local ICE ufrag recovery hint for a session
-    pub(in super::super) fn forget_user_local_ice_ufrag(
-        &mut self,
-        session_key: &TransportSessionKey,
-    ) {
-        let Some(local_ice_ufrag) = self.local_ice_ufrag_by_session.remove(session_key) else {
-            return;
-        };
-        self.local_ice_ufrag_index.remove(&local_ice_ufrag);
-    }
-
     /// removes all remote candidate recovery hints owned by a session
     ///
     /// candidate address indexes can contain several sessions for one address
@@ -304,16 +245,6 @@ impl RemoteAddrDemux {
     }
 
     #[cfg(test)]
-    pub(in super::super) fn local_ice_ufrag_for(
-        &self,
-        session_key: &TransportSessionKey,
-    ) -> Option<&str> {
-        self.local_ice_ufrag_by_session
-            .get(session_key)
-            .map(String::as_str)
-    }
-
-    #[cfg(test)]
     pub(in super::super) fn remote_candidate_addrs_for(
         &self,
         session_key: &TransportSessionKey,
@@ -327,7 +258,6 @@ impl RemoteAddrDemux {
     pub(in super::super) fn is_empty(&self) -> bool {
         self.remote_addrs_by_session.is_empty()
             && self.overflowed_sessions.is_empty()
-            && self.local_ice_ufrag_by_session.is_empty()
             && self.remote_candidate_addrs_by_session.is_empty()
     }
 

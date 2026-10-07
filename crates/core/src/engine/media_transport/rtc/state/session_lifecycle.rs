@@ -12,8 +12,9 @@ impl PacketLoopState {
         self.clear_session_schedule(session_key);
         let removed_session = self.users.remove(session_key);
         self.remote_addr_demux.forget_user_remote_addrs(session_key);
-        self.remote_addr_demux
-            .forget_user_local_ice_ufrag(session_key);
+        if let Some(ufrag) = self.ufrag_registry.forget_session(session_key) {
+            self.ufrag_worker_map.remove(&ufrag);
+        }
         self.remote_addr_demux
             .forget_user_remote_candidates(session_key);
         for src_media in self.remove_session_media_handles(session_key) {

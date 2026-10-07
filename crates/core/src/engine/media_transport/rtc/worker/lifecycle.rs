@@ -47,11 +47,20 @@ use crate::{
             ReceiverBandwidthSnapshot, SourcePolicySignal, TransportAdapterError,
             TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
             TransportQualitySnapshot, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
-            TransportWorkerPressureSnapshot,
+            TransportWorkerPressureSnapshot, rtc::UfragWorkerMap,
         },
         metrics::RtcMetricsRecorder,
     },
 };
+
+/// Values that differ per worker. Everything else passed to [`RtcWorker::start`] is
+/// shared.
+#[derive(Clone, Copy, Debug)]
+pub struct WorkerAssignment {
+    pub rtc_port_range: RtcPortRange,
+    pub media_id_base: u64,
+    pub media_worker_id: MediaWorkerId,
+}
 
 struct PacketLoopStartup {
     announced_ip: IpAddr,
@@ -63,6 +72,7 @@ struct PacketLoopStartup {
     terminal: Arc<AtomicBool>,
     shutdown: CancellationToken,
     media_worker_id: MediaWorkerId,
+    ufrag_worker_map: UfragWorkerMap,
 }
 
 impl PacketLoopStartup {
@@ -96,6 +106,7 @@ impl PacketLoopStartup {
             self.bitrate_registry,
             self.snapshot_state,
             self.inputs,
+            self.ufrag_worker_map,
         )
         .await;
     }
@@ -258,15 +269,14 @@ impl RtcWorker {
     ///
     /// Returns [`TransportAdapterError::TransportUnavailable`] when thread or
     /// runtime creation fails, the selected backend is unavailable or no socket
-    /// can bind in `rtc_port_range`.
+    /// can bind in `assignment.rtc_port_range`.
     pub(crate) fn start(
         config: &MediaTransportConfig,
         profile: Arc<RtpProfile>,
-        rtc_port_range: RtcPortRange,
+        assignment: WorkerAssignment,
         deps: &MediaTransportDeps,
         source_policy_signal: SourcePolicySignal,
-        media_id_base: u64,
-        media_worker_id: MediaWorkerId,
+        ufrag_worker_map: UfragWorkerMap,
     ) -> Result<Self, TransportAdapterError> {
         let relay_target_id =
             super::RelayTargetId::new(super::NEXT_RELAY_TARGET_ID.fetch_add(1, Ordering::Relaxed));
@@ -305,25 +315,27 @@ impl RtcWorker {
                 video_bitrate_limits: config.video_bitrate_limits,
                 profile,
                 media_quality_interval: config.media_quality_interval,
-                media_id_base,
+                media_id_base: assignment.media_id_base,
             },
             packet_sink_registry: Arc::clone(&deps.packet_sink_registry),
             source_policy_signal,
             metrics: Arc::clone(metrics),
-            rtp_metrics: metrics.register_rtp_worker_for_media_worker(media_worker_id.as_usize()),
+            rtp_metrics: metrics
+                .register_rtp_worker_for_media_worker(assignment.media_worker_id.as_usize()),
             rtc_metrics: Arc::clone(&rtc_metrics),
             packet_loop_delay,
         };
         let startup = PacketLoopStartup {
             announced_ip: config.announced_ip,
-            rtc_port_range,
+            rtc_port_range: assignment.rtc_port_range,
             config: packet_loop_config,
             bitrate_registry,
             snapshot_state,
             inputs: packet_loop_inputs,
             terminal,
             shutdown: shutdown.clone(),
-            media_worker_id,
+            media_worker_id: assignment.media_worker_id,
+            ufrag_worker_map,
         };
         let thread_name = format!("rtc-packet-loop-{relay_target_id:?}");
         let thread = match config.rtc_udp_io_backend {
@@ -344,8 +356,8 @@ impl RtcWorker {
             announced_ip = %config.announced_ip,
             max_bitrate_in_bps = config.bitrate_limits.max_bitrate_in().as_bps(),
             max_bitrate_out_bps = config.bitrate_limits.max_bitrate_out().as_bps(),
-            rtc_port_range_min = rtc_port_range.min(),
-            rtc_port_range_max = rtc_port_range.max(),
+            rtc_port_range_min = assignment.rtc_port_range.min(),
+            rtc_port_range_max = assignment.rtc_port_range.max(),
             rtc_udp_io_backend = config.rtc_udp_io_backend.wire_name(),
             "started rtc packet loop worker"
         );

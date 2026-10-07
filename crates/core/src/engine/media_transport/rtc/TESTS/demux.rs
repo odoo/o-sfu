@@ -29,24 +29,6 @@ fn remember_remote_addr_reports_stable_mapping_without_churn() {
 }
 
 #[test]
-fn remember_local_ice_ufrag_tracks_the_latest_session_mapping() {
-    let mut demux = RemoteAddrDemux::default();
-    let first_session = session_key(9, 3);
-    let second_session = session_key(9, 4);
-
-    assert!(demux.remember_local_ice_ufrag("ufrag-a", &first_session));
-    assert!(!demux.remember_local_ice_ufrag("ufrag-a", &first_session));
-    assert!(demux.remember_local_ice_ufrag("ufrag-a", &second_session));
-
-    assert_eq!(
-        demux.session_for_local_ufrag("ufrag-a"),
-        Some(&second_session)
-    );
-    assert_eq!(demux.local_ice_ufrag_for(&first_session), None);
-    assert_eq!(demux.local_ice_ufrag_for(&second_session), Some("ufrag-a"));
-}
-
-#[test]
 fn replace_remote_candidates_deduplicates_and_cleans_previous_entries() {
     let mut demux = RemoteAddrDemux::default();
     let first_session = session_key(9, 3);
