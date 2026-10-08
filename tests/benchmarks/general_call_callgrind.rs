@@ -10,10 +10,6 @@
     clippy::panic,
     reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
 )]
-#![allow(
-    clippy::needless_pass_by_value,
-    reason = "Gungraun's generated harness owns setup values"
-)]
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
@@ -21,6 +17,7 @@
 )]
 
 mod allocator;
+mod fixture;
 mod general_call;
 
 #[path = "callgrind_config.rs"]
@@ -29,12 +26,13 @@ mod callgrind_config;
 use std::hint::black_box;
 
 use callgrind_config::callgrind_config;
+use fixture::{boxed, release};
 use general_call::GeneralCallFixture;
 use gungraun::{library_benchmark, library_benchmark_group, main};
 
-#[library_benchmark(config = callgrind_config(2.0), teardown = drop)]
-#[bench::mix_10s(GeneralCallFixture::new())]
-fn room_flow(mut fixture: GeneralCallFixture) -> GeneralCallFixture {
+#[library_benchmark(config = callgrind_config(2.0), teardown = release)]
+#[bench::mix_10s(boxed(GeneralCallFixture::new))]
+fn room_flow(mut fixture: Box<GeneralCallFixture>) -> Box<GeneralCallFixture> {
     black_box(fixture.run_total_work());
     black_box(fixture)
 }
