@@ -13,13 +13,13 @@ use tracing::{info, warn};
 use super::{
     BroadcastPayloadError, Room, RoomJoinError, UserOutboundSender,
     effects::batch::{RoomEffectContext, RoomEffects},
-    media_graph::CommittedTransportReceipt,
     placement::JoinAdmissionTurn,
     state::ConnectionCloseCommit,
 };
 use crate::engine::{
     ConnectionId, MediaWorkerId, UserId, UserInfo, UserPermissions,
-    media_transport::MediaTransport, room::state::JoinCommit,
+    media_transport::{MediaTransport, TransportSessionKey},
+    room::state::JoinCommit,
 };
 
 /// Compatibility marker that collapses every authenticated [`UserPermissions`] value.
@@ -65,21 +65,21 @@ impl Room {
         admission.commit(self, joined_fanout).await
     }
 
-    /// Executes context-enabled [`RoomEffects`] before returning the committed receipt
+    /// Executes context-enabled [`RoomEffects`] before returning the committed transport key
     pub(super) async fn finalize_admission(
         &self,
         commit: JoinCommit,
         context: RoomEffectContext<'_>,
-    ) -> CommittedTransportReceipt {
+    ) -> TransportSessionKey {
         let JoinCommit {
-            receipt,
+            transport_session_key,
             effects,
             transport_plan,
         } = commit;
         RoomEffects::from_join(effects, transport_plan)
             .execute(self, context)
             .await;
-        let session = &receipt.transport_session_key;
+        let session = &transport_session_key;
         info!(
             event = telemetry_event::USER_JOINED,
             room_id = self.uuid(),
@@ -88,7 +88,7 @@ impl Room {
             media_worker_id = session.media_worker_id().as_usize(),
             "user joined room"
         );
-        receipt
+        transport_session_key
     }
 
     /// Returns `true` only when `connection_id` removed the current room user.

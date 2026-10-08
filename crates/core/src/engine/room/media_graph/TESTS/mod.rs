@@ -103,7 +103,6 @@ fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
     state
         .apply_join(user_id, test_sender())
         .expect("test user should join")
-        .receipt
         .transport_session_key
         .connection_id()
 }

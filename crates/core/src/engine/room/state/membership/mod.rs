@@ -12,9 +12,7 @@ use super::{
         BroadcastPayload, BroadcastPayloadError, RoomEventMessage, RoomJoinError, RouterPlacement,
         UserCloseReason,
         effects::transport::RoomTransportPlan,
-        media_graph::{
-            CommittedTransportReceipt, SessionPlacementCommit, SessionPlacementRejection,
-        },
+        media_graph::{SessionPlacementCommit, SessionPlacementRejection},
         outbound::{MessageFanout, OutboundSender, VersionedRemoteTrackSnapshot, fanout_all},
     },
     UserJoinedFanout,
@@ -22,7 +20,10 @@ use super::{
 };
 #[cfg(test)]
 use crate::engine::MediaWorkerId;
-use crate::engine::{ConnectionId, UserId, UserInfo, media_transport::TransportTeardown};
+use crate::engine::{
+    ConnectionId, UserId, UserInfo,
+    media_transport::{TransportSessionKey, TransportTeardown},
+};
 
 #[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
@@ -65,7 +66,7 @@ pub struct PresenceCommit {
 #[derive(Debug)]
 pub struct JoinCommit {
     pub effects: LifecycleEffects,
-    pub receipt: CommittedTransportReceipt,
+    pub transport_session_key: TransportSessionKey,
     pub transport_plan: RoomTransportPlan,
 }
 
@@ -218,7 +219,7 @@ impl RoomState {
         source_recipients.remove(user_id);
         let placement =
             self.apply_join_routing(user_id, connection_id, previous_connection, home_placement)?;
-        let receipt = placement.receipt;
+        let transport_session_key = placement.transport_session_key;
         let mut transport_plan = placement.replacement_transport_plan;
         if let Some(previous_connection) = previous_connection {
             transport_plan.extend_teardown(
@@ -262,7 +263,7 @@ impl RoomState {
         });
         Ok(JoinCommit {
             effects,
-            receipt,
+            transport_session_key,
             transport_plan,
         })
     }

@@ -56,37 +56,16 @@ pub struct RoomTopology {
     video_allocation_revision: u64,
 }
 
-/// Receipt acknowledging that [`RoomTopology`] committed a session placement.
-///
-/// It snapshots the committed connection identity and worker-resolved transport
-/// key across the room-state lock boundary. Placement lifetime remains controlled by
-/// [`RoomTopology::commit_session_placement`], [`RoomTopology::remove_session`]
-/// or [`RoomTopology::retire_committed_placement`].
-///
-/// # Admission handoff
-///
-/// Membership keeps the receipt while
-/// [`RoomEffects`](crate::engine::room::effects::batch::RoomEffects) consumes the
-/// join effects:
-///
-/// ```rust,ignore
-/// let JoinCommit { receipt, effects, transport_plan } = admission.commit(self, joined_fanout).await?;
-/// RoomEffects::from_join(effects, transport_plan).execute(self, context).await;
-/// Ok(receipt)
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommittedTransportReceipt {
-    /// Transport identity resolved from the committed media worker placement.
-    pub transport_session_key: TransportSessionKey,
-}
-
 /// The new placement is authoritative before displaced-session cleanup is returned.
 ///
-/// Bundling the receipt with resolved cleanup lets membership release `room.state`
-/// without looking up the displaced placement again.
+/// The key snapshots the committed connection and worker-resolved transport identity
+/// across the room-state lock boundary. Placement lifetime remains controlled by
+/// [`RoomTopology::commit_session_placement`], [`RoomTopology::remove_session`]
+/// or [`RoomTopology::retire_committed_placement`]. Bundling the key with resolved
+/// cleanup lets membership release `room.state` without another placement lookup.
 #[derive(Debug)]
 pub struct SessionPlacementCommit {
-    pub receipt: CommittedTransportReceipt,
+    pub transport_session_key: TransportSessionKey,
     /// Empty for a first placement.
     pub replacement_transport_plan: RoomTransportPlan,
 }
@@ -699,11 +678,8 @@ impl RoomTopology {
             .commit_session_placement(user_id, connection_id, home_placement)
             .map_err(SessionPlacementRejection::Router)?;
         self.route_graph.publisher_joined(user_id);
-        let session_key =
+        let transport_session_key =
             self.transport_session_key(user_id.clone().into(), connection_id, media_worker);
-        let receipt = CommittedTransportReceipt {
-            transport_session_key: session_key,
-        };
         let replacement_transport_plan = previous_session_key.as_ref().map_or_else(
             RoomTransportPlan::default,
             |replaced_session_key| {
@@ -726,7 +702,7 @@ impl RoomTopology {
             self.invalidate_video_allocation();
         }
         Ok(SessionPlacementCommit {
-            receipt,
+            transport_session_key,
             replacement_transport_plan,
         })
     }

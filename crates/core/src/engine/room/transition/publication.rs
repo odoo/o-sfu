@@ -254,7 +254,7 @@ async fn execute_publication_activity(
     commit: ProducerActivityCommit,
 ) {
     RoomEffects::from_publication_activity(commit)
-        .execute_with_source_policy_guard(guard, RoomEffectContext::runtime(media_transport))
+        .execute(guard, RoomEffectContext::runtime(media_transport))
         .await;
 }
 

@@ -5,13 +5,13 @@ use o_sfu_router::{
 use super::{
     super::super::{
         JoinUserRequest, RoomEffectContext, RoomJoinError, UserOutboundSender,
-        media_graph::CommittedTransportReceipt, placement::JoinAdmissionTurn,
+        placement::JoinAdmissionTurn,
     },
     RoomTestApi,
 };
 use crate::engine::{
     ConnectionId, UserId, UserPermissions,
-    media_transport::{MediaTransport, TransportAdapterError},
+    media_transport::{MediaTransport, TransportAdapterError, TransportSessionKey},
 };
 
 impl RoomTestApi<'_> {
@@ -58,7 +58,7 @@ impl RoomTestApi<'_> {
             RoomEffectContext::state_only(None),
         )
         .await
-        .map(|receipt| receipt.transport_session_key.connection_id())
+        .map(|session_key| session_key.connection_id())
     }
 
     /// # Errors
@@ -88,14 +88,14 @@ impl RoomTestApi<'_> {
             RoomEffectContext::state_only(Some(media_transport)),
         )
         .await
-        .map(|receipt| receipt.transport_session_key.connection_id())
+        .map(|session_key| session_key.connection_id())
     }
 
     async fn admit_session(
         self,
         admission: JoinAdmissionTurn<'_, impl FnOnce() -> o_sfu_router::RouterId>,
         context: RoomEffectContext<'_>,
-    ) -> Result<CommittedTransportReceipt, RoomJoinError> {
+    ) -> Result<TransportSessionKey, RoomJoinError> {
         let commit = self.room.commit_admission(admission, context).await?;
         Ok(self.room.finalize_admission(commit, context).await)
     }
