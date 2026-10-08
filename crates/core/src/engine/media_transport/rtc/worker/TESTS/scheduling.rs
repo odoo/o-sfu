@@ -21,9 +21,9 @@ use crate::{
                 bootstrap::test_support::ensure_session_rtc_state,
                 commands::RtcWorkerCommand,
                 packet_loop::{
-                    forwarded_packet::ForwardedPacket,
+                    IngressPacket, RtcIngress, forwarded_packet::ForwardedPacket,
                     routing_miss::DemuxRecoveryState,
-                    udp::{IngressPacket, UdpIngress, test_support::completed_datagram_channel},
+                    udp::test_support::completed_datagram_channel,
                 },
                 state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
                 worker::{
@@ -49,7 +49,7 @@ struct SchedulingHarness {
     config: PacketLoopConfig,
     demux: DemuxRecoveryState,
     inputs: PacketLoopInputReceivers,
-    ingress: UdpIngress,
+    ingress: RtcIngress,
     datagram_tx: mpsc::Sender<IngressPacket>,
     command_tx: mpsc::Sender<RtcWorkerCommand>,
     relay_tx: mpsc::Sender<ForwardedPacket>,

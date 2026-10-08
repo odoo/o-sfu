@@ -231,25 +231,25 @@
 //! RTP and hands complete network transmits to `RtcEgress`.
 //!
 //! ```text
-//! UDP IN -> UdpIngress -> str0m
-//!                           |
-//!                           +-> RTP packet
-//!                           |     |
-//!                           |     +-> origin sinks
-//!                           |     |
-//!                           |     +-> route gates
-//!                           |           |
-//!                           |           +-> relay fanout
-//!                           |           +-> local RTC (str0m, next drain)
-//!                           |
-//!                           +-> Transmit -> RtcEgress
-//!                                              |
-//!                                              +-> UDP
-//!                                              |     |
-//!                                              |     +-> Tokio -> UDP OUT
-//!                                              |     +-> io_uring (Linux) -> UDP OUT
-//!                                              |
-//!                                              +-> non-UDP -> rejected (WIP)
+//! UDP IN -> UdpReceiveTask -> RtcIngress -> str0m
+//!                                             |
+//!                                             +-> RTP packet
+//!                                             |     |
+//!                                             |     +-> origin sinks
+//!                                             |     |
+//!                                             |     +-> route gates
+//!                                             |           |
+//!                                             |           +-> relay fanout
+//!                                             |           +-> local RTC (str0m, next drain)
+//!                                             |
+//!                                             +-> Transmit -> RtcEgress
+//!                                                                |
+//!                                                                +-> UDP
+//!                                                                |     |
+//!                                                                |     +-> Tokio -> UDP OUT
+//!                                                                |     +-> io_uring (Linux) -> UDP OUT
+//!                                                                |
+//!                                                                +-> non-UDP -> rejected (WIP)
 //! ```
 //!
 //! `RtcEgress` separates RTC output from network I/O: the packet loop stages

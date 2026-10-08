@@ -29,6 +29,7 @@ mod forward_flush;
 pub(super) mod forwarded_packet;
 mod forwarding_destination;
 mod forwarding_planner;
+pub(super) mod ingress;
 pub(super) mod ingress_routing;
 pub(super) mod io_failures;
 pub(super) mod routing_miss;
@@ -43,9 +44,10 @@ pub(super) use forward_flush::{ForwardingEffects, PacketForwarder, drain_relay_p
 pub(super) use forward_flush::{
     finish_incoming_stats, record_incoming_packet, test_support::record_incoming_stats,
 };
+pub(super) use ingress::{IngressPacket, RtcIngress};
 #[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
 pub use ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at};
-pub use udp::{RtcUdpSocket, UdpIngress};
+pub use udp::{RtcUdpSocket, UdpReceiveTask};
 #[cfg(any(test, feature = "internal-benchmarks"))]
 pub(super) use {
     forward_flush::flush_packet_forwards,

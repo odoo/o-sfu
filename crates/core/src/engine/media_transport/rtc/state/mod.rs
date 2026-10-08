@@ -65,7 +65,10 @@ use self::{
     route_table::{RidReadinessScratch, RouteTable},
     slots::{SessionHandle, SessionStore},
 };
-use super::{egress::RtcEgress, packet_loop::UdpIngress};
+use super::{
+    egress::RtcEgress,
+    packet_loop::{RtcIngress, UdpReceiveTask},
+};
 pub use crate::engine::media_transport::TransportSessionHealth;
 use crate::engine::media_transport::{
     TransportMediaId,
@@ -83,7 +86,12 @@ pub(super) struct SharedRtcSocket {
     /// protocol dispatch for worker RTC output
     pub(super) egress: RtcEgress,
     /// completed datagrams received by the worker-local ingress pump
-    pub(super) ingress: UdpIngress,
+    pub(super) ingress: RtcIngress,
+    #[expect(
+        dead_code,
+        reason = "kept only so its Drop cancels the receive task when this is dropped"
+    )]
+    pub(super) udp_receive_task: UdpReceiveTask,
 }
 
 /// authoritative mutable state for one RTC packet-loop worker

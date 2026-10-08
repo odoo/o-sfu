@@ -201,10 +201,9 @@ impl IngressBurstBenchFixture {
     }
 
     fn from_routing_fixture(fixture: IngressRoutingBenchFixture) -> Self {
-        let candidate_addr = fixture.candidate_addr;
         Self {
             routing: fixture,
-            ingress: UdpIngressBenchHarness::new(candidate_addr),
+            ingress: UdpIngressBenchHarness::new(),
         }
     }
 

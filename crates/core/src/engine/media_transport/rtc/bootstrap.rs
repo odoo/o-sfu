@@ -23,7 +23,7 @@ use super::{
     RtpProfile,
     consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     egress::RtcEgress,
-    packet_loop::{RtcUdpSocket, UdpIngress},
+    packet_loop::{RtcIngress, RtcUdpSocket, UdpReceiveTask},
     state::{
         RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
         slots::SessionStore,
@@ -86,11 +86,14 @@ pub(super) fn bind_shared_rtc_socket(
             TransportAdapterError::TransportUnavailable
         })?;
         let candidate_addr = SocketAddr::new(announced_ip, port);
-        let ingress = UdpIngress::new(
+        let (ingress, packet_tx, recycle_rx) = RtcIngress::new();
+        let udp_receive_task = UdpReceiveTask::new(
             socket.clone(),
             bind_addr,
             candidate_addr,
             Arc::clone(rtc_metrics),
+            packet_tx,
+            recycle_rx,
         );
         info!(
             %bind_addr,
@@ -101,6 +104,7 @@ pub(super) fn bind_shared_rtc_socket(
             udp_candidate_addr: candidate_addr,
             egress: RtcEgress::new(socket, candidate_addr, Arc::clone(rtc_metrics)),
             ingress,
+            udp_receive_task,
         });
     }
     warn!(

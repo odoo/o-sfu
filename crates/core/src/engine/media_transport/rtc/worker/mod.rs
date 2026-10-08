@@ -7,7 +7,7 @@
 //! RtcWorker senders       shared UDP socket
 //!        |                       |
 //!        v                       v
-//! input mailboxes            UdpIngress
+//! input mailboxes            UdpReceiveTask
 //!        |                       |
 //!        +----> loop_driver <----+
 //!                    |
