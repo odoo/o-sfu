@@ -55,7 +55,6 @@ fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
     state
         .apply_join(user_id, test_sender())
         .expect("test user should join")
-        .receipt
         .transport_session_key
         .connection_id()
 }
@@ -73,7 +72,6 @@ fn join_test_user_on_placement(
             placement,
         )
         .expect("test user should join on placement")
-        .receipt
         .transport_session_key
         .connection_id()
 }
@@ -333,11 +331,11 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
         )
         .expect("replacement join should succeed");
     assert_eq!(
-        outcome.receipt.transport_session_key.media_worker_id(),
+        outcome.transport_session_key.media_worker_id(),
         relay.target_media_worker_id
     );
     assert_ne!(
-        outcome.receipt.transport_session_key.media_worker_id(),
+        outcome.transport_session_key.media_worker_id(),
         relay.route.source_session_key().media_worker_id()
     );
     let (relays, teardown) = outcome.transport_plan.relays_and_teardown();

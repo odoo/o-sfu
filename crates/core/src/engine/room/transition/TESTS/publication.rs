@@ -104,6 +104,24 @@ async fn staged_media_id(
 }
 
 #[tokio::test]
+#[should_panic(expected = "publish reservation dropped while still reserved")]
+async fn dropping_staged_publish_diagnoses_unreleased_reservation() {
+    let (room, _media_transport, user_id, connection_id) = staged_room().await;
+    let staged = {
+        let mut state = room.state.write().await;
+        state
+            .staged_publishes
+            .take(
+                &user_id,
+                connection_id,
+                &stream_id_for_source(TestSourceKind::ScalableVideo),
+            )
+            .expect("test publish should be staged")
+    };
+    drop(staged);
+}
+
+#[tokio::test]
 async fn staged_publish_is_not_visible_in_room_graph_before_answer() {
     let (room, media_transport, user_id, connection_id) = staged_room().await;
     let transport_media_id = staged_media_id(&room, &user_id, connection_id).await;

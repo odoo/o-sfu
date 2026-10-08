@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, btree_map::Entry},
-    marker::PhantomData,
-};
+use std::collections::{BTreeMap, btree_map::Entry};
 
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use o_sfu_telemetry::schema::event as telemetry_event;
@@ -34,7 +31,7 @@ type StagedPublishKey = (UserId, ConnectionId, UserStreamId);
 pub struct StagedPublish {
     pub(super) descriptor: ValidatedPublish,
     pub(super) media: TransportMediaId,
-    reservation: PublishReservation<Reserved>,
+    reservation: PublishReservation,
 }
 
 impl StagedPublishes {
@@ -199,7 +196,7 @@ impl StagedPublish {
         // acceptance so rejected commits still take the explicit teardown path.
         self.commit_reservation();
         RoomEffects::from_publish(commit)
-            .execute_with_source_policy_guard(guard, RoomEffectContext::runtime(media_transport))
+            .execute(guard, RoomEffectContext::runtime(media_transport))
             .await;
         info!(
             event = telemetry_event::PUBLISH_COMMITTED,
@@ -225,7 +222,7 @@ impl StagedPublish {
             media,
             reservation,
         } = self;
-        let _released = reservation.release();
+        reservation.release();
         TransportTeardown::RemoveMedia {
             session_key: descriptor.session_key,
             transport_media_id: media,
@@ -233,68 +230,40 @@ impl StagedPublish {
     }
 
     fn commit_reservation(self) {
-        let _committed = self.reservation.commit();
+        self.reservation.commit();
     }
 }
-
-#[derive(Debug)]
-struct Reserved;
-
-#[derive(Debug)]
-struct Committed;
-
-#[derive(Debug)]
-struct Released;
 
 #[derive(Debug)]
 #[must_use = "publish reservations must be committed or released"]
-/// Typestate guard requiring reserved transport media to be committed or released.
+/// Requires reserved transport media to be committed or released.
 ///
 /// Tests and debug builds diagnose an armed reservation on `Drop`. Cleanup
 /// paths must explicitly convert reserved media into [`TransportTeardown`].
-struct PublishReservation<State> {
-    guard: PublishReservationGuard,
-    _state: PhantomData<fn() -> State>,
-}
-
-#[derive(Debug)]
-struct PublishReservationGuard {
+struct PublishReservation {
     armed: bool,
 }
 
-impl PublishReservation<Reserved> {
+impl PublishReservation {
     fn new() -> Self {
-        Self {
-            guard: PublishReservationGuard { armed: true },
-            _state: PhantomData,
-        }
+        Self { armed: true }
     }
 
-    fn commit(mut self) -> PublishReservation<Committed> {
-        self.guard.disarm();
-        PublishReservation {
-            guard: self.guard,
-            _state: PhantomData,
-        }
+    fn commit(mut self) {
+        self.disarm();
     }
 
-    fn release(mut self) -> PublishReservation<Released> {
-        self.guard.disarm();
-        PublishReservation {
-            guard: self.guard,
-            _state: PhantomData,
-        }
+    fn release(mut self) {
+        self.disarm();
     }
-}
 
-impl PublishReservationGuard {
     fn disarm(&mut self) {
         debug_assert!(self.armed);
         self.armed = false;
     }
 }
 
-impl Drop for PublishReservationGuard {
+impl Drop for PublishReservation {
     fn drop(&mut self) {
         #[cfg(test)]
         assert!(

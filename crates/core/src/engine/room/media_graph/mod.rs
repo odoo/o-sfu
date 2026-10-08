@@ -34,9 +34,7 @@ pub(super) use self::{
     producer::{ProducerActivityCommit, PublishCommit, PublishIntentPlan, ValidatedPublish},
     route_graph::PendingUpgrade,
     subscription::{ReceiverRouteActivity, ReceiverRouteCommit, ReceiverRouteWork},
-    topology::{
-        CommittedTransportReceipt, RoomTopology, SessionPlacementCommit, SessionPlacementRejection,
-    },
+    topology::{RoomTopology, SessionPlacementCommit, SessionPlacementRejection},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

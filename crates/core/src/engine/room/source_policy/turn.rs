@@ -34,8 +34,8 @@ use crate::engine::{
 
 /// Deferred request to recompute one room's source policy.
 ///
-/// `RoomEffects` decides whether the turn runs before or after its transport
-/// work. [`Self::execute`] serializes it with publication activity.
+/// `PublicationEffects` runs policy before transport for activation. Other room
+/// effects run transport first. [`Self::execute`] serializes policy with publication activity.
 #[derive(Debug, Default)]
 pub struct SourcePolicyTurn {
     requested: bool,

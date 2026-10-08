@@ -448,15 +448,15 @@ impl RoomManager {
         // Retire the reservation only after membership commits. Failed admission
         // must leave its deadline intact for the reaper.
         mutation.lease.clear_expiration();
-        let receipt = room
+        let transport_session_key = room
             .finalize_admission(join_commit, RoomEffectContext::runtime(media_transport))
             .await;
 
         self.finish_session_mutation(room_id, mutation, None).await;
         Ok(RoomUserAdmission {
             room,
-            connection_id: receipt.transport_session_key.connection_id(),
-            transport_session_key: receipt.transport_session_key,
+            connection_id: transport_session_key.connection_id(),
+            transport_session_key,
         })
     }
 
