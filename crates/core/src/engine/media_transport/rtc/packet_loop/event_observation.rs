@@ -290,7 +290,14 @@ fn observe_receiver_bandwidth(
     session_key: &TransportSessionKey,
     kind: &BweKind,
 ) {
-    let (BweKind::Twcc(bitrate) | BweKind::Remb(_, bitrate)) = kind else {
+    // Probe availability does not invalidate the last receiver bitrate estimate.
+    let (BweKind::Twcc {
+        estimate: bitrate, ..
+    }
+    | BweKind::Remb {
+        estimate: bitrate, ..
+    }) = kind
+    else {
         return;
     };
     let estimate = Bitrate::from_bps(bitrate.as_u64());

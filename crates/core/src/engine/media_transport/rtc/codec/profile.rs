@@ -40,10 +40,11 @@ impl RtpProfile {
             if !codec.enabled_by(flags) {
                 continue;
             }
+            // Keep RED disabled to preserve the negotiated audio payload types.
             match codec {
-                AudioCodecPreference::Opus => codecs.enable_opus(true),
-                AudioCodecPreference::Pcmu => codecs.enable_pcmu(true),
-                AudioCodecPreference::Pcma => codecs.enable_pcma(true),
+                AudioCodecPreference::Opus => codecs.enable_opus(true, false),
+                AudioCodecPreference::Pcmu => codecs.enable_pcmu(true, false),
+                AudioCodecPreference::Pcma => codecs.enable_pcma(true, false),
             }
         }
         for codec in preferences.video_order() {

@@ -1663,10 +1663,11 @@ fn answer_with_leading_fid_pair(answer_sdp: &str, mid: &str) -> String {
     let section = media_section_for_mid(answer_sdp, mid)
         .expect("test answer should contain the target MID section");
     let ssrc_prefix = format!("{}{}{}", sdp::ATTR, sdp::attribute::SSRC, sdp::ATTR_SEP);
-    let ssrc_start = section
+    // Keep exactly two pairs for simulcast ordering and RID-less ambiguity checks.
+    let mut updated_section = section_with_fid_pair_limit(section, 1);
+    let ssrc_start = updated_section
         .find(&ssrc_prefix)
         .expect("test answer section should signal an SSRC pair");
-    let mut updated_section = section.to_owned();
     updated_section.insert_str(
         ssrc_start,
         concat!(
@@ -1753,6 +1754,22 @@ fn answer_with_simulcast_send_rids(
     mid: &str,
     rids: &[(&str, Option<u64>)],
 ) -> String {
+    let section = media_section_for_mid(answer_sdp, mid)
+        .expect("test answer should contain the target MID section");
+    // str0m retains simulcast declarations, so custom answers replace them once.
+    // A pruned send ladder cannot retain more primary/RTX pairs than accepted RIDs.
+    let section_with_accepted_pairs = section_with_fid_pair_limit(section, rids.len());
+    let rid_prefix = format!("{}{}{}", sdp::ATTR, sdp::attribute::RID, sdp::ATTR_SEP);
+    let simulcast_prefix = format!(
+        "{}{}{}",
+        sdp::ATTR,
+        sdp::attribute::SIMULCAST,
+        sdp::ATTR_SEP
+    );
+    let section_without_simulcast = section_with_accepted_pairs
+        .split_inclusive(sdp::LF)
+        .filter(|line| !line.starts_with(&rid_prefix) && !line.starts_with(&simulcast_prefix))
+        .collect::<String>();
     let marker = format!(
         "{}{}{}{mid}{}",
         sdp::ATTR,
@@ -1774,7 +1791,40 @@ fn answer_with_simulcast_send_rids(
         &rid_values,
     ));
     replacement.push_str(sdp::CRLF);
-    answer_sdp.replacen(&marker, &replacement, 1)
+    let updated_section = section_without_simulcast.replacen(&marker, &replacement, 1);
+    answer_sdp.replacen(section, &updated_section, 1)
+}
+
+fn section_with_fid_pair_limit(section: &str, pair_count: usize) -> String {
+    let fid_prefix = format!(
+        "{}{}{}{}{}",
+        sdp::ATTR,
+        sdp::attribute::SSRC_GROUP,
+        sdp::ATTR_SEP,
+        sdp::ssrc_group_semantics::FID,
+        sdp::SP,
+    );
+    let ssrc_prefix = format!("{}{}{}", sdp::ATTR, sdp::attribute::SSRC, sdp::ATTR_SEP);
+    let omitted_ssrcs = section
+        .lines()
+        .filter_map(|line| line.strip_prefix(&fid_prefix))
+        .skip(pair_count)
+        .flat_map(str::split_ascii_whitespace)
+        .collect::<Vec<_>>();
+    section
+        .split_inclusive(sdp::LF)
+        .filter(|line| {
+            if let Some(value) = line.strip_prefix(&ssrc_prefix) {
+                let ssrc = value.split_once(sdp::SP).map_or(value, |(ssrc, _)| ssrc);
+                return !omitted_ssrcs.contains(&ssrc);
+            }
+            line.strip_prefix(&fid_prefix).is_none_or(|value| {
+                !value
+                    .split_ascii_whitespace()
+                    .any(|ssrc| omitted_ssrcs.contains(&ssrc))
+            })
+        })
+        .collect()
 }
 
 fn build_remote_rtc(port: u16) -> Rtc {

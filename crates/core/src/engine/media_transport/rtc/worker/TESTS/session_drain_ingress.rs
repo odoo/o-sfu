@@ -12,12 +12,7 @@ use str0m::{
     rtp::{RtpHeader, RtpWrite, Ssrc},
 };
 
-use super::{
-    PacketLoopBuffers, SessionDrainContext, drain_ready_sessions,
-    peer::{
-        TestDatagram, connect_rtc_pair, drain_mutation, take_rtcp, take_written_rtp_with_header,
-    },
-};
+use super::{PacketLoopBuffers, SessionDrainContext, drain_ready_sessions};
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags,
     engine::{
@@ -36,7 +31,13 @@ use crate::{
                     media_registry::{ProducerStreamBinding, RegisteredMediaHandle},
                 },
                 test_support::test_transport_session_key,
-                worker::TESTS::CountingSink,
+                worker::{
+                    TESTS::CountingSink,
+                    session_drain_peer::{
+                        TestDatagram, connect_rtc_pair, drain_mutation, take_rtcp,
+                        take_written_rtp_with_header,
+                    },
+                },
             },
         },
         metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},

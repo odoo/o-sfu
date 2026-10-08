@@ -1074,9 +1074,10 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                 &self.source_policy_signal,
                 ROOM_ID,
                 &entry.session_key,
-                &Event::EgressBitrateEstimate(BweKind::Twcc(Str0mBitrate::from(
-                    receiver_bandwidth_bps(sample, participant),
-                ))),
+                &Event::EgressBitrateEstimate(BweKind::Twcc {
+                    estimate: Str0mBitrate::from(receiver_bandwidth_bps(sample, participant)),
+                    can_probe: true,
+                }),
             );
         }
         let updates = self

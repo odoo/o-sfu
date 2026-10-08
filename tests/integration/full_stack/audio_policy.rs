@@ -74,13 +74,14 @@ opus_vad_test!(
     true
 );
 
+// A nonzero audio level must preserve the clear VAD bit on the wire.
 opus_vad_test!(
     fake_rtc_opus_vad_false_blocks_audio_forwarding,
     "issuer-opus-vad-false",
     86,
     87,
     None,
-    0,
+    -32,
     false,
     s::DiagnosticsActiveSpeakerState::Blocked,
     s::DiagnosticsActiveSpeakerReason::VadFalse,
@@ -93,7 +94,7 @@ opus_vad_test!(
     186,
     187,
     Some(st::cross_worker_test_config()),
-    0,
+    -32,
     false,
     s::DiagnosticsActiveSpeakerState::Blocked,
     s::DiagnosticsActiveSpeakerReason::VadFalse,

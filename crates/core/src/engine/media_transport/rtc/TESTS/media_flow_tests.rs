@@ -623,10 +623,18 @@ async fn active_speaker_expiry_wakes_policy_without_input() {
         .await
         .expect("test probe must complete");
 
-    let observed_rooms = timeout(Duration::from_secs(1), updates.wait_for_update())
-        .await
-        .expect("active-speaker observation should wake room policy");
-    assert_eq!(observed_rooms, BTreeSet::from([room_instance_id]));
+    assert_eq!(
+        adapter
+            .active_speaker_source_snapshot()
+            .await
+            .expect("active speaker snapshot should complete")
+            .into_iter()
+            .map(ActiveSpeakerSource::transport_media_id)
+            .collect::<Vec<_>>(),
+        vec![media_id]
+    );
+    // The synthetic observation bypasses packet notifications. Only the speaker
+    // hold deadline should wake policy after the worker becomes idle.
     let dirty_rooms = timeout(Duration::from_secs(1), updates.wait_for_update())
         .await
         .expect("active-speaker expiry should wake room policy");

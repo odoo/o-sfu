@@ -228,7 +228,7 @@ pub fn drain_ready_sessions(
 /// and retire that session.
 #[expect(
     clippy::too_many_lines,
-    reason = "Moving Event by value into a helper raised session_drain_128 Callgrind instructions by 3.1%"
+    reason = "Moving Event by value into a helper raised Callgrind instructions by 3.1% in the former session_drain_128 BWE workload"
 )]
 fn drain_single_session(
     session_handle: SessionHandle,

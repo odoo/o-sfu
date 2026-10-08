@@ -165,13 +165,7 @@ enum PumpResult {
 #[derive(Clone)]
 struct ProtocolSendPath {
     mid: Mid,
-    rids: Vec<ProtocolRid>,
-}
-
-#[derive(Clone)]
-struct ProtocolRid {
-    rid: Rid,
-    max_bitrate: Option<u64>,
+    rids: Vec<Rid>,
 }
 
 impl FakeRtcPeer {
@@ -215,7 +209,8 @@ impl FakeRtcPeer {
         self.transport_sequence_extension_id = transport_sequence_extension_id(offer_sdp);
         self.send_paths = collect_protocol_send_paths(offer_sdp);
         let answer = self.rtc.sdp_api().accept_offer(offer).ok()?;
-        let answer_sdp = answer_with_simulcast_send_rids(&answer.to_sdp_string(), &self.send_paths);
+        // str0m omits RID restrictions, so o-sfu retains the offered bitrate ceilings.
+        let answer_sdp = answer.to_sdp_string();
         let answer_sdp = if matches!(self.video_answer, VideoAnswer::MidOnly) {
             answer_sdp
                 .split_inclusive(sdp::LF)
@@ -737,9 +732,7 @@ impl FakeRtcPeer {
 
 impl ProtocolSendPath {
     fn accepts_rid(&self, rid: Option<Rid>) -> bool {
-        rid.map_or(self.rids.is_empty(), |rid| {
-            !self.rids.is_empty() && self.rids.iter().any(|candidate| candidate.rid == rid)
-        })
+        rid.map_or(self.rids.is_empty(), |rid| self.rids.contains(&rid))
     }
 }
 
@@ -1008,21 +1001,19 @@ fn collect_protocol_send_paths(offer_sdp: &str) -> BTreeMap<MediaKind, ProtocolS
     let mut current_rids = Vec::new();
     let mut current_direction = session_direction;
 
-    let mut flush_section = |kind: Option<MediaKind>,
-                             mid: Option<Mid>,
-                             rids: Vec<ProtocolRid>,
-                             direction: OfferDirection| {
-        let Some(kind) = kind else {
-            return;
+    let mut flush_section =
+        |kind: Option<MediaKind>, mid: Option<Mid>, rids: Vec<Rid>, direction: OfferDirection| {
+            let Some(kind) = kind else {
+                return;
+            };
+            if !direction.allows_local_send() {
+                return;
+            }
+            let Some(mid) = mid else {
+                return;
+            };
+            send_paths.insert(kind, ProtocolSendPath { mid, rids });
         };
-        if !direction.allows_local_send() {
-            return;
-        }
-        let Some(mid) = mid else {
-            return;
-        };
-        send_paths.insert(kind, ProtocolSendPath { mid, rids });
-    };
 
     for raw_line in offer_sdp.lines() {
         let line = trim_sdp_line_ending(raw_line);
@@ -1107,82 +1098,7 @@ fn parse_offer_media_kind(line: &str) -> Option<MediaKind> {
     }
 }
 
-fn answer_with_simulcast_send_rids(
-    answer_sdp: &str,
-    send_paths: &BTreeMap<MediaKind, ProtocolSendPath>,
-) -> String {
-    send_paths
-        .values()
-        .filter(|send_path| !send_path.rids.is_empty())
-        .fold(answer_sdp.to_owned(), |answer_sdp, send_path| {
-            answer_with_mid_send_rids(&answer_sdp, send_path)
-        })
-}
-
-fn answer_with_mid_send_rids(answer_sdp: &str, send_path: &ProtocolSendPath) -> String {
-    // An offered recv RID is answered as a send RID and listed in the answer's
-    // send simulcast description.
-    // https://www.rfc-editor.org/rfc/rfc8851.html#section-6.3
-    // https://www.rfc-editor.org/rfc/rfc8853.html#section-5.3.2
-    let marker = format!(
-        "{}{}{}{}{}",
-        sdp::ATTR,
-        sdp::attribute::MID,
-        sdp::ATTR_SEP,
-        send_path.mid,
-        sdp::CRLF,
-    );
-    let mut replacement = marker.clone();
-    for rid in &send_path.rids {
-        replacement.push_str(&sdp_rid_line(rid, sdp::rid::DIRECTION_SEND));
-        replacement.push_str(sdp::CRLF);
-    }
-    replacement.push_str(&sdp_simulcast_line(
-        sdp::simulcast::DIRECTION_SEND,
-        &send_path.rids,
-    ));
-    replacement.push_str(sdp::CRLF);
-    answer_sdp.replacen(&marker, &replacement, 1)
-}
-
-fn sdp_rid_line(rid: &ProtocolRid, direction: &str) -> String {
-    let mut line = format!(
-        "{}{}{}{}{}{}",
-        sdp::ATTR,
-        sdp::attribute::RID,
-        sdp::ATTR_SEP,
-        rid.rid,
-        sdp::SP,
-        direction
-    );
-    if let Some(max_bitrate) = rid.max_bitrate {
-        line.push(sdp::SP);
-        line.push_str(sdp::rid_restriction::MAX_BITRATE);
-        line.push(sdp::rid_restriction::NAME_VALUE_SEPARATOR);
-        line.push_str(&max_bitrate.to_string());
-    }
-    line
-}
-
-fn sdp_simulcast_line(direction: &str, rids: &[ProtocolRid]) -> String {
-    let separator = sdp::simulcast::STREAM_SEPARATOR.to_string();
-    let rid_values = rids
-        .iter()
-        .map(|rid| rid.rid.to_string())
-        .collect::<Vec<_>>()
-        .join(&separator);
-    format!(
-        "{}{}{}{}{}{}",
-        sdp::ATTR,
-        sdp::attribute::SIMULCAST,
-        sdp::ATTR_SEP,
-        direction,
-        sdp::SP,
-        rid_values
-    )
-}
-
-fn parse_recv_rid(line: &str) -> Option<ProtocolRid> {
+fn parse_recv_rid(line: &str) -> Option<Rid> {
     // Only recv RIDs describe streams that this peer may send in its answer.
     // https://www.rfc-editor.org/rfc/rfc8851.html#section-6.3
     let rest = sdp_attribute_value(line, sdp::attribute::RID)?;
@@ -1195,23 +1111,7 @@ fn parse_recv_rid(line: &str) -> Option<ProtocolRid> {
     if webrtc::RtpStreamDirection::parse(direction) != Some(webrtc::RtpStreamDirection::Recv) {
         return None;
     }
-    Some(ProtocolRid {
-        rid: Rid::from(rid),
-        max_bitrate: parts.next().and_then(parse_max_bitrate),
-    })
-}
-
-fn parse_max_bitrate(restrictions: &str) -> Option<u64> {
-    restrictions
-        .split(sdp::rid_restriction::PARAMETER_SEPARATOR)
-        .filter_map(|restriction| {
-            restriction.split_once(sdp::rid_restriction::NAME_VALUE_SEPARATOR)
-        })
-        .find_map(|(key, value)| {
-            (key.trim() == sdp::rid_restriction::MAX_BITRATE)
-                .then(|| value.trim().parse::<u64>().ok())
-                .flatten()
-        })
+    Some(Rid::from(rid))
 }
 
 #[derive(Clone, Copy, Default)]
