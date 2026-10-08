@@ -264,14 +264,15 @@ impl InterleavedRelayActivityBenchFixture {
     }
 
     /// Checks command outcomes and exact active-phase relay payload and order.
+    /// Call this once per fixture because it consumes command outcomes and relay packets.
     ///
     /// # Panics
     ///
-    /// Panics if a command failed or a packet was lost, reordered or forwarded
-    /// while the source was inactive.
-    pub fn assert_coverage(mut self) {
+    /// Panics if this method is called again or if a command failed or a packet
+    /// was lost, reordered or forwarded while the source was inactive.
+    pub fn assert_coverage(&mut self) {
         assert!(self.state.routes.source_is_active(self.source_media_id));
-        for mut response in self.responses {
+        for response in &mut self.responses {
             let Ok(Ok(WorkerMediaControlBatchOutcome::Applied(results))) = response.try_recv()
             else {
                 panic!("benchmark command did not return an applied outcome");

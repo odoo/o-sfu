@@ -16,10 +16,6 @@
     clippy::panic,
     reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
 )]
-#![allow(
-    clippy::needless_pass_by_value,
-    reason = "Gungraun's generated harness owns setup values"
-)]
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
@@ -27,6 +23,7 @@
 )]
 
 mod allocator;
+mod fixture;
 
 #[path = "callgrind_config.rs"]
 mod callgrind_config;
@@ -34,35 +31,40 @@ mod callgrind_config;
 use std::hint::black_box;
 
 use callgrind_config::callgrind_config;
+use fixture::{boxed, release};
 use gungraun::{library_benchmark, library_benchmark_group, main};
 use o_sfu_core::server::transport::benchmark_support::MeetingFlowBenchFixture;
 
 // teardown re-checks coverage outside the measured window, so the benchmark
 // cannot keep reporting stable counts after the scenario stops reaching the
 // paths it exists to measure
-fn validate_packet_loop_coverage(mut fixture: MeetingFlowBenchFixture) {
+#[inline(never)]
+fn validate_packet_loop_coverage(mut fixture: Box<MeetingFlowBenchFixture>) {
     fixture.assert_packet_loop_coverage();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_packet_loop_coverage)]
-#[bench::meeting_2s(MeetingFlowBenchFixture::<false>::short_meeting())]
-#[bench::meeting_12s(MeetingFlowBenchFixture::<false>::long_meeting())]
-fn meeting_flow(mut fixture: MeetingFlowBenchFixture) -> MeetingFlowBenchFixture {
+#[bench::meeting_2s(boxed(MeetingFlowBenchFixture::<false>::short_meeting))]
+#[bench::meeting_12s(boxed(MeetingFlowBenchFixture::<false>::long_meeting))]
+fn meeting_flow(mut fixture: Box<MeetingFlowBenchFixture>) -> Box<MeetingFlowBenchFixture> {
     black_box(fixture.run_meeting());
     black_box(fixture)
 }
 
 // New cases have no pre-feature baseline and measure usable reports separately.
-fn validate_sampled_coverage(mut fixture: MeetingFlowBenchFixture<true>) {
+#[inline(never)]
+fn validate_sampled_coverage(mut fixture: Box<MeetingFlowBenchFixture<true>>) {
     fixture.assert_packet_loop_coverage();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_sampled_coverage)]
-#[bench::meeting_2s(MeetingFlowBenchFixture::<true>::short_meeting())]
-#[bench::meeting_12s(MeetingFlowBenchFixture::<true>::long_meeting())]
+#[bench::meeting_2s(boxed(MeetingFlowBenchFixture::<true>::short_meeting))]
+#[bench::meeting_12s(boxed(MeetingFlowBenchFixture::<true>::long_meeting))]
 fn sampled_meeting_flow(
-    mut fixture: MeetingFlowBenchFixture<true>,
-) -> MeetingFlowBenchFixture<true> {
+    mut fixture: Box<MeetingFlowBenchFixture<true>>,
+) -> Box<MeetingFlowBenchFixture<true>> {
     black_box(fixture.run_meeting());
     black_box(fixture)
 }

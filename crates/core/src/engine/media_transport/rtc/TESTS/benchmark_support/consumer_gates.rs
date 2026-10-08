@@ -70,8 +70,7 @@ impl ConsumerGateBatchBenchFixture {
         }
     }
 
-    #[must_use]
-    pub fn apply_updates(mut self) -> Self {
+    pub fn apply_updates(&mut self) {
         if let Some(source) = self.source.take() {
             let updates = take(&mut self.updates);
             let _ = apply_media_control_batch(
@@ -82,11 +81,10 @@ impl ConsumerGateBatchBenchFixture {
                 WorkerMediaControlBatch::ConsumerGates { source, updates },
             );
         }
-        self
     }
 
     #[must_use]
-    pub fn updates_applied(self) -> bool {
+    pub fn updates_applied(&self) -> bool {
         let route = self.state.routes.local_route(self.src_media);
         route.is_some_and(|r| {
             r.destinations

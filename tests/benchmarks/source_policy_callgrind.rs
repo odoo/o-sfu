@@ -12,10 +12,6 @@
     clippy::panic,
     reason = "fixed benchmark fixtures must fail on invalid setup or missing coverage"
 )]
-#![allow(
-    clippy::needless_pass_by_value,
-    reason = "Gungraun's generated harness owns setup values"
-)]
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
@@ -23,6 +19,7 @@
 )]
 
 mod allocator;
+mod fixture;
 mod source_policy;
 
 #[path = "callgrind_config.rs"]
@@ -31,6 +28,7 @@ mod callgrind_config;
 use std::hint::black_box;
 
 use callgrind_config::callgrind_config;
+use fixture::{boxed, release};
 use gungraun::{LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
 use source_policy::SourcePolicyFixture;
 
@@ -47,26 +45,30 @@ fn source_policy_config() -> LibraryBenchmarkConfig {
 // teardown runs the differential budget-pressure check outside the measured
 // window, so the benchmark cannot keep reporting stable counts after the
 // scenario stops constraining the plan
-fn validate_budget_pressure(mut fixture: SourcePolicyFixture) {
+#[inline(never)]
+fn validate_budget_pressure(mut fixture: Box<SourcePolicyFixture>) {
     fixture.assert_every_turn_planned();
     fixture.assert_budget_pressure_observed();
+    release(fixture);
 }
 
 #[library_benchmark(config = source_policy_config(), teardown = validate_budget_pressure)]
-#[bench::budget_pressure(SourcePolicyFixture::new())]
-fn policy_recomputation(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
+#[bench::budget_pressure(boxed(SourcePolicyFixture::new))]
+fn policy_recomputation(mut fixture: Box<SourcePolicyFixture>) -> Box<SourcePolicyFixture> {
     black_box(fixture.run_policy_turns());
     black_box(fixture)
 }
 
-fn validate_mixed_speakers(fixture: SourcePolicyFixture) {
+#[inline(never)]
+fn validate_mixed_speakers(fixture: Box<SourcePolicyFixture>) {
     fixture.assert_every_turn_planned();
     fixture.assert_speaker_selection();
+    release(fixture);
 }
 
 #[library_benchmark(config = source_policy_config(), teardown = validate_mixed_speakers)]
-#[bench::mixed_speakers(SourcePolicyFixture::mixed_speakers())]
-fn speaker_policy_recomputation(mut fixture: SourcePolicyFixture) -> SourcePolicyFixture {
+#[bench::mixed_speakers(boxed(SourcePolicyFixture::mixed_speakers))]
+fn speaker_policy_recomputation(mut fixture: Box<SourcePolicyFixture>) -> Box<SourcePolicyFixture> {
     black_box(fixture.run_policy_turns());
     black_box(fixture)
 }

@@ -26,14 +26,15 @@
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
-    clippy::needless_pass_by_value,
-    reason = "Gungraun's generated harness owns setup values, returns measured outputs and exits with the runner status"
+    reason = "Gungraun's generated harness returns measured outputs and exits with the runner status"
 )]
 
 mod allocator;
+mod fixture;
 
 use std::{env, hint::black_box};
 
+use fixture::{boxed, release};
 // github actions runs this manual target on x86_64 linux
 // other targets compile no-op hooks so local checks do not require supported
 // valgrind client requests
@@ -67,13 +68,14 @@ fn callgrind_worker_config() -> LibraryBenchmarkConfig {
     config
 }
 
-#[library_benchmark(config = callgrind_worker_config())]
-#[bench::active_speaker_snapshot(WorkerLoopBenchFixture::command_driven_current_thread())]
-fn worker_command_roundtrips(fixture: WorkerLoopBenchFixture) -> usize {
+#[library_benchmark(config = callgrind_worker_config(), teardown = release)]
+#[bench::active_speaker_snapshot(boxed(WorkerLoopBenchFixture::command_driven_current_thread))]
+fn worker_command_roundtrips(fixture: Box<WorkerLoopBenchFixture>) -> Box<WorkerLoopBenchFixture> {
     start_instrumentation();
     let result = fixture.run_command_roundtrips();
     stop_instrumentation();
-    black_box(result)
+    black_box(result);
+    black_box(fixture)
 }
 
 library_benchmark_group!(

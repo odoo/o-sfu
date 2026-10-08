@@ -146,7 +146,7 @@ impl LocalSendBenchFixture {
     }
 
     #[must_use]
-    pub fn accounting_matches(self) -> bool {
+    pub fn accounting_matches(&self) -> bool {
         self.egress_bitrate
             .record(self.observed_at + Duration::from_millis(500), 0);
         self.egress_bitrate

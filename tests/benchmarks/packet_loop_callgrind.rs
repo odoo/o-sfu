@@ -27,8 +27,7 @@
 #![expect(
     clippy::exit,
     clippy::must_use_candidate,
-    clippy::needless_pass_by_value,
-    reason = "Gungraun's generated harness owns setup values, returns measured outputs and exits with the runner status"
+    reason = "Gungraun's generated harness returns measured outputs and exits with the runner status"
 )]
 
 use std::{hint::black_box, mem::drop};
@@ -45,15 +44,17 @@ use o_sfu_core::server::transport::benchmark_support::{
 };
 
 mod allocator;
+mod fixture;
 
 #[path = "callgrind_config.rs"]
 mod callgrind_config;
 
 use callgrind_config::callgrind_config;
+use fixture::{boxed, release};
 
 const ROUTING_MISS_FINGERPRINT_ATTEMPTS: usize = 4096;
-fn fanout_topology(destination_count: usize) -> FanoutBenchTopology {
-    FanoutBenchTopology::with_local_destinations(destination_count)
+fn fanout_topology(destination_count: usize) -> Box<FanoutBenchTopology> {
+    boxed(|| FanoutBenchTopology::with_local_destinations(destination_count))
 }
 
 fn fingerprint_packet(packet_len: usize) -> Vec<u8> {
@@ -91,23 +92,27 @@ fn fingerprint_packet(packet_len: usize) -> Vec<u8> {
 // real work, so the useful info is if buffer reuse and route lookup stay
 // proportional to the required fanout rather than adding allocator churn or
 // unrelated scans
-#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
+#[library_benchmark(config = callgrind_config(0.5), teardown = release)]
 #[bench::fanout_1(args = (1usize), setup = fanout_topology)]
 #[bench::fanout_8(args = (8usize), setup = fanout_topology)]
 #[bench::fanout_32(args = (32usize), setup = fanout_topology)]
 #[bench::fanout_64(args = (64usize), setup = fanout_topology)]
-fn route_plan_1024(mut topology: FanoutBenchTopology) -> FanoutBenchTopology {
+fn route_plan_1024(mut topology: Box<FanoutBenchTopology>) -> Box<FanoutBenchTopology> {
     black_box(topology.plan_route_turns());
     black_box(topology)
 }
 
-fn validate_relay_gates(mut fixture: RelayFanoutBenchFixture) {
+#[inline(never)]
+fn validate_relay_gates(mut fixture: Box<RelayFanoutBenchFixture>) {
     fixture.assert_gate_selection();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(0.5), teardown = validate_relay_gates)]
-#[bench::mixed_gates(RelayFanoutBenchFixture::mixed_gates())]
-fn relay_route_plan_1024(mut fixture: RelayFanoutBenchFixture) -> RelayFanoutBenchFixture {
+#[bench::mixed_gates(boxed(RelayFanoutBenchFixture::mixed_gates))]
+fn relay_route_plan_1024(
+    mut fixture: Box<RelayFanoutBenchFixture>,
+) -> Box<RelayFanoutBenchFixture> {
     black_box(fixture.plan_route_turns());
     black_box(fixture)
 }
@@ -119,16 +124,18 @@ fn relay_route_plan_1024(mut fixture: RelayFanoutBenchFixture) -> RelayFanoutBen
 // this protects the packet-loop phase that learns source metadata, updates
 // active-speaker state, tracks RID liveness and records incoming bitrate before
 // route planning starts
-fn validate_incoming_observation(fixture: IncomingObservationBenchFixture) {
+#[inline(never)]
+fn validate_incoming_observation(fixture: Box<IncomingObservationBenchFixture>) {
     fixture.assert_observation_coverage();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_incoming_observation)]
-#[bench::mid_rid_then_ssrc(IncomingObservationBenchFixture::mid_rid_then_ssrc())]
-#[bench::negotiated_vp8(IncomingObservationBenchFixture::negotiated_vp8())]
+#[bench::mid_rid_then_ssrc(boxed(IncomingObservationBenchFixture::mid_rid_then_ssrc))]
+#[bench::negotiated_vp8(boxed(IncomingObservationBenchFixture::negotiated_vp8))]
 fn incoming_observation_512(
-    mut fixture: IncomingObservationBenchFixture,
-) -> IncomingObservationBenchFixture {
+    mut fixture: Box<IncomingObservationBenchFixture>,
+) -> Box<IncomingObservationBenchFixture> {
     black_box(fixture.observe_turns());
     black_box(fixture)
 }
@@ -139,10 +146,10 @@ fn incoming_observation_512(
 // the open and overloaded cases have different expected outcomes but both are
 // packet-loop work that can run for every relayed packet
 // keeping them cheap preserves cross-worker forwarding under bursty rooms
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::enqueue(RelayPressureBenchFixture::open_mailbox())]
-#[bench::overloaded(RelayPressureBenchFixture::full_mailbox())]
-fn relay_mailbox_256(fixture: RelayPressureBenchFixture) -> RelayPressureBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::enqueue(boxed(RelayPressureBenchFixture::open_mailbox))]
+#[bench::overloaded(boxed(RelayPressureBenchFixture::full_mailbox))]
+fn relay_mailbox_256(fixture: Box<RelayPressureBenchFixture>) -> Box<RelayPressureBenchFixture> {
     black_box(fixture.run_attempts());
     black_box(fixture)
 }
@@ -154,11 +161,13 @@ fn relay_mailbox_256(fixture: RelayPressureBenchFixture) -> RelayPressureBenchFi
 // remote address has been learned
 // repeated misses protect the defensive path that must stay bounded when noise
 // or stale peers send datagrams that do not belong to a live RTC session
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::cached_route(IngressRoutingBenchFixture::cached_accepted_route())]
-#[bench::unknown_source(IngressRoutingBenchFixture::repeated_unknown_source_miss())]
-#[bench::unknown_rtp_1200(IngressRoutingBenchFixture::repeated_large_unknown_source_miss())]
-fn ingress_demux_256(mut fixture: IngressRoutingBenchFixture) -> IngressRoutingBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::cached_route(boxed(IngressRoutingBenchFixture::cached_accepted_route))]
+#[bench::unknown_source(boxed(IngressRoutingBenchFixture::repeated_unknown_source_miss))]
+#[bench::unknown_rtp_1200(boxed(IngressRoutingBenchFixture::repeated_large_unknown_source_miss))]
+fn ingress_demux_256(
+    mut fixture: Box<IngressRoutingBenchFixture>,
+) -> Box<IngressRoutingBenchFixture> {
     black_box(fixture.route_datagrams());
     black_box(fixture)
 }
@@ -168,10 +177,12 @@ fn ingress_demux_256(mut fixture: IngressRoutingBenchFixture) -> IngressRoutingB
 // this protects the path where the socket receive task obtains a reusable
 // buffer, enqueues a completed datagram for the packet loop, then the packet
 // loop drains the bounded queue before routing and recycling the packet buffer
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::cached_route(IngressBurstBenchFixture::cached_accepted_route())]
-#[bench::unknown_rtp_1200(IngressBurstBenchFixture::repeated_large_unknown_source_miss())]
-fn ingress_completed_burst_256(mut fixture: IngressBurstBenchFixture) -> IngressBurstBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::cached_route(boxed(IngressBurstBenchFixture::cached_accepted_route))]
+#[bench::unknown_rtp_1200(boxed(IngressBurstBenchFixture::repeated_large_unknown_source_miss))]
+fn ingress_completed_burst_256(
+    mut fixture: Box<IngressBurstBenchFixture>,
+) -> Box<IngressBurstBenchFixture> {
     black_box(fixture.route_completed_bursts());
     black_box(fixture)
 }
@@ -181,9 +192,9 @@ fn ingress_completed_burst_256(mut fixture: IngressBurstBenchFixture) -> Ingress
 // this protects the packet-loop scheduler path from regressing back to full
 // session scans or excessive heap churn while merging dirty sessions and due
 // str0m timeouts
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::stale_timeouts(SchedulerBenchFixture::stale_timeouts())]
-fn scheduler_churn_128(mut fixture: SchedulerBenchFixture) -> SchedulerBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::stale_timeouts(boxed(SchedulerBenchFixture::stale_timeouts))]
+fn scheduler_churn_128(mut fixture: Box<SchedulerBenchFixture>) -> Box<SchedulerBenchFixture> {
     black_box(fixture.collect_ready_and_next_timeout());
     black_box(fixture)
 }
@@ -212,9 +223,11 @@ fn fingerprint_4096(packet: Vec<u8>) -> Vec<u8> {
 // recording sinks share the packet-loop origin side with media forwarding
 // this benchmark keeps that adjacent path visible so recording support cannot
 // quietly add per-packet cost to rooms that are already forwarding media
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::recording(PacketSinkFanoutBenchFixture::recording_sink())]
-fn packet_sink_512(mut fixture: PacketSinkFanoutBenchFixture) -> PacketSinkFanoutBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::recording(boxed(PacketSinkFanoutBenchFixture::recording_sink))]
+fn packet_sink_512(
+    mut fixture: Box<PacketSinkFanoutBenchFixture>,
+) -> Box<PacketSinkFanoutBenchFixture> {
     black_box(fixture.route_sink_turns());
     black_box(fixture)
 }
@@ -224,15 +237,20 @@ fn packet_sink_512(mut fixture: PacketSinkFanoutBenchFixture) -> PacketSinkFanou
 //
 // this protects dense room policy changes from adding per-consumer lookup cost
 // beyond the required destination validation and one aggregate source refresh
-fn validate_route_gate_batch(fixture: ConsumerGateBatchBenchFixture) {
+#[inline(never)]
+fn validate_route_gate_batch(fixture: Box<ConsumerGateBatchBenchFixture>) {
     assert!(fixture.updates_applied());
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_route_gate_batch)]
-#[bench::consumers_64(ConsumerGateBatchBenchFixture::consumers_64())]
-#[bench::consumers_256(ConsumerGateBatchBenchFixture::consumers_256())]
-fn route_gate_batch(fixture: ConsumerGateBatchBenchFixture) -> ConsumerGateBatchBenchFixture {
-    black_box(fixture.apply_updates())
+#[bench::consumers_64(boxed(ConsumerGateBatchBenchFixture::consumers_64))]
+#[bench::consumers_256(boxed(ConsumerGateBatchBenchFixture::consumers_256))]
+fn route_gate_batch(
+    mut fixture: Box<ConsumerGateBatchBenchFixture>,
+) -> Box<ConsumerGateBatchBenchFixture> {
+    fixture.apply_updates();
+    black_box(fixture)
 }
 
 // measures remote packet-gate retry queue pressure while source-worker control
@@ -240,10 +258,12 @@ fn route_gate_batch(fixture: ConsumerGateBatchBenchFixture) -> ConsumerGateBatch
 //
 // this protects remote gate convergence from linear queue dedupe and front
 // drain movement when relay pressure prevents immediate control delivery
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::sources_64(RemoteGateRetryBenchFixture::sources_64())]
-#[bench::sources_256(RemoteGateRetryBenchFixture::sources_256())]
-fn remote_gate_retry(mut fixture: RemoteGateRetryBenchFixture) -> RemoteGateRetryBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::sources_64(boxed(RemoteGateRetryBenchFixture::sources_64))]
+#[bench::sources_256(boxed(RemoteGateRetryBenchFixture::sources_256))]
+fn remote_gate_retry(
+    mut fixture: Box<RemoteGateRetryBenchFixture>,
+) -> Box<RemoteGateRetryBenchFixture> {
     black_box(fixture.retry_under_pressure());
     black_box(fixture)
 }
@@ -254,9 +274,9 @@ fn remote_gate_retry(mut fixture: RemoteGateRetryBenchFixture) -> RemoteGateRetr
 // this protects video route-control updates from becoming proportional to
 // repeated packets or duplicate readiness events instead of the unique source
 // and destination work that must actually change
-#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
-#[bench::selected(RidReadinessBenchFixture::pending_selected_rid())]
-fn rid_readiness_256(mut fixture: RidReadinessBenchFixture) -> RidReadinessBenchFixture {
+#[library_benchmark(config = callgrind_config(0.5), teardown = release)]
+#[bench::selected(boxed(RidReadinessBenchFixture::pending_selected_rid))]
+fn rid_readiness_256(mut fixture: Box<RidReadinessBenchFixture>) -> Box<RidReadinessBenchFixture> {
     black_box(fixture.activate_selected_rid());
     black_box(fixture)
 }
@@ -266,10 +286,10 @@ fn rid_readiness_256(mut fixture: RidReadinessBenchFixture) -> RidReadinessBench
 //
 // this protects the per-destination local egress rewrite cost paid before each
 // forwarded packet is handed to str0m
-#[library_benchmark(config = callgrind_config(0.5), teardown = drop)]
-#[bench::steady_ssrc(LocalRewriteBenchFixture::steady_ssrc())]
-#[bench::switching_ssrc(LocalRewriteBenchFixture::switching_ssrc())]
-fn local_rewrite_4096(mut fixture: LocalRewriteBenchFixture) -> LocalRewriteBenchFixture {
+#[library_benchmark(config = callgrind_config(0.5), teardown = release)]
+#[bench::steady_ssrc(boxed(LocalRewriteBenchFixture::steady_ssrc))]
+#[bench::switching_ssrc(boxed(LocalRewriteBenchFixture::switching_ssrc))]
+fn local_rewrite_4096(mut fixture: Box<LocalRewriteBenchFixture>) -> Box<LocalRewriteBenchFixture> {
     black_box(fixture.project_packets());
     black_box(fixture)
 }
@@ -278,13 +298,15 @@ fn local_rewrite_4096(mut fixture: LocalRewriteBenchFixture) -> LocalRewriteBenc
 //
 // this protects the destination-session lookup and counter update paid after
 // str0m accepts each forwarded packet
-fn validate_local_send(fixture: LocalSendBenchFixture) {
+#[inline(never)]
+fn validate_local_send(fixture: Box<LocalSendBenchFixture>) {
     assert!(fixture.accounting_matches());
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_local_send)]
-#[bench::successful(LocalSendBenchFixture::successful())]
-fn local_send_512(mut fixture: LocalSendBenchFixture) -> LocalSendBenchFixture {
+#[bench::successful(boxed(LocalSendBenchFixture::successful))]
+fn local_send_512(mut fixture: Box<LocalSendBenchFixture>) -> Box<LocalSendBenchFixture> {
     fixture.send_packets();
     black_box(fixture)
 }
@@ -293,9 +315,11 @@ fn local_send_512(mut fixture: LocalSendBenchFixture) -> LocalSendBenchFixture {
 //
 // this protects the packet-level audio policy used by room source-policy
 // updates and diagnostics
-#[library_benchmark(config = callgrind_config(1.0), teardown = drop)]
-#[bench::many_sources(ActiveSpeakerBenchFixture::many_sources())]
-fn active_speaker_policy(mut fixture: ActiveSpeakerBenchFixture) -> ActiveSpeakerBenchFixture {
+#[library_benchmark(config = callgrind_config(1.0), teardown = release)]
+#[bench::many_sources(boxed(ActiveSpeakerBenchFixture::many_sources))]
+fn active_speaker_policy(
+    mut fixture: Box<ActiveSpeakerBenchFixture>,
+) -> Box<ActiveSpeakerBenchFixture> {
     black_box(fixture.observe_sources());
     black_box(fixture)
 }
@@ -307,59 +331,65 @@ fn active_speaker_policy(mut fixture: ActiveSpeakerBenchFixture) -> ActiveSpeake
 // source command per consumer
 // this benchmark checks the route-scoped flush path that resolves current route
 // state before collapsing many requests into one producer-side signal
-#[library_benchmark(config = callgrind_config(5.0), teardown = drop)]
-#[bench::remote_source(KeyframeCoalescingBenchFixture::remote_source_requests())]
+#[library_benchmark(config = callgrind_config(5.0), teardown = release)]
+#[bench::remote_source(boxed(KeyframeCoalescingBenchFixture::remote_source_requests))]
 fn keyframe_coalesce_512(
-    mut fixture: KeyframeCoalescingBenchFixture,
-) -> KeyframeCoalescingBenchFixture {
+    mut fixture: Box<KeyframeCoalescingBenchFixture>,
+) -> Box<KeyframeCoalescingBenchFixture> {
     black_box(fixture.flush_requests());
     black_box(fixture)
 }
 
 // measures packet turns interleaved with source-activity commands on one
 // worker state, without OS-thread or mailbox-wait scheduling in the gate
-fn validate_interleaved_relay_activity(fixture: InterleavedRelayActivityBenchFixture) {
+#[inline(never)]
+fn validate_interleaved_relay_activity(mut fixture: Box<InterleavedRelayActivityBenchFixture>) {
     fixture.assert_coverage();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_interleaved_relay_activity)]
-#[bench::activity_gate(InterleavedRelayActivityBenchFixture::activity_gate())]
+#[bench::activity_gate(boxed(InterleavedRelayActivityBenchFixture::activity_gate))]
 fn interleaved_relay_activity_512(
-    mut fixture: InterleavedRelayActivityBenchFixture,
-) -> InterleavedRelayActivityBenchFixture {
+    mut fixture: Box<InterleavedRelayActivityBenchFixture>,
+) -> Box<InterleavedRelayActivityBenchFixture> {
     fixture.run();
     black_box(fixture)
 }
 
-fn validate_session_drain(fixture: SessionDrainBenchFixture) {
+#[inline(never)]
+fn validate_session_drain(fixture: Box<SessionDrainBenchFixture>) {
     fixture.assert_drained();
+    release(fixture);
 }
 
 // measures ready session output draining
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_session_drain)]
-#[bench::drain(SessionDrainBenchFixture::new())]
-fn session_drain_128(mut fixture: SessionDrainBenchFixture) -> SessionDrainBenchFixture {
+#[bench::drain(boxed(SessionDrainBenchFixture::new))]
+fn session_drain_128(mut fixture: Box<SessionDrainBenchFixture>) -> Box<SessionDrainBenchFixture> {
     fixture.drain_sessions();
     black_box(fixture)
 }
 
 // measures relay channel packet draining
-fn validate_relay_drain(fixture: RelayDrainBenchFixture) {
+#[inline(never)]
+fn validate_relay_drain(fixture: Box<RelayDrainBenchFixture>) {
     fixture.assert_drained();
+    release(fixture);
 }
 
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_relay_drain)]
-#[bench::drain(RelayDrainBenchFixture::new())]
-#[bench::retained_capacity(RelayDrainBenchFixture::warmed(256))]
-fn relay_drain_256(mut fixture: RelayDrainBenchFixture) -> RelayDrainBenchFixture {
+#[bench::drain(boxed(RelayDrainBenchFixture::new))]
+#[bench::retained_capacity(boxed(|| RelayDrainBenchFixture::warmed(256)))]
+fn relay_drain_256(mut fixture: Box<RelayDrainBenchFixture>) -> Box<RelayDrainBenchFixture> {
     black_box(fixture.drain_relay());
     black_box(fixture)
 }
 
 // The production relay budget with staging capacity retained from a prior turn.
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_relay_drain)]
-#[bench::retained_capacity(RelayDrainBenchFixture::warmed(64))]
-fn relay_drain_64(mut fixture: RelayDrainBenchFixture) -> RelayDrainBenchFixture {
+#[bench::retained_capacity(boxed(|| RelayDrainBenchFixture::warmed(64)))]
+fn relay_drain_64(mut fixture: Box<RelayDrainBenchFixture>) -> Box<RelayDrainBenchFixture> {
     black_box(fixture.drain_relay());
     black_box(fixture)
 }
