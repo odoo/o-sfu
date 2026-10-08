@@ -2027,6 +2027,8 @@ async fn constrained_bandwidth_pauses_then_recovers_and_upgrades_a_pinned_route(
     scenario
         .set_scalable_video_layout(2, 1, VideoLayoutIntent::Pinned)
         .await;
+    // Offer-only transports start without BWE, so the pinned upgrade must settle.
+    scenario.refresh_policy_until_upgrades_settle().await;
     let receiver = UserId::Integer(2);
     assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1], "hi").await;
     let connection_id = user_connection_id(&scenario.room, &receiver).await;
@@ -2058,6 +2060,9 @@ async fn constrained_bandwidth_preserves_demand_for_two_paused_routes() {
     let scenario = SourcePolicyScenario::three_ready_users().await;
     publish_three_layer_camera(&scenario.room, &UserId::Integer(1), &scenario.adapter).await;
     publish_three_layer_camera(&scenario.room, &UserId::Integer(3), &scenario.adapter).await;
+    // Seed high layers explicitly because offer-only transports cannot report BWE.
+    let initial_bandwidth = bandwidth_for(&scenario, 2, 10_000).await;
+    apply_policy_turns(&scenario, &initial_bandwidth, 2).await;
     let receiver = UserId::Integer(2);
     assert_scalable_video_rid_for_publishers(&scenario, &receiver, [1, 3], "hi").await;
     let first_source_media = source_media_id(
@@ -3328,6 +3333,12 @@ async fn readable_detail_holds_high_quality_until_pause_and_resume_expire() {
 async fn rejected_receiver_controls_do_not_block_another_receivers_deadline() {
     let scenario = SourcePolicyScenario::three_ready_users().await;
     publish_three_layer_camera(&scenario.room, &UserId::Integer(1), &scenario.adapter).await;
+    // Both routes must start high so pressure requires transport selector controls.
+    let mut initial_bandwidth = bandwidth_for(&scenario, 2, 10_000).await;
+    initial_bandwidth
+        .per_session
+        .extend(bandwidth_for(&scenario, 3, 10_000).await.per_session);
+    apply_policy_turns(&scenario, &initial_bandwidth, 2).await;
     let mut bandwidth = bandwidth_for(&scenario, 2, 100).await;
     bandwidth
         .per_session

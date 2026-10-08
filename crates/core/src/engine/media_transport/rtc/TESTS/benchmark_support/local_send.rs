@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use str0m::{Input, rtp::StreamTxQueueInfo};
 use str0m::{
     media::{MediaKind, Mid},
     rtp::Ssrc,
@@ -24,6 +26,8 @@ use super::super::{
     },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
+#[cfg(test)]
+use super::super::{codec::RtpProfile, worker::session_drain_peer::connect_rtc_pair};
 use crate::{
     Bitrate,
     engine::{
@@ -31,6 +35,8 @@ use crate::{
         media_transport::{TransportMediaId, TransportSessionKey},
     },
 };
+#[cfg(test)]
+use crate::{CodecPreferences, MediaCodecFlags};
 
 const LOCAL_SEND_PACKETS: usize = 512;
 const LOCAL_SEND_PAYLOAD: &[u8] = b"payload";
@@ -169,17 +175,30 @@ impl LocalSendBenchFixture {
 
 #[test]
 fn local_send_fixture_accounts_for_warmup_and_measured_packets() -> Result<(), Box<dyn Error>> {
-    use str0m::{Input, rtp::StreamTxQueueInfo};
     let mut fixture = LocalSendBenchFixture::successful();
+    let profile = RtpProfile::compile(MediaCodecFlags::default(), CodecPreferences::default())?;
+    let started_at = Instant::now();
+    let mut peer = profile.session_config().build(started_at);
+    let session = fixture
+        .state
+        .users
+        .get_mut(&fixture.session_keys[0])
+        .ok_or("benchmark consumer session should exist")?;
+    // str0m only refreshes queue snapshots after DTLS supplies SRTP keys.
+    let now = connect_rtc_pair(
+        &mut session.rtc,
+        &mut peer,
+        SocketAddr::from(([127, 0, 0, 1], 47_100)),
+        SocketAddr::from(([127, 0, 0, 1], 47_101)),
+        started_at,
+    )?;
     fixture.send_packets();
     let session = fixture
         .state
         .users
         .get_mut(&fixture.session_keys[0])
         .ok_or("benchmark consumer session should exist")?;
-    session
-        .rtc
-        .handle_input(Input::Timeout(fixture.observed_at))?;
+    session.rtc.handle_input(Input::Timeout(now))?;
     assert_eq!(
         session
             .rtc

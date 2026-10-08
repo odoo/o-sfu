@@ -366,7 +366,9 @@ fn validate_session_drain(fixture: Box<SessionDrainBenchFixture>) {
 // measures ready session output draining
 #[library_benchmark(config = callgrind_config(1.0), teardown = validate_session_drain)]
 #[bench::drain(boxed(SessionDrainBenchFixture::new))]
-fn session_drain_128(mut fixture: Box<SessionDrainBenchFixture>) -> Box<SessionDrainBenchFixture> {
+fn session_stats_drain_128(
+    mut fixture: Box<SessionDrainBenchFixture>,
+) -> Box<SessionDrainBenchFixture> {
     fixture.drain_sessions();
     black_box(fixture)
 }
@@ -414,7 +416,7 @@ library_benchmark_group!(
         active_speaker_policy,
         keyframe_coalesce_512,
         interleaved_relay_activity_512,
-        session_drain_128,
+        session_stats_drain_128,
         relay_drain_256,
         relay_drain_64
 );

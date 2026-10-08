@@ -53,6 +53,10 @@ mod TESTS;
 #[path = "TESTS/commands.rs"]
 mod command_support;
 
+#[cfg(test)]
+#[path = "TESTS/session_drain_peer.rs"]
+pub(super) mod session_drain_peer;
+
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/support.rs"]
 mod test_support;

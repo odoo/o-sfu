@@ -224,10 +224,10 @@ fn bind_producer_stream<'a>(
         ));
     }
     let encoding = encodings.get_mut(encoding_idx)?;
-    // str0m 0.23.1 can recreate a refused preceding SSRC in
+    // str0m 0.24.0 can recreate a refused preceding SSRC in
     // map_dynamic_finish. Keep its intended anti-flap rule even when the
     // delayed packet is emitted as a second authenticated receive stream.
-    // https://docs.rs/str0m/0.23.1/src/str0m/streams/mod.rs.html
+    // https://docs.rs/str0m/0.24.0/src/str0m/streams/mod.rs.html
     if encoding.previous_primary == Some(binding.primary) {
         return None;
     }

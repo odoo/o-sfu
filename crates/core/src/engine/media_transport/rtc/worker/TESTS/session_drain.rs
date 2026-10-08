@@ -19,13 +19,16 @@ mod clock_mapping;
 #[path = "session_drain_ingress.rs"]
 mod ingress;
 
-#[path = "session_drain_peer.rs"]
-mod peer;
-use self::peer::{
-    TestDatagram, capture_compound_nack, connect_rtc_pair, deliver_rtp, drain_mutation, take_rtcp,
-    take_written_rtp,
+use super::{
+    super::{
+        buffers::PacketLoopBuffers,
+        session_drain_peer::{
+            TestDatagram, capture_compound_nack, connect_rtc_pair, deliver_rtp, drain_mutation,
+            take_rtcp, take_written_rtp,
+        },
+    },
+    *,
 };
-use super::{super::buffers::PacketLoopBuffers, *};
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
     engine::{

@@ -191,7 +191,7 @@ pub(super) fn take_rtcp(rtc: &mut Rtc, now: Instant) -> Result<Vec<TestDatagram>
     Ok(outgoing.into_iter().filter(TestDatagram::is_rtcp).collect())
 }
 
-pub(super) fn connect_rtc_pair(
+pub(in crate::engine::media_transport::rtc) fn connect_rtc_pair(
     server: &mut Rtc,
     peer: &mut Rtc,
     server_addr: SocketAddr,

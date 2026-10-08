@@ -9,21 +9,22 @@
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-use str0m::{Input, bwe::Bitrate as Str0mBitrate};
+use str0m::Input;
 use tokio::sync::mpsc;
 
 use super::super::{
-    bootstrap::test_support::ensure_session_rtc_state,
+    RtpProfile,
+    bootstrap::ensure_session_rtc_state,
     packet_loop::{drain_relay_packets, forwarded_packet::ForwardedPacket},
     state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
     test_support::{sample_forwarded_packet, test_transport_session_key},
     worker::{PacketLoopBuffers, SessionDrainContext, drain_ready_sessions},
 };
 use crate::{
-    Bitrate,
+    Bitrate, CodecPreferences, MediaCodecFlags,
     engine::{
         UserId,
         media_transport::SourcePolicySignal,
@@ -32,10 +33,9 @@ use crate::{
 };
 
 const SESSION_DRAIN_SESSION_COUNT: u32 = 128;
-const SESSION_DRAIN_INITIAL_BITRATE: Bitrate = Bitrate::from_mbps(10);
-const SESSION_DRAIN_UPDATED_BITRATE: Bitrate = Bitrate::from_mbps(20);
+const SESSION_DRAIN_STATS_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Drains one queued bandwidth change per initialized RTC session.
+/// Drains one queued peer-statistics event per initialized RTC session.
 ///
 /// Setup consumes initial RTC output. Keeping its clock fixed excludes
 /// randomized DTLS retry deadlines from the measured drain.
@@ -57,6 +57,8 @@ impl SessionDrainBenchFixture {
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
         let candidate_addr = SocketAddr::from(([127, 0, 0, 1], 46_300));
+        let profile =
+            RtpProfile::compile(MediaCodecFlags::default(), CodecPreferences::default()).unwrap();
         for session_idx in 0..SESSION_DRAIN_SESSION_COUNT {
             let session_key = test_transport_session_key(
                 111,
@@ -66,9 +68,12 @@ impl SessionDrainBenchFixture {
             );
             ensure_session_rtc_state(
                 &mut state.users,
+                Arc::from("test-room"),
                 &session_key,
                 candidate_addr,
-                SESSION_DRAIN_INITIAL_BITRATE,
+                Bitrate::from_mbps(10),
+                &profile,
+                Some(SESSION_DRAIN_STATS_INTERVAL),
             )
             .unwrap();
             state.mark_session_dirty(&session_key);
@@ -84,12 +89,10 @@ impl SessionDrainBenchFixture {
             now: Instant::now(),
         };
         fixture.drain_sessions();
+        // Peer stats remain observable before SRTP setup, unlike TWCC estimates.
+        fixture.now += SESSION_DRAIN_STATS_INTERVAL;
         for key in fixture.state.users.keys().cloned().collect::<Vec<_>>() {
             let session = fixture.state.users.get_mut(&key).unwrap();
-            session
-                .rtc
-                .bwe()
-                .reset(Str0mBitrate::bps(SESSION_DRAIN_UPDATED_BITRATE.as_bps()));
             session
                 .rtc
                 .handle_input(Input::Timeout(fixture.now))
@@ -111,7 +114,7 @@ impl SessionDrainBenchFixture {
         let _ = drain_ready_sessions(&mut self.state, &context, &mut self.buffers, self.now);
     }
 
-    /// Verifies every queued estimate changed before its future deadline.
+    /// Verifies every queued peer sample was consumed before its future deadline.
     pub fn assert_drained(&self) {
         assert_eq!(
             self.state.users.len(),
@@ -119,15 +122,14 @@ impl SessionDrainBenchFixture {
         );
         assert!(!self.state.has_dirty_sessions());
         let keys: Vec<_> = self.state.users.keys().cloned().collect();
-        let bandwidth = self
+        let quality = self
             .snapshot_state
             .lock()
             .unwrap()
-            .receiver_bandwidth_snapshot(&keys);
-        assert_eq!(bandwidth.per_session.len(), keys.len());
-        for (key, estimate) in &bandwidth.per_session {
-            assert!(*estimate > SESSION_DRAIN_INITIAL_BITRATE);
-            assert!(*estimate <= SESSION_DRAIN_UPDATED_BITRATE);
+            .transport_quality_snapshot(&keys);
+        assert_eq!(quality.len(), keys.len());
+        for (key, sample) in &quality {
+            assert_eq!(sample.sample_count, 1);
             let session = self.state.users.get(key).unwrap();
             assert!(!session.packet_loop_dirty);
             assert!(

@@ -436,18 +436,16 @@ async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult
     let selection = &subscription.selection;
     assert_eq!(subscription.source_id, 1);
     assert!(selection.selected_encoding_id.is_some());
-    assert_eq!(selection.selected_rid.as_deref(), Some("hi"));
+    // An offer-only transport cannot probe, so its thumbnail has no BWE budget.
+    assert_eq!(selection.selected_rid.as_deref(), Some("lo"));
     assert_eq!(
         selection.selection_reason,
         DiagnosticsSourceSelectionReason::ReceiverAdaptation
     );
-    assert_eq!(
-        selection.latest_receiver_bandwidth_estimate_bps,
-        Some(10_000_000)
-    );
-    assert_eq!(selection.selected_video_budget_bps, Some(10_000_000));
+    assert_eq!(selection.latest_receiver_bandwidth_estimate_bps, None);
+    assert_eq!(selection.selected_video_budget_bps, None);
     assert_eq!(selection.active_video_route_count, 1);
-    assert_eq!(selection.selected_video_bitrate_bps, 900_000);
+    assert_eq!(selection.selected_video_bitrate_bps, 150_000);
     assert_eq!(source_requests(), 1);
 
     Ok(())
