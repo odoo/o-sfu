@@ -1,4 +1,4 @@
-//! The receive task spawned by [`UdpIngress`] owns backend I/O while the packet
+//! The receive task spawned by [`UdpReceiveTask`] owns backend I/O while the packet
 //! loop selects on a bounded completed-datagram queue. The packet loop can cancel
 //! its channel wait for control or deadlines without restarting a receive. Once
 //! the queue is full, the receive task waits for capacity instead of growing
@@ -24,15 +24,18 @@ use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc, time::sleep};
 use tokio_uring::net::UdpSocket as TokioUringUdpSocket;
 use tokio_util::sync::CancellationToken;
 
-use super::{super::worker::buffers::RECEIVE_BUFFER_LEN, io_failures::report_udp_receive_failure};
+#[cfg(feature = "internal-benchmarks")]
+use super::ingress::RtcIngress;
+use super::{
+    super::worker::buffers::RECEIVE_BUFFER_LEN, ingress::IngressPacket,
+    io_failures::report_udp_receive_failure,
+};
 use crate::{RtcUdpIoBackend, engine::metrics::RtcMetricsRecorder};
 
 #[cfg(test)]
 #[path = "udp/TESTS/support.rs"]
 pub(in super::super) mod test_support;
 
-const INGRESS_QUEUE_CAPACITY: usize = 32;
-const RECEIVE_BUFFER_POOL_CAPACITY: usize = 32;
 const RECEIVE_FAILURE_BACKOFF_MAX: Duration = Duration::from_millis(100);
 
 struct ReceiveFailureControl {
@@ -60,27 +63,8 @@ pub enum RtcUdpSocket {
     IoUring(Rc<TokioUringUdpSocket>),
 }
 
-/// Completed receive annotated with the local address expected by str0m.
-///
-/// The backend receive APIs supply only the peer address. `candidate_addr`
-/// preserves the local candidate identity needed by [`str0m::Input::Receive`].
-pub(crate) struct IngressPacket {
-    pub(in super::super) source_addr: SocketAddr,
-    pub(in super::super) candidate_addr: SocketAddr,
-    /// Socket-completion time captured before ingress-queue backpressure.
-    ///
-    /// str0m uses this clock for jitter and bandwidth timing.
-    pub(in super::super) received_at: Instant,
-    pub(in super::super) packet: Vec<u8>,
-    /// Protocol of the socket the packet was received on, which str0m matches against
-    /// its local candidates.
-    pub(in super::super) protocol: Protocol,
-}
-
 /// Receive-side datagram pump for one worker socket.
-pub struct UdpIngress {
-    rx: mpsc::Receiver<IngressPacket>,
-    recycle_tx: mpsc::Sender<Vec<u8>>,
+pub struct UdpReceiveTask {
     shutdown: CancellationToken,
     wake_addr: SocketAddr,
 }
@@ -88,7 +72,7 @@ pub struct UdpIngress {
 #[cfg(feature = "internal-benchmarks")]
 pub struct UdpIngressBenchHarness {
     tx: mpsc::Sender<IngressPacket>,
-    ingress: UdpIngress,
+    ingress: RtcIngress,
     recycle_rx: mpsc::Receiver<Vec<u8>>,
 }
 
@@ -131,7 +115,7 @@ impl RtcUdpSocket {
     }
 }
 
-impl UdpIngress {
+impl UdpReceiveTask {
     /// Starts receive ingress on the current worker runtime.
     ///
     /// `bind_addr` supplies the address family and port used to wake shutdown.
@@ -145,59 +129,30 @@ impl UdpIngress {
         bind_addr: SocketAddr,
         candidate_addr: SocketAddr,
         metrics: Arc<RtcMetricsRecorder>,
+        packet_tx: mpsc::Sender<IngressPacket>,
+        recycle_rx: mpsc::Receiver<Vec<u8>>,
     ) -> Self {
-        let (tx, rx) = mpsc::channel(INGRESS_QUEUE_CAPACITY);
-        let (recycle_tx, recycle_rx) = mpsc::channel(RECEIVE_BUFFER_POOL_CAPACITY);
         let shutdown = CancellationToken::new();
         let wake_addr = udp_wake_addr(bind_addr);
         spawn_ingress(
             socket,
             candidate_addr,
-            tx,
+            packet_tx,
             recycle_rx,
             shutdown.clone(),
             metrics,
         );
         Self {
-            rx,
-            recycle_tx,
             shutdown,
             wake_addr,
         }
-    }
-
-    pub(in super::super) fn try_recv(&mut self) -> Option<IngressPacket> {
-        self.rx.try_recv().ok()
-    }
-
-    pub(in super::super) async fn recv(&mut self) -> Option<IngressPacket> {
-        self.rx.recv().await
-    }
-
-    /// Returns reusable receive storage without backpressuring the packet loop.
-    ///
-    /// Only buffers retaining [`RECEIVE_BUFFER_LEN`] capacity enter the bounded
-    /// pool. A full pool drops the buffer because reuse is opportunistic.
-    pub(in super::super) fn recycle(&self, mut packet: Vec<u8>) {
-        if packet.capacity() < RECEIVE_BUFFER_LEN {
-            return;
-        }
-        packet.clear();
-        let _ = self.recycle_tx.try_send(packet);
     }
 }
 
 #[cfg(feature = "internal-benchmarks")]
 impl UdpIngressBenchHarness {
-    pub fn new(wake_addr: SocketAddr) -> Self {
-        let (tx, rx) = mpsc::channel(INGRESS_QUEUE_CAPACITY);
-        let (recycle_tx, recycle_rx) = mpsc::channel(RECEIVE_BUFFER_POOL_CAPACITY);
-        let ingress = UdpIngress {
-            rx,
-            recycle_tx,
-            shutdown: CancellationToken::new(),
-            wake_addr,
-        };
+    pub fn new() -> Self {
+        let (ingress, tx, recycle_rx) = RtcIngress::new();
         Self {
             tx,
             ingress,
@@ -225,12 +180,12 @@ impl UdpIngressBenchHarness {
             .is_ok()
     }
 
-    pub fn ingress_mut(&mut self) -> &mut UdpIngress {
+    pub fn ingress_mut(&mut self) -> &mut RtcIngress {
         &mut self.ingress
     }
 }
 
-impl Drop for UdpIngress {
+impl Drop for UdpReceiveTask {
     fn drop(&mut self) {
         self.shutdown.cancel();
         // The token cannot wake a task pending on socket I/O. Send a best-effort

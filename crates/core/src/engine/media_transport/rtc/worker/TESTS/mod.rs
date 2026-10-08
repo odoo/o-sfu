@@ -53,13 +53,14 @@ use super::{
         consumer_egress::test_support::{SourceRtpIdentity, project_identity},
         egress::RtcEgress,
         packet_loop::{
-            ForwardingDestination, PacketForwarder, PacketGateDecision, drain_relay_packets,
+            ForwardingDestination, PacketForwarder, PacketGateDecision, RtcIngress,
+            drain_relay_packets,
             event_observation::{RtcEventContext, observe_rtc_event},
             finish_incoming_stats, flush_packet_forwards,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
             plan_forwards, record_incoming_packet, record_incoming_stats,
             routing_miss::PacketLoopRoutingMissKey,
-            udp::{RtcUdpSocket, UdpIngress},
+            udp::{RtcUdpSocket, UdpReceiveTask},
         },
         recovery::{PendingKeyframeRequest, drain_due_kf_retries, flush_pending_kf_reqs_at},
         state::{
@@ -375,9 +376,18 @@ fn test_socket() -> Result<SharedRtcSocket, &'static str> {
     let socket = RtcUdpSocket::from_std(socket, RtcUdpIoBackend::Tokio)
         .map_err(|_error| "test socket should convert")?;
     let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
+    let (ingress, packet_tx, recycle_rx) = RtcIngress::new();
     Ok(SharedRtcSocket {
         udp_candidate_addr: addr,
-        ingress: UdpIngress::new(socket.clone(), addr, addr, Arc::clone(&rtc_metrics)),
+        udp_receive_task: UdpReceiveTask::new(
+            socket.clone(),
+            addr,
+            addr,
+            Arc::clone(&rtc_metrics),
+            packet_tx,
+            recycle_rx,
+        ),
+        ingress,
         egress: RtcEgress::new(socket, addr, rtc_metrics),
     })
 }

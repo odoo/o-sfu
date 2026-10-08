@@ -1,11 +1,11 @@
 //! Turn ordering for one worker-local RTC loop.
 //!
 //! [`PacketLoopTurn`] retains reusable buffers while [`PacketLoopState`] owns
-//! session, media and route facts. Socket receives enter through the spawned
-//! [`UdpIngress`] task. All mutation stays on the worker thread.
+//! session, media and route facts. Received packets enter through the worker's
+//! [`RtcIngress`] queue. All mutation stays on the worker thread.
 //!
 //! ```text
-//! apply one command, timeout or UDP datagram
+//! apply one command, timeout or ingress packet
 //!   -> drain dirty and timed-out sessions at the turn timestamp
 //!   -> drain the bounded relay mailbox and resolve consumer feedback
 //!   -> for each packet: observe facts -> plan -> flush
@@ -50,11 +50,10 @@ use super::{
         control::WorkerCommandContext,
         egress::RtcEgress,
         packet_loop::{
-            ForwardingEffects, PacketForwarder, drain_relay_packets,
+            ForwardingEffects, IngressPacket, PacketForwarder, RtcIngress, drain_relay_packets,
             forwarded_packet::ForwardedPacket,
             ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
             routing_miss::DemuxRecoveryState,
-            udp::{IngressPacket, UdpIngress},
         },
         recovery::{drain_due_kf_retries, drain_due_publisher_kf, flush_pending_kf_reqs_at},
         state::{PacketLoopState, RtcSnapshotState, SharedRtcSocket, bitrate::BitrateRegistry},
@@ -125,7 +124,7 @@ pub(crate) struct PacketLoopTurn {
     delay_publisher: PacketLoopDelayPublisher,
     input_yield_budget: usize,
     ready_now_budget: usize,
-    udp_burst_budget: usize,
+    ingress_burst_budget: usize,
     #[cfg(test)]
     pub(super) force_immediate_timeout: bool,
 }
@@ -141,7 +140,7 @@ pub(crate) struct PacketLoopApplyContext<'a> {
     pub candidate_addr: SocketAddr,
     pub config: &'a PacketLoopConfig,
     pub demux: &'a mut DemuxRecoveryState,
-    pub ingress: &'a UdpIngress,
+    pub ingress: &'a RtcIngress,
 }
 
 impl PacketLoopTurn {
@@ -152,7 +151,7 @@ impl PacketLoopTurn {
             delay_publisher: PacketLoopDelayPublisher::new(started_at),
             input_yield_budget: MAX_INPUTS_BEFORE_YIELD,
             ready_now_budget: MAX_READY_NOW_INPUTS_BEFORE_YIELD,
-            udp_burst_budget: MAX_UDP_DATAGRAMS_PER_TURN,
+            ingress_burst_budget: MAX_INGRESS_PACKETS_PER_TURN,
             #[cfg(test)]
             force_immediate_timeout: false,
         }
@@ -273,7 +272,7 @@ impl PacketLoopTurn {
         let topology_changed =
             drain_ready_sessions(state, &session_drain_context, &mut self.buffers, now);
         // Cap relay work so sustained cross-worker fanout cannot delay control,
-        // timeout or UDP input indefinitely.
+        // timeout or ingress input indefinitely.
         drain_relay_packets(
             relay_rx,
             &mut self.buffers.pending_packets,
@@ -325,11 +324,11 @@ impl PacketLoopTurn {
     /// Waits for the next event that should resume the worker loop.
     ///
     /// Shutdown wins ready inputs. Control precedes ingress except for one
-    /// completed datagram admitted after each bounded yield checkpoint.
+    /// completed ingress packet admitted after each bounded yield checkpoint.
     pub async fn wait_for_next_input(
         &mut self,
         snapshot: WaitPhaseSnapshot,
-        ingress: &mut UdpIngress,
+        ingress: &mut RtcIngress,
         inputs: &mut PacketLoopInputReceivers,
         packet_loop_delay: &PacketLoopDelaySnapshot,
     ) -> Option<PacketLoopTurnInput> {
@@ -339,7 +338,7 @@ impl PacketLoopTurn {
             }
             if self.input_yield_budget == 0 {
                 // Ready control and mixed inputs can bypass every receive await.
-                // Yield between complete turns, then admit one queued datagram
+                // Yield between complete turns, then admit one queued packet
                 // before restoring control priority.
                 yield_now().await;
                 if inputs.shutdown_cancelled() {
@@ -347,7 +346,7 @@ impl PacketLoopTurn {
                 }
                 self.input_yield_budget = MAX_INPUTS_BEFORE_YIELD;
                 if let Some(datagram) = ingress.try_recv() {
-                    self.udp_burst_budget = MAX_UDP_DATAGRAMS_PER_TURN.saturating_sub(1);
+                    self.ingress_burst_budget = MAX_INGRESS_PACKETS_PER_TURN.saturating_sub(1);
                     return Some(PacketLoopTurnInput::Datagram(datagram));
                 }
             }
@@ -364,8 +363,8 @@ impl PacketLoopTurn {
                 self.ready_now_budget = self.ready_now_budget.saturating_sub(1);
                 return Some(PacketLoopTurnInput::Timeout);
             }
-            // after one awaited datagram wakes the loop, consume a bounded number of
-            // already completed datagrams so bursts do not pay one ingress await per packet
+            // after one awaited packet wakes the loop, consume a bounded number of
+            // already completed packets so bursts do not pay one ingress await per packet
             if let Some(next_input) = self.try_recv_queued_datagram(ingress) {
                 return Some(next_input);
             }
@@ -391,8 +390,8 @@ impl PacketLoopTurn {
     ///
     /// Session and ICE controls invalidate ingress demux recovery hints.
     /// Other controls preserve miss throttles.
-    /// queued UDP datagrams can resume following turns without another ingress await
-    /// but every datagram still gets a pump between inputs
+    /// queued ingress packets can resume following turns without another ingress await
+    /// but every packet still gets a pump between inputs
     /// relay input remains in the receiver bundle until the next pump
     pub fn apply_input(
         &mut self,
@@ -437,32 +436,32 @@ impl PacketLoopTurn {
         }
     }
 
-    /// tries to consume one already queued UDP datagram without awaiting
+    /// tries to consume one already queued ingress packet without awaiting
     ///
     /// the burst budget allows short receive bursts while still forcing the worker
-    /// back to the biased wait after a bounded number of datagrams
+    /// back to the biased wait after a bounded number of packets
     fn try_recv_queued_datagram(
         &mut self,
-        ingress: &mut UdpIngress,
+        ingress: &mut RtcIngress,
     ) -> Option<PacketLoopTurnInput> {
-        if self.udp_burst_budget == 0 {
+        if self.ingress_burst_budget == 0 {
             return None;
         }
         if let Some(datagram) = ingress.try_recv() {
-            self.udp_burst_budget = self.udp_burst_budget.saturating_sub(1);
+            self.ingress_burst_budget = self.ingress_burst_budget.saturating_sub(1);
             Some(PacketLoopTurnInput::Datagram(datagram))
         } else {
-            self.udp_burst_budget = MAX_UDP_DATAGRAMS_PER_TURN;
+            self.ingress_burst_budget = MAX_INGRESS_PACKETS_PER_TURN;
             None
         }
     }
 
-    /// Cancelling this wait leaves socket receive running because [`UdpIngress`]
-    /// owns the in-flight I/O.
+    /// Cancelling this wait is safe because the receive tasks, not this future,
+    /// own the in-flight I/O. Dropping a pending queue receive loses no packet.
     async fn wait_for_ingress_input(
         &mut self,
         info: &WaitPhaseSnapshot,
-        ingress: &mut UdpIngress,
+        ingress: &mut RtcIngress,
     ) -> PacketLoopTurnInput {
         let receive = ingress.recv();
         let result = if let Some(next_timeout) = info.next_timeout {
@@ -480,12 +479,12 @@ impl PacketLoopTurn {
         } else {
             receive.await
         };
-        // successful receives reset the burst budget around this first datagram
-        // so follow-up queued datagrams can be tried without awaiting again
+        // successful receives reset the burst budget around this first packet
+        // so follow-up queued packets can be tried without awaiting again
         match result {
             Some(datagram) => {
-                // one datagram is already consumed from the new burst
-                self.udp_burst_budget = MAX_UDP_DATAGRAMS_PER_TURN.saturating_sub(1);
+                // one packet is already consumed from the new burst
+                self.ingress_burst_budget = MAX_INGRESS_PACKETS_PER_TURN.saturating_sub(1);
                 PacketLoopTurnInput::Datagram(datagram)
             }
             None => PacketLoopTurnInput::Timeout,
@@ -493,7 +492,7 @@ impl PacketLoopTurn {
     }
 }
 
-const MAX_UDP_DATAGRAMS_PER_TURN: usize = 16;
+const MAX_INGRESS_PACKETS_PER_TURN: usize = 16;
 const MAX_READY_NOW_INPUTS_BEFORE_YIELD: usize = 32;
 const MAX_INPUTS_BEFORE_YIELD: usize = 32;
 
@@ -501,7 +500,7 @@ const MAX_INPUTS_BEFORE_YIELD: usize = 32;
 ///
 /// # Concurrency
 ///
-/// this task owns `PacketLoopState`, demux recovery hints, `UdpIngress`,
+/// this task owns `PacketLoopState`, demux recovery hints, `RtcIngress`,
 /// `RtcEgress` and `PacketLoopBuffers`
 /// other tasks communicate with it through channels, shared read-side snapshots
 /// and cancellation
@@ -614,7 +613,7 @@ pub fn route_queued_ingress_datagrams_for_benchmark(
     packet_loop_state: &mut PacketLoopState,
     demux: &mut DemuxRecoveryState,
     rtc_metrics: &RtcMetricsRecorder,
-    ingress: &mut UdpIngress,
+    ingress: &mut RtcIngress,
     max_datagrams: usize,
 ) -> usize {
     let mut routed = 0;
