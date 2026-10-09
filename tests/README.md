@@ -23,11 +23,17 @@ Requires Valgrind and a `gungraun-runner` version matching `gungraun` in
 costs, not throughput. [CI setup](../.github/workflows/performance.yml).
 Both metrics block regressions. Instruction limits vary by scenario and
 simulated cycle limits are at least 5% to tolerate code-placement effects.
+Comparison targets use allocation-driven jemalloc cache collection because
+timed collection can add a sweep to only one revision. The CI comparison also
+passes this setting to older revisions that lack the shared configuration.
 
 Use `packet_loop_callgrind` below or another comparison target from
 [`Cargo.toml`](Cargo.toml):
 
 ```bash
+# Apply the same allocator setting to both revisions, including older baselines.
+export GUNGRAUN_ENVS='_RJEM_MALLOC_CONF=abort_conf:true,experimental_tcache_gc:false'
+
 # On the baseline revision
 cargo bench --locked -p o-sfu-tests --bench packet_loop_callgrind -- --save-baseline=local --save-summary=json
 
