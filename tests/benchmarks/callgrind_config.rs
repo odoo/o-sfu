@@ -23,6 +23,12 @@ pub fn callgrind_config(instruction_limit: f64) -> LibraryBenchmarkConfig {
     ]);
     callgrind.fail_fast(false);
     let mut config = LibraryBenchmarkConfig::default();
+    // Timed jemalloc cache collection can add an unrelated sweep to one revision.
+    // Allocation-driven collection keeps the same workload comparable.
+    config.env(
+        "_RJEM_MALLOC_CONF",
+        "abort_conf:true,experimental_tcache_gc:false",
+    );
     // A configured Callgrind tool would also run when DHAT is the default tool.
     if cfg!(feature = "dhat") {
         config.default_tool(ValgrindTool::DHAT);

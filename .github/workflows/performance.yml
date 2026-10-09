@@ -209,6 +209,9 @@ jobs:
           cargo test --locked -p o-sfu-tests --test benchmark_scenarios
 
       - name: Save base Callgrind baseline
+        env:
+          # Older revisions must use the same allocation-driven GC as head.
+          GUNGRAUN_ENVS: _RJEM_MALLOC_CONF=abort_conf:true,experimental_tcache_gc:false
         run: |
           callgrind_args='${{ steps.investigation.outputs.callgrind-args }}'
           if [[ -n "$callgrind_args" ]]; then
@@ -249,6 +252,8 @@ jobs:
           fi
 
       - name: Compare head Callgrind baseline
+        env:
+          GUNGRAUN_ENVS: _RJEM_MALLOC_CONF=abort_conf:true,experimental_tcache_gc:false
         run: |
           callgrind_args='${{ steps.investigation.outputs.callgrind-args }}'
           if [[ -n "$callgrind_args" ]]; then
