@@ -21,6 +21,8 @@ npm --prefix crates/client run verify
 Requires Valgrind and a `gungraun-runner` version matching `gungraun` in
 [`Cargo.lock`](../Cargo.lock). These measure instruction and simulated cycle
 costs, not throughput. [CI setup](../.github/workflows/performance.yml).
+Both metrics block regressions. Instruction limits vary by scenario and
+simulated cycle limits are at least 5% to tolerate code-placement effects.
 
 Use `packet_loop_callgrind` below or another comparison target from
 [`Cargo.toml`](Cargo.toml):
@@ -39,8 +41,10 @@ When changing a scenario, verify that removing its required work fails its self-
 cargo test --locked -p o-sfu-tests --test benchmark_scenarios
 ```
 
-The relay drain keeps its cold-growth case and measures retained staging capacity
-at 64 and 256 packets separately. Meeting cases keep arrival fallback separate
+The session stats drain queues one sample per session after 100 ms, before any
+randomized DTLS retry is due. The relay drain keeps its cold-growth case and
+measures retained staging capacity at 64 and 256 packets separately.
+Meeting cases keep arrival fallback separate
 from `sampled_meeting_flow`, which supplies shared-CNAME sender reports once per
 second and models video arriving 400 ms after sampling. That fixture includes
 registry report handling and interpolation but excludes authenticated RTCP parsing
