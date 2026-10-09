@@ -4,6 +4,7 @@ use str0m::media::Mid;
 
 use super::{
     super::commands::RemoteSourceControl, PacketLoopState, media_registry::RegisteredMediaHandle,
+    route_table::RemoteSourceTransaction,
 };
 use crate::engine::media_transport::{
     TransportAdapterError, TransportMediaId, TransportSessionKey, TransportSourceKey,
@@ -31,6 +32,8 @@ impl PacketLoopState {
     /// session
     /// remote sources require `remote_source_control` because later route refreshes
     /// need a command path back to the producer worker
+    /// On route creation failure, pass the returned transaction to
+    /// `RouteTable::rollback_remote_source`. Dropping it commits registration.
     ///
     /// # Errors
     ///
@@ -42,19 +45,20 @@ impl PacketLoopState {
         route_owner_session_key: &TransportSessionKey,
         source: &TransportSourceKey,
         remote_source_control: Option<RemoteSourceControl>,
-    ) -> Result<RouteSourceKind, TransportAdapterError> {
+    ) -> Result<(RouteSourceKind, Option<RemoteSourceTransaction>), TransportAdapterError> {
         let src_key = source.session_key();
         let src_media = source.transport_media_id();
         if src_key.media_worker_id() == route_owner_session_key.media_worker_id() {
             self.ensure_local_producer_mid(src_key, src_media)?;
-            return Ok(RouteSourceKind::Local);
+            return Ok((RouteSourceKind::Local, None));
         }
         let Some(remote_source_control) = remote_source_control else {
             return Err(TransportAdapterError::InvalidInput);
         };
-        self.routes
+        let transaction = self
+            .routes
             .register_remote_source(source, remote_source_control)?;
-        Ok(RouteSourceKind::Remote)
+        Ok((RouteSourceKind::Remote, Some(transaction)))
     }
 
     /// Validates source ownership without creating remote-source state.

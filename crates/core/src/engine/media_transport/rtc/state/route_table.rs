@@ -19,11 +19,12 @@
 //! [`PacketForwarder`](super::super::packet_loop::PacketForwarder).
 
 mod active_rank;
+mod remote;
 mod source;
 
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, VecDeque, btree_map::Entry},
+    collections::{BTreeMap, btree_map::Entry},
     mem,
     sync::Arc,
     time::{Duration, Instant},
@@ -37,10 +38,14 @@ use str0m::{
 };
 use tracing::debug;
 
-pub(in super::super) use self::source::{RidReadinessRouteUpdate, RidReadinessSelectedGateUpdate};
 use self::{
     active_rank::ActiveSpeakerRank,
+    remote::RemoteSources,
     source::{RemovedConsumerRoute, RouteSource},
+};
+pub(in super::super) use self::{
+    remote::{RemoteSourceRegistration, RemoteSourceTransaction},
+    source::{RidReadinessRouteUpdate, RidReadinessSelectedGateUpdate},
 };
 use super::{
     super::{codec, commands::RemoteSourceControl},
@@ -51,7 +56,7 @@ use super::{
     },
     relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
     route_control::PacketLayerGate,
-    source_route::{MediaRouteDestination, MediaRouteEntry, RemoteSourceRegistration},
+    source_route::{MediaRouteDestination, MediaRouteEntry},
 };
 
 #[derive(Clone, Copy)]
@@ -138,7 +143,7 @@ pub(in super::super) struct RouteTable {
     sources: BTreeMap<TransportMediaId, RouteSource>,
     forwarding_sources: usize,
     active: ActiveSpeakerRank,
-    remote_gate_queue: VecDeque<TransportMediaId>,
+    remote: RemoteSources,
     keyframe_requests: KeyframeRequestTracker,
     pub(in super::super) publisher_keyframes: PublisherKeyframeLimiter,
 }
@@ -380,9 +385,7 @@ impl RouteTable {
             return;
         };
         let remote_packet_gate = source.refresh_route_pkt_gate();
-        if source.publish_remote_pkt_gate(remote_packet_gate) {
-            self.remote_gate_queue.push_back(source_id);
-        }
+        self.remote.publish_gate(source_id, remote_packet_gate);
         let effective_packet_gate = source.effective_packet_gate();
         debug!(
             ?source_id,
@@ -471,35 +474,39 @@ impl RouteTable {
         (!source.producer.is_empty()).then(|| mem::take(&mut source.producer.ssrcs))
     }
 
+    /// Registers or replaces the control path.
+    ///
+    /// A first registration starts inactive until `SetRemoteSourceActivity`.
+    /// A replacement preserves learned activity.
+    ///
+    /// Drop the transaction to commit or pass it to `rollback_remote_source`
+    /// before another registration change for this source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::InvalidInput`] when the media id already
+    /// belongs to a different remote source identity.
     pub(in super::super) fn register_remote_source(
         &mut self,
         source: &TransportSourceKey,
         source_control: RemoteSourceControl,
-    ) -> Result<Option<RemoteSourceRegistration>, TransportAdapterError> {
-        let source_id = source.transport_media_id();
-        let registration = RemoteSourceRegistration::new(source.clone(), source_control);
-        self.sources
-            .entry(source_id)
-            .or_default()
-            .register_remote_source(source, registration)
+    ) -> Result<RemoteSourceTransaction, TransportAdapterError> {
+        let transaction = self.remote.register(source, source_control)?;
+        if transaction.previous.is_none() {
+            self.source_mut(source.transport_media_id())
+                .set_source_active(false);
+        }
+        Ok(transaction)
     }
 
-    pub(in super::super) fn restore_remote_source(
+    pub(in super::super) fn rollback_remote_source(
         &mut self,
-        source_id: TransportMediaId,
-        previous_registration: Option<RemoteSourceRegistration>,
+        transaction: RemoteSourceTransaction,
     ) {
-        if let Some(previous_registration) = previous_registration {
-            let pending = previous_registration.has_pending_gate();
-            self.sources
-                .entry(source_id)
-                .or_default()
-                .restore_remote_source(previous_registration);
-            if pending {
-                self.queue_remote_gate(source_id);
-            }
+        if transaction.previous.is_some() {
+            self.remote.rollback(transaction);
         } else {
-            self.remove_remote_source(source_id);
+            self.remove_remote_source(transaction.source_id);
         }
     }
 
@@ -507,7 +514,7 @@ impl RouteTable {
         &self,
         source_id: TransportMediaId,
     ) -> Option<&RemoteSourceRegistration> {
-        self.sources.get(&source_id).and_then(RouteSource::remote)
+        self.remote.get(source_id)
     }
 
     #[cfg(any(test, feature = "internal-benchmarks"))]
@@ -516,31 +523,11 @@ impl RouteTable {
         source_id: TransportMediaId,
         packet_gate: PacketLayerGate,
     ) {
-        if self
-            .sources
-            .get_mut(&source_id)
-            .is_some_and(|source| source.publish_remote_pkt_gate(packet_gate))
-        {
-            self.remote_gate_queue.push_back(source_id);
-        }
+        self.remote.publish_gate(source_id, packet_gate);
     }
 
     pub(in super::super) fn flush_remote_pkt_gates(&mut self) {
-        // bound this pass to the queue length at entry so a failed retry waits for the
-        // next packet-loop turn instead of being retried immediately
-        let count = self.remote_gate_queue.len();
-        for _ in 0..count {
-            let Some(source_id) = self.remote_gate_queue.pop_front() else {
-                break;
-            };
-            if self
-                .sources
-                .get_mut(&source_id)
-                .is_some_and(RouteSource::flush_remote_pkt_gate)
-            {
-                self.remote_gate_queue.push_back(source_id);
-            }
-        }
+        self.remote.flush();
     }
 
     pub(in super::super) fn prune_unrouted_remote_src(&mut self, source_id: TransportMediaId) {
@@ -725,22 +712,11 @@ impl RouteTable {
         source_id: TransportMediaId,
         packet_gate: Option<PacketLayerGate>,
     ) {
-        match self.sources.entry(source_id) {
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().set_local_pkt_gate(packet_gate);
-                if entry.get().is_empty() {
-                    entry.remove();
-                }
-            }
-            Entry::Vacant(entry) => {
-                let Some(packet_gate) = packet_gate else {
-                    return;
-                };
-                let mut source = RouteSource::default();
-                source.set_local_pkt_gate(Some(packet_gate));
-                entry.insert(source);
-            }
+        if packet_gate.is_none() && !self.sources.contains_key(&source_id) {
+            return;
         }
+        self.source_mut(source_id).set_local_pkt_gate(packet_gate);
+        self.prune_empty(source_id);
         debug!(
             ?source_id,
             effective_packet_gate = ?self.effective_packet_gate(source_id),
@@ -932,31 +908,20 @@ impl RouteTable {
     }
 
     fn remove_remote_source(&mut self, source_id: TransportMediaId) {
-        if let Some(source) = self.sources.get_mut(&source_id) {
-            source.remove_remote_source();
-        }
+        self.remote.remove(source_id);
         self.forget_packet_state(source_id);
-        self.remote_gate_queue.retain(|queued| *queued != source_id);
         self.keyframe_requests.forget_source(source_id);
         self.publisher_keyframes.forget_source(source_id);
         self.prune_empty(source_id);
     }
 
-    fn queue_remote_gate(&mut self, source_id: TransportMediaId) {
-        if self
-            .sources
-            .get_mut(&source_id)
-            .is_some_and(RouteSource::queue_remote_gate)
-        {
-            self.remote_gate_queue.push_back(source_id);
-        }
-    }
-
     fn prune_empty(&mut self, source_id: TransportMediaId) {
+        // Remote registrations retain a source entry for activity and gate updates.
         if self
             .sources
             .get(&source_id)
             .is_some_and(RouteSource::is_empty)
+            && self.remote.get(source_id).is_none()
         {
             self.sources.remove(&source_id);
             self.keyframe_requests.forget_source(source_id);

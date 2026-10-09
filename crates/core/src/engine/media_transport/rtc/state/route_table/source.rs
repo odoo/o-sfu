@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    mem,
     time::{Duration, Instant},
 };
 
@@ -19,8 +18,7 @@ use super::{
             PacketLayerGate, SourceAudioPolicyState, aggregate_packet_gates, intersect_packet_gates,
         },
         source_route::{
-            DestinationKeyframeTarget, MediaRouteDestination, MediaRouteEntry,
-            RemoteSourceRegistration, SelectedRefresh,
+            DestinationKeyframeTarget, MediaRouteDestination, MediaRouteEntry, SelectedRefresh,
         },
     },
     ConsumerRouteUpdate, RelayForwardView, RidReadinessScratch,
@@ -28,7 +26,7 @@ use super::{
 use crate::engine::media_transport::{
     ActiveSpeakerSource, ActiveSpeakerSourceDiagnostic, SourceActivityRevision,
     SourceActivityUpdate, TransportAdapterError, TransportMediaId, TransportRidActivity,
-    TransportSessionKey, TransportSourceActivity, TransportSourceKey, rtc::codec,
+    TransportSessionKey, TransportSourceActivity, rtc::codec,
 };
 
 #[derive(Default)]
@@ -111,7 +109,6 @@ pub(super) struct RouteSource {
     source_active: bool,
     source_activity_revision: SourceActivityRevision,
     local_route: Option<MediaRouteEntry>,
-    remote: RemoteSourceState,
     relay: Option<RelaySourceRegistration>,
     packet: SourcePacketState,
     pub(super) producer: ProducerSourceState,
@@ -123,22 +120,11 @@ impl Default for RouteSource {
             source_active: true,
             source_activity_revision: SourceActivityRevision::default(),
             local_route: None,
-            remote: RemoteSourceState::default(),
             relay: None,
             packet: SourcePacketState::default(),
             producer: ProducerSourceState::default(),
         }
     }
-}
-
-#[derive(Debug, Default)]
-enum RemoteSourceState {
-    #[default]
-    None,
-    Registered {
-        registration: RemoteSourceRegistration,
-        queued: bool,
-    },
 }
 
 #[derive(Debug, Default)]
@@ -156,10 +142,6 @@ impl RouteSource {
 
     pub(super) fn local_route(&self) -> Option<&MediaRouteEntry> {
         self.local_route.as_ref()
-    }
-
-    pub(super) fn remote(&self) -> Option<&RemoteSourceRegistration> {
-        self.remote.registration()
     }
 
     pub(super) fn active_relay_targets(&self) -> Option<&[ActiveRelayTarget]> {
@@ -368,41 +350,6 @@ impl RouteSource {
             })
     }
 
-    pub(super) fn register_remote_source(
-        &mut self,
-        source: &TransportSourceKey,
-        registration: RemoteSourceRegistration,
-    ) -> Result<Option<RemoteSourceRegistration>, TransportAdapterError> {
-        let previous = self.remote.register(source, registration)?;
-        // first remote registration starts inactive until a
-        // `SetRemoteSourceActivity` update arrives
-        // re-registration keeps the activity already learned
-        if previous.is_none() {
-            self.set_source_active(false);
-        }
-        Ok(previous)
-    }
-
-    pub(super) fn restore_remote_source(&mut self, registration: RemoteSourceRegistration) {
-        self.remote.restore(registration);
-    }
-
-    pub(super) fn remove_remote_source(&mut self) {
-        self.remote.remove();
-    }
-
-    pub(super) fn publish_remote_pkt_gate(&mut self, packet_gate: PacketLayerGate) -> bool {
-        self.remote.publish_gate(packet_gate)
-    }
-
-    pub(super) fn flush_remote_pkt_gate(&mut self) -> bool {
-        self.remote.flush_gate()
-    }
-
-    pub(super) fn queue_remote_gate(&mut self) -> bool {
-        self.remote.queue_gate()
-    }
-
     pub(super) fn diagnostic(
         &self,
         source_id: TransportMediaId,
@@ -570,101 +517,8 @@ impl RouteSource {
     pub(super) fn is_empty(&self) -> bool {
         self.local_route.is_none()
             && self.relay.is_none()
-            && self.remote.is_empty()
             && self.packet.is_empty()
             && self.producer.is_empty()
-    }
-}
-
-impl RemoteSourceState {
-    fn registration(&self) -> Option<&RemoteSourceRegistration> {
-        match self {
-            Self::None => None,
-            Self::Registered { registration, .. } => Some(registration),
-        }
-    }
-
-    fn register(
-        &mut self,
-        source: &TransportSourceKey,
-        registration: RemoteSourceRegistration,
-    ) -> Result<Option<RemoteSourceRegistration>, TransportAdapterError> {
-        match self {
-            Self::None => {
-                *self = Self::Registered {
-                    registration,
-                    queued: false,
-                };
-                Ok(None)
-            }
-            Self::Registered {
-                registration: current,
-                ..
-            } if current.source() == source => Ok(Some(mem::replace(current, registration))),
-            Self::Registered { .. } => Err(TransportAdapterError::InvalidInput),
-        }
-    }
-
-    fn restore(&mut self, registration: RemoteSourceRegistration) {
-        // rollback restore keeps retry membership with the temporary registration
-        let queued = match self {
-            Self::Registered { queued, .. } => *queued,
-            Self::None => false,
-        };
-        *self = Self::Registered {
-            registration,
-            queued,
-        };
-    }
-
-    fn remove(&mut self) {
-        *self = Self::None;
-    }
-
-    fn publish_gate(&mut self, packet_gate: PacketLayerGate) -> bool {
-        let Self::Registered {
-            registration,
-            queued,
-        } = self
-        else {
-            return false;
-        };
-        if !registration.publish_packet_gate_needs_retry(packet_gate) {
-            return false;
-        }
-        if *queued {
-            return false;
-        }
-        *queued = true;
-        true
-    }
-
-    fn flush_gate(&mut self) -> bool {
-        let Self::Registered {
-            registration,
-            queued,
-        } = self
-        else {
-            return false;
-        };
-        let needs_retry = registration.flush_pending_gate();
-        *queued = needs_retry;
-        needs_retry
-    }
-
-    fn queue_gate(&mut self) -> bool {
-        let Self::Registered { queued, .. } = self else {
-            return false;
-        };
-        if *queued {
-            return false;
-        }
-        *queued = true;
-        true
-    }
-
-    const fn is_empty(&self) -> bool {
-        matches!(self, Self::None)
     }
 }
 

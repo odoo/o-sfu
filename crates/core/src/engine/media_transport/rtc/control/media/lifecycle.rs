@@ -35,7 +35,7 @@ use crate::{
                 state::{
                     ConsumerRouteRegistration, PacketLoopState, PendingRecvStream, RtcSessionState,
                     bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
-                    slots::ConsumerStreamHandle, source_route::RemoteSourceRegistration,
+                    slots::ConsumerStreamHandle,
                 },
             },
         },
@@ -48,39 +48,6 @@ pub struct RecvMediaPolicy<'a> {
     pub max_bitrate_in: Bitrate,
     pub video_bitrate_limits: VideoBitrateLimits,
     pub profile: &'a RtpProfile,
-}
-
-#[derive(Clone)]
-struct RemoteSourceRollback {
-    is_remote_source: bool,
-    src_media: TransportMediaId,
-    previous_registration: Option<RemoteSourceRegistration>,
-}
-
-impl RemoteSourceRollback {
-    fn capture(
-        state: &PacketLoopState,
-        is_remote_source: bool,
-        src_media: TransportMediaId,
-    ) -> Self {
-        let previous_registration = is_remote_source
-            .then(|| state.routes.remote_source(src_media).cloned())
-            .flatten();
-        Self {
-            is_remote_source,
-            src_media,
-            previous_registration,
-        }
-    }
-
-    fn rollback(self, state: &mut PacketLoopState) {
-        if !self.is_remote_source {
-            return;
-        }
-        state
-            .routes
-            .restore_remote_source(self.src_media, self.previous_registration);
-    }
 }
 
 /// Removes one registered transport media and its dependent routes.
@@ -369,14 +336,9 @@ pub fn worker_add_send_media(
     } = request;
     let src_key = source.session_key();
     let src_media = source.transport_media_id();
-    // Source registration must precede route creation because the route needs
-    // its control path. Preserve the prior registration for every later error.
-    let remote_source_rollback = RemoteSourceRollback::capture(
-        state,
-        src_key.media_worker_id() != consumer_key.media_worker_id(),
-        src_media,
-    );
-    let route_source =
+    // Registration precedes route creation so its control path is available.
+    // Every later failure must return the transaction to the registry.
+    let (route_source, remote_transaction) =
         match state.ensure_route_src_registered(consumer_key, source, remote_source_control) {
             Ok(route_source) => route_source,
             Err(error) => {
@@ -392,20 +354,25 @@ pub fn worker_add_send_media(
                 return Err(error);
             }
         };
-    let Some(session_state) = state.users.get_mut(consumer_key) else {
-        remote_source_rollback.rollback(state);
-        return Err(TransportAdapterError::TransportUnavailable);
-    };
-    let (mid, consumer_stream, should_mark_dirty) = match declare_consumer_stream(
-        session_state,
-        src_key,
-        media_kind,
-        sync,
-        consumer_rtp_parameters,
-    ) {
+    let declared = state
+        .users
+        .get_mut(consumer_key)
+        .ok_or(TransportAdapterError::TransportUnavailable)
+        .and_then(|session_state| {
+            declare_consumer_stream(
+                session_state,
+                src_key,
+                media_kind,
+                sync,
+                consumer_rtp_parameters,
+            )
+        });
+    let (mid, consumer_stream, should_mark_dirty) = match declared {
         Ok(consumer_stream) => consumer_stream,
         Err(error) => {
-            remote_source_rollback.rollback(state);
+            if let Some(transaction) = remote_transaction {
+                state.routes.rollback_remote_source(transaction);
+            }
             return Err(error);
         }
     };

@@ -18,7 +18,8 @@ use super::super::{
         },
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayTargetId,
-        source_route::{MediaRouteDestination, RemoteSourceRegistration},
+        route_table::RemoteSourceRegistration,
+        source_route::MediaRouteDestination,
     },
 };
 use crate::engine::{
