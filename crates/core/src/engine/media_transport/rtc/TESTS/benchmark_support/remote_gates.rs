@@ -7,7 +7,7 @@ use super::super::{
     commands::RtcWorkerCommand,
     state::{
         PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
-        source_route::RemoteSourceRegistration,
+        route_table::RemoteSourceRegistration,
     },
     test_support::{
         MediaWorkerScenario, register_saturated_remote_source, test_transport_session_key,

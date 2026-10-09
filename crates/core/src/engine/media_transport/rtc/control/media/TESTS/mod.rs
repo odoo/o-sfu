@@ -24,7 +24,7 @@ use o_sfu_router::{
     },
 };
 use str0m::{
-    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
+    media::{Direction, Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
     rtp::Ssrc,
 };
 use tokio::sync::mpsc;
@@ -69,8 +69,8 @@ use crate::{
                     media_registry::{ConsumerKeyframeTarget, RegisteredMediaHandle},
                     relay_registry::{RelayPacketMailbox, RelayTargetId},
                     route_control::PacketLayerGate,
+                    route_table::RemoteSourceRegistration,
                     slots::ConsumerStreamHandle,
-                    source_route::RemoteSourceRegistration,
                 },
                 test_support::{
                     MediaWorkerScenario, add_source_rid_stream, assert_consumer_packet_gate,
@@ -2165,64 +2165,328 @@ fn pending_remote_packet_gate_is_retired_when_receiver_closes() {
 }
 
 #[test]
-fn remote_source_teardown_drops_pending_gate_state() {
-    let source_session = test_transport_session_key(141, 0, 170, UserId::Integer(171));
+fn remote_packet_gate_retries_visit_each_source_once_per_pass() {
     let mut state = PacketLoopState::default();
     let metrics = RuntimeMetrics::default();
     let rtc_metrics = metrics.register_rtc_worker();
-    let src_media = TransportMediaId::new(64);
-    let _command_rx = register_saturated_remote_source(
-        &mut state,
-        src_media,
-        &source_session,
-        RelayTargetId::new(21),
-        Arc::clone(&rtc_metrics),
+    let mut sources = Vec::new();
+    for seed in 180..183 {
+        let session = test_source_session_key(seed);
+        let media = TransportMediaId::new(seed);
+        let target = RelayTargetId::new(seed);
+        let receiver = register_saturated_remote_source(
+            &mut state,
+            media,
+            &session,
+            target,
+            Arc::clone(&rtc_metrics),
+        );
+        for gate in [PacketLayerGate::Block, PacketLayerGate::Open] {
+            state.routes.publish_remote_pkt_gate(media, gate);
+        }
+        sources.push((session, media, target, receiver));
+    }
+    state.routes.flush_remote_pkt_gates();
+    assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 3);
+    assert_eq!(metrics.snapshot().rtc_remote_control_packet_gate_drops(), 9);
+    for (_, _, _, receiver) in &mut sources[1..] {
+        assert!(receiver.try_recv().is_ok());
+    }
+    state.routes.flush_remote_pkt_gates();
+    for (session, media, target, receiver) in &mut sources[1..] {
+        assert_remote_packet_gate_command(
+            receiver,
+            session,
+            *media,
+            *target,
+            PacketLayerGate::Open,
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+    assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 6);
+    assert_eq!(
+        metrics.snapshot().rtc_remote_control_packet_gate_drops(),
+        10
     );
-
-    state
-        .routes
-        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
-    assert!(
-        state
-            .routes
-            .remote_source(src_media)
-            .is_some_and(|registration| registration.pending_gate().is_some())
-    );
-
-    state.routes.prune_unrouted_remote_src(src_media);
-
-    assert!(state.routes.remote_source(src_media).is_none());
-    assert_eq!(metrics.snapshot().rtc_remote_control_packet_gate_drops(), 1);
+    assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 2);
+    let (session, media, target, receiver) = &mut sources[0];
+    assert!(receiver.try_recv().is_ok());
+    state.routes.flush_remote_pkt_gates();
+    assert_remote_packet_gate_command(receiver, session, *media, *target, PacketLayerGate::Open);
+    state.routes.flush_remote_pkt_gates();
+    assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 7);
+    assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 3);
 }
 
 #[test]
-fn add_send_media_rolls_back_remote_source_registration_when_consumer_session_is_missing() {
-    let source_session = test_source_session_key(151);
-    let consumer_session = test_consumer_session_key_on_worker(151, 1);
-    let mut state = PacketLoopState::default();
-    let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
-    let src_media = TransportMediaId::new(33);
-    let (command_tx, _command_rx) = mpsc::channel(1);
-    let remote_source_control =
-        RemoteSourceControl::new(command_tx, RelayTargetId::new(10), rtc_metrics);
-    let consumer_rtp_parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
-    let source = TransportSourceKey::new(source_session, src_media);
+fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
+    for conflicting_identity in [false, true] {
+        let mut state = PacketLoopState::default();
+        let metrics = RuntimeMetrics::default();
+        let rtc_metrics = metrics.register_rtc_worker();
+        let session = test_source_session_key(184);
+        let media = TransportMediaId::new(184);
+        let source = TransportSourceKey::new(session.clone(), media);
+        let old_target = RelayTargetId::new(184);
+        let mut old_rx = register_saturated_remote_source(
+            &mut state,
+            media,
+            &session,
+            old_target,
+            Arc::clone(&rtc_metrics),
+        );
+        state.routes.set_local_pkt_gate(media, None);
+        state
+            .set_remote_source_activity(
+                &source,
+                SourceActivityUpdate::new(
+                    ProducerActivity::Active,
+                    SourceActivityRevision::default(),
+                ),
+            )
+            .expect("clearing a local gate must preserve remote source activity");
+        state
+            .routes
+            .publish_remote_pkt_gate(media, PacketLayerGate::Block);
+        let replacement_source = if conflicting_identity {
+            TransportSourceKey::new(test_source_session_key(185), media)
+        } else {
+            source.clone()
+        };
+        let new_target = RelayTargetId::new(185);
+        let (new_tx, mut new_rx) = saturated_remote_control(&replacement_source, new_target);
+        let result = state.routes.register_remote_source(
+            &replacement_source,
+            RemoteSourceControl::new(new_tx, new_target, Arc::clone(&rtc_metrics)),
+        );
+        if conflicting_identity {
+            assert!(matches!(result, Err(TransportAdapterError::InvalidInput)));
+        } else {
+            assert!(result.is_ok());
+            state
+                .routes
+                .publish_remote_pkt_gate(media, PacketLayerGate::Open);
+        }
+        assert_eq!(
+            state
+                .routes
+                .remote_source(media)
+                .map(RemoteSourceRegistration::source),
+            Some(&source)
+        );
+        assert!(state.routes.source_is_active(media));
+        assert!(old_rx.try_recv().is_ok());
+        assert!(new_rx.try_recv().is_ok());
+        state.routes.flush_remote_pkt_gates();
+        if conflicting_identity {
+            assert_remote_packet_gate_command(
+                &mut old_rx,
+                &session,
+                media,
+                old_target,
+                PacketLayerGate::Block,
+            );
+        } else {
+            assert_remote_packet_gate_command(
+                &mut new_rx,
+                &session,
+                media,
+                new_target,
+                PacketLayerGate::Open,
+            );
+        }
+        assert!(old_rx.try_recv().is_err());
+        assert!(new_rx.try_recv().is_err());
+        state.routes.flush_remote_pkt_gates();
+        assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 1);
+        assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 1);
+        assert_eq!(
+            metrics.snapshot().rtc_remote_control_packet_gate_drops(),
+            if conflicting_identity { 1 } else { 2 }
+        );
+    }
+}
 
-    let result = worker_add_send_media(
-        &mut state,
-        AddSendMediaRequest {
-            consumer_key: &consumer_session,
-            media_kind: MediaKind::Video,
-            sync: SourceSyncPolicy::Independent,
-            source: &source,
-            remote_source_control: Some(remote_source_control),
-            consumer_rtp_parameters: &consumer_rtp_parameters,
-            active: true,
-        },
-    );
+#[test]
+fn remote_source_teardown_drops_pending_gate_state() {
+    for reregister in [false, true] {
+        let source_session = test_transport_session_key(141, 0, 170, UserId::Integer(171));
+        let mut state = PacketLoopState::default();
+        let metrics = RuntimeMetrics::default();
+        let rtc_metrics = metrics.register_rtc_worker();
+        let src_media = TransportMediaId::new(64);
+        let mut old_rx = register_saturated_remote_source(
+            &mut state,
+            src_media,
+            &source_session,
+            RelayTargetId::new(21),
+            Arc::clone(&rtc_metrics),
+        );
+        state
+            .routes
+            .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+        assert!(
+            state
+                .routes
+                .remote_source(src_media)
+                .is_some_and(RemoteSourceRegistration::has_pending_gate)
+        );
+        state.routes.prune_unrouted_remote_src(src_media);
+        assert!(state.routes.remote_source(src_media).is_none());
+        assert!(old_rx.try_recv().is_ok());
+        if reregister {
+            let target = RelayTargetId::new(25);
+            let mut new_rx = register_saturated_remote_source(
+                &mut state,
+                src_media,
+                &source_session,
+                target,
+                Arc::clone(&rtc_metrics),
+            );
+            state
+                .routes
+                .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
+            state.routes.flush_remote_pkt_gates();
+            assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 1);
+            assert!(new_rx.try_recv().is_ok());
+            state.routes.flush_remote_pkt_gates();
+            assert_remote_packet_gate_command(
+                &mut new_rx,
+                &source_session,
+                src_media,
+                target,
+                PacketLayerGate::Open,
+            );
+            assert!(new_rx.try_recv().is_err());
+        }
+        state.routes.flush_remote_pkt_gates();
+        assert!(old_rx.try_recv().is_err());
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot.rtc_remote_control_packet_gate_drops(),
+            if reregister { 3 } else { 1 }
+        );
+        assert_eq!(
+            snapshot.rtc_remote_packet_gate_retries(),
+            if reregister { 2 } else { 0 }
+        );
+        assert_eq!(
+            snapshot.rtc_remote_packet_gate_flushes(),
+            u64::from(reregister)
+        );
+    }
+}
 
-    assert_eq!(result, Err(TransportAdapterError::TransportUnavailable));
-    assert!(state.routes.remote_source(src_media).is_none());
+fn prepare_consumer_awaiting_answer(
+    state: &mut PacketLoopState,
+    consumer_session: &TransportSessionKey,
+) {
+    bootstrap::test_support::ensure_session_rtc_state(
+        &mut state.users,
+        consumer_session,
+        SocketAddr::from(([127, 0, 0, 1], 47_102)),
+        Bitrate::from_mbps(10),
+    )
+    .expect("consumer session must initialize");
+    let session = state
+        .users
+        .get_mut(consumer_session)
+        .expect("consumer session must exist");
+    session.sdp_negotiation.initial_offer_applied = true;
+    let (offer, pending) = {
+        let mut api = session.rtc.sdp_api();
+        api.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        api.apply().expect("consumer offer must be staged")
+    };
+    session
+        .sdp_negotiation
+        .stage_offer(offer, pending, Vec::new());
+    session.sdp_negotiation.staged_offer.take();
+}
+
+#[test]
+fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_fails() {
+    for existing_registration in [false, true] {
+        for awaiting_answer in [false, true] {
+            let source_session = test_source_session_key(151);
+            let consumer_session = test_consumer_session_key_on_worker(151, 1);
+            let mut state = PacketLoopState::default();
+            let metrics = RuntimeMetrics::default();
+            let rtc_metrics = metrics.register_rtc_worker();
+            let src_media = TransportMediaId::new(33);
+            let old_target = RelayTargetId::new(10);
+            let mut old_rx = existing_registration.then(|| {
+                let receiver = register_saturated_remote_source(
+                    &mut state,
+                    src_media,
+                    &source_session,
+                    old_target,
+                    Arc::clone(&rtc_metrics),
+                );
+                state
+                    .routes
+                    .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+                receiver
+            });
+            if awaiting_answer {
+                prepare_consumer_awaiting_answer(&mut state, &consumer_session);
+            }
+            let (command_tx, mut new_rx) = mpsc::channel(1);
+            let control = RemoteSourceControl::new(
+                command_tx,
+                RelayTargetId::new(11),
+                Arc::clone(&rtc_metrics),
+            );
+            let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
+            let source = TransportSourceKey::new(source_session.clone(), src_media);
+            let result = worker_add_send_media(
+                &mut state,
+                AddSendMediaRequest {
+                    consumer_key: &consumer_session,
+                    media_kind: MediaKind::Video,
+                    sync: SourceSyncPolicy::Independent,
+                    source: &source,
+                    remote_source_control: Some(control),
+                    consumer_rtp_parameters: &parameters,
+                    active: true,
+                },
+            );
+            let error = if awaiting_answer {
+                TransportAdapterError::InvalidInput
+            } else {
+                TransportAdapterError::TransportUnavailable
+            };
+            assert_eq!(result, Err(error));
+            if let Some(receiver) = &mut old_rx {
+                assert!(receiver.try_recv().is_ok());
+                state.routes.flush_remote_pkt_gates();
+                assert_remote_packet_gate_command(
+                    receiver,
+                    &source_session,
+                    src_media,
+                    old_target,
+                    PacketLayerGate::Block,
+                );
+                assert!(receiver.try_recv().is_err());
+            } else {
+                assert!(state.routes.remote_source(src_media).is_none());
+            }
+            state.routes.flush_remote_pkt_gates();
+            assert!(new_rx.try_recv().is_err());
+            assert_eq!(
+                metrics.snapshot().rtc_remote_control_packet_gate_drops(),
+                u64::from(existing_registration)
+            );
+            assert_eq!(
+                metrics.snapshot().rtc_remote_packet_gate_retries(),
+                u64::from(existing_registration)
+            );
+            assert_eq!(
+                metrics.snapshot().rtc_remote_packet_gate_flushes(),
+                u64::from(existing_registration)
+            );
+        }
+    }
 }
 
 #[test]
