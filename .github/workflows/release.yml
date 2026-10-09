@@ -148,6 +148,9 @@ jobs:
     needs: preflight
     runs-on: ubuntu-24.04
     environment: release
+    outputs:
+      image: ${{ steps.release.outputs.image }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     permissions:
       attestations: write
       # required to mint the OIDC token used by actions/attest
@@ -443,3 +446,43 @@ jobs:
             --title "o-sfu ${GITHUB_REF_NAME}" \
             --notes "$notes" \
             "${release_flags[@]}"
+
+  latest-image:
+    name: Promote latest release image
+    needs: release
+    if: needs.release.outputs.prerelease == 'false'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    # Serialize tag updates across releases and resolve latest inside the lock.
+    concurrency:
+      group: release-latest-image
+      cancel-in-progress: false
+
+    steps:
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+        with:
+          version: ${{ env.BUILDX_VERSION }}
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+
+      - name: Login to GitHub Container Registry
+        # docker/login-action v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote published release image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.release.outputs.image }}
+        run: |
+          set -euo pipefail
+          latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          docker buildx imagetools create --prefer-index=false \
+            --tag "${IMAGE}:latest" "${IMAGE}:${latest_tag}"
