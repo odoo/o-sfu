@@ -33,12 +33,14 @@ use crate::{
 };
 
 const SESSION_DRAIN_SESSION_COUNT: u32 = 128;
-const SESSION_DRAIN_STATS_INTERVAL: Duration = Duration::from_secs(1);
+// dimpl's first DTLS retry can fire after 750 ms. Stats must be due before
+// any jittered retry so every measured drain consumes the same events.
+const SESSION_DRAIN_STATS_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Drains one queued peer-statistics event per initialized RTC session.
 ///
-/// Setup consumes initial RTC output. Keeping its clock fixed excludes
-/// randomized DTLS retry deadlines from the measured drain.
+/// Setup consumes initial RTC output. The stats interval expires before
+/// randomized DTLS retry deadlines.
 pub struct SessionDrainBenchFixture {
     state: PacketLoopState,
     snapshot_state: Arc<Mutex<RtcSnapshotState>>,
