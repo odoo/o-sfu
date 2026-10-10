@@ -540,6 +540,8 @@ mod worker_exit_tests {
     #[tokio::test]
     async fn tokio_worker_packet_sink_panic_is_terminal() {
         assert_terminal_after_sink_panic(RtcUdpIoBackend::Tokio).await;
+        #[cfg(target_os = "linux")]
+        assert_terminal_after_sink_panic(RtcUdpIoBackend::TokioBatch).await;
     }
 
     #[cfg(target_os = "linux")]

@@ -29,7 +29,7 @@ async fn incomplete_plan_preserves_original_datagrams() -> io::Result<()> {
     let sender = UdpSocket::bind("127.0.0.1:0")?;
     let source = sender.local_addr()?;
     sender.set_nonblocking(true)?;
-    let socket = RtcUdpSocket::from_std(sender, RtcUdpIoBackend::Tokio)?;
+    let mut socket = RtcUdpSocket::from_std(sender, RtcUdpIoBackend::Tokio)?;
     let receiver = UdpSocket::bind("127.0.0.1:0")?;
     receiver.set_read_timeout(Some(Duration::from_secs(1)))?;
     let destination = receiver.local_addr()?;
@@ -56,12 +56,12 @@ async fn incomplete_plan_preserves_original_datagrams() -> io::Result<()> {
         let capacity = transmits.capacity();
         {
             let mut remaining = transmits.drain(..);
-            submit(&socket, &recorder, &messages, remaining.by_ref().take(2)).await;
+            submit(&mut socket, &recorder, &messages, &mut remaining, 2).await;
             assert_eq!(remaining.len(), 1);
             let tail = [UdpMessage {
                 datagrams: NonZeroUsize::MIN,
             }];
-            submit(&socket, &recorder, &tail, remaining.by_ref().take(1)).await;
+            submit(&mut socket, &recorder, &tail, &mut remaining, 1).await;
         }
         for byte in [42, 43, 44] {
             let mut packet = [0; 1];

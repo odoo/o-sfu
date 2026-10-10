@@ -106,6 +106,20 @@ isolated same-host network limited to trusted services. Otherwise use a
 TLS-terminating proxy or authenticated encrypted overlay. A firewall alone
 does not protect plaintext credentials
 
+### UDP batching
+
+`RTC_UDP_IO_BACKEND=tokio_batch` opts Linux RTC workers into `sendmmsg`
+batches of up to 32 outgoing datagrams. It uses the existing Tokio runtime
+and receive task. The default remains `tokio`, which sends each datagram
+individually.
+
+The host or container policy must permit `sendmmsg`. `ENOSYS` switches the
+affected worker socket to individual sends for its lifetime and emits one
+warning with the backend and socket address. `EPERM` and `EACCES` remain
+per-datagram send failures. A policy that rejects every `sendmmsg` call with
+either error drops every outgoing datagram, incrementing failure metrics
+with sampled warnings.
+
 ### io_uring
 
 Docker's [default seccomp profile](https://docs.docker.com/engine/security/seccomp/)
@@ -575,7 +589,7 @@ RTC transport:
 | --- | --- | --- |
 | `RTC_MIN_PORT` | `40000` | lower bound for the RTC UDP port range, must be greater than zero |
 | `RTC_MAX_PORT` | `49999` | upper bound for the RTC UDP port range |
-| `RTC_UDP_IO_BACKEND` | `tokio` | UDP socket backend for RTC workers, either `tokio` or Linux-only `io_uring` |
+| `RTC_UDP_IO_BACKEND` | `tokio` | RTC worker UDP backend, either `tokio`, Linux-only `tokio_batch` for `sendmmsg` egress or Linux-only `io_uring` |
 | `RTC_MEDIA_WORKER_COUNT` | available parallelism | number of RTC media workers, falling back to `1` when the host cannot report available parallelism |
 | `MAX_BITRATE_IN` | `8000000` | maximum incoming bitrate in bps per user |
 | `MAX_BITRATE_OUT` | `10000000` | receiver-side BWE ceiling in bps per user |
