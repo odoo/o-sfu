@@ -89,23 +89,30 @@ fn load_transport_config_accepts_explicit_bitrate_limits() -> Result<()> {
 fn load_transport_config_accepts_explicit_rtc_udp_io_backend() -> Result<()> {
     let config = load_transport_config_with_defaults(&[("RTC_UDP_IO_BACKEND", "tokio")])?;
     assert_eq!(config.rtc_udp_io_backend, RtcUdpIoBackend::Tokio);
-
     #[cfg(target_os = "linux")]
-    {
-        let config = load_transport_config_with_defaults(&[("RTC_UDP_IO_BACKEND", "io_uring")])?;
-        assert_eq!(config.rtc_udp_io_backend, RtcUdpIoBackend::IoUring);
+    for (name, backend) in [
+        ("tokio_batch", RtcUdpIoBackend::TokioBatch),
+        ("io_uring", RtcUdpIoBackend::IoUring),
+    ] {
+        let config = load_transport_config_with_defaults(&[("RTC_UDP_IO_BACKEND", name)])?;
+        assert_eq!(config.rtc_udp_io_backend, backend);
     }
-
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
 #[test]
-fn load_transport_config_rejects_io_uring_backend_on_non_linux() {
-    assert_invalid_transport_cases(&[InvalidTransportCase {
-        overrides: &[("RTC_UDP_IO_BACKEND", "io_uring")],
-        message: "RTC_UDP_IO_BACKEND=io_uring is only supported on Linux",
-    }]);
+fn load_transport_config_rejects_linux_backends_on_non_linux() {
+    assert_invalid_transport_cases(&[
+        InvalidTransportCase {
+            overrides: &[("RTC_UDP_IO_BACKEND", "tokio_batch")],
+            message: "RTC_UDP_IO_BACKEND=tokio_batch is only supported on Linux",
+        },
+        InvalidTransportCase {
+            overrides: &[("RTC_UDP_IO_BACKEND", "io_uring")],
+            message: "RTC_UDP_IO_BACKEND=io_uring is only supported on Linux",
+        },
+    ]);
 }
 
 #[test]
@@ -282,7 +289,7 @@ fn load_transport_config_rejects_invalid_transport_values() {
     assert_invalid_transport_cases(&[
         InvalidTransportCase {
             overrides: &[("RTC_UDP_IO_BACKEND", "epoll")],
-            message: "RTC_UDP_IO_BACKEND must be one of tokio or io_uring, got epoll",
+            message: "RTC_UDP_IO_BACKEND must be one of tokio, tokio_batch or io_uring, got epoll",
         },
         InvalidTransportCase {
             overrides: &[("ANNOUNCED_IP", "0.0.0.0")],

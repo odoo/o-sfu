@@ -115,6 +115,7 @@ impl PacketLoopStartup {
 fn spawn_tokio_packet_loop(
     thread_name: String,
     startup: PacketLoopStartup,
+    backend: RtcUdpIoBackend,
 ) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
     let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
     let terminal = Arc::clone(&startup.terminal);
@@ -133,11 +134,7 @@ fn spawn_tokio_packet_loop(
                         .build()
                     {
                         Ok(runtime) => {
-                            runtime.block_on(startup.run(
-                                RtcUdpIoBackend::Tokio,
-                                startup_tx,
-                                &started,
-                            ));
+                            runtime.block_on(startup.run(backend, startup_tx, &started));
                         }
                         Err(error) => {
                             warn!(
@@ -339,7 +336,9 @@ impl RtcWorker {
         };
         let thread_name = format!("rtc-packet-loop-{relay_target_id:?}");
         let thread = match config.rtc_udp_io_backend {
-            RtcUdpIoBackend::Tokio => spawn_tokio_packet_loop(thread_name, startup)?,
+            RtcUdpIoBackend::Tokio | RtcUdpIoBackend::TokioBatch => {
+                spawn_tokio_packet_loop(thread_name, startup, config.rtc_udp_io_backend)?
+            }
             RtcUdpIoBackend::IoUring => {
                 #[cfg(target_os = "linux")]
                 {

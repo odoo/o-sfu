@@ -640,48 +640,48 @@ fn media_transport_overlapping_ranges_skip_bound_ports() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn media_transport_io_uring_worker_binds_before_first_offer() {
-    let blocker = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-        .unwrap_or_else(|error| panic!("test RTC port should bind: {error}"));
-    let blocked_port = blocker
-        .local_addr()
-        .unwrap_or_else(|error| panic!("test RTC port should expose its address: {error}"))
-        .port();
-    let mut blocked_config = test_media_transport_config(1, port_range(blocked_port, blocked_port));
-    blocked_config.rtc_udp_io_backend = RtcUdpIoBackend::IoUring;
-    assert_eq!(
-        MediaTransport::build(blocked_config, test_media_transport_deps()).err(),
-        Some(MediaTransportBuildError::WorkerStartup { worker_index: 0 })
-    );
-    drop(blocker);
-
-    let range = test_rtc_port_range();
-    let mut config = test_media_transport_config(1, range);
-    config.rtc_udp_io_backend = RtcUdpIoBackend::IoUring;
-    let adapter = MediaTransport::build(config, test_media_transport_deps())
-        .unwrap_or_else(|error| panic!("io_uring media transport should start: {error}"));
-
-    let session = test_session_key(1, 0, 1, UserId::Integer(1));
-    let offer = expect_initial_offer(&adapter, &session).await;
-    let port = expect_first_candidate_port(&offer.sdp);
-    assert!(range.ports().any(|candidate| candidate == port));
-    assert!(UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).is_err());
+async fn media_transport_linux_backends_bind_before_first_offer() {
+    for backend in [RtcUdpIoBackend::TokioBatch, RtcUdpIoBackend::IoUring] {
+        let blocker = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+            .unwrap_or_else(|error| panic!("test RTC port should bind: {error}"));
+        let blocked_port = blocker
+            .local_addr()
+            .unwrap_or_else(|error| panic!("test RTC port should expose its address: {error}"))
+            .port();
+        let mut blocked_config =
+            test_media_transport_config(1, port_range(blocked_port, blocked_port));
+        blocked_config.rtc_udp_io_backend = backend;
+        assert_eq!(
+            MediaTransport::build(blocked_config, test_media_transport_deps()).err(),
+            Some(MediaTransportBuildError::WorkerStartup { worker_index: 0 }),
+            "{backend}"
+        );
+        drop(blocker);
+        let range = test_rtc_port_range();
+        let mut config = test_media_transport_config(1, range);
+        config.rtc_udp_io_backend = backend;
+        let adapter = MediaTransport::build(config, test_media_transport_deps())
+            .unwrap_or_else(|error| panic!("{backend} media transport should start: {error}"));
+        let session = test_session_key(1, 0, 1, UserId::Integer(1));
+        let offer = expect_initial_offer(&adapter, &session).await;
+        let port = expect_first_candidate_port(&offer.sdp);
+        assert!(range.ports().any(|candidate| candidate == port));
+        assert!(UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).is_err());
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
 #[test]
-fn media_transport_build_rejects_non_linux_io_uring_backend() {
-    let mut config = test_media_transport_config(1, port_range(46_230, 46_230));
-    config.rtc_udp_io_backend = RtcUdpIoBackend::IoUring;
-
-    let result = MediaTransport::build(config, test_media_transport_deps());
-
-    assert_eq!(
-        result.err(),
-        Some(MediaTransportBuildError::UnsupportedUdpIoBackend {
-            backend: RtcUdpIoBackend::IoUring,
-        })
-    );
+fn media_transport_build_rejects_linux_backends_on_non_linux() {
+    for backend in [RtcUdpIoBackend::TokioBatch, RtcUdpIoBackend::IoUring] {
+        let mut config = test_media_transport_config(1, port_range(46_230, 46_230));
+        config.rtc_udp_io_backend = backend;
+        let result = MediaTransport::build(config, test_media_transport_deps());
+        assert_eq!(
+            result.err(),
+            Some(MediaTransportBuildError::UnsupportedUdpIoBackend { backend })
+        );
+    }
 }
 
 #[test]

@@ -21,9 +21,10 @@ impl EnvParse for RtcUdpIoBackend {
         let key = value.key;
         match value.raw.as_str() {
             "tokio" => Ok(Self::Tokio),
+            "tokio_batch" => Ok(Self::TokioBatch),
             "io_uring" => Ok(Self::IoUring),
             other => Err(anyhow!(
-                "{key} must be one of tokio or io_uring, got {other}"
+                "{key} must be one of tokio, tokio_batch or io_uring, got {other}"
             )),
         }
     }
@@ -120,8 +121,8 @@ fn advertised_ip(key: &'static str, value: IpAddr) -> Result<IpAddr> {
 
 fn supported_udp_io_backend(key: &'static str, value: RtcUdpIoBackend) -> Result<RtcUdpIoBackend> {
     ensure!(
-        value != RtcUdpIoBackend::IoUring || cfg!(target_os = "linux"),
-        "{key}=io_uring is only supported on Linux"
+        value == RtcUdpIoBackend::Tokio || cfg!(target_os = "linux"),
+        "{key}={value} is only supported on Linux"
     );
     Ok(value)
 }

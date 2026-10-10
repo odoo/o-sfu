@@ -37,7 +37,7 @@ impl MediaTransport {
         mut config: MediaTransportConfig,
         deps: MediaTransportDeps,
     ) -> Result<Self, MediaTransportBuildError> {
-        if config.rtc_udp_io_backend == RtcUdpIoBackend::IoUring && !cfg!(target_os = "linux") {
+        if config.rtc_udp_io_backend != RtcUdpIoBackend::Tokio && !cfg!(target_os = "linux") {
             return Err(MediaTransportBuildError::UnsupportedUdpIoBackend {
                 backend: config.rtc_udp_io_backend,
             });

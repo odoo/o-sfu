@@ -60,6 +60,8 @@ impl ReceiveFailureControl {
 pub enum RtcUdpSocket {
     Tokio(Arc<TokioUdpSocket>),
     #[cfg(target_os = "linux")]
+    TokioBatch(Arc<TokioUdpSocket>),
+    #[cfg(target_os = "linux")]
     IoUring(Rc<TokioUringUdpSocket>),
 }
 
@@ -79,22 +81,38 @@ pub struct UdpIngressBenchHarness {
 impl RtcUdpSocket {
     /// Wraps a bound nonblocking socket for the selected worker runtime.
     ///
-    /// The caller must configure `socket` as nonblocking before selecting Tokio.
+    /// The caller must configure `socket` as nonblocking for either Tokio backend.
     ///
     /// # Errors
     ///
-    /// Returns `Unsupported` for `io_uring` outside Linux. Tokio socket-inspection
-    /// or runtime-registration errors are forwarded.
+    /// Returns [`io::ErrorKind::Unsupported`] for `tokio_batch` or `io_uring`
+    /// outside Linux. Tokio socket-inspection or runtime-registration failures
+    /// return their [`io::Error`].
     ///
     /// # Panics
     ///
-    /// The Tokio backend may panic when `socket` is blocking or no Tokio runtime
+    /// The Tokio backends may panic when `socket` is blocking or no Tokio runtime
     /// is entered.
     pub fn from_std(socket: StdUdpSocket, backend: RtcUdpIoBackend) -> io::Result<Self> {
         match backend {
             RtcUdpIoBackend::Tokio => TokioUdpSocket::from_std(socket)
                 .map(Arc::new)
                 .map(Self::Tokio),
+            RtcUdpIoBackend::TokioBatch => {
+                #[cfg(target_os = "linux")]
+                {
+                    TokioUdpSocket::from_std(socket)
+                        .map(Arc::new)
+                        .map(Self::TokioBatch)
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "tokio_batch RTC UDP I/O backend is only supported on Linux",
+                    ))
+                }
+            }
             RtcUdpIoBackend::IoUring => {
                 #[cfg(target_os = "linux")]
                 {
@@ -204,6 +222,17 @@ fn spawn_ingress(
 ) {
     match socket {
         RtcUdpSocket::Tokio(socket) => {
+            tokio::spawn(run_tokio_ingress(
+                socket,
+                candidate_addr,
+                tx,
+                recycle_rx,
+                shutdown,
+                metrics,
+            ));
+        }
+        #[cfg(target_os = "linux")]
+        RtcUdpSocket::TokioBatch(socket) => {
             tokio::spawn(run_tokio_ingress(
                 socket,
                 candidate_addr,
