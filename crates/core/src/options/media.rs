@@ -4,8 +4,9 @@ use crate::Bitrate;
 
 /// RTC packet-loop UDP I/O backend.
 ///
-/// [`IoUring`](Self::IoUring) is available only on Linux. Selecting it on
-/// another target makes transport construction return
+/// [`TokioBatch`](Self::TokioBatch) and [`IoUring`](Self::IoUring) are available
+/// only on Linux. Selecting either on another target makes transport
+/// construction return
 /// [`MediaTransportBuildError::UnsupportedUdpIoBackend`].
 ///
 /// [`MediaTransportBuildError::UnsupportedUdpIoBackend`]:
@@ -14,6 +15,8 @@ use crate::Bitrate;
 pub enum RtcUdpIoBackend {
     #[default]
     Tokio,
+    /// Tokio UDP receives with `sendmmsg` batches for outgoing datagrams.
+    TokioBatch,
     IoUring,
 }
 
@@ -22,6 +25,7 @@ impl RtcUdpIoBackend {
     pub const fn wire_name(self) -> &'static str {
         match self {
             Self::Tokio => "tokio",
+            Self::TokioBatch => "tokio_batch",
             Self::IoUring => "io_uring",
         }
     }

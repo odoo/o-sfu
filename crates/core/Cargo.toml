@@ -35,6 +35,7 @@ uuid = { version = "1.18", features = ["v4"] }
 secrecy = { workspace = true, features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.4", features = ["net"] }
 tokio-uring = "0.5"
 
 [lints]

@@ -2,8 +2,8 @@
 //!
 //! Protocol dispatch leaves only UDP transmits in their original order. Each
 //! window holds at most 64 datagrams and ends before a rejected source.
-//! Planning borrows the staging drain directly. Submission takes payload ownership
-//! without copying bytes or retaining work across packet-loop turns.
+//! Planning borrows the staging drain directly. Submission retains payloads until
+//! completion without copying bytes or retaining work across packet-loop turns.
 
 use std::{net::SocketAddr, sync::Arc, vec::Drain};
 
@@ -61,10 +61,11 @@ impl UdpEgress {
             let (window, _) = transmits.as_slice().split_at(count);
             plan_messages(window, &mut self.messages);
             submit::submit(
-                &self.socket,
+                &mut self.socket,
                 &self.rtc_metrics,
                 &self.messages,
-                transmits.by_ref().take(count),
+                &mut transmits,
+                count,
             )
             .await;
         }
