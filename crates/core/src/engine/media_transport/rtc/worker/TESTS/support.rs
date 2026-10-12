@@ -5,6 +5,7 @@ use str0m::media::Mid;
 use {
     super::super::{
         RtpProfile, WorkerAssignment,
+        state::demux::RemoteTransportAddr,
         test_support::{
             RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
         },
@@ -151,7 +152,7 @@ impl RtcWorker {
         self.read_debug_worker(move |state, _context| {
             state
                 .remote_addr_demux
-                .session_key_for_remote_addr(source_addr)
+                .session_key_for_remote_addr(RemoteTransportAddr::udp(source_addr))
                 .cloned()
         })
         .await

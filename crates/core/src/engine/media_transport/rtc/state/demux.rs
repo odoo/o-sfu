@@ -1,4 +1,4 @@
-//! Worker-local indexes for UDP ingress routing.
+//! Worker-local indexes for ingress routing.
 //!
 //! Learned source addresses provide fast-path session pins and signaled candidate
 //! addresses narrow unknown-source recovery while `Rtc::accepts()` remains the ownership
@@ -11,6 +11,8 @@ use std::{
     net::SocketAddr,
 };
 
+use str0m::{Candidate, net::Protocol};
+
 use crate::engine::media_transport::TransportSessionKey;
 
 /// Maximum learned source tuples retained for one RTC session.
@@ -18,27 +20,50 @@ const MAX_REMOTE_ADDRS_PER_SESSION: usize = 16;
 
 #[derive(Debug, Default)]
 struct SessionRemoteAddrs {
-    addrs: Vec<SocketAddr>,
-    selected_addr: Option<SocketAddr>,
+    addrs: Vec<RemoteTransportAddr>,
+    selected_addr: Option<RemoteTransportAddr>,
 }
 
-/// Bidirectional demux indexes for worker-local UDP ingress recovery.
+/// A client endpoint as seen by the SFU: the transport protocol plus the remote IP and
+/// port.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct RemoteTransportAddr {
+    addr: SocketAddr,
+    protocol: Protocol,
+}
+
+impl RemoteTransportAddr {
+    pub fn new(addr: SocketAddr, protocol: Protocol) -> Self {
+        Self { addr, protocol }
+    }
+
+    #[cfg(test)]
+    pub fn udp(addr: SocketAddr) -> Self {
+        Self::new(addr, Protocol::Udp)
+    }
+
+    pub fn from_candidate(candidate: &Candidate) -> Self {
+        Self::new(candidate.addr(), candidate.proto())
+    }
+}
+
+/// Bidirectional demux indexes for worker-local ingress recovery.
 #[derive(Debug, Default)]
 pub struct RemoteAddrDemux {
-    /// learned UDP source tuple to session pin
-    remote_addr_index: HashMap<SocketAddr, TransportSessionKey>,
-    /// reverse lookup for learned UDP source tuple cleanup
+    /// learned remote transport address to session pin
+    remote_addr_index: HashMap<RemoteTransportAddr, TransportSessionKey>,
+    /// reverse lookup for learned remote transport address cleanup
     remote_addrs_by_session: BTreeMap<TransportSessionKey, SessionRemoteAddrs>,
     /// sessions that evicted an accepted source and may still accept that tuple
     overflowed_sessions: VecDeque<TransportSessionKey>,
     /// signaled remote candidate address to possible sessions
-    remote_candidate_addr_index: HashMap<SocketAddr, Vec<TransportSessionKey>>,
+    remote_candidate_addr_index: HashMap<RemoteTransportAddr, Vec<TransportSessionKey>>,
     /// reverse lookup for candidate hint cleanup after renegotiation or teardown
-    remote_candidate_addrs_by_session: BTreeMap<TransportSessionKey, Vec<SocketAddr>>,
+    remote_candidate_addrs_by_session: BTreeMap<TransportSessionKey, Vec<RemoteTransportAddr>>,
 }
 
 impl RemoteAddrDemux {
-    /// returns the session currently pinned to a UDP source tuple
+    /// returns the session currently pinned to a remote transport address
     ///
     /// this is a hot-path hint for cached ingress routing
     /// callers must still re-check the packet with `Rtc::accepts()` before
@@ -47,12 +72,12 @@ impl RemoteAddrDemux {
     #[must_use]
     pub fn session_key_for_remote_addr(
         &self,
-        source_addr: SocketAddr,
+        source_addr: RemoteTransportAddr,
     ) -> Option<&TransportSessionKey> {
         self.remote_addr_index.get(&source_addr)
     }
 
-    /// pins a UDP source tuple to the session that just accepted traffic
+    /// pins a remote transport address to the session that just accepted traffic
     ///
     /// returns `true` when the visible mapping changed
     /// remapping a tuple also removes it from the previous session reverse
@@ -61,7 +86,7 @@ impl RemoteAddrDemux {
     #[must_use]
     pub fn remember_remote_addr(
         &mut self,
-        source_addr: SocketAddr,
+        source_addr: RemoteTransportAddr,
         session_key: &TransportSessionKey,
     ) -> bool {
         if self
@@ -108,7 +133,7 @@ impl RemoteAddrDemux {
     pub(in super::super) fn remember_selected_remote_addr(
         &mut self,
         session_key: &TransportSessionKey,
-        selected_addr: SocketAddr,
+        selected_addr: RemoteTransportAddr,
     ) {
         if self
             .remote_addrs_by_session
@@ -147,7 +172,7 @@ impl RemoteAddrDemux {
     #[must_use]
     pub fn candidates_for_src_addr(
         &self,
-        source_addr: SocketAddr,
+        source_addr: RemoteTransportAddr,
     ) -> Option<&[TransportSessionKey]> {
         self.remote_candidate_addr_index
             .get(&source_addr)
@@ -165,7 +190,7 @@ impl RemoteAddrDemux {
         session_key: &TransportSessionKey,
         candidate_addrs: I,
     ) where
-        I: IntoIterator<Item = SocketAddr>,
+        I: IntoIterator<Item = RemoteTransportAddr>,
     {
         self.forget_user_remote_candidates(session_key);
         let session_candidate_addrs = self
@@ -187,15 +212,15 @@ impl RemoteAddrDemux {
         }
     }
 
-    /// removes one learned UDP source tuple pin after cached `Rtc::accepts()` rejection
-    pub(in super::super) fn forget_remote_addr(&mut self, source_addr: SocketAddr) {
+    /// removes one learned remote transport address pin after cached `Rtc::accepts()` rejection
+    pub(in super::super) fn forget_remote_addr(&mut self, source_addr: RemoteTransportAddr) {
         let Some(session_key) = self.remote_addr_index.remove(&source_addr) else {
             return;
         };
         self.remove_remote_addr(&session_key, source_addr);
     }
 
-    /// removes every learned UDP source tuple when its session is removed
+    /// removes every learned remote transport address when its session is removed
     pub(in super::super) fn forget_user_remote_addrs(&mut self, session_key: &TransportSessionKey) {
         self.overflowed_sessions
             .retain(|candidate| candidate != session_key);
@@ -238,7 +263,7 @@ impl RemoteAddrDemux {
     pub(in super::super) fn session_addrs_for(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<&[SocketAddr]> {
+    ) -> Option<&[RemoteTransportAddr]> {
         self.remote_addrs_by_session
             .get(session_key)
             .map(|session_addrs| session_addrs.addrs.as_slice())
@@ -248,7 +273,7 @@ impl RemoteAddrDemux {
     pub(in super::super) fn remote_candidate_addrs_for(
         &self,
         session_key: &TransportSessionKey,
-    ) -> Option<&[SocketAddr]> {
+    ) -> Option<&[RemoteTransportAddr]> {
         self.remote_candidate_addrs_by_session
             .get(session_key)
             .map(Vec::as_slice)
@@ -261,7 +286,11 @@ impl RemoteAddrDemux {
             && self.remote_candidate_addrs_by_session.is_empty()
     }
 
-    fn remove_remote_addr(&mut self, session_key: &TransportSessionKey, source_addr: SocketAddr) {
+    fn remove_remote_addr(
+        &mut self,
+        session_key: &TransportSessionKey,
+        source_addr: RemoteTransportAddr,
+    ) {
         let should_remove_session_entry = self
             .remote_addrs_by_session
             .get_mut(session_key)

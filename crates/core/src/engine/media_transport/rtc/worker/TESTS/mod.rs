@@ -9,6 +9,7 @@
 mod observations;
 mod scheduling;
 
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use std::{
     collections::BTreeSet,
     future::Future,
@@ -332,7 +333,7 @@ fn prepare_authenticated_rtcp_budget_drop(
         harness
             .packet_loop_state
             .remote_addr_demux
-            .forget_remote_addr(harness.source_addr);
+            .forget_remote_addr(RemoteTransportAddr::udp(harness.source_addr));
     }
     exhaust_rtcp_ingress_budget(&mut harness.packet_loop_state, &session_key, now)?;
     Ok(PreparedRtcpBudgetDrop {
@@ -1033,7 +1034,7 @@ fn indexed_route_stays_cached_without_touching_recent_miss_state() -> Result<(),
         harness
             .packet_loop_state
             .remote_addr_demux
-            .remember_remote_addr(harness.source_addr, &session_key)
+            .remember_remote_addr(RemoteTransportAddr::udp(harness.source_addr), &session_key)
     );
     let packet = authenticated_binding_packet(&mut harness.packet_loop_state, &session_key)?;
     let miss_key =
@@ -1054,7 +1055,7 @@ fn indexed_route_stays_cached_without_touching_recent_miss_state() -> Result<(),
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(harness.source_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(harness.source_addr)),
         Some(&session_key)
     );
     assert!(harness.demux.should_skip_scan(miss_key, &packet));
@@ -1082,7 +1083,7 @@ fn cached_rtcp_budget_drop_keeps_the_session_and_source_pin() -> Result<(), &'st
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(harness.source_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(harness.source_addr)),
         Some(&session_key)
     );
     let snapshot = harness.metrics.snapshot();
@@ -1108,7 +1109,7 @@ fn recovered_rtcp_budget_drop_relearns_the_source_pin() -> Result<(), &'static s
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(harness.source_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(harness.source_addr)),
         Some(&session_key)
     );
     let snapshot = harness.metrics.snapshot();
@@ -1126,7 +1127,10 @@ fn stale_indexed_route_clears_worker_pin() {
         harness
             .packet_loop_state
             .remote_addr_demux
-            .remember_remote_addr(harness.source_addr, &stale_session_key)
+            .remember_remote_addr(
+                RemoteTransportAddr::udp(harness.source_addr),
+                &stale_session_key
+            )
     );
     harness.route(&sample_rtp_packet(11, 111));
 
@@ -1134,7 +1138,7 @@ fn stale_indexed_route_clears_worker_pin() {
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(harness.source_addr)
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(harness.source_addr))
             .is_none()
     );
     let snapshot = harness.metrics.snapshot();
@@ -3132,7 +3136,7 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
                 harness
                     .packet_loop_state
                     .remote_addr_demux
-                    .remember_remote_addr(source, session_key,)
+                    .remember_remote_addr(RemoteTransportAddr::udp(source), session_key,)
             );
         }
     }
@@ -3160,7 +3164,7 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
         harness
             .packet_loop_state
             .remote_addr_demux
-            .candidates_for_src_addr(harness.source_addr)
+            .candidates_for_src_addr(RemoteTransportAddr::udp(harness.source_addr))
             .is_none()
     );
     let now = Instant::now() + Duration::from_secs(1);
@@ -3217,7 +3221,7 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(viable_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(viable_addr)),
         Some(&selected_session)
     );
     let context = super::session_drain::SessionDrainContext::new(
@@ -3250,7 +3254,7 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(viable_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(viable_addr)),
         Some(&selected_session)
     );
     for offset in 0..64 {
@@ -3259,21 +3263,21 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
             harness
                 .packet_loop_state
                 .remote_addr_demux
-                .remember_remote_addr(churn_addr, &selected_session,)
+                .remember_remote_addr(RemoteTransportAddr::udp(churn_addr), &selected_session,)
         );
     }
     assert_eq!(
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(selected_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(selected_addr)),
         Some(&selected_session)
     );
     assert!(
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(viable_addr)
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(viable_addr))
             .is_none()
     );
     let routed_before = harness.metrics.snapshot().rtc_datagram_routes_scan();
@@ -3292,7 +3296,7 @@ fn peer_reflexive_tuple_recovers_after_eviction_with_multiple_sessions() -> Resu
         harness
             .packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(viable_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(viable_addr)),
         Some(&selected_session)
     );
     Ok(())

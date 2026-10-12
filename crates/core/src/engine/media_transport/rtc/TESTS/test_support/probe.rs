@@ -38,6 +38,8 @@ use super::super::{
     state::{PacketLoopState, route_control::PacketLayerGate},
     worker::PacketLoopInputReceivers,
 };
+#[cfg(test)]
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use crate::{
     Bitrate,
     engine::media_transport::{TransportMediaId, TransportSessionKey},
@@ -231,9 +233,10 @@ impl DebugProbe for RememberRemoteAddrProbe {
         state: &mut PacketLoopState,
         _context: &WorkerCommandContext<'_>,
     ) -> Self::Output {
-        let _ = state
-            .remote_addr_demux
-            .remember_remote_addr(self.source_addr, &self.session_key);
+        let _ = state.remote_addr_demux.remember_remote_addr(
+            RemoteTransportAddr::udp(self.source_addr),
+            &self.session_key,
+        );
     }
 }
 
