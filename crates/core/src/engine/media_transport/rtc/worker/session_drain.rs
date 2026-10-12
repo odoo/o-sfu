@@ -33,7 +33,9 @@ use super::{
     buffers::PacketLoopBuffers,
 };
 use crate::engine::{
-    media_transport::{SourcePolicySignal, TransportSessionKey},
+    media_transport::{
+        SourcePolicySignal, TransportSessionKey, rtc::state::demux::RemoteTransportAddr,
+    },
     metrics::{RtcDrainFailureStage, RtcMetricsRecorder, RtcOutputBudgetLimit, RuntimeMetrics},
 };
 
@@ -270,7 +272,10 @@ fn drain_single_session(
                     .first()
                     .is_some_and(|first| matches!(first, 20..=63 | 128..=191))
                 {
-                    demux.remember_selected_remote_addr(session_key, transmit.destination);
+                    demux.remember_selected_remote_addr(
+                        session_key,
+                        RemoteTransportAddr::new(transmit.destination, transmit.proto),
+                    );
                 }
                 session_state.note_repairable_transmit(&transmit.contents, now);
                 buffers.pending_transmits.push(transmit);

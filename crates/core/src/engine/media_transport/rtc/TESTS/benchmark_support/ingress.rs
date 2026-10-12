@@ -15,7 +15,7 @@ use super::super::{
         PacketRouteDatagram, UdpIngressBenchHarness, route_pkt_to_session_at,
         routing_miss::DemuxRecoveryState,
     },
-    state::PacketLoopState,
+    state::{PacketLoopState, demux::RemoteTransportAddr},
     test_support::{
         sample_rtp_packet_with_len, serialize_stun_message, test_transport_session_key,
     },
@@ -82,9 +82,10 @@ impl IngressRoutingBenchFixture {
         )
         .is_ok();
         let packet = if bootstrap_succeeded {
-            let _ = state
-                .remote_addr_demux
-                .remember_remote_addr(source_addr, &session_key);
+            let _ = state.remote_addr_demux.remember_remote_addr(
+                RemoteTransportAddr::new(source_addr, Protocol::Udp),
+                &session_key,
+            );
             state
                 .users
                 .get_mut(&session_key)

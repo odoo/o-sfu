@@ -35,7 +35,10 @@ use super::{
 use crate::engine::{
     media_transport::{
         TransportSessionKey,
-        rtc::{UfragWorkerMap, state::ufrag_registry::UfragRegistry},
+        rtc::{
+            UfragWorkerMap,
+            state::{demux::RemoteTransportAddr, ufrag_registry::UfragRegistry},
+        },
     },
     metrics::{RtcDatagramDropReason, RtcDatagramRoutePath, RtcMetricsRecorder},
 };
@@ -243,14 +246,15 @@ fn route_cached_pkt(
     now: Instant,
     protocol: Protocol,
 ) -> CachedRouteOutcome {
+    let remote_addr = RemoteTransportAddr::new(source_addr, protocol);
     let Some(session_key) = state
         .remote_addr_demux
-        .session_key_for_remote_addr(source_addr)
+        .session_key_for_remote_addr(remote_addr)
     else {
         return CachedRouteOutcome::NotMatched;
     };
     let Some(session_state) = state.users.get_mut(session_key) else {
-        state.remote_addr_demux.forget_remote_addr(source_addr);
+        state.remote_addr_demux.forget_remote_addr(remote_addr);
         return CachedRouteOutcome::NotMatched;
     };
     let Ok(receive) = Receive::new(protocol, source_addr, candidate_addr, packet) else {
@@ -269,7 +273,7 @@ fn route_cached_pkt(
             media_worker_id = session_key.media_worker_id().as_usize(),
             "indexed rtc source address no longer matched the cached user; clearing source-address pin"
         );
-        state.remote_addr_demux.forget_remote_addr(source_addr);
+        state.remote_addr_demux.forget_remote_addr(remote_addr);
         return CachedRouteOutcome::NotMatched;
     }
     if !admit_rtcp_datagram(session_state, packet, now) {
@@ -312,12 +316,17 @@ fn indexed_session_for_pkt(
         PacketIndexProbe::LocalIceUfrag(local_ice_ufrag) => {
             CandidateSessionKeys::Single(ufrag_registry.session_for(local_ice_ufrag))
         }
-        PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => remote_addr_demux
-            .candidates_for_src_addr(*remote_candidate_addr)
-            .map_or(
-                CandidateSessionKeys::Single(None),
-                |candidate_session_keys| CandidateSessionKeys::Slice(candidate_session_keys.iter()),
-            ),
+        PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => {
+            let remote_addr = RemoteTransportAddr::new(*remote_candidate_addr, route.protocol);
+            remote_addr_demux
+                .candidates_for_src_addr(remote_addr)
+                .map_or(
+                    CandidateSessionKeys::Single(None),
+                    |candidate_session_keys| {
+                        CandidateSessionKeys::Slice(candidate_session_keys.iter())
+                    },
+                )
+        }
     };
     let mut examined_sessions: usize = 0;
     // `candidate_session_keys` borrows `remote_addr_demux`. Collect stale sessions
@@ -501,15 +510,16 @@ fn route_packet_to_session(
     } else {
         route.metrics.record_rtc_rtcp_ingress_budget_drop();
     }
+    let remote_transport_addr = RemoteTransportAddr::new(route.source_addr, route.protocol);
     // `Rtc::accepts()` already decided ownership. Later input processing does
     // not revise that decision, so retain the source pin on either result.
     let previous_session_key = state
         .remote_addr_demux
-        .session_key_for_remote_addr(route.source_addr)
+        .session_key_for_remote_addr(remote_transport_addr)
         .cloned();
     let source_pin_changed = state
         .remote_addr_demux
-        .remember_remote_addr(route.source_addr, session_key);
+        .remember_remote_addr(remote_transport_addr, session_key);
     match (source_pin_changed, previous_session_key) {
         (true, Some(previous_session_key)) => {
             debug!(

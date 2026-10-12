@@ -1,3 +1,4 @@
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use str0m::media::Rid;
 
 use super::{
@@ -49,22 +50,22 @@ fn packet_loop_state_reassigns_remote_addr_between_sessions() {
 
     let _ = packet_loop_state
         .remote_addr_demux
-        .remember_remote_addr(source_addr, &first_session_key);
+        .remember_remote_addr(RemoteTransportAddr::udp(source_addr), &first_session_key);
     assert_eq!(
         packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(source_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(source_addr)),
         Some(&first_session_key)
     );
 
     let _ = packet_loop_state
         .remote_addr_demux
-        .remember_remote_addr(source_addr, &second_session_key);
+        .remember_remote_addr(RemoteTransportAddr::udp(source_addr), &second_session_key);
 
     assert_eq!(
         packet_loop_state
             .remote_addr_demux
-            .session_key_for_remote_addr(source_addr),
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(source_addr)),
         Some(&second_session_key)
     );
     assert!(
@@ -77,7 +78,7 @@ fn packet_loop_state_reassigns_remote_addr_between_sessions() {
         packet_loop_state
             .remote_addr_demux
             .session_addrs_for(&second_session_key),
-        Some([source_addr].as_slice())
+        Some([RemoteTransportAddr::udp(source_addr)].as_slice())
     );
 }
 

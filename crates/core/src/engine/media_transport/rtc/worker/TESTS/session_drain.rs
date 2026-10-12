@@ -1,3 +1,4 @@
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use std::{
     io,
     net::SocketAddr,
@@ -728,7 +729,7 @@ impl NackDrainFixture {
         assert!(
             state
                 .remote_addr_demux
-                .remember_remote_addr(source_addr, &offender)
+                .remember_remote_addr(RemoteTransportAddr::udp(source_addr), &offender)
         );
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
@@ -1032,7 +1033,7 @@ fn assert_authenticated_nack_exhaustion(
         fixture
             .state
             .remote_addr_demux
-            .session_key_for_remote_addr(fixture.source_addr)
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(fixture.source_addr))
             .is_none()
     );
     assert!(
@@ -1211,7 +1212,7 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
         fixture
             .state
             .remote_addr_demux
-            .session_key_for_remote_addr(fixture.source_addr)
+            .session_key_for_remote_addr(RemoteTransportAddr::udp(fixture.source_addr))
             .is_none()
     );
     assert!(

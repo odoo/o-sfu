@@ -36,6 +36,7 @@ use crate::{
         media_transport::{
             AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, SessionUploadSlot,
             TransportAdapterError, TransportMediaId, TransportSessionKey,
+            rtc::state::demux::RemoteTransportAddr,
         },
         metrics::RuntimeMetrics,
     },
@@ -363,17 +364,16 @@ fn upload_encodings_for_mid(
         .collect()
 }
 
-fn answer_remote_candidate_addrs(answer: &SdpAnswer) -> Vec<SocketAddr> {
+fn answer_remote_candidate_addrs(answer: &SdpAnswer) -> Vec<RemoteTransportAddr> {
     answer
         .session
         .ice_candidates()
-        .map(str0m::Candidate::addr)
-        .chain(
-            answer
-                .media_lines
-                .iter()
-                .flat_map(|media_line| media_line.ice_candidates().map(str0m::Candidate::addr)),
-        )
+        .map(RemoteTransportAddr::from_candidate)
+        .chain(answer.media_lines.iter().flat_map(|media_line| {
+            media_line
+                .ice_candidates()
+                .map(RemoteTransportAddr::from_candidate)
+        }))
         .collect()
 }
 

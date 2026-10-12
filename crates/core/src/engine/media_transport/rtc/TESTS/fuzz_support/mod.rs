@@ -9,7 +9,7 @@ use str0m::net::Protocol;
 use super::{
     bootstrap,
     packet_loop::{PacketRouteDatagram, route_pkt_to_session_at, routing_miss::DemuxRecoveryState},
-    state::PacketLoopState,
+    state::{PacketLoopState, demux::RemoteTransportAddr},
 };
 use crate::{
     Bitrate,
@@ -89,10 +89,10 @@ impl IngressDemuxFuzzFixture {
     }
 
     fn pin_live_route(&mut self) {
-        let _ = self
-            .state
-            .remote_addr_demux
-            .remember_remote_addr(self.source_addr, &self.session_key);
+        let _ = self.state.remote_addr_demux.remember_remote_addr(
+            RemoteTransportAddr::new(self.source_addr, Protocol::Udp),
+            &self.session_key,
+        );
     }
 
     fn remove_session(&mut self) {

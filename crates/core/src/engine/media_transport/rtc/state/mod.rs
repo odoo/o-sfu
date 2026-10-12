@@ -114,7 +114,7 @@ pub(super) struct PacketLoopState {
     pub(super) rid_readiness_scratch: RidReadinessScratch,
     /// packet-loop write handles for incoming media bitrate accounting
     pub(super) incoming_bitrate_counters: BTreeMap<TransportMediaId, Arc<MediaBitrateCounter>>,
-    /// worker-local UDP ingress demux hints
+    /// worker-local ingress demux hints
     pub(super) remote_addr_demux: RemoteAddrDemux,
     /// primary media handle table keyed by stable transport media id
     pub(super) mid_registry: MediaStore,
