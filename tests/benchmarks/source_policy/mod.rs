@@ -713,6 +713,7 @@ fn media_transport() -> Result<MediaTransport> {
         video_bitrate_limits: VideoBitrateLimits::default(),
         rtc_port_range,
         rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
+        rtc_tcp_config: None,
         codec_flags: MediaCodecFlags::default(),
         codec_preferences: CodecPreferences::default(),
         media_quality_interval: None,

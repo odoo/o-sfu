@@ -66,6 +66,7 @@
 //!     video_bitrate_limits: VideoBitrateLimits::default(),
 //!     rtc_port_range: RtcPortRange::try_new(40_000, 40_099)?,
 //!     rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
+//!     rtc_tcp_config: None,
 //!     codec_flags: MediaCodecFlags::default(),
 //!     codec_preferences: CodecPreferences::default(),
 //!     media_quality_interval: None,
@@ -133,7 +134,7 @@ mod sfu;
 
 pub(crate) use options::{
     AudioCodecPreference, CodecPreferences, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy,
-    RtcPortRange, RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits,
+    RtcPortRange, RtcTcpConfig, RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits,
     VideoAdaptationTuning, VideoBitrateLimits, VideoCodecPreference,
 };
 

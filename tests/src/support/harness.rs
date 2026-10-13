@@ -484,6 +484,7 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
             video_bitrate_limits: VideoBitrateLimits::default(),
             rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
             rtc_media_worker_count: 1,
+            rtc_tcp_config: None,
             room_worker_policy: RoomWorkerPolicy::strict_single_router(),
             room_media_limits: RoomMediaLimits::default(),
             video_adaptation_tuning: VideoAdaptationTuning::default(),

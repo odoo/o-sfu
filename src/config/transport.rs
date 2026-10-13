@@ -1,5 +1,5 @@
 use std::{
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     num::{NonZeroU64, NonZeroUsize},
     thread,
     time::Duration,
@@ -12,7 +12,7 @@ use o_sfu_core::prelude::{
 };
 
 use super::{
-    TransportConfig,
+    RtcTcpConfig, TransportConfig,
     env::{Env, EnvParse, EnvValue, positive},
 };
 
@@ -103,6 +103,7 @@ impl TransportConfig {
             rtc_port_range,
             rtc_udp_io_backend,
             rtc_media_worker_count,
+            rtc_tcp_config: rtc_tcp_config_from_env(env, announced_ip, rtc_udp_io_backend)?,
             room_worker_policy,
             room_media_limits,
             video_adaptation_tuning,
@@ -140,6 +141,43 @@ fn room_media_limits_from_env(env: &Env<'_>) -> Result<RoomMediaLimits> {
         active_audio_speakers,
         video_downloads_per_receiver,
     )?)
+}
+
+fn rtc_tcp_config_from_env(
+    env: &Env<'_>,
+    announced_ip: IpAddr,
+    io_backend: RtcUdpIoBackend,
+) -> Result<Option<RtcTcpConfig>> {
+    let rtc_tcp_bind_addr = env
+        .var::<SocketAddr>("TCP_BIND_ADDRESS")
+        .check(|key, value| {
+            ensure!(
+                io_backend != RtcUdpIoBackend::IoUring,
+                "{key} is not supported with RTC_UDP_IO_BACKEND=io_uring"
+            );
+            ensure!(value.port() > 0, "{key} must use a non-zero port");
+            Ok(value)
+        })
+        .optional()?;
+    let rtc_tcp_announced_addr = env
+        .var::<SocketAddr>("TCP_ANNOUNCED_ADDRESS")
+        .check(|key, value| {
+            ensure!(
+                rtc_tcp_bind_addr.is_some(),
+                "{key} requires TCP_BIND_ADDRESS"
+            );
+            advertised_ip(key, value.ip())?;
+            Ok(value)
+        })
+        .optional()?;
+    Ok(rtc_tcp_bind_addr.map(|addr| {
+        let actual_announced_addr =
+            rtc_tcp_announced_addr.unwrap_or(SocketAddr::from((announced_ip, addr.port())));
+        RtcTcpConfig {
+            announced_addr: actual_announced_addr,
+            bind_addr: addr,
+        }
+    }))
 }
 
 fn video_adaptation_tuning_from_env(env: &Env<'_>) -> Result<VideoAdaptationTuning> {
