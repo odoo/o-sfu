@@ -23,7 +23,7 @@ use o_sfu_rfc::webrtc::{
     ice::{candidate_attribute, candidate_type},
 };
 use str0m::{
-    Candidate, Event, IceConnectionState, Input, Output, Rtc,
+    Candidate, Input, Rtc,
     change::{SdpAnswer, SdpOffer, SdpPendingOffer},
     ice::{StunMessage, TransId},
     media::{Direction, MediaKind},
@@ -33,7 +33,7 @@ use str0m::{
 use super::super::{
     bootstrap,
     state::slots::SessionStore,
-    test_support::{serialize_stun_message, test_transport_session_key},
+    test_support::{MAX_FIXTURE_STEPS, Peer, serialize_stun_message, test_transport_session_key},
 };
 use crate::{Bitrate, engine::UserId};
 
@@ -41,7 +41,6 @@ const UDP_PORT: u16 = 5000;
 const TCP_PORT: u16 = 5001;
 const REMOTE_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)), 55_000);
 const FLOW_LIMIT: Duration = Duration::from_secs(30);
-const MAX_FIXTURE_STEPS: usize = 10_000;
 
 #[test]
 fn offer_preserves_candidates_and_priorities() {
@@ -248,60 +247,6 @@ fn assert_binding_response(
         ),
         (protocol, source, REMOTE_ADDR, transaction),
     );
-}
-
-struct Peer {
-    rtc: Rtc,
-    ice: IceConnectionState,
-    connected: bool,
-    deadline: Instant,
-    nominated_routes: Vec<(Protocol, SocketAddr, SocketAddr)>,
-}
-
-impl Peer {
-    fn new(rtc: Rtc, now: Instant) -> Self {
-        Self {
-            rtc,
-            ice: IceConnectionState::New,
-            connected: false,
-            deadline: now,
-            nominated_routes: Vec::new(),
-        }
-    }
-
-    fn drain(&mut self, now: Instant) -> Vec<Transmit> {
-        let mut packets = Vec::new();
-        for _ in 0..MAX_FIXTURE_STEPS {
-            match self.rtc.poll_output().expect("RTC output") {
-                Output::Timeout(deadline) if deadline <= now => {
-                    self.rtc
-                        .handle_input(Input::Timeout(now))
-                        .expect("immediate timeout");
-                }
-                Output::Timeout(deadline) => {
-                    self.deadline = deadline;
-                    return packets;
-                }
-                Output::Event(Event::IceConnectionStateChange(state)) => self.ice = state,
-                Output::Event(Event::Connected) => self.connected = true,
-                Output::Event(_) => {}
-                Output::Transmit(packet) => {
-                    if self.ice.is_connected() {
-                        self.nominated_routes.push((
-                            packet.proto,
-                            packet.source,
-                            packet.destination,
-                        ));
-                    }
-                    packets.push(packet);
-                }
-            }
-        }
-        panic!(
-            "RTC did not reach a future timeout, last ICE state: {:?}",
-            self.ice
-        );
-    }
 }
 
 struct Pair {
