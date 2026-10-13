@@ -10,8 +10,8 @@
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use crate::{
-    CodecPreferences, MediaCodecFlags, RtcPortRange, RtcUdpIoBackend, SessionBitrateLimits,
-    VideoBitrateLimits,
+    CodecPreferences, MediaCodecFlags, RtcPortRange, RtcTcpConfig, RtcUdpIoBackend,
+    SessionBitrateLimits, VideoBitrateLimits,
     engine::{metrics::RuntimeMetrics, packet_sink_registry::RoomPacketSinkRegistry},
 };
 
@@ -37,6 +37,7 @@ pub struct MediaTransportConfig {
     /// The top-level config covers the whole process. Worker configs carry only
     /// the sub-range assigned to one media worker.
     pub rtc_port_range: RtcPortRange,
+    pub rtc_tcp_config: Option<RtcTcpConfig>,
     /// UDP I/O implementation used by RTC packet-loop workers.
     pub rtc_udp_io_backend: RtcUdpIoBackend,
     /// Enabled codec set for offer generation and capability projection.

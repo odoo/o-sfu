@@ -396,6 +396,7 @@ fn build_media_transport(config: &Config, services: &RuntimeServices) -> AnyResu
             video_bitrate_limits: config.transport.video_bitrate_limits,
             rtc_port_range: config.transport.rtc_port_range,
             rtc_udp_io_backend: config.transport.rtc_udp_io_backend,
+            rtc_tcp_config: config.transport.rtc_tcp_config,
             codec_flags: config.codecs.flags,
             codec_preferences: config.codecs.preferences,
             media_quality_interval: config.telemetry.media_quality_interval,

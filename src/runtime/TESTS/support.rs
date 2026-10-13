@@ -83,6 +83,7 @@ impl RuntimeTestBuilder {
                     max_bitrate_out: Bitrate::from_mbps(10),
                     video_bitrate_limits: VideoBitrateLimits::default(),
                     rtc_media_worker_count: 1,
+                    rtc_tcp_config: None,
                     room_worker_policy: RoomWorkerPolicy::strict_single_router(),
                     room_media_limits: RoomMediaLimits::default(),
                     video_adaptation_tuning: VideoAdaptationTuning::default(),

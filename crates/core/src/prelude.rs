@@ -16,8 +16,8 @@ pub use crate::{
     },
     options::{
         AudioCodecPreference, CodecPreferences, MediaCodecFlags, RoomMediaLimits,
-        RoomMediaLimitsError, RoomWorkerPolicy, RtcPortRange, RtcPortRangeError, RtcUdpIoBackend,
-        RuntimeFeatureFlags, SessionBitrateLimits, VideoAdaptationTuning,
+        RoomMediaLimitsError, RoomWorkerPolicy, RtcPortRange, RtcPortRangeError, RtcTcpConfig,
+        RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits, VideoAdaptationTuning,
         VideoAdaptationTuningError, VideoBitrateLimits, VideoCodecPreference,
     },
     sfu::{
