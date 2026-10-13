@@ -8,6 +8,8 @@ mod probe;
 mod remote_control;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 mod route_graph;
+#[cfg(test)]
+mod rtc_peer;
 
 #[cfg(test)]
 use std::time::Instant;
@@ -34,6 +36,8 @@ pub(super) use probe::{
 pub(super) use remote_control::register_saturated_remote_source;
 #[cfg(test)]
 pub(super) use remote_control::{register_remote_source_control, saturated_remote_control};
+#[cfg(test)]
+pub(super) use rtc_peer::{MAX_FIXTURE_STEPS, Peer};
 #[cfg(test)]
 pub(super) use {
     self::packets::sample_rtp_packet,
