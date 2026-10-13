@@ -21,5 +21,6 @@ pub fn ensure_session_rtc_state(
         max_bitrate_out,
         &profile,
         None,
+        None,
     )
 }

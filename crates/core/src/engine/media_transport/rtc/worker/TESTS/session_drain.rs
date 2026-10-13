@@ -779,6 +779,7 @@ impl NackDrainFixture {
                 profile,
                 media_quality_interval: None,
                 media_id_base: 0,
+                rtc_tcp_config: None,
             },
             buffers: PacketLoopBuffers::new(),
         })

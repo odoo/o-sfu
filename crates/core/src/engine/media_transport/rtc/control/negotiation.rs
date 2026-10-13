@@ -31,7 +31,7 @@ use super::{
     recv_stream::{RecvStreamRepair, StaleSsrcPolicy, apply_recv_stream},
 };
 use crate::{
-    Bitrate, VideoBitrateLimits,
+    Bitrate, RtcTcpConfig, VideoBitrateLimits,
     engine::{
         media_transport::{
             AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, SessionUploadSlot,
@@ -53,6 +53,7 @@ pub(super) struct OfferBootstrapConfig<'a> {
     pub(super) profile: &'a RtpProfile,
     pub(super) media_quality_interval: Option<Duration>,
     pub(super) metrics: &'a RuntimeMetrics,
+    pub(super) rtc_tcp_config: Option<RtcTcpConfig>,
 }
 
 /// Create the first local offer for a user after ensuring the worker has
@@ -512,6 +513,7 @@ fn ensure_session_ready_for_offer(
         config.max_bitrate_out,
         config.profile,
         config.media_quality_interval,
+        config.rtc_tcp_config,
     )?;
     if let Some(session_state) = state.users.get(session_key) {
         if created_session && let Ok(mut bitrate) = bitrate_registry.lock() {
