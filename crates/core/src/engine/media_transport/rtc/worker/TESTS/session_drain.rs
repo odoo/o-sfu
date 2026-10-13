@@ -1,4 +1,3 @@
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use std::{
     io,
     net::SocketAddr,
@@ -14,6 +13,8 @@ use str0m::{
     rtp::{RtpWrite, Ssrc, rtcp::SenderInfo},
 };
 use tokio::sync::oneshot;
+
+use crate::engine::media_transport::rtc::{egress::TcpEgress, state::demux::RemoteTransportAddr};
 
 #[path = "session_clock_mapping.rs"]
 mod clock_mapping;
@@ -822,6 +823,7 @@ impl NackDrainFixture {
         let (response, _outcome) = oneshot::channel();
         handle_worker_command(
             &mut self.state,
+            &mut TcpEgress::default(),
             &WorkerCommandContext {
                 bitrate_registry: &self.bitrate_registry,
                 snapshot_state: &self.snapshot_state,

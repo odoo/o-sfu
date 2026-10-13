@@ -25,7 +25,10 @@ use super::{
     session,
 };
 use crate::engine::{
-    media_transport::{TransportMediaId, TransportResult, TransportSourceDiagnosticsSnapshot},
+    media_transport::{
+        TransportMediaId, TransportResult, TransportSourceDiagnosticsSnapshot,
+        rtc::egress::TcpEgress,
+    },
     metrics::{RtcMetricsRecorder, RuntimeMetrics},
 };
 
@@ -68,6 +71,7 @@ impl WorkerCommandContext<'_> {
 )]
 pub fn handle_worker_command(
     state: &mut PacketLoopState,
+    tcp_egress: &mut TcpEgress,
     context: &WorkerCommandContext<'_>,
     command: RtcWorkerCommand,
 ) {
@@ -222,6 +226,14 @@ pub fn handle_worker_command(
                 request,
                 response,
             );
+        }
+        RtcWorkerCommand::RegisterTcpOutbox {
+            peer_addr,
+            outbox_tx,
+            response,
+        } => {
+            tcp_egress.register(peer_addr, outbox_tx);
+            respond(response, Ok(()));
         }
     }
 }
