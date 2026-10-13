@@ -313,6 +313,7 @@ impl RtcWorker {
                 profile,
                 media_quality_interval: config.media_quality_interval,
                 media_id_base: assignment.media_id_base,
+                rtc_tcp_config: config.rtc_tcp_config,
             },
             packet_sink_registry: Arc::clone(&deps.packet_sink_registry),
             source_policy_signal,

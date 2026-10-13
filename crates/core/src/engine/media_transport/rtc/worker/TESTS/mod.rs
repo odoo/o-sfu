@@ -889,6 +889,7 @@ fn packet_loop_config_for_test() -> PacketLoopConfig {
             ),
             media_quality_interval: None,
             media_id_base: 0,
+            rtc_tcp_config: None,
         },
         packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
         source_policy_signal: SourcePolicySignal::default(),
