@@ -2,11 +2,12 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    net::SocketAddr,
     sync::Arc,
     time::Instant,
 };
 
-use o_sfu_rfc::rtp;
+use o_sfu_rfc::{rtp, tcp_framing::TcpFrame};
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
     Rtc,
@@ -14,6 +15,7 @@ use str0m::{
     media::{Mid, Rid},
     rtp::Ssrc,
 };
+use tokio::sync::mpsc;
 
 use super::{
     super::{codec::RepairSummary, consumer_egress::ConsumerStreamStore},
@@ -57,6 +59,10 @@ pub(in super::super) struct RtcSessionState {
     pub(in super::super) egress_bitrate: Arc<MediaBitrateCounter>,
     /// local ICE fragment registered in demux recovery hints
     pub(in super::super) local_ice_ufrag: String,
+    /// Strong senders of the outboxes of the TCP streams serving this session. The egress
+    /// only keeps weak handles, so dropping the session drops the senders, which closes
+    /// the channels and ends the streams.
+    pub(in super::super) tcp_outbox_tx_by_peer: HashMap<SocketAddr, mpsc::Sender<TcpFrame>>,
     #[cfg(test)]
     /// last inbound bitrate cap applied by tests that inspect negotiation refreshes
     pub(in super::super) max_bitrate_in: Option<Bitrate>,
@@ -85,6 +91,17 @@ pub(in super::super) struct RtcSessionState {
 }
 
 impl RtcSessionState {
+    /// Makes this session the owner of the outbox of the TCP stream of `peer_addr`.
+    pub(in super::super) fn attach_tcp_outbox(
+        &mut self,
+        peer_addr: SocketAddr,
+        outbox_tx: mpsc::Sender<TcpFrame>,
+    ) {
+        self.tcp_outbox_tx_by_peer
+            .retain(|_, outbox_tx| !outbox_tx.is_closed());
+        self.tcp_outbox_tx_by_peer.insert(peer_addr, outbox_tx);
+    }
+
     pub(in super::super) fn prepare_rtp_input(&mut self, packet: &[u8]) {
         self.pending_rtp_input = muxed_rtp_ssrc(packet);
     }

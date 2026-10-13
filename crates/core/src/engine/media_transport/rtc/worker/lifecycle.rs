@@ -7,7 +7,7 @@
 use std::{
     any::Any,
     cell::Cell,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex, PoisonError,
@@ -18,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_rfc::tcp_framing::TcpFrame;
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
     sync::{Semaphore, mpsc, oneshot},
@@ -47,7 +48,11 @@ use crate::{
             ReceiverBandwidthSnapshot, SourcePolicySignal, TransportAdapterError,
             TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
             TransportQualitySnapshot, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
-            TransportWorkerPressureSnapshot, rtc::UfragWorkerMap,
+            TransportWorkerPressureSnapshot,
+            rtc::{
+                UfragWorkerMap,
+                packet_loop::{IngressPacket, RtcIngress},
+            },
         },
         metrics::RtcMetricsRecorder,
     },
@@ -73,6 +78,9 @@ struct PacketLoopStartup {
     shutdown: CancellationToken,
     media_worker_id: MediaWorkerId,
     ufrag_worker_map: UfragWorkerMap,
+    ingress: RtcIngress,
+    packet_tx: mpsc::Sender<IngressPacket>,
+    recycle_rx: mpsc::Receiver<Vec<u8>>,
 }
 
 impl PacketLoopStartup {
@@ -87,6 +95,9 @@ impl PacketLoopStartup {
             self.rtc_port_range,
             backend,
             &self.config.rtc_metrics,
+            self.ingress,
+            self.packet_tx,
+            self.recycle_rx,
         ) {
             Ok(shared_socket) => shared_socket,
             Err(error) => {
@@ -109,6 +120,29 @@ impl PacketLoopStartup {
             self.ufrag_worker_map,
         )
         .await;
+    }
+}
+
+/// Starts the packet loop thread on the runtime the UDP backend requires.
+fn spawn_packet_loop(
+    thread_name: String,
+    startup: PacketLoopStartup,
+    backend: RtcUdpIoBackend,
+) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
+    match backend {
+        RtcUdpIoBackend::Tokio | RtcUdpIoBackend::TokioBatch => {
+            spawn_tokio_packet_loop(thread_name, startup, backend)
+        }
+        RtcUdpIoBackend::IoUring => {
+            #[cfg(target_os = "linux")]
+            {
+                spawn_io_uring_packet_loop(thread_name, startup)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(TransportAdapterError::TransportUnavailable)
+            }
+        }
     }
 }
 
@@ -275,6 +309,7 @@ impl RtcWorker {
         source_policy_signal: SourcePolicySignal,
         ufrag_worker_map: UfragWorkerMap,
     ) -> Result<Self, TransportAdapterError> {
+        let (ingress, packet_tx, recycle_rx) = RtcIngress::new();
         let relay_target_id =
             super::RelayTargetId::new(super::NEXT_RELAY_TARGET_ID.fetch_add(1, Ordering::Relaxed));
         let (command_tx, command_rx) = mpsc::channel(64);
@@ -297,6 +332,7 @@ impl RtcWorker {
             snapshot_state: Arc::clone(&snapshot_state),
             packet_loop_delay: Arc::clone(&packet_loop_delay),
             terminal: Arc::clone(&terminal),
+            packet_tx: packet_tx.clone(),
         };
         let packet_loop_inputs =
             super::PacketLoopInputReceivers::new(command_rx, relay_rx, shutdown.clone());
@@ -334,23 +370,12 @@ impl RtcWorker {
             shutdown: shutdown.clone(),
             media_worker_id: assignment.media_worker_id,
             ufrag_worker_map,
+            ingress,
+            packet_tx,
+            recycle_rx,
         };
         let thread_name = format!("rtc-packet-loop-{relay_target_id:?}");
-        let thread = match config.rtc_udp_io_backend {
-            RtcUdpIoBackend::Tokio | RtcUdpIoBackend::TokioBatch => {
-                spawn_tokio_packet_loop(thread_name, startup, config.rtc_udp_io_backend)?
-            }
-            RtcUdpIoBackend::IoUring => {
-                #[cfg(target_os = "linux")]
-                {
-                    spawn_io_uring_packet_loop(thread_name, startup)?
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    return Err(TransportAdapterError::TransportUnavailable);
-                }
-            }
-        };
+        let thread = spawn_packet_loop(thread_name, startup, config.rtc_udp_io_backend)?;
         info!(
             ?relay_target_id,
             announced_ip = %config.announced_ip,
@@ -409,6 +434,32 @@ impl RtcWorker {
 
     pub(in crate::engine::media_transport) fn is_usable(&self) -> bool {
         !self.handle.terminal.load(Ordering::Acquire)
+    }
+
+    /// Registers a TCP stream to this worker. The `outbox_tx` used to relay outgoing packets
+    /// is handed over to the session identified by `ufrag`, which owns it from then on: the
+    /// stream ends when the session is dropped. The `ingress_tx` used to pass incoming
+    /// packets to the packet loop is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when no session of this worker
+    /// uses `ufrag` (anymore), or when the worker can't be reached.
+    #[expect(dead_code, reason = "called by the TCP acceptor")]
+    pub(in crate::engine::media_transport) async fn register_tcp_stream(
+        &self,
+        peer_addr: SocketAddr,
+        ufrag: String,
+        outbox_tx: mpsc::Sender<TcpFrame>,
+    ) -> Result<mpsc::Sender<IngressPacket>, TransportAdapterError> {
+        self.request_worker(|response| RtcWorkerCommand::RegisterTcpOutbox {
+            peer_addr,
+            ufrag,
+            outbox_tx,
+            response,
+        })
+        .await?;
+        Ok(self.handle.packet_tx.clone())
     }
 
     /// Enqueues one bounded-mailbox command and waits for its oneshot result.

@@ -7,13 +7,22 @@
 //! racing socket teardown.
 
 use std::{
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Instant,
 };
 
-use super::super::state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry};
+use o_sfu_rfc::tcp_framing::TcpFrame;
+use tokio::sync::mpsc;
+
+use super::super::{
+    egress::TcpEgress,
+    state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
+};
 use crate::engine::{
-    media_transport::{TransportSessionHealth, TransportSessionKey},
+    media_transport::{
+        TransportAdapterError, TransportResult, TransportSessionHealth, TransportSessionKey,
+    },
     metrics::{self, RuntimeMetrics},
 };
 
@@ -60,4 +69,27 @@ pub(in crate::engine::media_transport::rtc) fn worker_close_session(
         );
         metrics.add_active_transport_users(-1);
     }
+}
+
+/// Hands the outbox of a TCP stream to the session identified by `ufrag`. Dropping the
+/// session, drops the sender thus ends the stream.
+///
+/// # Errors
+///
+/// Returns [`TransportAdapterError::TransportUnavailable`] when no session uses `ufrag`.
+pub(in crate::engine::media_transport::rtc) fn worker_register_tcp_outbox(
+    state: &mut PacketLoopState,
+    tcp_egress: &mut TcpEgress,
+    peer_addr: SocketAddr,
+    ufrag: &str,
+    outbox_tx: mpsc::Sender<TcpFrame>,
+) -> TransportResult<()> {
+    let session = state
+        .ufrag_registry
+        .session_for(ufrag)
+        .and_then(|session_key| state.users.get_mut(session_key))
+        .ok_or(TransportAdapterError::TransportUnavailable)?;
+    tcp_egress.register(peer_addr, &outbox_tx);
+    session.attach_tcp_outbox(peer_addr, outbox_tx);
+    Ok(())
 }
