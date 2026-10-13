@@ -183,7 +183,6 @@ async fn flush_rejects_bad_instructions_and_continues(
         .map(serde_json::from_str::<Value>)
         .collect::<Result<Vec<_>, _>>()?;
     let expected_rejections = [
-        (Protocol::Tcp, candidate, "unsupported_protocol"),
         (Protocol::SslTcp, candidate, "unsupported_protocol"),
         (Protocol::Tls, candidate, "unsupported_protocol"),
         (Protocol::Udp, wrong_port, "source_mismatch"),

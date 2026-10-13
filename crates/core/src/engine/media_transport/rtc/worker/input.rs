@@ -19,6 +19,7 @@ use super::super::{
     packet_loop::forwarded_packet::ForwardedPacket,
     state::PacketLoopState,
 };
+use crate::engine::media_transport::rtc::egress::TcpEgress;
 
 /// Receive-side input bundle for one packet-loop worker.
 ///
@@ -195,9 +196,14 @@ impl PacketLoopControlInput {
     ///
     /// The caller invalidates demux hints when [`Self::may_change_demux_topology`]
     /// reports a possible ownership change.
-    pub(super) fn dispatch(self, state: &mut PacketLoopState, context: &WorkerCommandContext<'_>) {
+    pub(super) fn dispatch(
+        self,
+        state: &mut PacketLoopState,
+        tcp_egress: &mut TcpEgress,
+        context: &WorkerCommandContext<'_>,
+    ) {
         match self {
-            Self::Command(command) => handle_worker_command(state, context, command),
+            Self::Command(command) => handle_worker_command(state, tcp_egress, context, command),
             #[cfg(any(test, feature = "testing-transport"))]
             Self::Probe(probe) => {
                 handle_debug_probe(state, context, probe);

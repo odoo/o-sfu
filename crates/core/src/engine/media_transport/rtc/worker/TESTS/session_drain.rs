@@ -1,4 +1,3 @@
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use std::{
     io,
     net::SocketAddr,
@@ -6,6 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use o_sfu_rfc::tcp_framing::TcpFrame;
 use str0m::{
     Rtc,
     format::{Codec, PayloadParams},
@@ -13,7 +13,12 @@ use str0m::{
     net::{Protocol, Transmit},
     rtp::{RtpWrite, Ssrc, rtcp::SenderInfo},
 };
-use tokio::sync::oneshot;
+use tokio::sync::{
+    mpsc::{self, error::TryRecvError},
+    oneshot,
+};
+
+use crate::engine::media_transport::rtc::{egress::TcpEgress, state::demux::RemoteTransportAddr};
 
 #[path = "session_clock_mapping.rs"]
 mod clock_mapping;
@@ -35,7 +40,8 @@ use crate::{
     engine::{
         UserId,
         media_transport::{
-            ReceiverBweTargetUpdate, SourcePolicySignal, TransportMediaId,
+            ReceiverBweTargetUpdate, SourcePolicySignal, TransportAdapterError, TransportMediaId,
+            TransportResult,
             rtc::{
                 RtcWorkerConfig,
                 bootstrap::test_support::ensure_session_rtc_state,
@@ -822,6 +828,7 @@ impl NackDrainFixture {
         let (response, _outcome) = oneshot::channel();
         handle_worker_command(
             &mut self.state,
+            &mut TcpEgress::default(),
             &WorkerCommandContext {
                 bitrate_registry: &self.bitrate_registry,
                 snapshot_state: &self.snapshot_state,
@@ -839,6 +846,37 @@ impl NackDrainFixture {
                 response,
             },
         );
+    }
+
+    fn register_tcp_outbox(
+        &mut self,
+        ufrag: &str,
+        peer_addr: SocketAddr,
+        outbox_tx: mpsc::Sender<TcpFrame>,
+    ) -> Result<TransportResult<()>, &'static str> {
+        let (response, mut outcome) = oneshot::channel();
+        handle_worker_command(
+            &mut self.state,
+            &mut TcpEgress::default(),
+            &WorkerCommandContext {
+                bitrate_registry: &self.bitrate_registry,
+                snapshot_state: &self.snapshot_state,
+                candidate_addr: self.candidate_addr,
+                now: self.now,
+                config: &self.config,
+                runtime_metrics: &self.metrics,
+                rtc_metrics: &self.rtc_metrics,
+            },
+            RtcWorkerCommand::RegisterTcpOutbox {
+                peer_addr,
+                ufrag: ufrag.to_owned(),
+                outbox_tx,
+                response,
+            },
+        );
+        outcome
+            .try_recv()
+            .map_err(|_error| "the command should answer right away")
     }
 }
 
@@ -1183,6 +1221,19 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
         fixture.candidate_addr,
         b"healthy-prefix",
     ));
+    let (offender_outbox_tx, mut offender_outbox_rx) = mpsc::channel(1);
+    let (sibling_outbox_tx, mut sibling_outbox_rx) = mpsc::channel(1);
+    for (session_key, port, outbox_tx) in [
+        (&fixture.offender, 46_201, offender_outbox_tx),
+        (&fixture.sibling, 46_202, sibling_outbox_tx),
+    ] {
+        fixture
+            .state
+            .users
+            .get_mut(session_key)
+            .ok_or("session should exist before its TCP stream attaches")?
+            .attach_tcp_outbox(SocketAddr::from(([127, 0, 0, 1], port)), outbox_tx);
+    }
     let mut context = SessionDrainContext::new(
         &fixture.snapshot_state,
         &fixture.bitrate_registry,
@@ -1195,6 +1246,12 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
     assert!(changed);
     assert!(!fixture.state.users.contains_key(&fixture.offender));
     assert!(fixture.state.users.contains_key(&fixture.sibling));
+    // The dropped session owned its TCP outbox: its stream ends, the sibling's stays open.
+    assert_eq!(
+        offender_outbox_rx.try_recv(),
+        Err(TryRecvError::Disconnected)
+    );
+    assert_eq!(sibling_outbox_rx.try_recv(), Err(TryRecvError::Empty));
     assert!(!fixture.state.has_dirty_sessions());
     let snapshot = fixture
         .snapshot_state
@@ -1245,6 +1302,24 @@ fn assert_terminal_drain_failure(stage: RtcDrainFailureStage) -> Result<(), &'st
         1
     );
     assert_retired_owner_cleanup(&mut fixture)?;
+    Ok(())
+}
+
+#[test]
+fn tcp_outbox_of_an_unknown_ufrag_is_rejected() -> Result<(), &'static str> {
+    let mut fixture = NackDrainFixture::new(1, 1)?;
+    let (outbox_tx, mut outbox_rx) = mpsc::channel(1);
+    let registered = fixture.register_tcp_outbox(
+        "unknown-ufrag",
+        SocketAddr::from(([127, 0, 0, 1], 46_201)),
+        outbox_tx,
+    )?;
+    assert!(matches!(
+        registered,
+        Err(TransportAdapterError::TransportUnavailable)
+    ));
+    // Nobody owns the outbox, so its stream ends right away.
+    assert_eq!(outbox_rx.try_recv(), Err(TryRecvError::Disconnected));
     Ok(())
 }
 

@@ -9,6 +9,7 @@
 //! contracts
 
 use std::{
+    collections::HashMap,
     io::ErrorKind,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket as StdUdpSocket},
     sync::Arc,
@@ -17,13 +18,14 @@ use std::{
 
 use o_sfu_rfc::webrtc;
 use str0m::{Candidate, bwe::Bitrate as Str0mBitrate, net::TcpType};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use super::{
     RtpProfile,
     consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     egress::RtcEgress,
-    packet_loop::{RtcIngress, RtcUdpSocket, UdpReceiveTask},
+    packet_loop::{IngressPacket, RtcIngress, RtcUdpSocket, UdpReceiveTask},
     state::{
         RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
         slots::SessionStore,
@@ -60,6 +62,9 @@ pub(super) fn bind_shared_rtc_socket(
     rtc_port_range: RtcPortRange,
     rtc_udp_io_backend: RtcUdpIoBackend,
     rtc_metrics: &Arc<RtcMetricsRecorder>,
+    ingress: RtcIngress,
+    packet_tx: mpsc::Sender<IngressPacket>,
+    recycle_rx: mpsc::Receiver<Vec<u8>>,
 ) -> Result<SharedRtcSocket, TransportAdapterError> {
     let bind_ip = bind_ip_for_announced_ip(announced_ip);
     for port in rtc_port_range.ports() {
@@ -86,7 +91,6 @@ pub(super) fn bind_shared_rtc_socket(
             TransportAdapterError::TransportUnavailable
         })?;
         let candidate_addr = SocketAddr::new(announced_ip, port);
-        let (ingress, packet_tx, recycle_rx) = RtcIngress::new();
         let udp_receive_task = UdpReceiveTask::new(
             socket.clone(),
             bind_addr,
@@ -205,6 +209,7 @@ pub(super) fn ensure_session_rtc_state(
             nack_totals: super::state::RtcNackTotals::default(),
             egress_bitrate: Arc::new(MediaBitrateCounter::new(started_at)),
             local_ice_ufrag,
+            tcp_outbox_tx_by_peer: HashMap::new(),
             #[cfg(test)]
             max_bitrate_in: None,
             #[cfg(test)]

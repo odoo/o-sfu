@@ -86,7 +86,10 @@ use crate::engine::media_transport::SourcePolicySignal;
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::metrics::RuntimeMetrics;
 use crate::engine::{
-    media_transport::{SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey},
+    media_transport::{
+        SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey,
+        rtc::packet_loop::IngressPacket,
+    },
     metrics::RtcMetricsRecorder,
 };
 
@@ -102,6 +105,8 @@ pub(super) struct RtcWorkerHandle {
     pub(super) packet_loop_delay: Arc<PacketLoopDelaySnapshot>,
     /// Set before explicit cancellation or when the thread exits unexpectedly.
     pub(super) terminal: Arc<AtomicBool>,
+    /// Producer end of the worker's ingress queue.
+    pub(super) packet_tx: mpsc::Sender<IngressPacket>,
 }
 
 impl fmt::Debug for RtcWorkerHandle {
