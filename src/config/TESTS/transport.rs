@@ -10,6 +10,7 @@ use super::{
     Bitrate, Env, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange, RtcUdpIoBackend,
     TransportConfig, VideoAdaptationTuning, VideoBitrateLimits, default_rtc_media_worker_count,
 };
+use crate::config::RtcTcpConfig;
 
 fn load_transport_config(get_var: impl Fn(&str) -> Option<String>) -> Result<TransportConfig> {
     let env = Env::new(get_var, |_| {
@@ -62,6 +63,7 @@ fn load_transport_config_accepts_public_ip_and_defaults() {
             rtc_port_range: RtcPortRange::try_new(40_000, 49_999).expect("valid default range"),
             rtc_udp_io_backend: RtcUdpIoBackend::Tokio,
             rtc_media_worker_count: worker_count,
+            rtc_tcp_config: None,
             room_worker_policy: RoomWorkerPolicy::strict_single_router(),
             room_media_limits: RoomMediaLimits::default(),
             video_adaptation_tuning: VideoAdaptationTuning::default(),
@@ -440,4 +442,87 @@ fn load_transport_config_rejects_unrepresentable_policy_deadlines() {
             message: "ROOM_UPGRADE_DWELL_MS must not exceed 3153600000000",
         },
     ]);
+}
+
+#[test]
+fn load_transport_config_resolves_tcp_settings() -> Result<()> {
+    let cases = [
+        (vec![], None),
+        (
+            vec![
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                ("TCP_ANNOUNCED_ADDRESS", "192.168.172.1:443"),
+            ],
+            Some(RtcTcpConfig {
+                bind_addr: "0.0.0.0:4242".parse()?,
+                announced_addr: "192.168.172.1:443".parse()?,
+            }),
+        ),
+        (
+            vec![
+                ("ANNOUNCED_IP", "203.0.113.10"),
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+            ],
+            Some(RtcTcpConfig {
+                bind_addr: "0.0.0.0:4242".parse()?,
+                announced_addr: "203.0.113.10:4242".parse()?,
+            }),
+        ),
+    ];
+    for (overrides, expected) in cases {
+        let config = load_transport_config_with_defaults(&overrides)?;
+        assert_eq!(config.rtc_tcp_config, expected, "{overrides:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn load_transport_config_rejects_invalid_tcp_settings() {
+    assert_invalid_transport_cases(&[
+        InvalidTransportCase {
+            overrides: &[("TCP_ANNOUNCED_ADDRESS", "192.168.172.1:443")],
+            message: "TCP_ANNOUNCED_ADDRESS requires TCP_BIND_ADDRESS",
+        },
+        InvalidTransportCase {
+            overrides: &[("TCP_BIND_ADDRESS", "nonsense")],
+            message: "TCP_BIND_ADDRESS must be a valid socket address",
+        },
+        InvalidTransportCase {
+            overrides: &[
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                ("TCP_ANNOUNCED_ADDRESS", "nonsense"),
+            ],
+            message: "TCP_ANNOUNCED_ADDRESS must be a valid socket address",
+        },
+        InvalidTransportCase {
+            overrides: &[
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                ("TCP_ANNOUNCED_ADDRESS", "0.0.0.0:443"),
+            ],
+            message: "TCP_ANNOUNCED_ADDRESS must be a concrete advertised address",
+        },
+        InvalidTransportCase {
+            overrides: &[
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                ("TCP_ANNOUNCED_ADDRESS", "239.1.1.1:443"),
+            ],
+            message: "TCP_ANNOUNCED_ADDRESS cannot be a multicast address",
+        },
+        InvalidTransportCase {
+            overrides: &[("TCP_BIND_ADDRESS", "0.0.0.0:0")],
+            message: "TCP_BIND_ADDRESS must use a non-zero port",
+        },
+    ]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn load_transport_config_rejects_tcp_with_io_uring() {
+    assert_invalid_transport_cases(&[InvalidTransportCase {
+        overrides: &[
+            ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+            ("RTC_UDP_IO_BACKEND", "io_uring"),
+        ],
+        message: "TCP_BIND_ADDRESS is not supported with RTC_UDP_IO_BACKEND=io_uring",
+    }]);
 }
