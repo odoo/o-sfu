@@ -15,6 +15,7 @@ use o_sfu_router::{
 };
 pub(super) use str0m::media::{MediaKind as Str0mMediaKind, Mid};
 
+use crate::RtcTcpConfig;
 pub(super) use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits,
     engine::{
@@ -120,6 +121,12 @@ pub(super) fn rtc_with_codec_policy(
     let mut config = test_media_transport_config(1, test_rtc_port_range());
     config.codec_flags = codec_flags;
     config.codec_preferences = codec_preferences;
+    RtcWorker::for_test(config)
+}
+
+pub(super) fn rtc_with_tcp_config(tcp_config: RtcTcpConfig) -> RtcWorker {
+    let mut config = test_media_transport_config(1, test_rtc_port_range());
+    config.rtc_tcp_config = Some(tcp_config);
     RtcWorker::for_test(config)
 }
 

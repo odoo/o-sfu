@@ -27,7 +27,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use crate::{SessionBitrateLimits, VideoBitrateLimits};
+use crate::{RtcTcpConfig, SessionBitrateLimits, VideoBitrateLimits};
 
 #[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
@@ -72,4 +72,5 @@ struct RtcWorkerConfig {
     profile: Arc<RtpProfile>,
     media_quality_interval: Option<Duration>,
     media_id_base: u64,
+    rtc_tcp_config: Option<RtcTcpConfig>,
 }

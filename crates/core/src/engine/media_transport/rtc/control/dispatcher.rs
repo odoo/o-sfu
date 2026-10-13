@@ -48,6 +48,7 @@ impl WorkerCommandContext<'_> {
             profile: self.config.profile.as_ref(),
             media_quality_interval: self.config.media_quality_interval,
             metrics: self.runtime_metrics,
+            rtc_tcp_config: self.config.rtc_tcp_config,
         }
     }
 
