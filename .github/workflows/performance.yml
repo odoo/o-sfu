@@ -374,7 +374,7 @@ jobs:
       - name: Upload Callgrind artifacts
         if: always()
         # actions/upload-artifact v4
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           # keep the raw Gungraun output available for local inspection when the summary is not enough
           name: packet-loop-callgrind-${{ github.run_id }}
@@ -388,7 +388,7 @@ jobs:
       - name: Upload DHAT artifacts
         if: always() && github.event_name == 'workflow_dispatch' && inputs.dhat
         # actions/upload-artifact v4
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: packet-loop-dhat-${{ github.run_id }}
           path: |
