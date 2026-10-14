@@ -128,14 +128,6 @@ impl RuntimeJsonFormatter {
             .is_valid()
             .then(|| span_context.trace_id().to_string())
     }
-
-    #[cfg(not(feature = "otel-tracing"))]
-    fn trace_id<S>(&self, _ctx: &FmtContext<'_, S, JsonFields>) -> Option<String>
-    where
-        S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-    {
-        None
-    }
 }
 
 #[cfg(feature = "otel-tracing")]
@@ -164,7 +156,11 @@ where
             level: event.metadata().level().as_str(),
             target: event.metadata().target(),
             resource: &self.resource,
+            // Only OTel trace lookup needs formatter state.
+            #[cfg(feature = "otel-tracing")]
             trace_id: self.trace_id(ctx),
+            #[cfg(not(feature = "otel-tracing"))]
+            trace_id: None,
             fields: event.field_map(),
             spans: JsonSpans(ctx),
         };
