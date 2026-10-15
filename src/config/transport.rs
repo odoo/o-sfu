@@ -10,6 +10,7 @@ use o_sfu_core::prelude::{
     Bitrate, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange, RtcUdpIoBackend,
     VideoAdaptationTuning, VideoAdaptationTuningError, VideoBitrateLimits,
 };
+use tokio::sync::Semaphore;
 
 use super::{
     RtcTcpConfig, TransportConfig,
@@ -143,6 +144,15 @@ fn room_media_limits_from_env(env: &Env<'_>) -> Result<RoomMediaLimits> {
     )?)
 }
 
+fn requires_tcp_bind_addr<T>(
+    bind_addr: Option<SocketAddr>,
+) -> impl Fn(&'static str, T) -> Result<T> {
+    move |key, value| {
+        ensure!(bind_addr.is_some(), "{key} requires TCP_BIND_ADDRESS");
+        Ok(value)
+    }
+}
+
 fn rtc_tcp_config_from_env(
     env: &Env<'_>,
     announced_ip: IpAddr,
@@ -161,21 +171,32 @@ fn rtc_tcp_config_from_env(
         .optional()?;
     let rtc_tcp_announced_addr = env
         .var::<SocketAddr>("TCP_ANNOUNCED_ADDRESS")
+        .check(requires_tcp_bind_addr(rtc_tcp_bind_addr))
         .check(|key, value| {
-            ensure!(
-                rtc_tcp_bind_addr.is_some(),
-                "{key} requires TCP_BIND_ADDRESS"
-            );
             advertised_ip(key, value.ip())?;
             Ok(value)
         })
         .optional()?;
+    let max_conn = env
+        .var::<usize>("TCP_MAX_CONNECTIONS")
+        .check(requires_tcp_bind_addr(rtc_tcp_bind_addr))
+        .check(|key, value| {
+            ensure!(
+                (1..=Semaphore::MAX_PERMITS).contains(&value),
+                "{key} must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            );
+            Ok(value)
+        })
+        .optional()?
+        .unwrap_or(1024);
     Ok(rtc_tcp_bind_addr.map(|addr| {
         let actual_announced_addr =
             rtc_tcp_announced_addr.unwrap_or(SocketAddr::from((announced_ip, addr.port())));
         RtcTcpConfig {
             announced_addr: actual_announced_addr,
             bind_addr: addr,
+            max_conn,
         }
     }))
 }

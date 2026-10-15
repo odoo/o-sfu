@@ -569,8 +569,10 @@ HTTP and operator access:
 | `DIAGNOSTICS_AUTH_TOKEN` | unset | bearer token of at least 32 bytes after trimming whitespace for `/v1/stats`, `/metrics` and `/internal/diagnostics/...`. Tokenless access requires the actual listener to use loopback |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | total deadline in milliseconds for listener, WebSocket session, background task and RTC worker drainage, from `1` to `86400000` |
 
-Set `RLIMIT_NOFILE` above `MAX_HTTP_CONNECTIONS` with headroom for UDP sockets,
-logs and other process descriptors. The HTTP cap also limits concurrent WebSocket users.
+Set `RLIMIT_NOFILE` above `MAX_HTTP_CONNECTIONS`, or above the sum of
+`MAX_HTTP_CONNECTIONS` and `TCP_MAX_CONNECTIONS` when RTC over TCP is enabled, with
+headroom for UDP sockets, logs and other process descriptors. The HTTP cap also limits
+concurrent WebSocket users.
 
 authentication and websocket admission:
 
@@ -601,6 +603,7 @@ RTC transport:
 | `RTC_UDP_IO_BACKEND` | `tokio` | RTC worker UDP backend, either `tokio`, Linux-only `tokio_batch` for `sendmmsg` egress or Linux-only `io_uring` |
 | `TCP_BIND_ADDRESS` | unset | `ip:port` the RTC TCP listener binds to. Setting it enables TCP and adds one passive TCP host candidate to every offer. Unset binds no listener and offers carry no TCP candidate. Not supported with `RTC_UDP_IO_BACKEND=io_uring` |
 | `TCP_ANNOUNCED_ADDRESS` | `ANNOUNCED_IP` with the `TCP_BIND_ADDRESS` port | concrete `ip:port` advertised as the TCP candidate, for deployments where the public TCP port differs from the bound one. Requires `TCP_BIND_ADDRESS` |
+| `TCP_MAX_CONNECTIONS` | `1024` | concurrent RTC TCP connections per process. Connections over the limit are closed on accept. Requires `TCP_BIND_ADDRESS` |
 | `RTC_MEDIA_WORKER_COUNT` | available parallelism | number of RTC media workers, falling back to `1` when the host cannot report available parallelism |
 | `MAX_BITRATE_IN` | `8000000` | maximum incoming bitrate in bps per user |
 | `MAX_BITRATE_OUT` | `10000000` | receiver-side BWE ceiling in bps per user |

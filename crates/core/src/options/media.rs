@@ -69,6 +69,7 @@ pub enum RtcPortRangeError {
 pub struct RtcTcpConfig {
     pub bind_addr: SocketAddr,
     pub announced_addr: SocketAddr,
+    pub max_conn: usize,
 }
 
 /// Inclusive UDP port range assigned across RTC workers.

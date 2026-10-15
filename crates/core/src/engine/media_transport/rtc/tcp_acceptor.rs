@@ -20,7 +20,7 @@ use tokio::{
     },
     runtime::Builder as TokioRuntimeBuilder,
     select,
-    sync::mpsc,
+    sync::{Semaphore, mpsc},
     time::{Duration, sleep, timeout},
 };
 use tokio_util::sync::CancellationToken;
@@ -66,6 +66,7 @@ impl TcpAcceptor {
         announced_addr: SocketAddr,
         ufrag_worker_map: UfragWorkerMap,
         workers: Arc<[RtcWorker]>,
+        max_conn: usize,
     ) -> io::Result<Self> {
         let runtime = TokioRuntimeBuilder::new_current_thread()
             .enable_io()
@@ -85,6 +86,7 @@ impl TcpAcceptor {
                 shutdown_clone,
                 ufrag_worker_map,
                 workers,
+                max_conn,
             ));
         })?;
         Ok(Self { shutdown })
@@ -97,7 +99,9 @@ async fn accept_loop(
     shutdown: CancellationToken,
     ufrag_worker_map: UfragWorkerMap,
     workers: Arc<[RtcWorker]>,
+    max_conn: usize,
 ) {
+    let semaphore = Arc::new(Semaphore::new(max_conn));
     let mut failure_backoff = Duration::from_millis(1);
     loop {
         select! {
@@ -108,10 +112,15 @@ async fn accept_loop(
                 match accepted {
                     Ok((stream, peer)) => {
                         failure_backoff = Duration::from_millis(1);
+                        let Ok(permit) = Arc::clone(&semaphore).try_acquire_owned() else {
+                            debug!("TCP connection rejected: not enough room left");
+                            continue;
+                        };
                         let task_worker_map = ufrag_worker_map.clone();
                         let task_workers = Arc::clone(&workers);
                         let task_shutdown = shutdown.clone();
                         tokio::spawn(async move {
+                            let _permit = permit;
                             select! {
                                 () = task_shutdown.cancelled() => {}
                                 result = serve_tcp_stream(stream, peer, announced_addr, task_worker_map, task_workers) => {

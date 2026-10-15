@@ -38,7 +38,7 @@ use crate::{
 
 const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
 
-fn tcp_transport() -> (SocketAddr, MediaTransport) {
+fn tcp_transport(max_conn: Option<usize>) -> (SocketAddr, MediaTransport) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .expect("should be able to bind listener to available port");
     let addr = listener
@@ -49,6 +49,7 @@ fn tcp_transport() -> (SocketAddr, MediaTransport) {
     config.rtc_tcp_config = Some(RtcTcpConfig {
         bind_addr: addr,
         announced_addr: addr,
+        max_conn: max_conn.unwrap_or(1024),
     });
     let transport = MediaTransport::build(config, test_media_transport_deps())
         .expect("should be able to start test media transport");
@@ -89,7 +90,7 @@ fn binding_request_frame(username: &str) -> TcpFrame {
 
 #[tokio::test]
 async fn acceptor_accepts_tcp_connections() {
-    let (addr, _transport) = tcp_transport();
+    let (addr, _transport) = tcp_transport(None);
     TcpStream::connect(addr)
         .await
         .expect("should be able to create test stream");
@@ -97,7 +98,7 @@ async fn acceptor_accepts_tcp_connections() {
 
 #[tokio::test]
 async fn acceptor_closes_connection_without_ufrag() {
-    let (addr, _transport) = tcp_transport();
+    let (addr, _transport) = tcp_transport(None);
     let mut stream = TcpStream::connect(addr)
         .await
         .expect("should be able to create test stream");
@@ -111,7 +112,7 @@ async fn acceptor_closes_connection_without_ufrag() {
 
 #[tokio::test]
 async fn acceptor_closes_stalled_connections() {
-    let (addr, transport) = tcp_transport();
+    let (addr, transport) = tcp_transport(None);
     let (_session_key, offer) = create_session_offer(&transport).await;
     let local_ufrag = offer
         .lines()
@@ -137,7 +138,7 @@ async fn acceptor_closes_stalled_connections() {
 
 #[tokio::test]
 async fn acceptor_times_out_without_ufrag() {
-    let (addr, _transport) = tcp_transport();
+    let (addr, _transport) = tcp_transport(None);
     let now = Instant::now();
     let mut stream = TcpStream::connect(addr)
         .await
@@ -148,6 +149,44 @@ async fn acceptor_times_out_without_ufrag() {
         .expect("should receive EOF right away");
     assert_eq!(received, 0);
     assert!(now.elapsed() >= TCP_RESOLVE_UFRAG_MAX);
+}
+
+async fn closed_within(stream: &mut TcpStream, wait: Duration) -> bool {
+    match timeout(wait, stream.read(&mut [0u8; 16])).await {
+        Ok(Ok(0) | Err(_)) => true,
+        Ok(Ok(_)) => panic!("server should not send bytes before a ufrag"),
+        Err(_elapsed) => false,
+    }
+}
+
+#[tokio::test]
+async fn acceptor_enforces_max_conn() {
+    let quick_close = TCP_RESOLVE_UFRAG_MAX / 4;
+    let (addr, _transport) = tcp_transport(Some(1));
+    let held = TcpStream::connect(addr)
+        .await
+        .expect("should be able to create test stream");
+    let mut over_limit = TcpStream::connect(addr)
+        .await
+        .expect("the stream is accepted before being closed");
+    assert!(
+        closed_within(&mut over_limit, quick_close).await,
+        "the stream over the limit should be closed right away"
+    );
+    drop(held);
+    let started = Instant::now();
+    loop {
+        let mut retry = TcpStream::connect(addr)
+            .await
+            .expect("should be able to create test stream");
+        if !closed_within(&mut retry, quick_close).await {
+            break;
+        }
+        assert!(
+            started.elapsed() < TCP_RESOLVE_UFRAG_MAX,
+            "closing a stream should free its slot"
+        );
+    }
 }
 
 async fn relay_until_connected(
@@ -192,7 +231,7 @@ async fn relay_until_connected(
 
 #[tokio::test]
 async fn client_connects_over_tcp() {
-    let (server_addr, transport) = tcp_transport();
+    let (server_addr, transport) = tcp_transport(None);
     let (session_key, offer) = create_session_offer(&transport).await;
     let offer = SdpOffer::from_sdp_string(&offer).expect("should be able to parse created offer");
     let mut client = Peer::new(
