@@ -60,7 +60,7 @@ enum IndexedSessionRecoveryOutcome {
     Malformed,
 }
 
-enum PacketIndexProbe<'a> {
+pub(in crate::engine::media_transport::rtc) enum PacketIndexProbe<'a> {
     LocalIceUfrag(&'a str),
     RemoteCandidateAddr(SocketAddr),
 }
@@ -382,7 +382,10 @@ fn indexed_session_for_pkt(
 }
 
 /// Selects the recovery index for a str0m-classifiable datagram.
-fn packet_index_probe(source_addr: SocketAddr, packet: &[u8]) -> Option<PacketIndexProbe<'_>> {
+pub(in crate::engine::media_transport::rtc) fn packet_index_probe(
+    source_addr: SocketAddr,
+    packet: &[u8],
+) -> Option<PacketIndexProbe<'_>> {
     let byte0 = packet.first().copied()?;
     let packet_len = packet.len();
     // Keep these gates aligned with str0m 0.21's `Receive::new` classifier:

@@ -47,6 +47,7 @@ pub(crate) mod fuzz_support;
 mod packet_loop;
 mod recovery;
 mod state;
+mod tcp_acceptor;
 #[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
 #[path = "TESTS/test_support/mod.rs"]
 pub mod test_support;
@@ -59,6 +60,7 @@ pub(super) use commands::{ParsedSessionAnswer, RtcSessionOffer};
 pub use commands::{
     RtcWorkerCommand, RtcWorkerResponse, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
 };
+pub(super) use tcp_acceptor::TcpAcceptor;
 pub use worker::{RtcWorker, WorkerAssignment};
 
 #[cfg(any(test, feature = "testing-transport"))]

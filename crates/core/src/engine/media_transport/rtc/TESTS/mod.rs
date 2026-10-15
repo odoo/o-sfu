@@ -16,3 +16,5 @@ mod packet_loop_state_tests;
 mod relay_registry_tests;
 #[path = "route_control_state_tests.rs"]
 mod route_control_state_tests;
+#[path = "tcp.rs"]
+mod tcp;
