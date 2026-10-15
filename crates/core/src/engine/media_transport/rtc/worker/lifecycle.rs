@@ -439,7 +439,6 @@ impl RtcWorker {
     /// Registers a TCP stream to this worker. The `outbox_tx` used to relay outgoing packets
     /// is passed to the worker, and the `ingress_tx` used to pass incoming packets to the
     /// packet loop is returned.
-    #[expect(dead_code, reason = "called by the TCP acceptor")]
     pub(in crate::engine::media_transport) async fn register_tcp_stream(
         &self,
         peer_addr: SocketAddr,

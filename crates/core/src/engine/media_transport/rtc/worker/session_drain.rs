@@ -41,7 +41,7 @@ use crate::engine::{
 
 // The limits admit hundreds of MTU-sized fragments from one large video
 // keyframe while bounding one authenticated peer's work before the next input.
-const SESSION_DRAIN_MAX_TRANSMITS: usize = 512;
+pub const SESSION_DRAIN_MAX_TRANSMITS: usize = 512;
 const SESSION_DRAIN_MAX_IMMEDIATE_TIMEOUTS: usize = 8;
 const SESSION_DRAIN_MAX_PAYLOAD_BYTES: usize = 384 * 1024;
 

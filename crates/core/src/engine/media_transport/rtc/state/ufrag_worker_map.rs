@@ -25,10 +25,6 @@ impl UfragWorkerMap {
         lock_unpoisoned(&self.worker_id_by_ufrag).remove(ufrag);
     }
     /// Get the worker id handling the given ufrag, if any.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "will be read by the TCP acceptor")
-    )]
     pub(in super::super) fn get(&self, ufrag: &str) -> Option<MediaWorkerId> {
         lock_unpoisoned(&self.worker_id_by_ufrag)
             .get(ufrag)
