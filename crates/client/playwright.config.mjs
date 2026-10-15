@@ -1,5 +1,18 @@
 import { defineConfig } from "@playwright/test";
 
+const CHROMIUM = { browserName: "chromium" };
+const FIREFOX = {
+    browserName: "firefox",
+    launchOptions: {
+        // Firefox needs camera permission to gather loopback candidates
+        // for the synthetic canvas fixtures.
+        firefoxUserPrefs: {
+            "media.peerconnection.ice.loopback": true,
+            "permissions.default.camera": 1
+        }
+    }
+};
+
 export default defineConfig({
     testDir: "./playwright",
     timeout: 30_000,
@@ -13,23 +26,17 @@ export default defineConfig({
         video: "retain-on-failure"
     },
     projects: [
+        { name: "chromium", use: CHROMIUM },
+        { name: "firefox", use: FIREFOX },
         {
-            name: "chromium",
-            use: { browserName: "chromium" }
+            name: "chromium-tcp",
+            testIgnore: "bundle.spec.js",
+            use: { ...CHROMIUM, transport: "tcp" }
         },
         {
-            name: "firefox",
-            use: {
-                browserName: "firefox",
-                launchOptions: {
-                    // Firefox needs camera permission to gather loopback candidates
-                    // for the synthetic canvas fixtures.
-                    firefoxUserPrefs: {
-                        "media.peerconnection.ice.loopback": true,
-                        "permissions.default.camera": 1
-                    }
-                }
-            }
+            name: "firefox-tcp",
+            testIgnore: "bundle.spec.js",
+            use: { ...FIREFOX, transport: "tcp" }
         }
     ],
     webServer: [
@@ -41,7 +48,7 @@ export default defineConfig({
         },
         {
             command:
-                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= HTTP_INTERFACE=127.0.0.1:18080 ANNOUNCED_IP=127.0.0.1 RTC_MIN_PORT=58000 RTC_MAX_PORT=58031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
+                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= TCP_BIND_ADDRESS=127.0.0.1:58100 HTTP_INTERFACE=127.0.0.1:18080 ANNOUNCED_IP=127.0.0.1 RTC_MIN_PORT=58000 RTC_MAX_PORT=58031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
             reuseExistingServer: true,
             timeout: 360_000,
             url: "http://127.0.0.1:18080/v1/noop"

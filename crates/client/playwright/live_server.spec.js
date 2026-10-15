@@ -1,7 +1,7 @@
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
 
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./transport_fixtures.mjs";
 import { WS_CLOSE_CODE } from "../dist/protocol_contract.js";
 
 import {
