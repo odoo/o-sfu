@@ -21,7 +21,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox]
+        include:
+          - project: chromium
+            browser: chromium
+          - project: firefox
+            browser: firefox
+          - project: chromium-tcp
+            browser: chromium
+          - project: firefox-tcp
+            browser: firefox
 
     defaults:
       run:
@@ -61,13 +69,13 @@ jobs:
         run: npx playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run Playwright browser tests
-        run: npm run test:browser -- --project=${{ matrix.browser }}
+        run: npm run test:browser -- --project=${{ matrix.project }}
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         # actions/upload-artifact v4
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: playwright-report-${{ matrix.browser }}
+          name: playwright-report-${{ matrix.project }}
           path: crates/client/output/playwright/results
           retention-days: 14

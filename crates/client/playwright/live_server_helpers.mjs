@@ -3,6 +3,8 @@ import { createHmac, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
+import { test } from "@playwright/test";
+
 const TEST_AUTH_KEY = "u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng=";
 const TEST_ROOM_KEY = "6me1UEeLIMqcygWGz1icMuVMVcPbZyVOF2LlZZPCCOw=";
 const TEST_SFU_HTTP_BASE_URL = "http://127.0.0.1:18080";
@@ -13,6 +15,7 @@ const ROOM_TOKEN_TTL_SECONDS = 30;
 const CONNECT_TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const HARNESS_URL = "/playwright/fixtures/harness.html";
 const STREAM_TYPES = new Set(["audio", "camera", "screen"]);
+const TCP_PROJECT_PORT_OFFSET = 1000;
 
 export async function createChannel({
     authKey = TEST_AUTH_KEY,
@@ -726,6 +729,10 @@ export async function spawnLiveServer({
     outboundQueueByteCapacity,
     codecFlags = {}
 }) {
+    const portOffset = test.info().project.use.transport === "tcp" ? TCP_PROJECT_PORT_OFFSET : 0;
+    bindPort += portOffset;
+    rtcMinPort += portOffset;
+    rtcMaxPort += portOffset;
     const env = {
         ...process.env,
         AUTH_KEY: authKey,
@@ -733,6 +740,7 @@ export async function spawnLiveServer({
         ANNOUNCED_IP: announcedIp,
         RTC_MAX_PORT: String(rtcMaxPort),
         RTC_MIN_PORT: String(rtcMinPort),
+        TCP_BIND_ADDRESS: `${bindHost}:${rtcMaxPort + 1}`,
         CODEC_H264: String(Boolean(codecFlags.h264)),
         CODEC_VP9: String(Boolean(codecFlags.vp9))
     };
