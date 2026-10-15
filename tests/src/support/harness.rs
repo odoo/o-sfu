@@ -495,6 +495,7 @@ pub fn test_config(authentication_timeout_ms: u64, room_size: usize) -> Config {
         features: RuntimeFeatureFlags::default(),
         telemetry: TelemetryConfig::default(),
         diagnostics: DiagnosticsConfig::default(),
+        runtime_thread_count: 1,
     }
 }
 

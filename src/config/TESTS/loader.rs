@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{num::NonZeroUsize, thread, time::Duration};
 
 use base64::{
     Engine as _,
@@ -85,6 +85,12 @@ fn config_validates_auth_key_material() -> anyhow::Result<()> {
 #[test]
 fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
     let config = config_from(&[])?;
+    assert_eq!(
+        config.runtime_thread_count,
+        thread::available_parallelism()
+            .map_or(1, NonZeroUsize::get)
+            .min(4)
+    );
     assert_eq!(config.http.bind_address.to_string(), "0.0.0.0:8070");
     assert_eq!(
         config.http.shutdown_timeout.as_duration(),
@@ -132,6 +138,8 @@ fn config_uses_defaults_and_explicit_values() -> anyhow::Result<()> {
 #[test]
 fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
     let config = config_from(&[
+        ("RUNTIME_THREAD_COUNT", "8"),
+        ("RTC_MEDIA_WORKER_COUNT", "12"),
         ("HTTP_INTERFACE", "127.0.0.1:9000"),
         ("PROXY", "true"),
         ("TRUSTED_PROXIES", "127.0.0.1/32, ::1/128"),
@@ -147,6 +155,8 @@ fn config_accepts_explicit_http_auth_and_user_settings() -> anyhow::Result<()> {
         ("ROOM_RESERVATION_TTL", "120"),
         ("ROOM_DEPARTURE_GRACE", "0"),
     ])?;
+    assert_eq!(config.runtime_thread_count, 8);
+    assert_eq!(config.transport.rtc_media_worker_count, 12);
     assert_eq!(config.http.bind_address.to_string(), "127.0.0.1:9000");
     assert_eq!(
         config.http.shutdown_timeout.as_duration(),
@@ -213,6 +223,7 @@ fn config_rejects_invalid_proxy_flag() {
 #[test]
 fn config_rejects_zero_runtime_limits() {
     let cases = [
+        "RUNTIME_THREAD_COUNT",
         "ROOM_SIZE",
         "MAX_PRE_AUTH_WEBSOCKET_SESSIONS",
         "MAX_PRE_AUTH_WEBSOCKET_SESSIONS_PER_ORIGIN",

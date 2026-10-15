@@ -95,6 +95,7 @@ impl RuntimeTestBuilder {
                 features: RuntimeFeatureFlags::default(),
                 telemetry: TelemetryConfig::default(),
                 diagnostics: DiagnosticsConfig::default(),
+                runtime_thread_count: 1,
             },
         }
     }

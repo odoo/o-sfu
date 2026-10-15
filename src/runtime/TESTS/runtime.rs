@@ -35,6 +35,17 @@ use crate::{
 const TEST_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[test]
+fn main_runtime_uses_configured_thread_budget() -> AnyResult<()> {
+    let mut config = RuntimeTestBuilder::new().config().clone();
+    for count in [1, 8] {
+        config.runtime_thread_count = count;
+        let runtime = super::build_tokio_runtime(&config)?;
+        assert_eq!(runtime.metrics().num_workers(), count);
+    }
+    Ok(())
+}
+
+#[test]
 fn runtime_rejects_invalid_programmatic_operator_tokens_before_starting_workers() {
     for token in [
         "",
