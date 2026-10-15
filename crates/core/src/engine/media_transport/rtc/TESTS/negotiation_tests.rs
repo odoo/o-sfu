@@ -2018,6 +2018,7 @@ async fn rtc_initial_session_offer_advertises_passive_tcp_candidate() {
     let tcp_config = RtcTcpConfig {
         bind_addr: addr,
         announced_addr: addr,
+        max_conn: 1024,
     };
     let candidates = offer_candidates(Some(tcp_config)).await;
     assert!(candidates.iter().any(|c| {

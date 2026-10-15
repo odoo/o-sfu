@@ -102,6 +102,7 @@ impl MediaTransport {
                     c.announced_addr,
                     ufrag_worker_map,
                     Arc::clone(&workers),
+                    c.max_conn,
                 )
                 .map(Arc::new);
                 info!(

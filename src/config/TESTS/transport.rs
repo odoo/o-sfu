@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
+use tokio::sync::Semaphore;
 
 use super::{
     Bitrate, Env, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange, RtcUdpIoBackend,
@@ -452,10 +453,12 @@ fn load_transport_config_resolves_tcp_settings() -> Result<()> {
             vec![
                 ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
                 ("TCP_ANNOUNCED_ADDRESS", "192.168.172.1:443"),
+                ("TCP_MAX_CONNECTIONS", "1111"),
             ],
             Some(RtcTcpConfig {
                 bind_addr: "0.0.0.0:4242".parse()?,
                 announced_addr: "192.168.172.1:443".parse()?,
+                max_conn: 1111,
             }),
         ),
         (
@@ -466,6 +469,7 @@ fn load_transport_config_resolves_tcp_settings() -> Result<()> {
             Some(RtcTcpConfig {
                 bind_addr: "0.0.0.0:4242".parse()?,
                 announced_addr: "203.0.113.10:4242".parse()?,
+                max_conn: 1024,
             }),
         ),
     ];
@@ -511,6 +515,33 @@ fn load_transport_config_rejects_invalid_tcp_settings() {
         InvalidTransportCase {
             overrides: &[("TCP_BIND_ADDRESS", "0.0.0.0:0")],
             message: "TCP_BIND_ADDRESS must use a non-zero port",
+        },
+        InvalidTransportCase {
+            overrides: &[("TCP_MAX_CONNECTIONS", "0")],
+            message: "TCP_MAX_CONNECTIONS requires TCP_BIND_ADDRESS",
+        },
+        InvalidTransportCase {
+            overrides: &[
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                ("TCP_MAX_CONNECTIONS", "0"),
+            ],
+            message: &format!(
+                "TCP_MAX_CONNECTIONS must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            ),
+        },
+        InvalidTransportCase {
+            overrides: &[
+                ("TCP_BIND_ADDRESS", "0.0.0.0:4242"),
+                (
+                    "TCP_MAX_CONNECTIONS",
+                    &format!("{}", Semaphore::MAX_PERMITS + 1),
+                ),
+            ],
+            message: &format!(
+                "TCP_MAX_CONNECTIONS must be between 1 and {}",
+                Semaphore::MAX_PERMITS
+            ),
         },
     ]);
 }
