@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::{
     net::TcpListener,
-    runtime::Builder,
+    runtime::{Builder, Runtime as TokioRuntime},
     signal::ctrl_c,
     sync::Semaphore,
     task::JoinHandle,
@@ -435,18 +435,23 @@ fn build_room_manager(
     ))
 }
 
+fn build_tokio_runtime(config: &Config) -> io::Result<TokioRuntime> {
+    Builder::new_multi_thread()
+        .worker_threads(config.runtime_thread_count)
+        .enable_all()
+        .build()
+}
+
 /// # Errors
 ///
-/// Returns an error when configuration, tracing, Tokio startup, serving or
-/// shutdown fails.
+/// Returns [`anyhow::Error`] when configuration, tracing, Tokio startup, serving
+/// or shutdown fails.
 pub fn run() -> AnyResult<()> {
     let config = Config::from_env()?;
     let _telemetry = init_tracing(&config.telemetry, process::id())?;
     let runtime = Runtime::new(&config)?;
-    Ok(Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(runtime.serve(serve_http, shutdown_signal()))?)
+    // Telemetry must outlive Tokio teardown so dropped tasks can finish their spans.
+    Ok(build_tokio_runtime(&config)?.block_on(runtime.serve(serve_http, shutdown_signal()))?)
 }
 
 #[cfg(test)]

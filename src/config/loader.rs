@@ -1,12 +1,16 @@
-use std::{env, fs};
+use std::{env, fs, num::NonZeroUsize, thread};
 
 use anyhow::Result;
 
 use super::{
     AuthConfig, CodecConfig, HttpConfig, TransportConfig, UserConfig,
-    codec_flags::load_media_codec_flags, codec_preferences::load_codec_preferences,
-    diagnostics::DiagnosticsConfig, env::Env, feature_flags::load_runtime_feature_flags,
-    settings::Config, telemetry::load_telemetry_config,
+    codec_flags::load_media_codec_flags,
+    codec_preferences::load_codec_preferences,
+    diagnostics::DiagnosticsConfig,
+    env::{Env, positive},
+    feature_flags::load_runtime_feature_flags,
+    settings::Config,
+    telemetry::load_telemetry_config,
 };
 
 impl Config {
@@ -32,6 +36,11 @@ impl Config {
         let diagnostics = DiagnosticsConfig::from_env(&env)?;
         let telemetry = load_telemetry_config(&env)?;
         let transport = TransportConfig::from_env(&env)?;
+        let runtime_thread_count = env.var("RUNTIME_THREAD_COUNT").check(positive).default(
+            thread::available_parallelism()
+                .map_or(1, NonZeroUsize::get)
+                .min(4),
+        )?;
         Ok(Self {
             auth,
             http,
@@ -44,6 +53,7 @@ impl Config {
             features: feature_flags,
             telemetry,
             diagnostics,
+            runtime_thread_count,
         })
     }
 }

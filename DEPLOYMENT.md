@@ -529,7 +529,7 @@ runtime:
 - `AUTH_KEY` matches the Odoo caller configuration
 - `AUTH_KEY` decodes to at least 32 bytes generated with cryptographically safe randomness
 - `DIAGNOSTICS_AUTH_TOKEN` is generated independently from at least 32 random bytes
-- `RTC_MEDIA_WORKER_COUNT` fits the VM capacity
+- `RTC_MEDIA_WORKER_COUNT` and `RUNTIME_THREAD_COUNT` fit the VM capacity together
 - `ROOM_MAX_LOCAL_ROUTERS` does not exceed `RTC_MEDIA_WORKER_COUNT`
 
 validation:
@@ -549,10 +549,11 @@ required:
 | `ANNOUNCED_IP` | required | concrete advertised IP address used in ICE-lite SDP |
 | `AUTH_KEY` | required | base64 key with at least 32 decoded bytes used to sign and verify SFU JWTs |
 
-HTTP and operator access:
+runtime, HTTP and operator access:
 
 | variable | default | description |
 | --- | --- | --- |
+| `RUNTIME_THREAD_COUNT` | available parallelism capped at `4` | number of main runtime worker threads for HTTP, WebSocket and room policy work. Must be positive. Falls back to `1` when the host cannot report available parallelism. Replaces `TOKIO_WORKER_THREADS`, which no longer configures this pool |
 | `HTTP_INTERFACE` | `0.0.0.0:8070` | HTTP and WebSocket listening address |
 | `MAX_HTTP_CONNECTIONS` | `4096` | concurrent accepted sockets per process, including authenticated WebSockets until they close |
 | `HEADER_READ_TIMEOUT` | `10` | seconds from acceptance to first headers and for subsequent HTTP/1 headers, including keep-alive idle time, from `1` to `86400` |

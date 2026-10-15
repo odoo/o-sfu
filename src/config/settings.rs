@@ -27,6 +27,7 @@ pub struct Config {
     pub features: RuntimeFeatureFlags,
     pub telemetry: TelemetryConfig,
     pub diagnostics: DiagnosticsConfig,
+    pub runtime_thread_count: usize,
 }
 
 #[derive(Debug, Clone)]
