@@ -445,7 +445,6 @@ impl RtcWorker {
     ///
     /// Returns [`TransportAdapterError::TransportUnavailable`] when no session of this worker
     /// uses `ufrag` (anymore), or when the worker can't be reached.
-    #[expect(dead_code, reason = "called by the TCP acceptor")]
     pub(in crate::engine::media_transport) async fn register_tcp_stream(
         &self,
         peer_addr: SocketAddr,
