@@ -1,13 +1,14 @@
 //! media transport construction and startup validation
 
-use std::sync::Arc;
+use std::{io, net::TcpListener, sync::Arc};
 
 use thiserror::Error;
+use tracing::info;
 
 use super::{
     MediaTransport, SourcePolicySignal,
     config::{MediaTransportConfig, MediaTransportDeps},
-    rtc::{RtcWorker, RtpProfile},
+    rtc::{RtcWorker, RtpProfile, TcpAcceptor},
 };
 use crate::{
     MediaWorkerId, RtcUdpIoBackend,
@@ -90,6 +91,28 @@ impl MediaTransport {
                 })
             })
             .collect::<Result<_, _>>()?;
+        let tcp_acceptor = config
+            .rtc_tcp_config
+            .map(|c| {
+                let addr = c.bind_addr;
+                let listener = TcpListener::bind(addr)?;
+                listener.set_nonblocking(true)?;
+                let acceptor: Result<Arc<TcpAcceptor>, io::Error> = TcpAcceptor::spawn(
+                    listener,
+                    c.announced_addr,
+                    ufrag_worker_map,
+                    Arc::clone(&workers),
+                    c.max_conn,
+                )
+                .map(Arc::new);
+                info!(
+                    "booted rtc TCP listener bind_addr={} candidate_addr={}",
+                    addr, c.announced_addr,
+                );
+                acceptor
+            })
+            .transpose()
+            .map_err(|error| MediaTransportBuildError::TcpAcceptorStartup { kind: error.kind() })?;
         Ok(Self {
             workers,
             profile,
@@ -99,6 +122,7 @@ impl MediaTransport {
             #[cfg(any(test, feature = "testing-transport"))]
             source_diagnostics_requests: Arc::default(),
             source_policy_signal,
+            _tcp_acceptor: tcp_acceptor,
         })
     }
 }
@@ -129,4 +153,7 @@ pub enum MediaTransportBuildError {
     /// one worker could not create its runtime or bind its assigned UDP range
     #[error("media transport worker {worker_index} failed to start")]
     WorkerStartup { worker_index: usize },
+    /// the TCP listener could not be bound or the acceptor thread could not start
+    #[error("media transport failed to start the TCP acceptor: {kind}")]
+    TcpAcceptorStartup { kind: io::ErrorKind },
 }

@@ -13,6 +13,7 @@ use str0m::{
     change::SdpOffer,
     format::{Codec, FormatParams},
     media::Frequency,
+    net::{Protocol, TcpType},
 };
 
 use super::{
@@ -20,7 +21,7 @@ use super::{
     fixtures::*,
 };
 use crate::{
-    AudioCodecPreference, VideoCodecPreference,
+    AudioCodecPreference, RtcTcpConfig, VideoCodecPreference,
     engine::media_transport::{SessionUploadSlot, TransportMediaId},
 };
 
@@ -1997,4 +1998,38 @@ async fn add_negotiated_producer_media(
         .expect("addition offer should be available");
     apply_offer_answer(adapter, session_key, remote, addition_offer.into_parts().0).await;
     (producer_media_id, producer_mid)
+}
+
+async fn offer_candidates(tcp_config: Option<RtcTcpConfig>) -> Vec<Candidate> {
+    let adapter = tcp_config.map_or_else(RtcWorker::default, rtc_with_tcp_config);
+    let session_key = transport_key(1, 34, UserId::Integer(34));
+    let offer = expect_initial_offer(&adapter, &session_key).await;
+    SdpOffer::from_sdp_string(&offer.into_parts().0)
+        .expect("created offer can be parsed")
+        .media_lines
+        .iter()
+        .flat_map(|media_line| media_line.ice_candidates().cloned())
+        .collect()
+}
+
+#[tokio::test]
+async fn rtc_initial_session_offer_advertises_passive_tcp_candidate() {
+    let addr = SocketAddr::from(([127, 0, 0, 1], 4444));
+    let tcp_config = RtcTcpConfig {
+        bind_addr: addr,
+        announced_addr: addr,
+        max_conn: 1024,
+    };
+    let candidates = offer_candidates(Some(tcp_config)).await;
+    assert!(candidates.iter().any(|c| {
+        c.proto() == Protocol::Tcp && c.addr() == addr && c.tcptype() == Some(TcpType::Passive)
+    }));
+    assert!(candidates.iter().any(|c| c.proto() == Protocol::Udp));
+}
+
+#[tokio::test]
+async fn rtc_initial_session_offer_does_not_advertise_tcp_when_disabled() {
+    let candidates = offer_candidates(None).await;
+    assert!(candidates.iter().all(|c| c.proto() != Protocol::Tcp));
+    assert!(candidates.iter().any(|c| c.proto() == Protocol::Udp));
 }

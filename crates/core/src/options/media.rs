@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{fmt, net::SocketAddr, time::Duration};
 
 use crate::Bitrate;
 
@@ -63,6 +63,13 @@ pub enum RtcPortRangeError {
     MinZero,
     #[error("RTC port range maximum must be greater than or equal to the minimum")]
     MinAboveMax,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RtcTcpConfig {
+    pub bind_addr: SocketAddr,
+    pub announced_addr: SocketAddr,
+    pub max_conn: usize,
 }
 
 /// Inclusive UDP port range assigned across RTC workers.

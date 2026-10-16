@@ -16,21 +16,22 @@ use std::{
 };
 
 use o_sfu_rfc::webrtc;
-use str0m::{Candidate, bwe::Bitrate as Str0mBitrate};
+use str0m::{Candidate, bwe::Bitrate as Str0mBitrate, net::TcpType};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use super::{
     RtpProfile,
     consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     egress::RtcEgress,
-    packet_loop::{RtcIngress, RtcUdpSocket, UdpReceiveTask},
+    packet_loop::{IngressPacket, RtcIngress, RtcUdpSocket, UdpReceiveTask},
     state::{
         RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
         slots::SessionStore,
     },
 };
 use crate::{
-    Bitrate, RtcPortRange, RtcUdpIoBackend,
+    Bitrate, RtcPortRange, RtcTcpConfig, RtcUdpIoBackend,
     engine::{
         media_transport::{TransportAdapterError, TransportSessionKey},
         metrics::RtcMetricsRecorder,
@@ -60,6 +61,9 @@ pub(super) fn bind_shared_rtc_socket(
     rtc_port_range: RtcPortRange,
     rtc_udp_io_backend: RtcUdpIoBackend,
     rtc_metrics: &Arc<RtcMetricsRecorder>,
+    ingress: RtcIngress,
+    packet_tx: mpsc::Sender<IngressPacket>,
+    recycle_rx: mpsc::Receiver<Vec<u8>>,
 ) -> Result<SharedRtcSocket, TransportAdapterError> {
     let bind_ip = bind_ip_for_announced_ip(announced_ip);
     for port in rtc_port_range.ports() {
@@ -86,7 +90,6 @@ pub(super) fn bind_shared_rtc_socket(
             TransportAdapterError::TransportUnavailable
         })?;
         let candidate_addr = SocketAddr::new(announced_ip, port);
-        let (ingress, packet_tx, recycle_rx) = RtcIngress::new();
         let udp_receive_task = UdpReceiveTask::new(
             socket.clone(),
             bind_addr,
@@ -142,6 +145,10 @@ fn bind_ip_for_announced_ip(announced_ip: IpAddr) -> IpAddr {
 ///
 /// returns `TransportUnavailable` if the local candidate cannot be represented
 /// by str0m or cannot be attached to the newly created rtc state
+#[expect(
+    clippy::too_many_arguments,
+    reason = "session bootstrap takes each worker setting it needs explicitly"
+)]
 pub(super) fn ensure_session_rtc_state(
     users: &mut SessionStore,
     room_id: Arc<str>,
@@ -150,6 +157,7 @@ pub(super) fn ensure_session_rtc_state(
     max_bitrate_out: Bitrate,
     profile: &RtpProfile,
     stats_interval: Option<Duration>,
+    rtc_tcp_config: Option<RtcTcpConfig>,
 ) -> Result<bool, TransportAdapterError> {
     if users.contains_key(session_key) {
         return Ok(false);
@@ -165,10 +173,27 @@ pub(super) fn ensure_session_rtc_state(
         .enable_bwe(Some(Str0mBitrate::bps(max_bitrate_out.as_bps())))
         .set_ice_lite(true)
         .build(started_at);
-    let candidate = Candidate::host(candidate_addr, webrtc::IceTransport::Udp.as_str())
+    let udp_candidate = Candidate::host(candidate_addr, webrtc::IceTransport::Udp.as_str())
         .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
-    if rtc.add_local_candidate(candidate).is_none() {
+    if rtc.add_local_candidate(udp_candidate).is_none() {
         return Err(TransportAdapterError::TransportUnavailable);
+    }
+    if let Some(config) = rtc_tcp_config {
+        match Candidate::builder()
+            .tcp()
+            .host(config.announced_addr)
+            .tcptype(TcpType::Passive)
+            .build()
+        {
+            Ok(tcp_candidate) => {
+                if rtc.add_local_candidate(tcp_candidate).is_none() {
+                    warn!(%config.announced_addr, "duplicated TCP candidate");
+                }
+            }
+            Err(error) => {
+                warn!(%error, %config.announced_addr, "invalid TCP candidate address");
+            }
+        }
     }
     let local_ice_ufrag = rtc.direct_api().local_ice_credentials().ufrag;
     users.insert(

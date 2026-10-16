@@ -27,7 +27,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use crate::{SessionBitrateLimits, VideoBitrateLimits};
+use crate::{RtcTcpConfig, SessionBitrateLimits, VideoBitrateLimits};
 
 #[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
@@ -47,6 +47,7 @@ pub(crate) mod fuzz_support;
 mod packet_loop;
 mod recovery;
 mod state;
+mod tcp_acceptor;
 #[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
 #[path = "TESTS/test_support/mod.rs"]
 pub mod test_support;
@@ -59,6 +60,7 @@ pub(super) use commands::{ParsedSessionAnswer, RtcSessionOffer};
 pub use commands::{
     RtcWorkerCommand, RtcWorkerResponse, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
 };
+pub(super) use tcp_acceptor::TcpAcceptor;
 pub use worker::{RtcWorker, WorkerAssignment};
 
 #[cfg(any(test, feature = "testing-transport"))]
@@ -72,4 +74,5 @@ struct RtcWorkerConfig {
     profile: Arc<RtpProfile>,
     media_quality_interval: Option<Duration>,
     media_id_base: u64,
+    rtc_tcp_config: Option<RtcTcpConfig>,
 }

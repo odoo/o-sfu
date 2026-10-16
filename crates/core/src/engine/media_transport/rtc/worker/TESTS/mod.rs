@@ -9,7 +9,6 @@
 mod observations;
 mod scheduling;
 
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use std::{
     collections::BTreeSet,
     future::Future,
@@ -99,6 +98,7 @@ use crate::{
         media_transport::{
             ProducerActivity, SourceActivityRevision, SourceActivityUpdate, SourcePolicySignal,
             TransportMediaId, TransportSessionKey, TransportSourceKey,
+            rtc::state::demux::RemoteTransportAddr,
         },
         metrics::{
             RtcMetricsRecorder, RtcNackDirection, RtcRouteControlOutcome, RtpMetricsRecorder,
@@ -889,6 +889,7 @@ fn packet_loop_config_for_test() -> PacketLoopConfig {
             ),
             media_quality_interval: None,
             media_id_base: 0,
+            rtc_tcp_config: None,
         },
         packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
         source_policy_signal: SourcePolicySignal::default(),
@@ -2019,6 +2020,7 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,
+                tcp_egress: &mut shared_socket.egress.tcp,
             },
             first_input,
         );
@@ -2210,6 +2212,7 @@ fn packet_loop_wait_takes_one_completed_datagram_per_turn() -> Result<(), &'stat
                 config: &config,
                 demux: &mut demux,
                 ingress: &shared_socket.ingress,
+                tcp_egress: &mut shared_socket.egress.tcp,
             },
             input,
         );

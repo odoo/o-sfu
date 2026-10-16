@@ -20,6 +20,7 @@ use crate::{
             rtc::{
                 bootstrap::test_support::ensure_session_rtc_state,
                 commands::RtcWorkerCommand,
+                egress::TcpEgress,
                 packet_loop::{
                     IngressPacket, RtcIngress, forwarded_packet::ForwardedPacket,
                     routing_miss::DemuxRecoveryState,
@@ -126,6 +127,7 @@ impl SchedulingHarness {
                 config: &self.config,
                 demux: &mut self.demux,
                 ingress: &self.ingress,
+                tcp_egress: &mut TcpEgress::default(),
             },
             input,
         );

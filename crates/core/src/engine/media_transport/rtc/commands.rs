@@ -7,9 +7,9 @@
 //! fire-and-forget route controls are best-effort because they may target a
 //! worker that has already torn down the corresponding relay or session
 
-use std::{fmt::Write as _, sync::Arc};
+use std::{fmt::Write as _, net::SocketAddr, sync::Arc};
 
-use o_sfu_rfc::webrtc::sdp;
+use o_sfu_rfc::{tcp_framing::TcpFrame, webrtc::sdp};
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
     change::{SdpAnswer, SdpOffer},
@@ -383,6 +383,11 @@ pub enum RtcWorkerCommand {
         request: RouteControlRequest,
         response: Option<RtcWorkerResponse<()>>,
     },
+    RegisterTcpOutbox {
+        peer_addr: SocketAddr,
+        outbox_tx: mpsc::Sender<TcpFrame>,
+        response: RtcWorkerResponse<()>,
+    },
 }
 
 impl RtcWorkerCommand {
@@ -409,7 +414,8 @@ impl RtcWorkerCommand {
             | Self::AddRecvMedia { .. }
             | Self::AddSendMedia { .. }
             | Self::ApplyMediaControlBatch { .. }
-            | Self::RouteControl { .. } => None,
+            | Self::RouteControl { .. }
+            | Self::RegisterTcpOutbox { .. } => None,
         }
     }
 
@@ -425,7 +431,8 @@ impl RtcWorkerCommand {
             | Self::AddRecvMedia { .. }
             | Self::AddSendMedia { .. }
             | Self::ApplyMediaControlBatch { .. }
-            | Self::RouteControl { .. } => false,
+            | Self::RouteControl { .. }
+            | Self::RegisterTcpOutbox { .. } => false,
             #[cfg(test)]
             Self::ResolveMediaMid { .. } => false,
             #[cfg(test)]

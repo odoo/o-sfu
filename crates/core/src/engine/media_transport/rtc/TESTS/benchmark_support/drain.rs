@@ -76,6 +76,7 @@ impl SessionDrainBenchFixture {
                 Bitrate::from_mbps(10),
                 &profile,
                 Some(SESSION_DRAIN_STATS_INTERVAL),
+                None,
             )
             .unwrap();
             state.mark_session_dirty(&session_key);

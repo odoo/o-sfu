@@ -42,7 +42,7 @@ use crate::{
         media_transport::{
             ProducerActivity, SourceActivityRevision, SourceActivityUpdate, SourcePolicySignal,
             TransportMediaId, TransportResult, TransportSourceKey,
-            route_control::ProducerRouteControl,
+            route_control::ProducerRouteControl, rtc::egress::TcpEgress,
         },
         metrics::RuntimeMetrics,
         packet_sink_registry::RoomPacketSinkRegistry,
@@ -145,6 +145,7 @@ impl InterleavedRelayActivityBenchFixture {
                 ),
                 media_quality_interval: None,
                 media_id_base: 0,
+                rtc_tcp_config: None,
             },
             packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),
             source_policy_signal: SourcePolicySignal::default(),
@@ -221,6 +222,7 @@ impl InterleavedRelayActivityBenchFixture {
     fn run_phase(&mut self, command: RtcWorkerCommand, packets: Vec<ForwardedPacket>) {
         handle_worker_command(
             &mut self.state,
+            &mut TcpEgress::default(),
             &WorkerCommandContext {
                 bitrate_registry: &self.bitrate_registry,
                 snapshot_state: &self.snapshot_state,

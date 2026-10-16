@@ -48,7 +48,7 @@ use super::{
     super::{
         RtcWorkerConfig,
         control::WorkerCommandContext,
-        egress::RtcEgress,
+        egress::{RtcEgress, TcpEgress},
         packet_loop::{
             ForwardingEffects, IngressPacket, PacketForwarder, RtcIngress, drain_relay_packets,
             forwarded_packet::ForwardedPacket,
@@ -141,6 +141,7 @@ pub(crate) struct PacketLoopApplyContext<'a> {
     pub config: &'a PacketLoopConfig,
     pub demux: &'a mut DemuxRecoveryState,
     pub ingress: &'a RtcIngress,
+    pub tcp_egress: &'a mut TcpEgress,
 }
 
 impl PacketLoopTurn {
@@ -410,6 +411,7 @@ impl PacketLoopTurn {
                 let topology_may_change = command.may_change_demux_topology();
                 command.dispatch(
                     context.packet_loop_state,
+                    context.tcp_egress,
                     &WorkerCommandContext {
                         bitrate_registry: context.bitrate_registry,
                         snapshot_state: context.snapshot_state,
@@ -545,6 +547,7 @@ pub async fn run_packet_loop(
                     config: &config,
                     demux: &mut demux,
                     ingress: &shared_socket.ingress,
+                    tcp_egress: &mut shared_socket.egress.tcp,
                 },
                 input,
             );
