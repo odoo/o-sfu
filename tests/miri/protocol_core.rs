@@ -158,19 +158,19 @@ fn request_timeouts_ignore_unrelated_timer_ids_and_resolve_only_matching_request
     assert!(core.on_timer(99_999).is_empty());
     assert_eq!(
         core.on_timer(stop_request.timeout_timer_id).as_slice(),
-        &[Command::CompletePendingRequest {
+        &[Command::RejectPendingRequest {
             request_id: stop_request.request_id.clone(),
             timeout_timer_id: stop_request.timeout_timer_id,
-            ok: false,
+            error: "bus request timed out".to_owned(),
         }]
     );
     assert!(core.on_timer(stop_request.timeout_timer_id).is_empty());
     assert_eq!(
         core.on_timer(start_request.timeout_timer_id).as_slice(),
-        &[Command::CompletePendingRequest {
+        &[Command::RejectPendingRequest {
             request_id: start_request.request_id.clone(),
             timeout_timer_id: start_request.timeout_timer_id,
-            ok: false,
+            error: "bus request timed out".to_owned(),
         }]
     );
 }
@@ -299,10 +299,10 @@ fn disconnect_clears_pending_requests_snapshots_and_runtime_obligations() {
         &[
             Command::CancelTimer { id: 1 },
             Command::CancelTimer { id: 2 },
-            Command::CompletePendingRequest {
+            Command::RejectPendingRequest {
                 request_id: request.request_id.clone(),
                 timeout_timer_id: request.timeout_timer_id,
-                ok: false,
+                error: "bus closed".to_owned(),
             },
             Command::EmitEvent {
                 event: ProtocolEvent::TrackSnapshot {

@@ -10,7 +10,7 @@ import {
     type DownloadStates,
     type JsonValue,
     type RecordingOptions,
-    type SfuRecordingState,
+    type RecordingFlags,
     type SessionId,
     type SessionInfo,
     type SfuStats,
@@ -25,6 +25,7 @@ import {
 } from "../protocol_contract.js";
 import {
     EMPTY_FEATURES,
+    EMPTY_RECORDING_FLAGS,
     type ClientPeerConnection,
     type ClientWebSocket,
     type SfuClientDependencies,
@@ -76,8 +77,11 @@ export class BrowserRuntime {
     private readonly _context: BrowserRuntimeContext;
 
     private _timerHandles = new Map<number, TimerHandle>();
-    private _availableFeatures: AvailableFeatures = { ...EMPTY_FEATURES };
-    private _recordingState: SfuRecordingState = {};
+    private _availableFeatures: AvailableFeatures = {
+        ...EMPTY_FEATURES,
+        recording: { ...EMPTY_RECORDING_FLAGS }
+    };
+    private _recordingState: RecordingFlags = { ...EMPTY_RECORDING_FLAGS };
     private _state: ConnectionState = SFU_CLIENT_STATE.DISCONNECTED;
 
     constructor(context: BrowserRuntimeContext, dependencies: SfuClientDependencies = {}) {
@@ -114,7 +118,7 @@ export class BrowserRuntime {
         return this._availableFeatures;
     }
 
-    get recordingState(): SfuRecordingState {
+    get recordingState(): RecordingFlags {
         return this._recordingState;
     }
 
@@ -178,6 +182,17 @@ export class BrowserRuntime {
         } catch (error) {
             this.handleRuntimeError(error);
         }
+    }
+
+    setRecording(options: Partial<RecordingFlags>): Promise<boolean> {
+        if (this._state !== SFU_CLIENT_STATE.CONNECTED) {
+            return Promise.reject(new Error("SFU client is not connected"));
+        }
+        const input = { ...options };
+        return this._pendingRequests.drainRequestCommands(
+            () => this._core.startRecording(input),
+            true
+        );
     }
 
     startRecording(options: RecordingOptions = {}): Promise<boolean> {
@@ -352,6 +367,10 @@ export class BrowserRuntime {
                 this.cancelTimer(command.timeoutTimerId);
                 this._pendingRequests.resolve(command.requestId, command.ok);
                 return [];
+            case COMMAND_KIND.REJECT_PENDING_REQUEST:
+                this.cancelTimer(command.timeoutTimerId);
+                this._pendingRequests.fail(command.requestId, new Error(command.error));
+                return [];
             case COMMAND_KIND.SCHEDULE_TIMER:
                 this.scheduleTimer(command.id, command.ms);
                 return [];
@@ -423,9 +442,9 @@ export class BrowserRuntime {
             disconnectCommands = [
                 {
                     kind: COMMAND_KIND.SET_AVAILABLE_FEATURES,
-                    features: { ...EMPTY_FEATURES }
+                    features: { ...EMPTY_FEATURES, recording: { ...EMPTY_RECORDING_FLAGS } }
                 },
-                { kind: COMMAND_KIND.SET_RECORDING_STATE, state: {} },
+                { kind: COMMAND_KIND.SET_RECORDING_STATE, state: { ...EMPTY_RECORDING_FLAGS } },
                 {
                     kind: COMMAND_KIND.EMIT_STATE_CHANGE,
                     state: SFU_CLIENT_STATE.DISCONNECTED

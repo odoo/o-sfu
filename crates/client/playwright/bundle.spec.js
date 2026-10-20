@@ -34,12 +34,10 @@ test("released bundle embeds Wasm and exposes only the public runtime API", asyn
         initialState: {
             availableFeatures: {
                 rtc: false,
-                transcription: false,
-                audioRecording: false,
-                videoRecording: false
+                recording: { audio: false, video: false, transcription: false }
             },
             errors: [],
-            recordingState: {},
+            recordingState: { audio: false, video: false, transcription: false },
             state: "disconnected"
         }
     });

@@ -4,9 +4,9 @@ import type {
     ConnectionState,
     DownloadStates,
     RecordingOptions,
+    RecordingFlags,
     SessionId,
     SessionInfo,
-    SfuRecordingState,
     StreamType
 } from "./public_api.js";
 
@@ -53,6 +53,7 @@ export const COMMAND_KIND = {
     EMIT_UPDATE: "emitUpdate",
     BEGIN_PENDING_REQUEST: "beginPendingRequest",
     COMPLETE_PENDING_REQUEST: "completePendingRequest",
+    REJECT_PENDING_REQUEST: "rejectPendingRequest",
     SCHEDULE_TIMER: "scheduleTimer",
     CANCEL_TIMER: "cancelTimer"
 } as const;
@@ -96,7 +97,7 @@ export type HostCommand =
     | { kind: typeof COMMAND_KIND.CLOSE_PEER_CONNECTION }
     | { kind: typeof COMMAND_KIND.CLOSE_WEB_SOCKET; code: number }
     | { kind: typeof COMMAND_KIND.SET_AVAILABLE_FEATURES; features: AvailableFeatures }
-    | { kind: typeof COMMAND_KIND.SET_RECORDING_STATE; state: SfuRecordingState }
+    | { kind: typeof COMMAND_KIND.SET_RECORDING_STATE; state: RecordingFlags }
     | { kind: typeof COMMAND_KIND.EMIT_STATE_CHANGE; state: ConnectionState; cause?: string }
     | { kind: typeof COMMAND_KIND.EMIT_UPDATE; update: HostUpdate }
     | { kind: typeof COMMAND_KIND.BEGIN_PENDING_REQUEST; request: PendingRequest }
@@ -105,6 +106,12 @@ export type HostCommand =
           requestId: string;
           timeoutTimerId: number;
           ok: boolean;
+      }
+    | {
+          kind: typeof COMMAND_KIND.REJECT_PENDING_REQUEST;
+          requestId: string;
+          timeoutTimerId: number;
+          error: string;
       }
     | { kind: typeof COMMAND_KIND.SCHEDULE_TIMER; id: number; ms: number }
     | { kind: typeof COMMAND_KIND.CANCEL_TIMER; id: number }

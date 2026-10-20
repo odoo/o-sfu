@@ -282,6 +282,12 @@ impl ProtocolHarnessPeer {
                     self.pending_request_resolutions.push((request_id, ok));
                     Vec::new()
                 }
+                Command::RejectPendingRequest {
+                    timeout_timer_id, ..
+                } => {
+                    self.timers.remove(&timeout_timer_id);
+                    return None;
+                }
             };
             pending.extend(follow_up);
         }

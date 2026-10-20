@@ -1,6 +1,7 @@
 import { COMMAND_KIND, type HostCommand, type PendingRequest } from "../protocol_contract.js";
 
 type PendingRequestCallbacks = {
+    fail: (error: Error) => void;
     reject: (error: Error) => void;
     resolve: (ok: boolean) => void;
 };
@@ -13,7 +14,10 @@ export class PendingRequests {
         private readonly _scheduleTimer: (timeoutTimerId: number, timeoutMs: number) => void
     ) {}
 
-    drainRequestCommands(getCommands: () => HostCommand[]): Promise<boolean> {
+    drainRequestCommands(
+        getCommands: () => HostCommand[],
+        rejectOnFailure = false
+    ): Promise<boolean> {
         let completion: Promise<boolean> | undefined;
         return this._enqueueRequest(() => {
             const commands = getCommands();
@@ -21,22 +25,33 @@ export class PendingRequests {
             if (begin?.kind !== COMMAND_KIND.BEGIN_PENDING_REQUEST) {
                 return commands;
             }
-            completion = this.register(begin.request);
+            completion = this.register(begin.request, rejectOnFailure);
             void completion.catch(() => undefined);
             this._scheduleTimer(begin.request.timeoutTimerId, begin.request.timeoutMs);
             return commands.slice(1);
         }).then(
-            () => completion ?? false,
+            () => {
+                // Teardown can cancel the queued request before the core registers it.
+                if (!completion && rejectOnFailure) {
+                    throw new Error("SFU client is not connected");
+                }
+                return completion ?? false;
+            },
             (error) => completion ?? Promise.reject(error)
         );
     }
 
-    private register(request: PendingRequest): Promise<boolean> {
+    private register(request: PendingRequest, rejectOnFailure: boolean): Promise<boolean> {
         if (this._pendingRequestResolvers.has(request.requestId)) {
             throw new Error(`pending request ${request.requestId} is already registered`);
         }
         return new Promise<boolean>((resolve, reject) => {
-            this._pendingRequestResolvers.set(request.requestId, { resolve, reject });
+            this._pendingRequestResolvers.set(request.requestId, {
+                // Legacy recording calls treat bus failure as refusal. Fatal errors still reject.
+                fail: rejectOnFailure ? reject : () => resolve(false),
+                resolve,
+                reject
+            });
         });
     }
 
@@ -44,6 +59,12 @@ export class PendingRequests {
         const callbacks = this._pendingRequestResolvers.get(requestId);
         this._pendingRequestResolvers.delete(requestId);
         callbacks?.resolve(ok);
+    }
+
+    fail(requestId: string, error: Error): void {
+        const callbacks = this._pendingRequestResolvers.get(requestId);
+        this._pendingRequestResolvers.delete(requestId);
+        callbacks?.fail(error);
     }
 
     rejectAll(error: Error): void {

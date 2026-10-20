@@ -18,13 +18,35 @@ import {
     type ConnectionState,
     type ConsumersCompat,
     type JsonValue,
+    type RecordingFlags,
+    type RecordingStopCode,
     type SfuRecordingState
 } from "../../dist/odoo_sfu.js";
 
 const client = new SfuClient();
 const state: ConnectionState = client.state;
 const features: AvailableFeatures = client.availableFeatures;
-const recordingState: SfuRecordingState = client.recordingState;
+const recordingState: RecordingFlags = client.recordingState;
+const legacyRecordingState: SfuRecordingState = recordingState;
+const recordingCapabilities: RecordingFlags = features.recording;
+const recordingAudio: boolean = recordingState.audio;
+const accepted: Promise<boolean> = client.setRecording({ audio: true, video: false });
+void client.setRecording({});
+// @ts-expect-error Recording snapshots have all three required flags.
+const incompleteRecordingState: RecordingFlags = { audio: true };
+// @ts-expect-error The aggregate recording flag is absent from the public state.
+void recordingState.recording;
+// @ts-expect-error Recording capability flags are nested.
+void features.audioRecording;
+// @ts-expect-error Recording flags are boolean.
+void client.setRecording({ audio: "yes" });
+void [
+    legacyRecordingState,
+    recordingCapabilities,
+    recordingAudio,
+    accepted,
+    incompleteRecordingState
+];
 const consumers: ConsumersCompat | undefined = client._consumers.get("remote-session");
 const bundleInfo: BundleInfo = __info__;
 const message: JsonValue = { type: "reaction", value: "raised-hand" };
@@ -41,6 +63,11 @@ client.addEventListener("update", (event) => {
     if (event.detail.name === CLIENT_UPDATE.TRACK) {
         const track: MediaStreamTrack = event.detail.payload.track;
         void track;
+    }
+    if (event.detail.name === CLIENT_UPDATE.CHANNEL_INFO_CHANGE) {
+        const flags: RecordingFlags = event.detail.payload.state;
+        const stopCode: RecordingStopCode | undefined = event.detail.payload.stopCode;
+        void [flags, stopCode];
     }
 });
 

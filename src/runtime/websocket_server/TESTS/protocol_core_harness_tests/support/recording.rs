@@ -74,5 +74,8 @@ pub(crate) async fn assert_recording_request_rejected(
         return None;
     }
     let request_id = drain_peer_until_pending_request_resolution(peer, false).await?;
-    (!has_channel_info_update(&peer.updates)).then_some(request_id)
+    let request = peer.pending_request_starts.first()?;
+    (!peer.timers.contains_key(&request.timeout_timer_id)
+        && !has_channel_info_update(&peer.updates))
+    .then_some(request_id)
 }

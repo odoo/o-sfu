@@ -10,7 +10,7 @@ import {
     type DownloadStates,
     type JsonValue,
     type RecordingOptions,
-    type SfuRecordingState,
+    type RecordingFlags,
     type SessionId,
     type SessionInfo,
     type SfuClientEventMap,
@@ -72,7 +72,7 @@ export class SfuClient extends EventTarget {
     }
 
     /** Latest recording snapshot accepted from the server. */
-    get recordingState(): SfuRecordingState {
+    get recordingState(): RecordingFlags {
         return this._runtime.recordingState;
     }
 
@@ -186,19 +186,30 @@ export class SfuClient extends EventTarget {
     }
 
     /**
-     * Requests recording with the selected media types.
+     * Changes selected recording outputs. Omitted flags keep their current values.
+     * Set all flags to `false` to stop recording. Channel updates carry the result.
+     * Resolves `false` when the server refuses the request.
      *
-     * Resolves `true` when the server accepts the request. It resolves `false`
-     * for refusal, timeout, teardown or when no request was registered. Runtime
-     * failures reject the promise and also emit `handledError`.
+     * Rejects with Error when disconnected, the request times out or the connection closes.
+     * Runtime failures also emit `handledError`.
+     */
+    setRecording(options: Partial<RecordingFlags>): Promise<boolean> {
+        return this._runtime.setRecording(options);
+    }
+
+    /**
+     * @deprecated Use setRecording(). Retains the legacy start-recording request.
+     * Resolves false for refusal, timeout, closure or when no request starts.
+     * Runtime failures reject Error and emit `handledError`.
      */
     startRecording(options: RecordingOptions = {}): Promise<boolean> {
         return this._runtime.startRecording(options);
     }
 
     /**
-     * Requests recording shutdown with the same completion rules as
-     * {@link startRecording}.
+     * @deprecated Use setRecording() with all flags false. Retains the legacy stop request.
+     * Resolves false for refusal, timeout, closure or when no request starts.
+     * Runtime failures reject Error and emit `handledError`.
      */
     stopRecording(): Promise<boolean> {
         return this._runtime.stopRecording();
