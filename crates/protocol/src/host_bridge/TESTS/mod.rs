@@ -2,7 +2,8 @@ use serde_json::json;
 
 use super::project_protocol_event;
 use crate::{
-    core::{Command, ProtocolEvent},
+    bundle_api::BundleUpdate,
+    core::{Command, ProtocolCore, ProtocolEvent},
     shared::{RecordingState, RecordingStateUpdate, StopCode, StreamType, UserId, UserInfo},
     signaling::{PeerSnapshot, TrackBinding},
 };
@@ -30,7 +31,7 @@ fn peer_departure_serializes_as_disconnect_update() {
 }
 
 #[test]
-fn borrowed_event_projection_matches_owned_bundle_shape() {
+fn borrowed_event_projection_matches_owned_bundle_shape() -> serde_json::Result<()> {
     let peer_snapshot = ProtocolEvent::PeerSnapshot {
         peers: vec![
             PeerSnapshot {
@@ -85,24 +86,81 @@ fn borrowed_event_projection_matches_owned_bundle_shape() {
             },
         },
     ];
-
     for event in events {
         let command = Command::EmitEvent {
             event: event.clone(),
         };
-        let actual = serde_json::to_value(command).unwrap_or_default();
-        let expected = serde_json::to_value(project_protocol_event(event)).unwrap_or_default();
+        let actual = serde_json::to_value(command)?;
+        let projected = project_protocol_event(event);
+        let expected = serde_json::to_value(&projected)?;
         assert_eq!(actual.get("update"), Some(&expected));
+        assert_eq!(serde_json::from_value::<BundleUpdate>(expected)?, projected);
     }
-
     let command = Command::EmitEvent {
         event: peer_snapshot,
     };
-    let actual = serde_json::to_value(command).unwrap_or_default();
+    let actual = serde_json::to_value(command)?;
     let collision_value = actual
         .get("update")
         .and_then(|update| update.get("payload"))
         .and_then(|payload| payload.get("5"));
     let expected = json!({ "isCameraOn": true });
     assert_eq!(collision_value, Some(&expected));
+    Ok(())
+}
+
+#[test]
+fn legacy_welcome_projects_browser_capabilities_and_full_recording_flags() -> serde_json::Result<()>
+{
+    let mut core = ProtocolCore::new();
+    let reset = core.connect("wss://sfu.test/ws", "token", None);
+    assert_eq!(
+        serde_json::to_value(&reset[0])?,
+        json!({
+            "kind": "setAvailableFeatures",
+            "features": {"rtc": false, "recording": {"audio": false, "video": false, "transcription": false}}
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&reset[1])?,
+        json!({
+            "kind": "setRecordingState",
+            "state": {"audio": false, "video": false, "transcription": false}
+        })
+    );
+    let commands = core.on_ws_message(r#"[{"t":"welcome","p":{"features":{"rtc":true,"audioRecording":true,"videoRecording":false,"transcription":true},"recording":{"recording":true,"audio":true},"peers":[]}}]"#);
+    assert_eq!(
+        serde_json::to_value(&commands[0])?,
+        json!({
+            "kind": "setAvailableFeatures",
+            "features": {"rtc": true, "recording": {"audio": true, "video": false, "transcription": true}}
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&commands[1])?,
+        json!({
+            "kind": "setRecordingState",
+            "state": {"audio": true, "video": false, "transcription": false}
+        })
+    );
+    let update = Command::EmitEvent {
+        event: ProtocolEvent::RecordingStateChanged {
+            state: RecordingStateUpdate {
+                state: RecordingState {
+                    recording: Some(true),
+                    video: Some(true),
+                    ..RecordingState::default()
+                },
+                stop_code: None,
+            },
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(update)?,
+        json!({
+            "kind": "emitUpdate",
+            "update": {"name": "channel_info_change", "payload": {"state": {"audio": false, "video": true, "transcription": false}}}
+        })
+    );
+    Ok(())
 }

@@ -415,51 +415,55 @@ to `sfu.errors`.
 
 ## Recording
 
-Recording capabilities are exposed through `availableFeatures`:
+Recording capabilities are exposed through `availableFeatures.recording`:
 
 ```js
-if (sfu.availableFeatures.videoRecording) {
-    const allowed = await sfu.startRecording({ video: true });
+if (sfu.availableFeatures.recording.audio) {
+    const allowed = await sfu.setRecording({ audio: true });
 }
 ```
 
-Recording methods:
+`setRecording(options: Partial<RecordingFlags>): Promise<boolean>` changes the
+selected outputs. Omitted flags keep their current values. An empty object is
+valid. Set all flags to `false` to stop recording:
 
 ```js
-const allowed = await sfu.startRecording({
-    audio: true,
-    video: true,
+const allowed = await sfu.setRecording({ audio: true, video: false });
+const stopped = await sfu.setRecording({
+    audio: false,
+    video: false,
     transcription: false,
 });
-
-const stopped = await sfu.stopRecording();
 ```
 
-Each promise resolves to the server acceptance result. It resolves `false` for
-refusal, timeout, teardown or when no request starts. A fatal runtime failure
-rejects the promise and emits `handledError`.
+Each promise resolves to the server acceptance result. A server refusal resolves
+`false`. The o-sfu recording backend is unavailable, so its capabilities are all
+`false` and recording requests resolve `false`.
 
-Options:
+Calls outside the `connected` state reject with
+`Error("SFU client is not connected")`. Request timeouts and connection closure
+reject with `Error`. Runtime failures also emit `handledError`.
 
 ```ts
-interface RecordingOptions {
-    audio?: boolean;
-    video?: boolean;
-    transcription?: boolean;
+interface RecordingFlags {
+    audio: boolean;
+    video: boolean;
+    transcription: boolean;
 }
 ```
 
-Current recording state is exposed through `sfu.recordingState` and updated by
-`CLIENT_UPDATE.CHANNEL_INFO_CHANGE` events.
+`sfu.recordingState` exposes all three flags and initializes them to `false`.
+`CLIENT_UPDATE.CHANNEL_INFO_CHANGE` carries `{ state, stopCode? }`. The new state
+is visible on `sfu.recordingState` before listeners run. `stopCode` retains the
+existing recording stop-code values.
 
-```ts
-interface SfuRecordingState {
-    recording?: boolean;
-    audio?: boolean;
-    video?: boolean;
-    transcription?: boolean;
-}
-```
+The deprecated `startRecording(options)` and `stopRecording()` methods retain
+their legacy protocol requests. They resolve `false` for refusal, timeout,
+connection closure or when no request starts. Runtime failures reject with
+`Error` and emit `handledError`. `RecordingOptions` aliases
+`Partial<RecordingFlags>` and `SfuRecordingState` aliases `RecordingFlags`.
+Concurrent calls, including deprecated starts and stops, each send a request
+and settle independently.
 
 ## Events
 
@@ -553,9 +557,7 @@ the compatibility-only `_consumers` view. `connect()` and `disconnect()` clear
 ```ts
 interface AvailableFeatures {
     rtc: boolean;
-    transcription: boolean;
-    audioRecording: boolean;
-    videoRecording: boolean;
+    recording: RecordingFlags;
 }
 ```
 

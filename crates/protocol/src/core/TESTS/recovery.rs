@@ -97,10 +97,10 @@ fn protocol_core_disconnect_cleans_up_connected_session() -> Result<(), String> 
             Command::CancelTimer {
                 id: RECOVERY_TIMER_ID,
             },
-            Command::CompletePendingRequest {
+            Command::RejectPendingRequest {
                 request_id,
                 timeout_timer_id,
-                ok: false,
+                error: "bus closed".to_owned(),
             },
             Command::CloseWebSocket { code: 1000 },
             Command::ClosePeerConnection,
@@ -182,10 +182,10 @@ fn protocol_core_terminal_close_resolves_request_before_recovery_cancel() -> Res
     assert_eq!(
         commands.as_slice(),
         &[
-            Command::CompletePendingRequest {
+            Command::RejectPendingRequest {
                 request_id,
                 timeout_timer_id,
-                ok: false,
+                error: "bus closed".to_owned(),
             },
             Command::CancelTimer {
                 id: RECOVERY_TIMER_ID,

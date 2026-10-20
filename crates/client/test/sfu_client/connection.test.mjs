@@ -19,13 +19,10 @@ import { buildNegotiationFrame } from "../support/negotiation_fixtures.mjs";
 
 const WELCOME_FEATURES = {
     rtc: true,
-    transcription: false,
-    audioRecording: false,
-    videoRecording: true
+    recording: { audio: false, video: true, transcription: false }
 };
 
 const WELCOME_RECORDING_STATE = {
-    recording: false,
     audio: false,
     transcription: false,
     video: false
@@ -72,6 +69,7 @@ test("public state changes are visible before their events", async () => {
     const { client, emitMessage, sockets } = harness;
     const stateSnapshots = [];
     let recordingStateDuringUpdate;
+    let recordingUpdate;
     client.addEventListener("stateChange", (event) => {
         stateSnapshots.push({
             state: event.detail.state,
@@ -82,6 +80,7 @@ test("public state changes are visible before their events", async () => {
     client.addEventListener("update", (event) => {
         if (event.detail.name === CLIENT_UPDATE.CHANNEL_INFO_CHANGE) {
             recordingStateDuringUpdate = client.recordingState;
+            recordingUpdate = event.detail.payload;
         }
     });
 
@@ -93,7 +92,6 @@ test("public state changes are visible before their events", async () => {
     });
 
     const activeRecordingState = {
-        recording: true,
         audio: true,
         transcription: false,
         video: true
@@ -102,11 +100,12 @@ test("public state changes are visible before their events", async () => {
         JSON.stringify([
             {
                 t: "recordingchange",
-                p: { state: activeRecordingState }
+                p: { state: { ...activeRecordingState, recording: true }, stopCode: "user_request" }
             }
         ])
     );
     assert.deepEqual(recordingStateDuringUpdate, activeRecordingState);
+    assert.deepEqual(recordingUpdate, { state: activeRecordingState, stopCode: "user_request" });
 
     sockets[0].emitClose(1011);
     await tick();
@@ -121,7 +120,7 @@ test("public state changes are visible before their events", async () => {
     assert.deepEqual(stateSnapshots.at(-1), {
         state: "disconnected",
         availableFeatures: EMPTY_FEATURES,
-        recordingState: {}
+        recordingState: { audio: false, video: false, transcription: false }
     });
 });
 
@@ -130,7 +129,6 @@ test("batched public state exposes ordered snapshots", async () => {
     const { client, connect, emitMessage, open } = harness;
     const snapshots = [];
     const activeRecordingState = {
-        recording: true,
         audio: true,
         transcription: false,
         video: true

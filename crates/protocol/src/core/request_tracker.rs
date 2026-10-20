@@ -44,14 +44,7 @@ impl RequestTracker {
         }
     }
 
-    pub(super) fn try_begin(&mut self, kind: PendingRequestKind) -> Option<PendingRequestStart> {
-        if self
-            .pending_requests
-            .iter()
-            .any(|pending_request| pending_request.kind == kind)
-        {
-            return None;
-        }
+    pub(super) fn begin(&mut self, kind: PendingRequestKind) -> PendingRequestStart {
         let request_id = self.allocate_request_id();
         let timeout_timer_id = self.allocate_timeout_timer_id();
         self.pending_requests.push(PendingRequestState {
@@ -59,10 +52,10 @@ impl RequestTracker {
             kind,
             timeout_timer_id,
         });
-        Some(PendingRequestStart {
+        PendingRequestStart {
             request_id,
             timeout_timer_id,
-        })
+        }
     }
 
     pub(super) fn resolve_response(
@@ -76,6 +69,7 @@ impl RequestTracker {
         }) else {
             return Vec::new();
         };
+        // Remove before settling so duplicate responses and stale timers cannot settle twice.
         vec![complete_pending_request(
             self.pending_requests.remove(index),
             ok,
@@ -87,9 +81,9 @@ impl RequestTracker {
             .pending_requests
             .iter()
             .position(|pending_request| pending_request.timeout_timer_id == timeout_id)?;
-        Some(vec![complete_pending_request(
+        Some(vec![reject_pending_request(
             self.pending_requests.remove(index),
-            false,
+            "bus request timed out",
         )])
     }
 
@@ -97,11 +91,11 @@ impl RequestTracker {
         self.pending_requests.clear();
     }
 
-    /// Completes pending requests in begin order.
+    /// Fails pending requests in begin order.
     pub(super) fn fail_all(&mut self) -> Commands {
         mem::take(&mut self.pending_requests)
             .into_iter()
-            .map(|pending_request| complete_pending_request(pending_request, false))
+            .map(|pending_request| reject_pending_request(pending_request, "bus closed"))
             .collect()
     }
 
@@ -123,5 +117,13 @@ fn complete_pending_request(pending_request: PendingRequestState, ok: bool) -> C
         request_id: pending_request.request_id,
         timeout_timer_id: pending_request.timeout_timer_id.raw(),
         ok,
+    }
+}
+
+fn reject_pending_request(pending_request: PendingRequestState, error: &str) -> Command {
+    Command::RejectPendingRequest {
+        request_id: pending_request.request_id,
+        timeout_timer_id: pending_request.timeout_timer_id.raw(),
+        error: error.to_owned(),
     }
 }

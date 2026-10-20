@@ -4,10 +4,10 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use super::{
-    BundleBroadcastUpdate, BundleConnectionState, BundleStateChange, BundleUpdate,
-    bundle_session_info_key,
+    BundleBroadcastUpdate, BundleConnectionState, BundleRecordingFlags, BundleRecordingStateUpdate,
+    BundleStateChange, BundleUpdate, bundle_session_info_key,
 };
-use crate::shared::{RecordingState, RecordingStateUpdate, StopCode, UserId, UserInfo};
+use crate::shared::{StopCode, UserId, UserInfo};
 
 fn assert_round_trip<T>(value: &T, expected_json: Value) -> serde_json::Result<()>
 where
@@ -85,12 +85,11 @@ fn bundle_updates_round_trip() -> serde_json::Result<()> {
         }),
     )?;
 
-    let channel_info = BundleUpdate::ChannelInfoChange(RecordingStateUpdate {
-        state: RecordingState {
-            recording: Some(false),
-            audio: Some(false),
-            transcription: Some(false),
-            video: Some(false),
+    let channel_info = BundleUpdate::ChannelInfoChange(BundleRecordingStateUpdate {
+        state: BundleRecordingFlags {
+            audio: false,
+            video: false,
+            transcription: false,
         },
         stop_code: Some(StopCode::UserRequest),
     });
@@ -100,7 +99,6 @@ fn bundle_updates_round_trip() -> serde_json::Result<()> {
             "name": "channel_info_change",
             "payload": {
                 "state": {
-                    "recording": false,
                     "audio": false,
                     "transcription": false,
                     "video": false

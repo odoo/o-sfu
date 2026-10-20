@@ -4,11 +4,12 @@ use serde::{Serialize, Serializer};
 
 use crate::{
     bundle_api::{
-        BundleBroadcastUpdate, BundleDisconnectUpdate, BundleRemoteMediaUpdate,
-        BundleSessionInfoSnapshotById, BundleUpdate, bundle_session_info_key,
+        BundleBroadcastUpdate, BundleDisconnectUpdate, BundleRecordingFlags,
+        BundleRecordingStateUpdate, BundleRemoteMediaUpdate, BundleSessionInfoSnapshotById,
+        BundleUpdate, bundle_session_info_key,
     },
     core::ProtocolEvent,
-    shared::{JsonPayload, RecordingStateUpdate, UserId, UserInfo},
+    shared::{AvailableFeatures, JsonPayload, RecordingState, UserId, UserInfo},
     signaling::TrackBinding,
 };
 
@@ -29,7 +30,40 @@ enum BundleUpdateRef<'a> {
     },
     #[serde(rename = "info_change")]
     SessionInfoChange(BTreeMap<Cow<'a, str>, &'a UserInfo>),
-    ChannelInfoChange(&'a RecordingStateUpdate),
+    ChannelInfoChange(BundleRecordingStateUpdate),
+}
+
+pub(crate) fn serialize_features<S>(
+    features: &AvailableFeatures,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    #[derive(Serialize)]
+    struct Features {
+        rtc: bool,
+        recording: BundleRecordingFlags,
+    }
+    Features {
+        rtc: features.rtc,
+        recording: BundleRecordingFlags {
+            audio: features.audio_recording,
+            video: features.video_recording,
+            transcription: features.transcription,
+        },
+    }
+    .serialize(serializer)
+}
+
+pub(crate) fn serialize_recording_state<S>(
+    state: &RecordingState,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    BundleRecordingFlags::from(state).serialize(serializer)
 }
 
 #[must_use]
@@ -53,7 +87,9 @@ pub fn project_protocol_event(event: ProtocolEvent) -> BundleUpdate {
         ProtocolEvent::Broadcast { sender_id, message } => {
             BundleUpdate::Broadcast(BundleBroadcastUpdate { sender_id, message })
         }
-        ProtocolEvent::RecordingStateChanged { state } => BundleUpdate::ChannelInfoChange(state),
+        ProtocolEvent::RecordingStateChanged { state } => {
+            BundleUpdate::ChannelInfoChange((&state).into())
+        }
     }
 }
 
@@ -79,7 +115,9 @@ where
         ProtocolEvent::Broadcast { sender_id, message } => {
             BundleUpdateRef::Broadcast { sender_id, message }
         }
-        ProtocolEvent::RecordingStateChanged { state } => BundleUpdateRef::ChannelInfoChange(state),
+        ProtocolEvent::RecordingStateChanged { state } => {
+            BundleUpdateRef::ChannelInfoChange(state.into())
+        }
     };
     update.serialize(serializer)
 }

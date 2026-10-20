@@ -8,18 +8,13 @@ import { audioMedia, sdp, videoMedia, videoUploadSlot } from "./support/negotiat
 
 const EMPTY_FEATURES = {
     rtc: false,
-    transcription: false,
-    audioRecording: false,
-    videoRecording: false
+    recording: { audio: false, video: false, transcription: false }
 };
 const AVAILABLE_FEATURES = {
     rtc: true,
-    transcription: false,
-    audioRecording: true,
-    videoRecording: false
+    recording: { audio: true, video: false, transcription: false }
 };
 const RECORDING_STATE = {
-    recording: false,
     audio: false,
     transcription: false,
     video: false
@@ -57,7 +52,7 @@ test("generated Wasm conforms to the complete host-command contract", () => {
 
     assertCommands(core.connect("ws://example.test/ws", "jwt-token", "channel-a"), [
         { kind: COMMAND_KIND.SET_AVAILABLE_FEATURES, features: EMPTY_FEATURES },
-        { kind: COMMAND_KIND.SET_RECORDING_STATE, state: {} },
+        { kind: COMMAND_KIND.SET_RECORDING_STATE, state: RECORDING_STATE },
         stateChange(SFU_CLIENT_STATE.CONNECTING),
         { kind: COMMAND_KIND.CONNECT, url: "ws://example.test/ws" }
     ]);
@@ -71,8 +66,13 @@ test("generated Wasm conforms to the complete host-command contract", () => {
             encodeFrame({
                 t: "welcome",
                 p: {
-                    features: AVAILABLE_FEATURES,
-                    recording: RECORDING_STATE,
+                    features: {
+                        rtc: true,
+                        transcription: false,
+                        audioRecording: true,
+                        videoRecording: false
+                    },
+                    recording: { ...RECORDING_STATE, recording: false },
                     peers: [{ sessionId: "peer-7", info: peerInfo }]
                 }
             })
@@ -119,7 +119,7 @@ test("generated Wasm conforms to the complete host-command contract", () => {
     ]);
     assertCommands(core.onTransportReady(), [stateChange(SFU_CLIENT_STATE.CONNECTED)]);
 
-    const recordingCommands = core.startRecording({ audio: true });
+    const recordingCommands = core.startRecording({ audio: true, video: false });
     const { requestId, timeoutTimerId } = requireCommand(
         recordingCommands,
         COMMAND_KIND.BEGIN_PENDING_REQUEST
@@ -143,7 +143,7 @@ test("generated Wasm conforms to the complete host-command contract", () => {
     assertCommands(core.onTimer(flushTimerId), [
         sendWebSocket({
             t: "startrecording",
-            p: { audio: true },
+            p: { audio: true, video: false },
             q: requestId
         })
     ]);
@@ -165,6 +165,24 @@ test("generated Wasm conforms to the complete host-command contract", () => {
         ]
     );
 
+    const timeoutCommands = core.startRecording({});
+    const timedOutRequest = requireCommand(
+        timeoutCommands,
+        COMMAND_KIND.BEGIN_PENDING_REQUEST
+    ).request;
+    const timeoutFlushTimer = requireCommand(timeoutCommands, COMMAND_KIND.SCHEDULE_TIMER).id;
+    assertCommands(core.onTimer(timeoutFlushTimer), [
+        sendWebSocket({ t: "startrecording", p: {}, q: timedOutRequest.requestId })
+    ]);
+    assertCommands(core.onTimer(timedOutRequest.timeoutTimerId), [
+        {
+            kind: COMMAND_KIND.REJECT_PENDING_REQUEST,
+            requestId: timedOutRequest.requestId,
+            timeoutTimerId: timedOutRequest.timeoutTimerId,
+            error: "bus request timed out"
+        }
+    ]);
+
     const recoveryCommands = core.onWsClose(WS_CLOSE_CODE.ERROR);
     const recoveryTimerId = requireCommand(recoveryCommands, COMMAND_KIND.SCHEDULE_TIMER).id;
     assert.equal(Number.isInteger(recoveryTimerId), true);
@@ -182,7 +200,7 @@ test("generated Wasm conforms to the complete host-command contract", () => {
         { kind: COMMAND_KIND.CLOSE_WEB_SOCKET, code: WS_CLOSE_CODE.CLEAN },
         { kind: COMMAND_KIND.CLOSE_PEER_CONNECTION },
         { kind: COMMAND_KIND.SET_AVAILABLE_FEATURES, features: EMPTY_FEATURES },
-        { kind: COMMAND_KIND.SET_RECORDING_STATE, state: {} },
+        { kind: COMMAND_KIND.SET_RECORDING_STATE, state: RECORDING_STATE },
         stateChange(SFU_CLIENT_STATE.DISCONNECTED)
     ]);
     assert.deepEqual([...seenKinds].sort(), Object.values(COMMAND_KIND).sort());

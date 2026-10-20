@@ -31,6 +31,7 @@ export type {
     InfoChangeUpdateDetail,
     JsonValue,
     RecordingOptions,
+    RecordingFlags,
     RecordingStopCode,
     SessionId,
     SessionInfo,

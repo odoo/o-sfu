@@ -356,11 +356,12 @@ pub enum StreamType {
     Screen,
 }
 
-/// recording modes requested by a user
+/// recording output changes requested by a user
 ///
-/// missing fields mean the caller did not request that mode
-/// the room combines these options with feature flags, current recording state
-/// and [`UserPermissions`] before mutating recording state
+/// omitted modes keep their current values
+/// present flags enable or disable the selected modes
+/// setting all flags to false requests a stop
+/// the room accepts changes only when recording is available and [`UserPermissions`] allow them
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordingOptions {
     #[serde(skip_serializing_if = "Option::is_none")]

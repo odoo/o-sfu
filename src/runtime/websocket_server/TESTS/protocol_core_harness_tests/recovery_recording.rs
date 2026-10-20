@@ -1,3 +1,5 @@
+use o_sfu_protocol::wire::RecordingOptions;
+
 use super::support::*;
 
 type ProtocolSetup = (
@@ -136,10 +138,12 @@ async fn protocol_core_recording_requests_resolve_as_unsupported_without_backend
         connect_protocol_recording_peer(&server, &room).await,
         "recording protocol peer should connect",
     )?;
+    assert!(!peer.available_features.audio_recording);
+    assert!(!peer.available_features.video_recording);
+    assert!(!peer.available_features.transcription);
     peer.pending_request_starts.clear();
     peer.pending_request_resolutions.clear();
     peer.updates.clear();
-
     require_some(
         peer.start_recording(Some(true), Some(false), None).await,
         "start recording command should run",
@@ -148,11 +152,9 @@ async fn protocol_core_recording_requests_resolve_as_unsupported_without_backend
         assert_recording_request_rejected(&mut peer).await,
         "start recording request should be rejected",
     )?;
-
     peer.pending_request_starts.clear();
     peer.pending_request_resolutions.clear();
     peer.updates.clear();
-
     require_some(
         peer.stop_recording().await,
         "stop recording command should run",
@@ -160,6 +162,51 @@ async fn protocol_core_recording_requests_resolve_as_unsupported_without_backend
     require_some(
         assert_recording_request_rejected(&mut peer).await,
         "stop recording request should be rejected",
+    )?;
+    let recording_state = room.recording_state().await;
+    for options in [
+        RecordingOptions {
+            audio: Some(true),
+            ..RecordingOptions::default()
+        },
+        RecordingOptions {
+            video: Some(false),
+            ..RecordingOptions::default()
+        },
+        RecordingOptions::default(),
+        RecordingOptions {
+            audio: Some(false),
+            video: Some(false),
+            transcription: Some(false),
+        },
+    ] {
+        peer.pending_request_starts.clear();
+        peer.pending_request_resolutions.clear();
+        peer.updates.clear();
+        require_some(
+            peer.start_recording(options.audio, options.video, options.transcription)
+                .await,
+            "recording setter should run",
+        )?;
+        let request_id = require_some(
+            assert_recording_request_rejected(&mut peer).await,
+            "recording setter should receive a server refusal",
+        )?;
+        assert_eq!(peer.pending_request_starts.len(), 1);
+        assert_eq!(peer.pending_request_resolutions, [(request_id, false)]);
+        assert_eq!(room.recording_state().await, recording_state);
+    }
+    let info = ProtocolSessionInfo {
+        is_talking: Some(true),
+        ..ProtocolSessionInfo::default()
+    };
+    require_some(
+        peer.update_info(info.clone()).await,
+        "ordinary info update should run after recording refusals",
+    )?;
+    require_some(
+        consume_peer_info_update(&mut peer, UserId::Integer(63), info.snapshot_complete()).await,
+        "ordinary info update should return after recording refusals",
     )?;
     Ok(())
 }

@@ -11,9 +11,7 @@ import {
 
 export const EMPTY_FEATURES = {
     rtc: false,
-    transcription: false,
-    audioRecording: false,
-    videoRecording: false
+    recording: { audio: false, video: false, transcription: false }
 };
 
 const initialOfferCommand = (requestId) => ({
@@ -57,7 +55,7 @@ export class FakeProtocolCore {
         this.state = "connecting";
         return [
             setAvailableFeatures({ ...EMPTY_FEATURES }),
-            setRecordingState({}),
+            setRecordingState({ audio: false, video: false, transcription: false }),
             { kind: "emitStateChange", state: "connecting" },
             { kind: "connect", url }
         ];
@@ -69,7 +67,7 @@ export class FakeProtocolCore {
         this.trackBindings.clear();
         return [
             setAvailableFeatures({ ...EMPTY_FEATURES }),
-            setRecordingState({}),
+            setRecordingState({ audio: false, video: false, transcription: false }),
             { kind: "emitStateChange", state: "disconnected" }
         ];
     }
@@ -103,12 +101,9 @@ export class FakeProtocolCore {
                 return [
                     setAvailableFeatures({
                         rtc: true,
-                        transcription: false,
-                        audioRecording: true,
-                        videoRecording: false
+                        recording: { audio: true, video: false, transcription: false }
                     }),
                     setRecordingState({
-                        recording: false,
                         audio: false,
                         transcription: false,
                         video: false

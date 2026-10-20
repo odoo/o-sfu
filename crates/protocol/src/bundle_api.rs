@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::core::ConnectionState as BundleConnectionState;
 use crate::{
-    shared::{JsonPayload, RecordingStateUpdate, UserId, UserInfo},
+    shared::{JsonPayload, RecordingState, RecordingStateUpdate, StopCode, UserId, UserInfo},
     signaling::TrackBinding,
 };
 
@@ -49,6 +49,40 @@ pub struct BundleRemoteMediaUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleRecordingFlags {
+    pub audio: bool,
+    pub video: bool,
+    pub transcription: bool,
+}
+
+impl From<&RecordingState> for BundleRecordingFlags {
+    fn from(state: &RecordingState) -> Self {
+        // Browser updates require full snapshots. Missing legacy flags default to false.
+        Self {
+            audio: state.audio.unwrap_or(false),
+            video: state.video.unwrap_or(false),
+            transcription: state.transcription.unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BundleRecordingStateUpdate {
+    pub state: BundleRecordingFlags,
+    #[serde(rename = "stopCode", skip_serializing_if = "Option::is_none")]
+    pub stop_code: Option<StopCode>,
+}
+
+impl From<&RecordingStateUpdate> for BundleRecordingStateUpdate {
+    fn from(update: &RecordingStateUpdate) -> Self {
+        Self {
+            state: (&update.state).into(),
+            stop_code: update.stop_code,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "name", content = "payload")]
 pub enum BundleUpdate {
     #[serde(rename = "remote_media")]
@@ -60,7 +94,7 @@ pub enum BundleUpdate {
     #[serde(rename = "info_change")]
     SessionInfoChange(BundleSessionInfoSnapshotById),
     #[serde(rename = "channel_info_change")]
-    ChannelInfoChange(RecordingStateUpdate),
+    ChannelInfoChange(BundleRecordingStateUpdate),
 }
 
 #[cfg(test)]

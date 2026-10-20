@@ -8,6 +8,10 @@ use crate::signaling::{
 };
 
 impl ProtocolCore {
+    /// Requests partial recording changes through the legacy `startrecording` wire.
+    ///
+    /// Existing servers refuse this request. Future backends must preserve its
+    /// partial-update semantics for released bundles or negotiate a replacement.
     pub fn start_recording(&mut self, options: RecordingOptions) -> Vec<Command> {
         begin_request(self, ClientRequest::StartRecording(options))
     }
@@ -113,9 +117,7 @@ fn begin_request(core: &mut ProtocolCore, request: ClientRequest) -> Commands {
         ClientRequest::StartRecording(_) => PendingRequestKind::StartRecording,
         ClientRequest::StopRecording => PendingRequestKind::StopRecording,
     };
-    let Some(request_start) = core.request_tracker.try_begin(kind) else {
-        return Vec::new();
-    };
+    let request_start = core.request_tracker.begin(kind);
     let request_id = request_start.request_id;
     let pending_request = PendingRequest {
         request_id: request_id.clone(),

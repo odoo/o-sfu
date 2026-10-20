@@ -52,7 +52,7 @@ test("cyclic broadcast input leaves the real protocol core reusable", async () =
     assert.equal(handledErrors[0].name, "TypeError");
     assert.equal(client.state, "disconnected");
     assert.deepEqual(client.availableFeatures, EMPTY_FEATURES);
-    assert.deepEqual(client.recordingState, {});
+    assert.deepEqual(client.recordingState, { audio: false, video: false, transcription: false });
 
     client.connect("ws://example.test/ws", "jwt-token", { channelUUID: "channel-a" });
     await tick();
@@ -109,7 +109,7 @@ test("fatal input after same-turn disconnect observes the installed cleanup stat
     assert.deepEqual(handledErrorSurfaces, [
         {
             availableFeatures: EMPTY_FEATURES,
-            recordingState: {},
+            recordingState: { audio: false, video: false, transcription: false },
             state: "disconnected"
         }
     ]);
@@ -200,7 +200,7 @@ test("disconnect exposes cleanup state before peer-close callbacks", async () =>
     assert.deepEqual(handledErrorSurfaces, [
         {
             availableFeatures: EMPTY_FEATURES,
-            recordingState: {},
+            recordingState: { audio: false, video: false, transcription: false },
             state: "disconnected"
         }
     ]);
@@ -234,7 +234,7 @@ test("fatal runtime errors reset the public client surface", async () => {
     assert.equal(core.disconnectCalls, 1);
     assert.equal(client.state, "disconnected");
     assert.deepEqual(client.availableFeatures, EMPTY_FEATURES);
-    assert.deepEqual(client.recordingState, {});
+    assert.deepEqual(client.recordingState, { audio: false, video: false, transcription: false });
     assert.equal(client._consumers.size, 0);
     assert.equal(stateChanges.at(-1).state, "disconnected");
     assert.equal(client.errors.length, 1);
@@ -243,7 +243,7 @@ test("fatal runtime errors reset the public client surface", async () => {
     assert.deepEqual(handledErrorSurfaces, [
         {
             availableFeatures: EMPTY_FEATURES,
-            recordingState: {},
+            recordingState: { audio: false, video: false, transcription: false },
             state: "disconnected"
         }
     ]);
@@ -308,7 +308,7 @@ test("fatal runtime errors keep the original error when protocol disconnect fail
     assert.deepEqual(handledErrorSurfaces, [
         {
             availableFeatures: EMPTY_FEATURES,
-            recordingState: {},
+            recordingState: { audio: false, video: false, transcription: false },
             state: "disconnected"
         }
     ]);

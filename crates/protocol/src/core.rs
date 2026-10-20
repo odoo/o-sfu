@@ -76,9 +76,11 @@ pub enum Command {
         cause: Option<String>,
     },
     SetAvailableFeatures {
+        #[serde(serialize_with = "crate::host_bridge::serialize_features")]
         features: AvailableFeatures,
     },
     SetRecordingState {
+        #[serde(serialize_with = "crate::host_bridge::serialize_recording_state")]
         state: RecordingState,
     },
     /// Emit a protocol-domain event for the host projection layer.
@@ -100,6 +102,14 @@ pub enum Command {
         #[serde(rename = "timeoutTimerId")]
         timeout_timer_id: u32,
         ok: bool,
+    },
+    /// Cancel `timeout_timer_id` then fail `request_id` using its public method's policy.
+    RejectPendingRequest {
+        #[serde(rename = "requestId")]
+        request_id: RequestId,
+        #[serde(rename = "timeoutTimerId")]
+        timeout_timer_id: u32,
+        error: String,
     },
     /// Start a one-shot timer; the host must call [`ProtocolCore::on_timer`]
     /// when it fires.

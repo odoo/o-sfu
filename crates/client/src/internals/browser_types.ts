@@ -67,11 +67,14 @@ export interface SfuClientDependencies {
     setTimer?: (callback: () => void, ms: number) => TimerHandle;
 }
 
+export const EMPTY_RECORDING_FLAGS = {
+    audio: false,
+    video: false,
+    transcription: false
+};
+
 export const EMPTY_FEATURES = {
-    rtc: false,
-    transcription: false,
-    audioRecording: false,
-    videoRecording: false
+    rtc: false
 };
 
 export const STREAM_KIND: Record<StreamType, "audio" | "video"> = {

@@ -61,25 +61,22 @@ export interface UpdateInfoOptions {
     needRefresh?: boolean;
 }
 
+export interface RecordingFlags {
+    audio: boolean;
+    video: boolean;
+    transcription: boolean;
+}
+
 export interface AvailableFeatures {
     rtc: boolean;
-    transcription: boolean;
-    audioRecording: boolean;
-    videoRecording: boolean;
+    recording: RecordingFlags;
 }
 
-export interface SfuRecordingState {
-    recording?: boolean;
-    audio?: boolean;
-    video?: boolean;
-    transcription?: boolean;
-}
+/** @deprecated Use RecordingFlags. */
+export type SfuRecordingState = RecordingFlags;
 
-export interface RecordingOptions {
-    audio?: boolean;
-    video?: boolean;
-    transcription?: boolean;
-}
+/** @deprecated Use Partial<RecordingFlags>. */
+export type RecordingOptions = Partial<RecordingFlags>;
 
 export const CLIENT_LOG_LEVEL = {
     DEBUG: "debug",
@@ -145,7 +142,7 @@ export interface BroadcastUpdateDetail {
 }
 
 export interface ChannelInfoChangeDetail {
-    state: SfuRecordingState;
+    state: RecordingFlags;
     stopCode?: RecordingStopCode;
 }
 
