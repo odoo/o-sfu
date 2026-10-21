@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-core"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "bitflags 2.13.2",
  "futures-util",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-core-room-tests"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "o-sfu-core",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-model"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1443,14 +1443,14 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-proofs"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "o-sfu-rfc",
 ]
 
 [[package]]
 name = "o-sfu-protocol"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "o-sfu-model",
  "o-sfu-rfc",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-rfc"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "base64 0.23.1",
  "serde",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-router"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "o-sfu-model",
  "o-sfu-rfc",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-telemetry"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "o-sfu-model",
@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "o-sfu-tests"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
