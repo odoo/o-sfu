@@ -1,10 +1,9 @@
 //! RFC 4571 framing for RTP/RTCP over TCP.
 //! - Framing RTP and RTCP packets over connection-oriented transport: <https://www.rfc-editor.org/rfc/rfc4571>
 
-use std::{
-    collections::VecDeque,
-    io::{IoSlice, Result as IoResult},
-};
+use std::io::IoSlice;
+
+use crate::stream_decoder::{Decoded, FrameCodec, StreamDecoder};
 
 /// The payload doesn't fit in the 2 bytes length header of a frame or exceeds [`MAX_FRAME_SIZE`].
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -53,7 +52,6 @@ impl TcpFrame {
     }
 }
 
-const DECODER_CHUNK_SIZE: usize = 4096;
 /// Largest frame payload the decoder accepts, in bytes.
 ///
 /// Stricter than RFC 4571, which allows up to 65535 bytes. The decoder buffers a whole
@@ -63,53 +61,18 @@ const DECODER_CHUNK_SIZE: usize = 4096;
 /// 9147 §4.3, RFC 3550 §6.1), which is usually 1500 bytes.
 pub const MAX_FRAME_SIZE: u16 = 4096;
 
-/// Incremental decoder of RFC 4571 frames: bytes go in through
-/// [`FrameDecoder::feed_with`], frames come out by iterating.
-///
-/// Drain the iterator after each feed, otherwise decoded frames accumulate in the
-/// buffer. A single frame is bounded by [`MAX_FRAME_SIZE`].
-///
-/// On error (e.g. a frame larger than [`MAX_FRAME_SIZE`]) the stream is
-/// desynchronized and cannot be recovered: close it.
-#[derive(Default)]
-pub struct FrameDecoder {
-    buffer: VecDeque<u8>,
-}
+/// Incremental decoder of RFC 4571 frames, see [`StreamDecoder`].
+pub type FrameDecoder = StreamDecoder<TcpCodec>;
 
-impl FrameDecoder {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
+/// Finds RFC 4571 frames: a 2 bytes length prefix, then the payload.
+#[derive(Debug)]
+pub struct TcpCodec;
 
-    /// Lends buffer space to `f` to **directly** feed bytes into the decoder. The bytes
-    /// are parsed into  [`TcpFrame`]s by [`FrameDecoder::next`].
-    ///
-    /// Returns what `f` returned, `Ok(0)` means EOF.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of `f` unchanged, and no bytes are kept.
-    pub fn feed_with(&mut self, f: impl FnOnce(&mut [u8]) -> IoResult<usize>) -> IoResult<usize> {
-        let slice_start: usize = self.buffer.len();
-        self.buffer.resize(slice_start + DECODER_CHUNK_SIZE, 0);
-        let slice = self
-            .buffer
-            .make_contiguous()
-            .get_mut(slice_start..)
-            .unwrap_or_default();
-        let result = f(slice);
-        self.buffer
-            .truncate(slice_start + result.as_ref().map_or(0, |&count| count));
-        result
-    }
-}
+impl FrameCodec for TcpCodec {
+    type Frame = TcpFrame;
+    type Error = FrameTooLargeError;
 
-impl Iterator for FrameDecoder {
-    type Item = Result<TcpFrame, FrameTooLargeError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let unread = self.buffer.make_contiguous();
+    fn try_decode(unread: &[u8]) -> Decoded<TcpFrame, FrameTooLargeError> {
         let &[first, second] = unread.first_chunk::<2>()?;
         let length = u16::from_be_bytes([first, second]);
         if length > MAX_FRAME_SIZE {
@@ -117,9 +80,7 @@ impl Iterator for FrameDecoder {
         }
         let frame_end = 2 + usize::from(length);
         let payload = unread.get(2..frame_end)?;
-        let payload = payload.to_vec();
-        self.buffer.drain(..frame_end);
-        Some(TcpFrame::try_new(payload))
+        Some(TcpFrame::try_new(payload.to_vec()).map(|frame| (frame, frame_end)))
     }
 }
 

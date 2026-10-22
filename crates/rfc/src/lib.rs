@@ -6,5 +6,6 @@
 pub mod jwt;
 pub mod port;
 pub mod rtp;
+pub mod stream_decoder;
 pub mod tcp_framing;
 pub mod webrtc;
