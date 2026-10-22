@@ -62,7 +62,7 @@ impl TcpFrame {
 pub const MAX_FRAME_SIZE: u16 = 4096;
 
 /// Incremental decoder of RFC 4571 frames, see [`StreamDecoder`].
-pub type FrameDecoder = StreamDecoder<TcpCodec>;
+pub type TcpFrameDecoder = StreamDecoder<TcpCodec>;
 
 /// Finds RFC 4571 frames: a 2 bytes length prefix, then the payload.
 #[derive(Debug)]

@@ -7,7 +7,7 @@ use std::{
 };
 
 use o_sfu_model::UserId;
-use o_sfu_rfc::tcp_framing::{FrameDecoder, TcpFrame};
+use o_sfu_rfc::tcp_framing::{TcpFrame, TcpFrameDecoder};
 use str0m::{
     Candidate, Input, Rtc,
     change::SdpOffer,
@@ -247,7 +247,7 @@ async fn relay_until_connected(
     server_addr: SocketAddr,
     client_addr: SocketAddr,
 ) {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     loop {
         for packet in client.drain(Instant::now()) {
             let frame = TcpFrame::try_new(packet.contents.into())

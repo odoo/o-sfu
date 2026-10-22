@@ -3,8 +3,8 @@ use std::io::{self, Read};
 use super::*;
 use crate::stream_decoder;
 
-/// Feeds `chunk` to the decoder the way a socket would: through [`FrameDecoder::feed_with`].
-fn feed_chunk(decoder: &mut FrameDecoder, chunk: &[u8]) {
+/// Feeds `chunk` to the decoder the way a socket would: through [`TcpFrameDecoder::feed_with`].
+fn feed_chunk(decoder: &mut TcpFrameDecoder, chunk: &[u8]) {
     let mut source = chunk;
     while !source.is_empty() {
         decoder
@@ -15,7 +15,7 @@ fn feed_chunk(decoder: &mut FrameDecoder, chunk: &[u8]) {
 
 #[track_caller]
 fn assert_round_trips(name: &str, chunks: &[&[u8]], expected: &[&[u8]]) {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     let mut frames = Vec::new();
     for chunk in chunks {
         feed_chunk(&mut decoder, chunk);
@@ -95,7 +95,7 @@ fn chunked_streams_round_trip_through_frames() {
 
 #[test]
 fn incomplete_packet_produces_no_frame() {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     feed_chunk(&mut decoder, &[0, 3, 1, 2]);
     assert_eq!(decoder.next(), None);
     feed_chunk(&mut decoder, &[3]);
@@ -105,7 +105,7 @@ fn incomplete_packet_produces_no_frame() {
 
 #[test]
 fn feed_with_errors_does_not_corrupt_decoder() {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     feed_chunk(&mut decoder, &[0, 2, 7]);
     let error = decoder
         .feed_with(|_| Err(io::ErrorKind::ConnectionReset.into()))
@@ -127,7 +127,7 @@ fn oversized_packet_is_rejected_by_try_new() {
 
 #[test]
 fn packet_size_greater_than_max_frame_size_is_rejected_by_next() {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     feed_chunk(&mut decoder, &(MAX_FRAME_SIZE + 1).to_be_bytes());
     assert_eq!(decoder.next(), Some(Err(FrameTooLargeError)));
 }

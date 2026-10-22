@@ -14,7 +14,7 @@ use std::{
     time::Instant,
 };
 
-use o_sfu_rfc::tcp_framing::{FrameDecoder, FrameTooLargeError, TcpFrame};
+use o_sfu_rfc::tcp_framing::{FrameTooLargeError, TcpFrame, TcpFrameDecoder};
 use str0m::net::Protocol;
 use thiserror::Error;
 use tokio::{
@@ -218,7 +218,7 @@ pub(super) enum TcpFailure {
 /// were received within [`TCP_STALL_PEER_DELAY`].
 async fn read_into_decoder(
     reader: &ReadHalf<'_>,
-    decoder: &mut FrameDecoder,
+    decoder: &mut TcpFrameDecoder,
 ) -> Result<(), TcpFailure> {
     timeout(TCP_STALL_PEER_DELAY, reader.readable())
         .await
@@ -252,7 +252,7 @@ async fn read_into_decoder(
 async fn find_worker<'w>(
     peer_addr: SocketAddr,
     reader: &ReadHalf<'_>,
-    decoder: &mut FrameDecoder,
+    decoder: &mut TcpFrameDecoder,
     ufrag_worker_map: &UfragWorkerMap,
     workers: &'w [RtcWorker],
 ) -> Result<(&'w RtcWorker, String, TcpFrame), TcpFailure> {
@@ -327,7 +327,7 @@ async fn tcp_ingress_loop(
     ufrag_worker_map: UfragWorkerMap,
     workers: Arc<[RtcWorker]>,
 ) -> Result<(), TcpFailure> {
-    let mut decoder = FrameDecoder::new();
+    let mut decoder = TcpFrameDecoder::new();
     let (worker, ufrag, frame) = find_worker(
         peer_addr,
         &reader,
