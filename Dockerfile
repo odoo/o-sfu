@@ -16,7 +16,7 @@ COPY src ./src
 ARG CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 ARG CARGO_PROFILE_RELEASE_LTO=false
 
-RUN cargo build --release --locked -p o-sfu --bin o-sfu
+RUN cargo build --release --locked -v -p o-sfu --bin o-sfu
 
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 

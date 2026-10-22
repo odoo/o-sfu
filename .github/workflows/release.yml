@@ -295,10 +295,18 @@ jobs:
         working-directory: crates/client
 
       - name: Build server binary
+        id: server
         env:
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
           CARGO_PROFILE_RELEASE_LTO: thin
-        run: cargo build --locked --release -p o-sfu
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -v -p o-sfu
+          # NOTE: Keep image inputs and release notes aligned with this build's overrides.
+          {
+            echo "codegen-units=$CARGO_PROFILE_RELEASE_CODEGEN_UNITS"
+            echo "lto=$CARGO_PROFILE_RELEASE_LTO"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build Odoo bundle
         run: npm run build:odoo
@@ -312,8 +320,8 @@ jobs:
           context: .
           file: ./Dockerfile
           build-args: |
-            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
-            CARGO_PROFILE_RELEASE_LTO=thin
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${{ steps.server.outputs.codegen-units }}
+            CARGO_PROFILE_RELEASE_LTO=${{ steps.server.outputs.lto }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -370,6 +378,8 @@ jobs:
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           RUSTC_VERSION: ${{ steps.rust.outputs.rustc-version }}
+          SERVER_CODEGEN_UNITS: ${{ steps.server.outputs.codegen-units }}
+          SERVER_LTO: ${{ steps.server.outputs.lto }}
         run: |
           set -euo pipefail
           source_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
@@ -384,6 +394,7 @@ jobs:
             printf -- "- **Docker Buildx:** \`%s\`\n" "$BUILDX_VERSION"
             printf -- "- **BuildKit:** \`%s\`\n" "$BUILDKIT_IMAGE"
             printf -- "- **Rust:** \`%s\`\n" "$RUSTC_VERSION"
+            printf -- "- **Server Cargo profile overrides (binary and image):** \`lto=%s\`, \`codegen-units=%s\`\n" "$SERVER_LTO" "$SERVER_CODEGEN_UNITS"
             printf -- "- **Node.js:** \`%s\`\n" "$NODE_VERSION"
             printf -- "- **wasm-pack:** \`%s\`\n" "$WASM_PACK_VERSION"
             while IFS= read -r image
