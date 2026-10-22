@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 
 use super::*;
+use crate::stream_decoder;
 
 /// Feeds `chunk` to the decoder the way a socket would: through [`FrameDecoder::feed_with`].
 fn feed_chunk(decoder: &mut FrameDecoder, chunk: &[u8]) {
@@ -84,7 +85,7 @@ fn chunked_streams_round_trip_through_frames() {
         .take(usize::from(MAX_FRAME_SIZE))
         .collect();
     let wire = [&MAX_FRAME_SIZE.to_be_bytes()[..], &max_size_payload].concat();
-    assert!(wire.len() > DECODER_CHUNK_SIZE);
+    assert!(wire.len() > stream_decoder::DECODER_CHUNK_SIZE);
     assert_round_trips(
         "Frame of the maximum size needing several reads",
         &[&wire],
