@@ -21,12 +21,67 @@
 
 use std::fmt;
 
+use crate::{dtls, rtp, stun};
+
+// First-octet ranges from RFC 7983 section 7:
+// <https://www.rfc-editor.org/rfc/rfc7983.html#section-7>
+/// Inclusive upper bound of the STUN first-octet range, which starts at zero.
+const STUN_MUX_FIRST_OCTET_END: u8 = 3;
+/// Inclusive lower bound of the multiplexed DTLS content-type range.
 const DTLS_MUX_FIRST_OCTET_START: u8 = 20;
+/// Inclusive upper bound of the multiplexed DTLS content-type range.
 const DTLS_MUX_FIRST_OCTET_END: u8 = 63;
+
+/// Protocol selected from a multiplexed WebRTC datagram's unencrypted headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatagramKind {
+    Rtp,
+    Rtcp,
+    Stun,
+    Dtls,
+}
+
+/// Classifies STUN, DTLS 1.0/1.2, RTP/SRTP or RTCP/SRTCP by header shape.
+///
+/// Returns `None` for unsupported multiplexed protocols or truncated framing.
+/// STUN requires the RFC 8489 cookie and exact aligned message length. DTLS
+/// requires one complete initial record. RTP requires its fixed header, CSRC
+/// list and declared extension block. RTCP requires an initial packet header,
+/// sender SSRC and declared initial packet length, allowing compound packets
+/// and SRTCP trailers.
+///
+/// These shallow checks do not validate STUN attributes, subsequent DTLS/RTCP
+/// records, RTP payloads or padding. They do not authenticate or decrypt data
+/// and cannot distinguish protected packets from plaintext packets.
+///
+/// References:
+/// - <https://www.rfc-editor.org/rfc/rfc7983.html#section-7>
+/// - <https://www.rfc-editor.org/rfc/rfc8489.html#section-5>
+/// - <https://www.rfc-editor.org/rfc/rfc4347.html#section-4.1>
+/// - <https://www.rfc-editor.org/rfc/rfc6347.html#section-4.1>
+/// - <https://www.rfc-editor.org/rfc/rfc3550.html#section-5.1>
+/// - <https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1>
+/// - <https://www.rfc-editor.org/rfc/rfc5761.html#section-4>
+/// - <https://www.rfc-editor.org/rfc/rfc3711.html#section-3.4>
+#[must_use]
+pub fn classify_datagram(packet: &[u8]) -> Option<DatagramKind> {
+    let first = *packet.first()?;
+    if first <= STUN_MUX_FIRST_OCTET_END {
+        return stun::has_datagram_shape(packet).then_some(DatagramKind::Stun);
+    }
+    if is_dtls_mux_packet(first) {
+        return dtls::has_datagram_shape(packet).then_some(DatagramKind::Dtls);
+    }
+    match rtp::classify_datagram(packet)? {
+        rtp::RtpRtcpMuxPacketKind::Rtp => Some(DatagramKind::Rtp),
+        rtp::RtpRtcpMuxPacketKind::Rtcp => Some(DatagramKind::Rtcp),
+    }
+}
 
 /// Returns whether a datagram first octet selects DTLS in WebRTC multiplexing.
 ///
-/// Reference: <https://www.rfc-editor.org/rfc/rfc7983.html#section-5>
+/// Reference: <https://www.rfc-editor.org/rfc/rfc7983.html#section-7>
 #[must_use]
 pub const fn is_dtls_mux_packet(first_octet: u8) -> bool {
     first_octet >= DTLS_MUX_FIRST_OCTET_START && first_octet <= DTLS_MUX_FIRST_OCTET_END

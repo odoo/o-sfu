@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Browser shell groundwork for o-sfu",
   "scripts": {
-    "lint": "eslint src scripts test playwright eslint.config.mjs",
+    "lint": "eslint src scripts test playwright chaos *.config.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "clean": "node ./scripts/clean_dist.mjs",
     "wasm:build": "node ./scripts/build_wasm_runtime.mjs",
@@ -16,6 +16,7 @@
     "test": "npm run test:unit",
     "test:unit": "npm run build && node --test \"./test/**/*.test.mjs\"",
     "test:browser": "npm run build && npm run bundle:odoo && playwright test",
+    "test:chaos": "npm run build && npm run bundle:odoo && playwright test --config playwright.chaos.config.mjs",
     "test:browser:chromium": "npm run test:browser -- --project=chromium",
     "test:browser:firefox": "npm run test:browser -- --project=firefox",
     "test:odoo-types": "tsc --noEmit -p test/types/tsconfig.json",

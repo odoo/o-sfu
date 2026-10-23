@@ -16,16 +16,22 @@ cargo test --locked --release
 npm --prefix crates/client run verify
 ```
 
+## Browser suites
+
+`verify` runs Playwright with direct connections. Run [Chaos fault scenarios](signaling-proxy/README.md)
+separately from the repository root:
+
+```bash
+npm --prefix crates/client run test:chaos
+```
+
+[Chaos CI](../.github/workflows/chaos.yml) runs nightly, manually and on relevant PRs.
+
 ## Callgrind benchmarks
 
 Requires Valgrind and a `gungraun-runner` version matching `gungraun` in
 [`Cargo.lock`](../Cargo.lock). These measure instruction and simulated cycle
 costs, not throughput. [CI setup](../.github/workflows/performance.yml).
-Both metrics block regressions. Instruction limits vary by scenario and
-simulated cycle limits are at least 5% to tolerate code-placement effects.
-Comparison targets use allocation-driven jemalloc cache collection because
-timed collection can add a sweep to only one revision. The CI comparison also
-passes this setting to older revisions that lack the shared configuration.
 
 Use `packet_loop_callgrind` below or another comparison target from
 [`Cargo.toml`](Cargo.toml):
@@ -47,17 +53,8 @@ When changing a scenario, verify that removing its required work fails its self-
 cargo test --locked -p o-sfu-tests --test benchmark_scenarios
 ```
 
-The session stats drain queues one sample per session after 100 ms, before any
-randomized DTLS retry is due. The relay drain keeps its cold-growth case and
-measures retained staging capacity at 64 and 256 packets separately.
-Meeting cases keep arrival fallback separate
-from `sampled_meeting_flow`, which supplies shared-CNAME sender reports once per
-second and models video arriving 400 ms after sampling. That fixture includes
-registry report handling and interpolation but excludes authenticated RTCP parsing
-and feedback staging. New cases have no comparison until the base contains them.
-
-The worker target is manual investigation only. Thread scheduling makes its
-instruction counts unsuitable for the PR comparison gate:
+The worker target is manual only. Thread scheduling makes its
+instruction counts to undeterministic for the PR comparison gate:
 
 ```bash
 cargo bench --locked -p o-sfu-tests --features worker-benchmarks --bench packet_loop_worker_callgrind -- --save-summary=json

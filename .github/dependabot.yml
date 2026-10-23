@@ -111,6 +111,22 @@ updates:
       - "lang-rust"
       - "tests"
 
+  - package-ecosystem: "cargo"
+    directory: "/tests/signaling-proxy"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "[DEP] signaling-proxy:"
+      prefix-development: "[DEP] signaling-proxy (dev):"
+    labels:
+      - "dependencies"
+      - "cargo"
+      - "AI"
+      - "lang-rust"
+      - "tests"
+
   - package-ecosystem: "npm"
     directory: "/crates/client"
     schedule:

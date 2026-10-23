@@ -557,6 +557,27 @@ export async function streamDiagnostics({
     };
 }
 
+export async function decodedFrameCount(page, sessionId, streamType) {
+    return page.evaluate(
+        async ({ sessionId, streamType }) => {
+            const client = globalThis.__liveHarness.client;
+            const peer = client._runtime._peerSession._activePeer;
+            const track = client._consumers.get(sessionId)?.[streamType]?.track;
+            const receiver = peer
+                ?.getReceivers()
+                .find((candidate) => candidate.track?.id === track?.id);
+            if (!receiver) {
+                return null;
+            }
+            const stats = await receiver.getStats();
+            return [...stats.values()]
+                .filter((report) => report.type === "inbound-rtp" && report.kind === "video")
+                .reduce((total, report) => total + (report.framesDecoded ?? 0), 0);
+        },
+        { sessionId, streamType }
+    );
+}
+
 export async function waitForDecodedRemoteVideoFrame(
     page,
     targetSessionId,

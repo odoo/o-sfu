@@ -341,11 +341,11 @@ impl RouteSource {
             && self.local_route.as_ref().is_some_and(|route| {
                 route.destinations.iter().any(|destination| {
                     destination.active
-                        && matches!(
+                        && (matches!(
                             destination.delivery.keyframe_target_rid(None),
                             DestinationKeyframeTarget::Current(target_rid)
                                 if rid.is_none() || target_rid == rid
-                        )
+                        ) || (rid.is_some() && destination.delivery.needs_fallback_refresh()))
                 })
             })
     }
@@ -731,7 +731,17 @@ fn update_decoder_ready_dsts(
             .delivery
             .observe_selected_refresh(incoming_rid, is_keyframe)
         {
-            SelectedRefresh::NotWaiting => {}
+            SelectedRefresh::NotWaiting => {
+                // The first fallback keyframe can predate this consumer or selection.
+                // Refresh the observed RID while the requested RID has no usable frame.
+                if dst.active
+                    && !is_keyframe
+                    && incoming_rid.is_some()
+                    && dst.delivery.needs_fallback_refresh()
+                {
+                    update.mark_pending_selected_gate();
+                }
+            }
             SelectedRefresh::Pending => update.mark_pending_selected_gate(),
             SelectedRefresh::Activated => {
                 debug!(
