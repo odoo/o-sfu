@@ -47,8 +47,10 @@ export default defineConfig({
             url: "http://127.0.0.1:4173/playwright/fixtures/harness.html"
         },
         {
+            // Keep RTC listeners below Linux's default ephemeral range so
+            // browser and HTTP client source ports cannot take a later server's port.
             command:
-                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= TCP_BIND_ADDRESS=127.0.0.1:58100 HTTP_INTERFACE=127.0.0.1:18080 ANNOUNCED_IP=127.0.0.1 RTC_MIN_PORT=58000 RTC_MAX_PORT=58031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
+                "AUTH_KEY=u6bsUQEWrHdKIuYplirRnbBmLbrKV5PxKG7DtA71mng= TCP_BIND_ADDRESS=127.0.0.1:28100 HTTP_INTERFACE=127.0.0.1:18080 ANNOUNCED_IP=127.0.0.1 RTC_MIN_PORT=28000 RTC_MAX_PORT=28031 cargo run --quiet --manifest-path ../../Cargo.toml -p o-sfu",
             reuseExistingServer: true,
             timeout: 360_000,
             url: "http://127.0.0.1:18080/v1/noop"

@@ -406,8 +406,8 @@ test("server queue overflow recovers sticky publish subscribe and info intents",
     test.setTimeout(60_000);
     const server = await spawnLiveServer({
         bindPort: browserName === "firefox" ? 18090 : 18089,
-        rtcMinPort: browserName === "firefox" ? 58456 : 58424,
-        rtcMaxPort: browserName === "firefox" ? 58487 : 58455,
+        rtcMinPort: browserName === "firefox" ? 28456 : 28424,
+        rtcMaxPort: browserName === "firefox" ? 28487 : 28455,
         // Chromium can leave hi idle for these cameras. Keep even the probe
         // ceiling below hi so recovery does not depend on that encoder starting.
         maxBitrateOut: 1_000_000,
@@ -598,8 +598,8 @@ test("H264-only live publish applies RID simulcast and renders when supported", 
     );
     const server = await spawnLiveServer({
         bindPort: 18084,
-        rtcMinPort: 58264,
-        rtcMaxPort: 58295,
+        rtcMinPort: 28264,
+        rtcMaxPort: 28295,
         codecFlags: { h264: true, vp8: false }
     });
     try {
@@ -671,13 +671,13 @@ test("live browser negotiation enables video recovery for optional codecs", asyn
         browserName === "firefox"
             ? {
                   bindPort: 18083,
-                  rtcMaxPort: 58263,
-                  rtcMinPort: 58232
+                  rtcMaxPort: 28263,
+                  rtcMinPort: 28232
               }
             : {
                   bindPort: 18082,
-                  rtcMaxPort: 58231,
-                  rtcMinPort: 58200
+                  rtcMaxPort: 28231,
+                  rtcMinPort: 28200
               };
     const server = await spawnLiveServer({
         bindPort: liveServerPorts.bindPort,
@@ -1039,8 +1039,8 @@ test("middle camera RID delivers half-resolution decoded video", async ({
     const middleBitrate = 800_000;
     const server = await spawnLiveServer({
         bindPort: browserName === "firefox" ? 18088 : 18087,
-        rtcMinPort: browserName === "firefox" ? 58392 : 58360,
-        rtcMaxPort: browserName === "firefox" ? 58423 : 58391,
+        rtcMinPort: browserName === "firefox" ? 28392 : 28360,
+        rtcMaxPort: browserName === "firefox" ? 28423 : 28391,
         maxBitrateOut: middleBitrate,
         maxVideoBitrate
     });
@@ -1129,8 +1129,8 @@ test("startup pressure holds the thumbnail through the soft pause dwell", async 
     const maxVideoBitrate = 200_000;
     const server = await spawnLiveServer({
         bindPort: browserName === "firefox" ? 18086 : 18085,
-        rtcMinPort: browserName === "firefox" ? 58328 : 58296,
-        rtcMaxPort: browserName === "firefox" ? 58359 : 58327,
+        rtcMinPort: browserName === "firefox" ? 28328 : 28296,
+        rtcMaxPort: browserName === "firefox" ? 28359 : 28327,
         maxBitrateOut: maxVideoBitrate,
         maxVideoBitrate
     });
