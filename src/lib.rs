@@ -1,36 +1,48 @@
 //! Odoo's Selective Forwarding Unit (SFU) for audio/video calls.
 //!
-//! `o-sfu` is a multi-tenant SFU designed to be compatible with the Odoo saas/.sh
-//! architecture, which means that a single o-sfu server can serve
-//! independent (individually authenticated) "rooms" which can be used by many
-//! independent tenants (like odoo saas "databases").
+//! `o-sfu` receives participants' audio and video and forwards selected streams
+//! to other participants in the same room. Each sender uploads media to the SFU
+//! instead of sending a separate copy to every receiver.
 //!
-//! # Reading Map
+//! ```text
+//! Alice -- audio/video --> SFU --+--> Bob
+//!                                |
+//!                                +--> Carol
+//! ```
 //!
-//! - **Start or embed the server**: [`run`], [`Runtime`] and [`config`].
-//! - **Understand admission**: [`auth`], [`http`] and [`websocket`].
-//! - **Change room and media behavior**: [`core::server::room::Room`],
-//!   [`o_sfu_router::Router`] and [`core::server::transport::MediaTransport`].
-//! - **Integrate a browser client**: `SfuClient` exposes the Odoo-facing API.
-//!   [`o_sfu_protocol::host::ProtocolCore`] supplies its signaling state machine.
+//! A room groups the participants, published media and subscriptions for a call.
+//! One server can host independently authenticated rooms for multiple tenants,
+//! such as different Odoo databases. This fits the Odoo saas and Odoo.sh
+//! architecture.
 //!
+//! # A call through the SFU
 //!
-//! # Core Concepts
+//! The application backend provisions a room and gives participants credentials
+//! to join it. Browser clients use WebSocket signaling to join, publish media
+//! and choose what to receive. Media travels separately from signaling, over WebRTC.
 //!
-//! `o-sfu` separates the **control plane** for admission and room policy, the
-//! **routing plane** for user-to-connection placement and the **packet plane**
-//! for RTP forwarding on worker loops.
+//! ```text
+//! Odoo backend -- HTTP ------> room creation and access
+//!                                       |
+//!                                       v
+//! Browser <---- WebSocket ---> room membership and media requests
+//!                                       |
+//!                                       v
+//! Browser <---- WebRTC/UDP --> media workers <----> other browsers
+//! ```
 //!
-//! - **[`Runtime`]**: Owns the process lifecycle, the HTTP/WebSocket servers and graceful shutdown.
-//! - **[`core::server::room::Room`]**: The control plane boundary for a set of participants. It commits membership and media relationships.
-//! - **[`o_sfu_router::Router`]**: The routing plane, a pure, sans-I/O engine owning the placement graph that maps users to connections.
-//! - **[`core::prelude::MediaSession`]**: Orchestrates a user's connection, bridging room intent to transport effects.
-//! - **[`core::server::transport::MediaTransport`]**: Owns the media workers and abstracts their threading model. Each worker holds a packet loop and applies projected routes to incoming datagrams.
+//! This separates decisions about the call from the work of forwarding its
+//! media. Signaling changes which streams should flow. Media workers deliver
+//! those streams as packets arrive.
 //!
 //! # Architecture
 //!
-//! Control and routing decisions happen above the packet loops, which apply the
-//! resulting transport state to UDP datagrams.
+//! [`Runtime`] brings together the HTTP/WebSocket servers, rooms and media
+//! workers. The HTTP control API manages rooms through
+//! [`RoomManager`](core::server::room::RoomManager). WebSocket sessions admit
+//! participants through [`SfuCore`](core::prelude::SfuCore) and use a
+//! [`MediaSession`](core::prelude::MediaSession) for each connection to publish
+//! media and manage subscriptions.
 //!
 //! ```text
 //! HTTP control API ------------------------------> RoomManager
@@ -55,261 +67,87 @@
 //!                      UDP OUT      UDP OUT       UDP OUT
 //! ```
 //!
-//! # Admission Edge
+//! A [`Room`](core::server::room::Room) manages who is present and which media
+//! they publish or receive. The [`Router`](o_sfu_router::Router) keeps
+//! track of the connections needed to deliver that media. Its decisions do not
+//! perform network I/O, so routing behavior can be tested without sockets.
 //!
-//! Applications provision rooms through
-//! [`RoomManager::serve_room`](core::server::room::RoomManager::serve_room).
-//! WebSocket clients join through
-//! [`SfuCore::admit_user`](core::prelude::SfuCore::admit_user). Both paths require
-//! JWT authentication before admission.
-//!
-//! Upgraded sockets retain their connection permits. Before authentication,
-//! they have a first-frame deadline and global plus per-origin caps
-//! (one bucket per IPv4 address or IPv6 /64).
-//!
-//! ```text
-//! Incoming TCP connection
-//!     |
-//!     v
-//! connection cap + HTTP header deadline
-//!     |
-//!     v
-//! Axum Router
-//!     |
-//!     +-> GET /v1/noop
-//!     |     public liveness -> noop
-//!     |
-//!     +-> GET /v1/channel
-//!     |     Authorization JWT -> VerifiedRoomRequest -> room
-//!     |
-//!     +-> POST /v1/disconnect
-//!     |     request-body JWT -> VerifiedDisconnectClaims -> disconnect
-//!     |
-//!     +-> WebSocket /
-//!     |     upgrade -> first-frame JWT -> admit_user -> session
-//!     |
-//!     +-> GET /v1/stats, /metrics and /internal/diagnostics/...
-//!           authorize_operator -> stats, metrics or diagnostics
-//! ```
-//!
-//! - **HTTP**: Parses server-to-server requests using [`http::CreateRoomQuery`]. Verifies [`auth::HttpRoomClaims`]. The request that creates the current room fixes its signing key.
-//! - **WebSocket**: Client connection frames are decoded by [`websocket::decode_auth_payload_text`]. A hint selects a candidate key. Claims are verified, normalized into [`auth::WebSocketConnectClaims`] and trusted for access.
-//!
-//! # Security Model
-//!
-//! `o-sfu` secures two planes independently. Application-layer JWTs gate room
-//! admission on the control plane. `str0m` encrypts media on the packet plane
-//! with DTLS-SRTP. An external reverse proxy provides TLS for HTTP and
-//! WebSocket signaling.
-//!
-//! ```text
-//! control plane    JWT HS256           admission trust
-//! packet plane     DTLS-SRTP (str0m)   media confidentiality
-//! signaling wire   TLS (via proxy)     transport confidentiality
-//! ```
-//!
-//! ## JWT Admission
-//!
-//! Tokens are `HS256` only. [`auth::verify`] rejects any other `alg`, checks the
-//! HMAC in constant time and requires an unexpired `exp`. It validates `nbf`
-//! and the `iat` future-skew bound when present. Current Odoo does not issue
-//! `iat`. Tokens without `exp` fail with [`auth::AuthenticationError::MissingExpiry`].
-//! It caps token size at
-//! [`auth::MAX_JWT_TOKEN_BYTES`].
-//!
-//! There are two different keys:
-//!
-//! - **Server-to-server key**: `AUTH_KEY` (base64, at least 32 decoded bytes) verifies
-//!   the HTTP [`http::CreateRoomQuery`] path through [`auth::HttpRoomClaims`] and
-//!   [`auth::HttpDisconnectClaims`]. See [`config`].
-//! - **Per-room key**: the request that creates the current room pins the signing
-//!   key from the `key` or `keySeed` claim in [`auth::HttpRoomClaims`]. A direct
-//!   key must decode to at least 32 bytes or room creation returns `400`.
-//!   `keySeed` instead derives the room's signing bytes from `AUTH_KEY`:
-//!   ```text
-//!   room_key = HMAC-SHA256(
-//!       key = Base64Decode(AUTH_KEY),
-//!       message = Base64Decode(keySeed)
-//!   )
-//!   ```
-//!   WebSocket [`auth::WebSocketConnectClaims`] verify against that room key,
-//!   never against `AUTH_KEY`. Runtime construction decodes the global key once.
-//!   Room creation retains decoded secret bytes, so verification does not decode
-//!   stored keys and equivalent base64 encodings match the same reservation.
-//!
-//! HTTP room creation uses the
-//! `Authorization` header, HTTP disconnect uses the request body and the
-//! WebSocket client sends a first-frame auth envelope decoded by
-//! [`websocket::decode_auth_payload_text`]. An unverified room id selects only a
-//! candidate key, then the same token is verified once against it. Modern
-//! [`auth::WebSocketConnectClaims`] must name the selected room. Legacy Odoo
-//! tokens select it through the auth envelope's `channel` and are normalized
-//! only after verification with that room's key. Odoo may send both
-//! `session_id` and account `user_id`. The session takes precedence as the
-//! participant identity. Tokens without either identity are rejected.
-//!
-//! Admission establishes identity and room scope. It does not enforce the
-//! per-user `permissions` claim provided by each tenant.
-//!
-//! ## Media Transport
-//!
-//! `str0m` handles ICE, DTLS and SRTP over UDP. `o-sfu` builds and drives the
-//! `str0m` sessions to forward RTP between participants.
-//!
-//! - **Keying**: the DTLS handshake derives SRTP keys per RFC 5764 DTLS-SRTP.
-//! - **Certificate**: `str0m` generates a self-signed certificate when each RTC
-//!   session is built and advertises its SHA-256 fingerprint in the SDP offer.
-//!   Accepting the answer stores the expected remote fingerprint. The DTLS
-//!   handshake verifies it against the peer certificate.
-//! - **ICE**: `o-sfu` runs ICE-lite with `a=setup:actpass` and advertises
-//!   `ANNOUNCED_IP`, so media UDP must reach the host directly.
-//!
-//! ## Signaling Transport
-//!
-//! HTTPS and WSS are expected to be terminated by an external reverse proxy.
-//! Setting `PROXY=true` in [`config`] requires `TRUSTED_PROXIES` CIDRs.
-//! Forwarded headers are honored only when the TCP peer belongs to that set.
-//! The public edge must overwrite client-supplied forwarded host and protocol
-//! headers. See [`http::resolve_request_origin`] for origin
-//! resolution and [`http`] for operator route access.
-//!
-//! # Room and Router Ownership
-//!
-//! Room transitions produce typed commits while holding short exclusive state
-//! locks. `RoomEffects` consumes deferred transport, source-policy and WebSocket
-//! output work after the lock is released.
-//!
-//! ```text
-//! room state lock held                  lock released
-//! +--------------------------------+    +------------------------------+
-//! | validate user and connection   |    | MediaTransport commands      |
-//! | commit room topology           |    | source-policy turn           |
-//! | capture transition commit      |--->| websocket output             |
-//! |                                |    | idempotent teardown          |
-//! +--------------------------------+    +------------------------------+
-//! ```
-//!
-//! [`o_sfu_router::Router`] owns exact user-to-connection placement. Receiver shadows are foreign local sessions derived from active consumer dependencies, disappearing with their final consumer.
-//!
-//! Absent subscription targets are capped per receiver. Eviction drops the
-//! oldest absent target's intent. Present members do not consume that allowance.
-//!
-//! # Signaling and Client Bundle
-//!
-//! Browsers use `SfuClient` for connection, publication, subscription and room
-//! control. Signaling state stays in [`o_sfu_protocol::host::ProtocolCore`] and
-//! yields ordered [`o_sfu_protocol::host::Command`] values. The WASM bridge
-//! serializes commands for `BrowserRuntime`, which executes effects through
-//! browser `WebSocket`, `RTCPeerConnection` and timer APIs. Protocol events are
-//! mapped to Odoo bundle updates during command serialization. `BrowserRuntime`
-//! applies those updates to client state and notifies the application.
-//!
-//! Outbound overflow closes with `4110` (`Overloaded`), allowing reconnect and
-//! intent replay. Replacement or explicit removal uses terminal `4108` (`Kicked`).
-//!
-//! ```text
-//! SfuClient (public API)
-//!        |
-//!        v
-//! BrowserRuntime
-//!        |
-//!        v
-//! ProtocolCore (sans-I/O) -> Vec<Command>
-//!        |
-//!        v
-//! WASM serialization -> TypeScript command union
-//!        |
-//!        v
-//! BrowserRuntime -> WebSocket, RTCPeerConnection, timers
-//!        ^                                        |
-//!        +--------------- browser events ---------+
-//! ```
-//!
-//! # Packet Path
-//!
-//! Each [`core::server::transport::MediaTransport`] worker drives `str0m`, routes
-//! RTP and hands complete network transmits to `RtcEgress`.
-//!
-//! ```text
-//! UDP IN -> UdpReceiveTask -> RtcIngress -> str0m
-//!                                             |
-//!                                             +-> RTP packet
-//!                                             |     |
-//!                                             |     +-> origin sinks
-//!                                             |     |
-//!                                             |     +-> route gates
-//!                                             |           |
-//!                                             |           +-> relay fanout
-//!                                             |           +-> local RTC (str0m, next drain)
-//!                                             |
-//!                                             +-> Transmit -> RtcEgress
-//!                                                                |
-//!                                                                +-> UDP
-//!                                                                |     |
-//!                                                                |     +-> Tokio -> UDP OUT
-//!                                                                |     +-> io_uring (Linux) -> UDP OUT
-//!                                                                |
-//!                                                                +-> non-UDP -> rejected (WIP)
-//! ```
-//!
-//! `RtcEgress` separates RTC output from network I/O: the packet loop stages
-//! complete transmits while egress handles protocol dispatch and socket sends.
-//!
-//! Worker BWE and audio observations feed into room source policy, which updates route gates for later packets.
-//!
-//! ```text
-//! worker BWE and audio observations
-//!                |
-//!                v
-//!        room source policy
-//!                |
-//!                v
-//!   route gates for later packets
-//! ```
-//!
-//! # Observability
-//!
-//! Monitored through the [`o_sfu_telemetry`] sub-crate. See [`http::telemetry`] for the HTTP contracts.
-//!
-//! - **Metrics**: [`http::telemetry::metrics`] exposes Prometheus text exposition.
-//! - **Diagnostics**: [`http::telemetry::diagnostics`] exposes JSON state summaries.
-//!
-//! # Scaling
+//! [`MediaTransport`](core::server::transport::MediaTransport) runs the worker
+//! threads and uses `str0m` for WebRTC. Room policy selects media using
+//! subscriptions, video layout, active speakers and receiver bandwidth. Each
+//! worker forwards incoming media to the selected receivers, shown as fanout
+//! in the diagram.
 //!
 //! Rooms start with one worker. [`config::RoomWorkerPolicy`] can spread new
-//! joins across more workers in the same process, under one [`o_sfu_router::Router`].
+//! joins across additional workers in the same process. Participants still
+//! belong to one room and can receive media from participants on other workers.
 //!
-//! ```text
-//!                        Room -- Router
-//!                         |
-//!                   MediaTransport
-//!              +----------+----------+
-//!              |                     |
-//!         worker A <--- relay ---> worker B
-//!          default                spillover
+//! # Access and encryption
+//!
+//! The backend signs tokens for room creation and disconnect requests with
+//! the server's `AUTH_KEY`. Participant tokens are verified with their room's
+//! signing key. This lets a tenant authorize its participants without giving
+//! them the server key. See [`auth`] for token types and verification.
+//!
+//! Admission establishes participant identity and room scope. It does not
+//! enforce the per-user `permissions` claim supplied by the tenant.
+//!
+//! Signaling and media need separate transport protection:
+//!
+//! - An external reverse proxy terminates HTTPS and WSS. Proxy mode requires
+//!   configured trusted proxies and the public edge must overwrite
+//!   client-supplied forwarded host and protocol headers. See [`config`] and
+//!   [`http::resolve_request_origin`].
+//! - `str0m` encrypts media between each browser and the SFU with DTLS-SRTP.
+//!   Media UDP must reach the server's configured `ANNOUNCED_IP`.
+//!
+//! # Browser client
+//!
+//! The JavaScript bundle exposes `SfuClient`, the Odoo-facing API for joining
+//! calls, publishing media and subscribing to other participants. For example,
+//! with a room token supplied by the application:
+//!
+//! ```javascript
+//! import { SfuClient } from "/bundle/odoo_sfu.js";
+//!
+//! const sfu = new SfuClient();
+//! sfu.connect("https://sfu.example.com/ws", jsonWebToken, {
+//!     channelUUID: "mail-channel-uuid",
+//! });
 //! ```
 //!
-//! Joins reuse a healthy room worker or expand within the cap. Healthy means a
-//! known packet-loop delay below the threshold. Under load, running room workers
-//! remain usable. Failed placements free capacity for replacement.
-//! Admission fails when no worker is running.
+//! `connect()` returns before authentication and media negotiation finish.
+//! The application observes `stateChange` and `handledError` for the result.
 //!
-//! # Feature Flags
+//! The client shares its signaling logic through
+//! [`o_sfu_protocol::host::ProtocolCore`]. The browser adapter runs that Rust
+//! logic as WebAssembly and connects it to browser WebSocket and WebRTC APIs.
+//! This keeps protocol decisions separate from browser-specific operations.
 //!
-//! Core media behavior is configured at runtime through [`config`], not Cargo features.
-//! The default feature `otel-tracing` enables OpenTelemetry tracing support through [`o_sfu_telemetry::TraceExportConfig`].
-//! Other features are only used for tests and benchmarking.
+//! # Running and observing the server
 //!
-//! # Sub-crates
+//! [`run`] starts the server from configuration. Use [`Runtime`] to embed it
+//! with a caller-provided listener and shutdown signal. [`config`] controls
+//! network addresses, admission limits and media worker policy at runtime.
+//! The default Cargo feature `otel-tracing` enables OpenTelemetry tracing.
 //!
-//! | Crate | Role |
+//! [`http::telemetry::metrics`] exposes Prometheus metrics for monitoring over
+//! time. [`http::telemetry::diagnostics`] exposes room, participant and worker
+//! state for investigating a call. These operator endpoints require separate
+//! access control, described in [`http`].
+//!
+//! # Where to read next
+//!
+//! | Area | Entry point |
 //! | --- | --- |
-//! | [`o_sfu_rfc`] | RFC-backed JWT, RTP, RTCP, SDP and WebRTC consts/types |
-//! | `o-sfu-model` | Shared call data ([`o_sfu_protocol::wire::UserId`], etc.) |
-//! | [`o_sfu_router`] | Sans-I/O [`o_sfu_router::Router`] facade for room placement and routed media lifetimes |
-//! | [`o_sfu_core`] | Room engine, [`core::prelude::SourcePolicy`], recording taps and [`core::server::transport::MediaTransport`] projection |
-//! | [`o_sfu_protocol`] | Sans-I/O [`o_sfu_protocol::host::ProtocolCore`] and typed commands |
-//! | [`o_sfu_telemetry`] | Tracing setup, metrics and diagnostics response types |
+//! | Configuration and server lifecycle | [`config`], [`Runtime`] and [`run`] |
+//! | Authentication and signaling messages | [`auth`], [`http`] and [`websocket`] |
+//! | Room behavior and media transport | [`o_sfu_core`] |
+//! | Connections and media routing | [`o_sfu_router`] |
+//! | Client signaling and Odoo bundle compatibility | [`o_sfu_protocol`] |
+//! | Metrics, diagnostics and tracing | [`o_sfu_telemetry`] |
+//! | Shared call identifiers | `o-sfu-model`, including [`o_sfu_protocol::wire::UserId`] |
+//! | Protocol constants and types | [`o_sfu_rfc`] |
 pub mod config;
 pub mod core {
     pub use o_sfu_core::{prelude, server};
@@ -347,61 +185,20 @@ pub mod http {
 
     /// Operator-facing metrics and diagnostics contracts.
     pub mod telemetry {
-        /// Prometheus metric scrape contract.
+        /// Prometheus metrics for monitoring calls and server load.
         ///
-        /// `GET` [`metrics::PATH`] returns `200 OK` Prometheus text exposition
-        /// with [`metrics::CONTENT_TYPE`].
-        ///
-        /// This is a scrape endpoint.
-        /// Configure Prometheus to scrape [`metrics::PATH`], then issue `PromQL`
-        /// queries to Prometheus.
-        /// Histogram families render `<name>_bucket` with the additional `le`
-        /// label plus `<name>_sum` and `<name>_count`.
-        ///
-        /// # Scrape and Query
-        ///
-        /// ```yaml
-        /// scrape_configs:
-        ///   - job_name: o-sfu
-        ///     scheme: https
-        ///     metrics_path: /metrics
-        ///     authorization:
-        ///       type: Bearer
-        ///       credentials_file: /run/secrets/o_sfu_diagnostics_token
-        ///     tls_config:
-        ///       ca_file: /run/secrets/o_sfu_observability_ca
-        ///       server_name: o-sfu-observability.internal
-        ///     static_configs:
-        ///       - targets: ["o-sfu-observability.internal:443"]
-        /// ```
-        ///
-        /// The endpoint returns Prometheus text exposition.
-        ///
-        /// ```text
-        /// # HELP osfu_rooms_active Current number of active rooms owned by this runtime.
-        /// # TYPE osfu_rooms_active gauge
-        /// osfu_rooms_active 3
-        /// # TYPE osfu_worker_rtp_packets_total counter
-        /// osfu_worker_rtp_packets_total{media_worker_id="0",direction="ingress"} 1240
-        /// ```
-        ///
-        /// Query clients send `PromQL` to the Prometheus-compatible backend
-        /// rather than to o-sfu.
-        /// These examples cover a gauge, counter and histogram.
+        /// `GET` [`metrics::PATH`] returns `200 OK` in Prometheus text exposition
+        /// format with content type [`metrics::CONTENT_TYPE`]. Configure
+        /// Prometheus to scrape this endpoint. Send `PromQL` queries to
+        /// Prometheus, for example:
         ///
         /// ```promql
         /// sum(osfu_users_active)
         /// sum by (stage) (rate(osfu_ws_connections_total[5m]))
-        /// histogram_quantile(
-        ///   0.95,
-        ///   sum by (le, route) (rate(osfu_http_request_duration_seconds_bucket[10m]))
-        /// )
         /// ```
         ///
-        /// Read the [`metrics::MetricName`] variants below to find every
-        /// exported name and its meaning.
-        /// Query [`metrics::PATH`] to see each family's `HELP`, `TYPE`, label
-        /// keys and current label values before building selectors.
+        /// [`metrics::MetricName`] lists exported names and their meanings.
+        /// The scrape response includes each metric's `HELP`, `TYPE` and labels.
         pub mod metrics {
             pub use o_sfu_telemetry::{
                 metrics::MetricName, prometheus::PROMETHEUS_CONTENT_TYPE as CONTENT_TYPE,
@@ -410,142 +207,32 @@ pub mod http {
             pub use crate::http::route::METRICS as PATH;
         }
 
-        /// JSON diagnostics contract.
+        /// JSON snapshots for investigating rooms, participants and workers.
         ///
-        /// Every constant in [`diagnostics::route`] is a `GET` endpoint returning
-        /// `200 OK` JSON on success.
+        /// Each route in [`diagnostics::route`] accepts `GET` and returns
+        /// `200 OK` JSON on success. The response types document their fields.
         ///
-        /// # Routes and Parameters
+        /// | Request | Response |
+        /// | --- | --- |
+        /// | `/internal/diagnostics/summary` | [`diagnostics::DiagnosticsSummaryResponse`] |
+        /// | `/internal/diagnostics/rooms` | Array of [`diagnostics::DiagnosticsRoomSummary`] |
+        /// | `/internal/diagnostics/workers` | Array of [`diagnostics::DiagnosticsWorkerSummary`] |
+        /// | `/internal/diagnostics/rooms/{uuid}` | [`diagnostics::DiagnosticsRoomDetail`] |
+        /// | `/internal/diagnostics/rooms/{uuid}/users` | Array of [`diagnostics::DiagnosticsUserSummary`] |
+        /// | `/internal/diagnostics/rooms/{uuid}/users/{id}` | [`diagnostics::DiagnosticsUserDetail`] |
         ///
-        /// | request | JSON response | parameter source |
-        /// | --- | --- | --- |
-        /// | `GET /internal/diagnostics/summary` | one [`diagnostics::DiagnosticsSummaryResponse`] | none |
-        /// | `GET /internal/diagnostics/rooms` | array of [`diagnostics::DiagnosticsRoomSummary`] | none |
-        /// | `GET /internal/diagnostics/workers` | array of [`diagnostics::DiagnosticsWorkerSummary`] | none |
-        /// | `GET /internal/diagnostics/rooms/{uuid}` | one [`diagnostics::DiagnosticsRoomDetail`] | `uuid` from the rooms response |
-        /// | `GET /internal/diagnostics/rooms/{uuid}/users` | array of [`diagnostics::DiagnosticsUserSummary`] | `uuid` from the rooms response |
-        /// | `GET /internal/diagnostics/rooms/{uuid}/users/{id}` | one [`diagnostics::DiagnosticsUserDetail`] | `uuid` from rooms and `userKey` from room users |
+        /// Use `uuid` from the rooms response and `userKey` from the room users
+        /// response. `userId` may be a number or string, while `userKey` is
+        /// always the string for `{id}`. URL-encode both path values.
         ///
-        /// `userId` may be a JSON number or string.
-        /// `userKey` is always the string to put into `{id}`.
-        /// URL-encode both path values before substitution.
-        ///
-        /// # Summary Request and Response over HTTPS
-        ///
-        /// ```text
+        /// ```http
         /// GET /internal/diagnostics/summary HTTP/1.1
         /// Host: o-sfu-observability.internal
         /// Authorization: Bearer <diagnostics-token>
         /// Accept: application/json
-        ///
-        /// HTTP/1.1 200 OK
-        /// Content-Type: application/json
-        ///
-        /// {
-        ///   "roomsActive": 1,
-        ///   "publicationsActive": 1,
-        ///   "recordingRoomsActive": 0,
-        ///   "usersActive": 2,
-        ///   "subscriptionsActive": 1,
-        ///   "transport": {
-        ///     "connectedUsers": 2,
-        ///     "disconnectedUsers": 0,
-        ///     "totalUsers": 2,
-        ///     "unknownUsers": 0
-        ///   }
-        /// }
         /// ```
         ///
-        /// # JavaScript Fetch Example
-        ///
-        /// ```javascript
-        /// const origin = "https://o-sfu-observability.internal";
-        /// const headers = {
-        ///   Authorization: `Bearer ${process.env.DIAGNOSTICS_AUTH_TOKEN}`,
-        /// };
-        ///
-        /// async function getJson(path) {
-        ///   const response = await fetch(`${origin}${path}`, { headers });
-        ///   if (!response.ok) {
-        ///     throw new Error(`${response.status} ${await response.text()}`);
-        ///   }
-        ///   return response.json();
-        /// }
-        ///
-        /// async function main() {
-        ///   const rooms = await getJson("/internal/diagnostics/rooms");
-        ///   const roomUuid = encodeURIComponent(rooms[0].uuid);
-        ///   const room = await getJson(`/internal/diagnostics/rooms/${roomUuid}`);
-        ///   const users = await getJson(`/internal/diagnostics/rooms/${roomUuid}/users`);
-        ///   const userKey = encodeURIComponent(users[0].userKey);
-        ///   const user = await getJson(
-        ///     `/internal/diagnostics/rooms/${roomUuid}/users/${userKey}`,
-        ///   );
-        ///
-        ///   console.log(room.summary, room.users, room.sources);
-        ///   console.log(user.user, user.recordingState);
-        /// }
-        ///
-        /// main().catch((error) => {
-        ///   console.error(error);
-        ///   process.exitCode = 1;
-        /// });
-        /// ```
-        ///
-        /// The rooms response has this shape.
-        ///
-        /// ```json
-        /// [
-        ///   {
-        ///     "createDate": "2026-07-15T10:20:30.000Z",
-        ///     "mediaWorkerId": 0,
-        ///     "publicationCount": 1,
-        ///     "recordingState": {
-        ///       "recording": false,
-        ///       "audio": false,
-        ///       "transcription": false,
-        ///       "video": false
-        ///     },
-        ///     "remoteAddress": "203.0.113.10",
-        ///     "sourceCount": 1,
-        ///     "userCount": 2,
-        ///     "subscriptionCount": 1,
-        ///     "transport": {
-        ///       "connectedUsers": 2,
-        ///       "disconnectedUsers": 0,
-        ///       "totalUsers": 2,
-        ///       "unknownUsers": 0
-        ///     },
-        ///     "uuid": "550e8400-e29b-41d4-a716-446655440000",
-        ///     "webRtcEnabled": true
-        ///   }
-        /// ]
-        /// ```
-        ///
-        /// The room users response has this shape.
-        ///
-        /// ```json
-        /// [
-        ///   {
-        ///     "audioIncomingBitrateBps": 32000,
-        ///     "cameraIncomingBitrateBps": 600000,
-        ///     "connectionId": 91,
-        ///     "health": "connected",
-        ///     "incomingBitrateBps": 632000,
-        ///     "mediaWorkerId": 0,
-        ///     "publicationCount": 2,
-        ///     "roomId": "550e8400-e29b-41d4-a716-446655440000",
-        ///     "screenIncomingBitrateBps": 0,
-        ///     "subscriptionCount": 1,
-        ///     "userId": 42,
-        ///     "userKey": "42"
-        ///   }
-        /// ]
-        /// ```
-        ///
-        /// The response structs below list every field in each payload.
-        /// Wire names are `camelCase` unless a field documents an exception.
-        ///
+        /// Wire names use `camelCase` unless a field documents an exception.
         /// User detail is room-scoped because the same user key can be active
         /// in several rooms.
         pub mod diagnostics {
