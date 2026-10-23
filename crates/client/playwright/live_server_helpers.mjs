@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -15,7 +16,10 @@ const ROOM_TOKEN_TTL_SECONDS = 30;
 const CONNECT_TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const HARNESS_URL = "/playwright/fixtures/harness.html";
 const STREAM_TYPES = new Set(["audio", "camera", "screen"]);
+// NOTE: Scenario RTC ports plus this offset must stay below Linux's default
+// ephemeral range (32768-60999), including the TCP listener at rtcMaxPort + 1.
 const TCP_PROJECT_PORT_OFFSET = 1000;
+const SERVER_STDERR_TAIL_LENGTH = 64 * 1024;
 
 export async function createChannel({
     authKey = TEST_AUTH_KEY,
@@ -762,33 +766,57 @@ export async function spawnLiveServer({
         {
             cwd: fileURLToPath(new URL("../", import.meta.url)),
             env,
-            stdio: "ignore"
+            stdio: ["ignore", "ignore", "pipe"]
         }
     );
+    let stderr = "";
+    // A bind failure can exit before HTTP starts. Wait for pipe closure
+    // to retain its error instead of hiding it behind the readiness timeout.
+    const closed = new Promise((resolve) => child.once("close", resolve));
+    const stop = async () => {
+        child.kill("SIGTERM");
+        await closed;
+    };
     const httpBaseUrl = `http://${host}:${bindPort}`;
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-        try {
-            const response = await fetch(`${httpBaseUrl}/v1/noop`);
-            if (response.ok) {
-                return {
-                    authKey,
-                    child,
-                    httpBaseUrl,
-                    stop: async () => {
-                        child.kill("SIGTERM");
-                        await onceExit(child);
-                    },
-                    wsUrl: `ws://${host}:${bindPort}/`
-                };
+    try {
+        // Spawn errors can leave stderr absent. Node emits spawn before stderr data.
+        await once(child, "spawn");
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk) => {
+            stderr = (stderr + chunk).slice(-SERVER_STDERR_TAIL_LENGTH);
+        });
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+            if (child.exitCode !== null || child.signalCode !== null) {
+                await closed;
+                throw new Error(
+                    `o-sfu test server on port ${bindPort} exited with code ${child.exitCode}` +
+                        ` and signal ${child.signalCode}:\n${stderr.trim()}`
+                );
             }
-        } catch (_error) {
-            void _error;
+            try {
+                const response = await fetch(`${httpBaseUrl}/v1/noop`);
+                if (response.ok) {
+                    return {
+                        authKey,
+                        child,
+                        httpBaseUrl,
+                        stop,
+                        wsUrl: `ws://${host}:${bindPort}/`
+                    };
+                }
+            } catch (_error) {
+                void _error;
+            }
+            await delay(500);
         }
-        await delay(500);
+        await stop();
+        throw new Error(
+            `o-sfu test server on port ${bindPort} did not become ready:\n${stderr.trim()}`
+        );
+    } catch (error) {
+        await stop();
+        throw error;
     }
-    child.kill("SIGTERM");
-    await onceExit(child);
-    throw new Error(`o-sfu test server on port ${bindPort} did not become ready`);
 }
 
 async function fetchRoomDiagnostics(httpBaseUrl, roomId) {
@@ -819,13 +847,4 @@ function signJwt(payload, keyB64) {
 
 function encodeJwtSegment(value) {
     return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-
-async function onceExit(child) {
-    if (child.exitCode !== null) {
-        return;
-    }
-    await new Promise((resolve) => {
-        child.once("exit", resolve);
-    });
 }
