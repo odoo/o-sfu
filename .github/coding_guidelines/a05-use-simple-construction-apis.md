@@ -1,8 +1,17 @@
 # A5. Use the simplest construction API
 
-Successful construction must establish the type's invariants. Use `new` when
-inputs are already valid and `try_new` when construction needs fallible
-validation. Reserve `Default` for one unsurprising canonical value and keep
+Successful construction must establish the type's invariants. Use `new` for
+infallible construction and `try_new` when construction can fail. Name additional
+modes `new_with_foo` or `try_new_with_foo`, where `foo` identifies the mode
+rather than listing its dependencies.
+
+Use `from_foo` for conversion from another representation of the same value.
+Pair it with `From` when the conversion is infallible, preserves meaning
+without loss and has one obvious interpretation. Use `TryFrom` when such a
+conversion can fail. Follow the standard library's
+[`From` contract](https://doc.rust-lang.org/std/convert/trait.From.html#when-to-implement-from).
+
+Reserve `Default` for one unsurprising canonical value and keep
 invariant-bearing fields private to preserve the guarantees of construction.
 Plain records may expose independent, unconstrained fields.
 

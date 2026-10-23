@@ -5,18 +5,36 @@ and modules provide context, so short names work when their scope makes the
 meaning clear. If a precise name requires a sentence, simplify the boundary it
 describes.
 
-Conversion names communicate both cost and ownership. Following the Rust API
-Guidelines' [conversion
+Name methods after comparable standard-library APIs. Conversion names
+communicate both cost and ownership. Following the Rust API Guidelines' [conversion
 conventions](https://rust-lang.github.io/api-guidelines/naming.html#c-conv), use
-`as_` for cheap views of the existing representation, `to_` for conversions that
-retain the source and `into_` for conversions that consume it.
+`as_` for cheap borrowed views, `to_` for conversions that retain the source
+and may allocate or do other work and `into_` for conversions that consume it.
+Match the receiver to that promise: borrow for views and retaining conversions
+and take `self` for consuming conversions. A `Copy` receiver may take `self`
+by value while leaving the caller's value usable. `into_` makes no promise
+about conversion cost.
+
+Give type lifetimes descriptive names such as `'packet` or `'session`. Use
+`'_` when the relationship needs no name. One or two short names are enough
+for a local input/output relationship or a bound such as `for<'a>`. Name each
+relationship when more lifetimes interact. Generic abstractions such as `Cow`
+may retain conventional short lifetime names.
+
+Keep generic parameter names short and tied to their role or main trait bound,
+such as `R: Read`, `W: Write` or `Req`. Use `T` or `U` when the API accepts
+arbitrary types. Name extension traits with an `Ext` suffix so callers can
+recognize methods added to another type.
 
 Make dependencies visible through explicit production imports and qualify
-generic names where context helps, as in `h264::Profile` or `fmt::Result`. Keep
-items private until callers need access, then grant only the required visibility.
+generic type names where context helps, as in `h264::Profile` or `fmt::Result`.
+For free functions and constants, follow
+[M6](m06-qualify-functions-and-constants-with-their-module.md). Keep items private
+until callers need access, then grant only the required visibility.
 
 > [!NOTE]
-> Further reading: **[visibility and privacy in the Rust Reference](https://doc.rust-lang.org/reference/visibility-and-privacy.html)**.
+> Further reading: **[naming conventions in Comprehensive Rust](https://google.github.io/comprehensive-rust/idiomatic/foundations-api-design/predictable-api/naming-conventions.html)**
+> and **[visibility and privacy in the Rust Reference](https://doc.rust-lang.org/reference/visibility-and-privacy.html)**.
 >
 > Related lints: [absolute_paths](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#absolute_paths),
 > [pedantic::enum_glob_use](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#enum_glob_use),
