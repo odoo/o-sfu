@@ -101,6 +101,7 @@ maintenance and sustains development velocity as the codebase grows.
 - [M3. Choose the simplest clear design](coding_guidelines/m03-choose-the-simplest-clear-design.md)
 - [M4. Keep related code together](coding_guidelines/m04-keep-related-code-together.md)
 - [M5. Define shared decisions once](coding_guidelines/m05-define-shared-decisions-once.md)
+- [M6. Qualify functions and constants with their module](coding_guidelines/m06-qualify-functions-and-constants-with-their-module.md)
 
 ## Repository guidelines
 
