@@ -12,6 +12,7 @@ const FIREFOX = {
         }
     }
 };
+const clientPort = process.env.O_SFU_CLIENT_TEST_PORT ?? "4173";
 
 export default defineConfig({
     testDir: "./playwright",
@@ -19,7 +20,7 @@ export default defineConfig({
     outputDir: "./output/playwright/results",
     reporter: [["list"]],
     use: {
-        baseURL: "http://127.0.0.1:4173",
+        baseURL: `http://127.0.0.1:${clientPort}`,
         headless: true,
         screenshot: "only-on-failure",
         trace: "retain-on-failure",
@@ -44,7 +45,7 @@ export default defineConfig({
             command: "node ./playwright/serve_client.mjs",
             reuseExistingServer: true,
             timeout: 10_000,
-            url: "http://127.0.0.1:4173/playwright/fixtures/harness.html"
+            url: `http://127.0.0.1:${clientPort}/playwright/fixtures/harness.html`
         },
         {
             // Keep RTC listeners below Linux's default ephemeral range so

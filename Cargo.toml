@@ -10,7 +10,9 @@ members = [
     "tests/core-room",
     "tests/fuzz",
     "tests/proofs",
+    "tests/signaling-proxy",
 ]
+# Chaos checks the proxy separately with Rust 1.96.
 default-members = [
     ".",
     "crates/core",
@@ -65,6 +67,7 @@ tokio = { version = "1.52", features = [
 tokio-tungstenite = "0.30"
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
 thiserror = "2.0"
 
 [workspace.lints.rust]

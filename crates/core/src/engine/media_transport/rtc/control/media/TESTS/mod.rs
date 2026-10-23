@@ -1226,18 +1226,44 @@ fn selected_rid_gate_waits_for_a_keyframe_despite_recent_packet_liveness() {
 }
 
 #[test]
-fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict() {
+fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict()
+-> Result<(), &'static str> {
     let mut route = prepare_pending_selected_rid_route();
+    let old_consumer_media = route
+        .state
+        .routes
+        .local_route(route.src_media)
+        .and_then(|entry| entry.destinations.first())
+        .map(|destination| destination.dest_transport_media_id)
+        .ok_or("selected RID fixture should have a destination")?;
+    route
+        .state
+        .remove_consumer_route(&route.consumer_session, old_consumer_media, route.src_media);
+    let now = Instant::now();
+    assert!(!route.observe_rid_ready(route.fallback_rid, true, now));
+    let consumer_media = install_video_route_with_gate(
+        &mut route.state,
+        route.src_media,
+        &route.consumer_session,
+        Mid::from("cam-down"),
+        PacketLayerGate::Open,
+    );
+    let consumer_route = TransportConsumerRoute::new(
+        route.consumer_session.clone(),
+        consumer_media,
+        TransportSourceKey::new(route.source_session.clone(), route.src_media),
+    );
+    set_consumer_packet_gate_at(
+        &mut route.state,
+        &consumer_route,
+        PacketLayerGate::Rid(route.selected_rid),
+        now + Duration::from_millis(1),
+    );
     route.assert_packet_gate(
         PacketLayerGate::Block,
         Some(PacketLayerGate::Rid(route.selected_rid)),
     );
-    assert_eq!(
-        route.state.routes.effective_packet_gate(route.src_media),
-        Some(PacketLayerGate::Block)
-    );
 
-    let now = Instant::now();
     assert_eq!(
         route.state.routes.track_kf_req(
             route.src_media,
@@ -1249,7 +1275,7 @@ fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict() {
         KeyframeRequestDecision::Forward
     );
 
-    assert!(!route.observe_rid_ready(route.fallback_rid, false, now));
+    assert!(!route.observe_rid_ready(route.fallback_rid, false, now + Duration::from_millis(10)));
 
     route.assert_packet_gate(
         PacketLayerGate::Block,
@@ -1260,10 +1286,19 @@ fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict() {
         Some(PacketLayerGate::Block)
     );
 
-    assert!(drain_ready_sessions(&mut route.state).is_empty());
-    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 0);
+    assert_eq!(
+        drain_ready_sessions(&mut route.state),
+        vec![route.source_session.clone()]
+    );
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 1);
+    assert!(
+        route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, Some(route.fallback_rid))
+    );
 
-    assert!(route.observe_rid_ready(route.fallback_rid, true, now + Duration::from_millis(10)));
+    assert!(route.observe_rid_ready(route.fallback_rid, true, now + Duration::from_millis(20)));
 
     route.assert_packet_gate(
         PacketLayerGate::Rid(route.fallback_rid),
@@ -1277,7 +1312,27 @@ fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict() {
         drain_ready_sessions(&mut route.state),
         vec![route.source_session.clone()]
     );
-    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 1);
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);
+    assert!(
+        !route
+            .state
+            .routes
+            .has_local_kf_demand(route.src_media, Some(route.fallback_rid))
+    );
+    retry_source_kf(
+        &mut route.state,
+        &route.rtc_metrics,
+        SourceKeyframeRequest {
+            src_media: route.src_media,
+            rid: Some(route.fallback_rid),
+            kind: KeyframeRequestKind::Pli,
+        },
+        now + Duration::from_secs(1),
+    );
+    assert!(!route.observe_rid_ready(route.fallback_rid, false, now + Duration::from_secs(1)));
+    assert!(drain_ready_sessions(&mut route.state).is_empty());
+    assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);
+    Ok(())
 }
 
 #[test]

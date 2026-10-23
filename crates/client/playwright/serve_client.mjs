@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PORT = 4173;
+const PORT = Number(process.env.O_SFU_CLIENT_TEST_PORT ?? 4173);
 const CLIENT_ROOT = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const MIME_TYPE = {
     ".css": "text/css; charset=utf-8",

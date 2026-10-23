@@ -88,6 +88,12 @@ impl DecoderDelivery {
         self.pending_gate
     }
 
+    /// A blocked explicit selection needs a fresh frame from an available fallback RID.
+    pub(in crate::engine::media_transport::rtc) fn needs_fallback_refresh(&self) -> bool {
+        self.effective_gate == PacketLayerGate::Block
+            && matches!(self.pending_gate, Some(PacketLayerGate::Rid(_)))
+    }
+
     pub(in crate::engine::media_transport::rtc) const fn generation(&self) -> u64 {
         self.generation
     }

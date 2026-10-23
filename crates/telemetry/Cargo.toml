@@ -31,7 +31,7 @@ time.workspace = true
 tracing.workspace = true
 tracing-opentelemetry = { version = "0.34", optional = true }
 tracing-serde = "0.2"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
 
 [lints]
 workspace = true

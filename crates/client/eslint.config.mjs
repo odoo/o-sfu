@@ -62,7 +62,9 @@ export default defineConfig([
             "test/**/*.mjs",
             "playwright/**/*.js",
             "playwright/**/*.mjs",
-            "eslint.config.mjs"
+            "chaos/**/*.js",
+            "chaos/**/*.mjs",
+            "*.config.mjs"
         ],
         languageOptions: {
             globals: {

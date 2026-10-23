@@ -157,14 +157,13 @@ const RTP_TIMESTAMP_OFFSET: usize = 4;
 const RTP_SSRC_OFFSET: usize = 8;
 const RTP_CSRC_BYTES: usize = 4;
 
+// RTCP header fields from RFC 3550 section 6.4.1:
+// <https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1>
 /// RTCP common-header length in bytes.
-///
-/// Reference: <https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1>
 const RTCP_COMMON_HEADER_BYTES: usize = 4;
-
+/// RTCP length field follows the flags/count and packet-type octets.
+const RTCP_LENGTH_OFFSET: usize = 2;
 /// SSRC field length in an RTCP packet.
-///
-/// Reference: <https://www.rfc-editor.org/rfc/rfc3550.html#section-6.4.1>
 const RTCP_SSRC_BYTES: usize = 4;
 
 /// Length of an RTCP Receiver Report with no report blocks.
@@ -1568,6 +1567,8 @@ pub const fn is_rtcp_mux_dynamic_payload_type(payload_type: u8) -> bool {
 ///
 /// The packet must contain the first two header octets plus one body octet,
 /// matching the minimum boundary used before complete RTP or RTCP parsing.
+/// Both marker-bit values for payload types 64 through 95 select RTCP.
+/// This candidate check does not validate complete datagram framing.
 ///
 /// Reference: <https://www.rfc-editor.org/rfc/rfc5761.html#section-4>
 #[must_use]
@@ -1602,6 +1603,10 @@ pub fn parse_muxed_rtp_fixed_header(packet: &[u8]) -> Option<RtpFixedHeader> {
     if classify_rtp_rtcp_mux(packet) != Some(RtpRtcpMuxPacketKind::Rtp) {
         return None;
     }
+    parse_rtp_fixed_header(packet)
+}
+
+fn parse_rtp_fixed_header(packet: &[u8]) -> Option<RtpFixedHeader> {
     let first = *packet.first()?;
     let second = *packet.get(1)?;
     let header = RtpFixedHeader {
@@ -1616,6 +1621,31 @@ pub fn parse_muxed_rtp_fixed_header(packet: &[u8]) -> Option<RtpFixedHeader> {
     };
     packet.get(..header.extension_offset())?;
     Some(header)
+}
+
+pub(crate) fn classify_datagram(packet: &[u8]) -> Option<RtpRtcpMuxPacketKind> {
+    let first = *packet.first()?;
+    if first & RTP_VERSION_MASK != RTP_VERSION_HEADER_BITS {
+        return None;
+    }
+    let second = *packet.get(1)?;
+    // Inspect the full octet here. The looser ingress candidate helper also
+    // reserves unmarked payload types 64..=95 and has a different contract.
+    let rtcp_start = RTP_MARKER_MASK | RTP_RTCP_MUX_FORBIDDEN_PAYLOAD_TYPE_START;
+    let rtcp_end = RTP_MARKER_MASK | RTP_RTCP_MUX_FORBIDDEN_PAYLOAD_TYPE_END;
+    if (rtcp_start..=rtcp_end).contains(&second) {
+        let words = read_u16(packet, RTCP_LENGTH_OFFSET)?;
+        let bytes = (usize::from(words) + 1) * mem::size_of::<u32>();
+        // SRTCP encrypts after the sender SSRC and adds a trailer, so only
+        // the initial RTCP packet can be sized without the security context.
+        return (bytes >= RTCP_COMMON_HEADER_BYTES + RTCP_SSRC_BYTES && packet.len() >= bytes)
+            .then_some(RtpRtcpMuxPacketKind::Rtcp);
+    }
+    let header = parse_rtp_fixed_header(packet)?;
+    if header.has_extension() {
+        header_extension::block(packet, header.extension_offset())?;
+    }
+    Some(RtpRtcpMuxPacketKind::Rtp)
 }
 
 /// Expands one Generic NACK PID and bitmask into requested RTP sequence
@@ -1851,20 +1881,10 @@ pub mod header_extension {
         if !header.has_extension() {
             return None;
         }
-        let extension_offset = header.extension_offset();
-        let profile = super::read_u16(packet, extension_offset)?;
+        let (profile, mut elements) = block(packet, header.extension_offset())?;
         if profile != ONE_BYTE_PROFILE_ID {
             return None;
         }
-        let word_count = super::read_u16(
-            packet,
-            extension_offset.checked_add(super::mem::size_of::<u16>())?,
-        )?;
-        let elements_offset = extension_offset.checked_add(HEADER_BYTES)?;
-        let elements_bytes = usize::from(word_count).checked_mul(WORD_BYTES)?;
-        let mut elements =
-            packet.get(elements_offset..elements_offset.checked_add(elements_bytes)?)?;
-
         while let Some((&element_header, rest)) = elements.split_first() {
             elements = rest;
             if element_header == ONE_BYTE_ID_PAD {
@@ -1883,6 +1903,16 @@ pub mod header_extension {
             }
         }
         None
+    }
+
+    pub(super) fn block(packet: &[u8], offset: usize) -> Option<(u16, &[u8])> {
+        let profile = super::read_u16(packet, offset)?;
+        let word_count =
+            super::read_u16(packet, offset.checked_add(super::mem::size_of::<u16>())?)?;
+        let elements_offset = offset.checked_add(HEADER_BYTES)?;
+        let elements_bytes = usize::from(word_count).checked_mul(WORD_BYTES)?;
+        let elements = packet.get(elements_offset..elements_offset.checked_add(elements_bytes)?)?;
+        Some((profile, elements))
     }
 }
 

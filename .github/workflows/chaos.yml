@@ -1,0 +1,117 @@
+name: Chaos
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - .github/actions/setup-rust/**
+      - .github/workflows/chaos.yml
+      - Cargo.lock
+      - Cargo.toml
+      - crates/client/chaos/**
+      - crates/client/playwright*.config.mjs
+      - crates/client/playwright/**
+      - crates/client/package.json
+      - crates/client/package-lock.json
+      - crates/rfc/**
+      - tests/signaling-proxy/**
+      - rust-toolchain.toml
+      - rustfmt.toml
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signaling-chaos-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: chromium
+            browser: chromium
+          - project: firefox
+            browser: firefox
+          - project: chromium-tcp
+            browser: chromium
+          - project: firefox-tcp
+            browser: firefox
+
+    defaults:
+      run:
+        working-directory: crates/client
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Install signaling proxy toolchain
+        working-directory: tests/signaling-proxy
+        run: rustup toolchain install --profile minimal --no-self-update
+
+      - name: Install signaling proxy Clippy
+        if: matrix.project == 'chromium'
+        working-directory: tests/signaling-proxy
+        run: rustup component add clippy
+
+      - name: Install nightly formatter
+        if: matrix.project == 'chromium'
+        run: rustup toolchain install nightly --profile minimal --component rustfmt --no-self-update
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: chaos
+          workspaces: . -> target
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/client/package-lock.json
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Verify signaling proxy
+        if: matrix.project == 'chromium'
+        working-directory: tests/signaling-proxy
+        run: |
+          cargo +nightly fmt -p o-sfu-signaling-proxy --check
+          cargo clippy --locked -p o-sfu-signaling-proxy --all-targets -- -D warnings
+          cargo test --locked -p o-sfu-signaling-proxy
+
+      - name: Build signaling proxy
+        working-directory: tests/signaling-proxy
+        run: cargo build --locked -p o-sfu-signaling-proxy
+
+      - name: Run signaling chaos tests
+        run: npm run test:chaos -- --project=${{ matrix.project }} --workers=2
+
+      - name: Upload Chaos report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
+        with:
+          name: chaos-report-${{ matrix.project }}
+          path: crates/client/output/chaos
+          retention-days: 14
