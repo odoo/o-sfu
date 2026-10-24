@@ -17,6 +17,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(target_os = "linux")]
+use std::{future::Future, io, mem::ManuallyDrop};
 
 use o_sfu_rfc::tcp_framing::TcpFrame;
 use tokio::{
@@ -111,14 +113,16 @@ impl PacketLoopStartup {
             return;
         }
         started.set(true);
-        super::run_packet_loop(
+        // The inline UDP send batch enlarges the packet-loop future. Allocate
+        // it once at worker startup instead of boxing each output flush.
+        Box::pin(super::run_packet_loop(
             self.config,
             shared_socket,
             self.bitrate_registry,
             self.snapshot_state,
             self.inputs,
             self.ufrag_worker_map,
-        )
+        ))
         .await;
     }
 }
@@ -209,7 +213,15 @@ fn spawn_io_uring_packet_loop(
         .spawn(move || {
             let started = Cell::new(false);
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                tokio_uring::start(startup.run(RtcUdpIoBackend::IoUring, startup_tx, &started));
+                if let Err(error) =
+                    run_io_uring(startup.run(RtcUdpIoBackend::IoUring, startup_tx, &started))
+                {
+                    warn!(
+                        ?media_worker_id,
+                        ?error,
+                        "failed to boot rtc packet loop io_uring runtime"
+                    );
+                }
             }));
             mark_thread_exit(
                 &terminal,
@@ -222,6 +234,19 @@ fn spawn_io_uring_packet_loop(
         })
         .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
     wait_for_packet_loop_startup(thread, &startup_rx)
+}
+
+/// Retains the runtime and its sockets until process exit if `future` panics.
+///
+/// Returns [`io::Error`] if the `io_uring` runtime cannot start.
+#[cfg(target_os = "linux")]
+fn run_io_uring<F: Future>(future: F) -> io::Result<F::Output> {
+    // tokio-uring 0.5 drops retained operation buffers before canceling them.
+    // Skip teardown on unwind so the kernel cannot access freed send storage.
+    let runtime = ManuallyDrop::new(tokio_uring::Runtime::new(&tokio_uring::builder())?);
+    let output = runtime.block_on(future);
+    drop(ManuallyDrop::into_inner(runtime));
+    Ok(output)
 }
 
 fn mark_thread_exit(
@@ -693,3 +718,7 @@ fn backlog_pressure_score(backlog_depth: usize, capacity: usize) -> u8 {
     let score = backlog_depth.saturating_mul(100) / capacity;
     u8::try_from(score.min(100)).unwrap_or(100)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "TESTS/runtime.rs"]
+mod runtime_tests;
