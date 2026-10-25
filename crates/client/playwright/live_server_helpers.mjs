@@ -341,6 +341,20 @@ export async function setStreamDownload(
     );
 }
 
+export async function setStreamLayout(page, targetSessionId, streamType, layout) {
+    assertStreamType(streamType);
+    await page.evaluate(
+        ({ layout, streamType, targetSessionId }) => {
+            const harness = globalThis.__liveHarness;
+            if (!harness.client) {
+                throw new Error("browser harness client is not connected");
+            }
+            harness.client.subscribe(targetSessionId, { [`${streamType}Layout`]: layout });
+        },
+        { layout, streamType, targetSessionId }
+    );
+}
+
 export async function pauseStream(page, streamType) {
     assertStreamType(streamType);
     await page.evaluate((streamType) => {

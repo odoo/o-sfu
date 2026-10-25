@@ -292,6 +292,7 @@ pub struct PeerSnapshot {
 /// this is client intent, not a transport subscription object
 /// missing fields mean the current receiver preference for that stream or
 /// layout should be left unchanged
+/// [`VideoLayoutIntent::Automatic`] resets a layout to the source default
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DownloadStates {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -326,6 +327,11 @@ impl DownloadStates {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VideoLayoutIntent {
+    /// source default treatment, as if no layout had been selected
+    ///
+    /// clears an earlier explicit layout so the room applies the source's
+    /// automatic policy again, such as active-speaker promotion for cameras
+    Automatic,
     /// main speaker or call focus
     Featured,
     /// user-pinned stream protected more strongly than ordinary thumbnails

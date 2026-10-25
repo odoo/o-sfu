@@ -52,6 +52,9 @@ const bundleInfo: BundleInfo = __info__;
 const message: JsonValue = { type: "reaction", value: "raised-hand" };
 
 client.broadcast(message);
+client.subscribe("remote-session", { cameraLayout: "automatic", screenLayout: "automatic" });
+// @ts-expect-error Layouts must be known video layout intents.
+client.subscribe("remote-session", { cameraLayout: "floating" });
 
 client.addEventListener("stateChange", (event) => {
     const nextState: ConnectionState = event.detail.state;

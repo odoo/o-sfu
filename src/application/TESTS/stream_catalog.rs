@@ -108,6 +108,7 @@ fn assert_camera_policy(intent: &SourcePublishIntent) {
             .map(|layout| layout.resolve(Some(VideoLayoutIntent::Pinned), true)),
         Some(SourceRoomPolicySelector::Pinned)
     );
+    assert_automatic_layout_matches_no_preference(policy);
 }
 
 fn assert_screen_policy(intent: &SourcePublishIntent) {
@@ -129,4 +130,24 @@ fn assert_screen_policy(intent: &SourcePublishIntent) {
         policy.layout().map(|layout| layout.resolve(None, true)),
         Some(SourceRoomPolicySelector::ReadableDetail)
     );
+    assert_eq!(
+        policy
+            .layout()
+            .map(|layout| layout.resolve(Some(VideoLayoutIntent::Hidden), false)),
+        Some(SourceRoomPolicySelector::Hidden)
+    );
+    assert_automatic_layout_matches_no_preference(policy);
+}
+
+fn assert_automatic_layout_matches_no_preference(policy: SourcePolicy) {
+    for active_speaker in [false, true] {
+        assert_eq!(
+            policy
+                .layout()
+                .map(|layout| layout.resolve(Some(VideoLayoutIntent::Automatic), active_speaker)),
+            policy
+                .layout()
+                .map(|layout| layout.resolve(None, active_speaker)),
+        );
+    }
 }
