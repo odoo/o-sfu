@@ -2,7 +2,7 @@
 
 This document is the operator contract for running `o-sfu` as the Odoo Discuss SFU.
 
-(for Odoo development, refer to [Odoo SFU Dev Deployment Guide](/.github/odoo_setup.md))
+(for Odoo development, refer to [Odoo SFU Dev Deployment Guide](odoo_setup.md))
 
 ## typical traffic model
 
@@ -21,7 +21,7 @@ A single `o-sfu` deployment can serve many independent tenants, such as
 different Odoo databases. Configure each database with the same public SFU URL
 and shared server key shown below. Calls use separate, independently
 authenticated rooms. The shared server key belongs only to trusted Odoo
-backends. See [Multi-Tenant Segregation](/SECURITY.md#multi-tenant-segregation)
+backends. See [Multi-Tenant Segregation](../SECURITY.md#multi-tenant-segregation)
 for the security model.
 
 > [!WARNING]
@@ -73,7 +73,7 @@ TELEMETRY_DEPLOYMENT_ENVIRONMENT=production
 
 ## security
 
-see [SECURITY.md](SECURITY.md) for privacy and vulnerability reporting
+see [SECURITY.md](../SECURITY.md) for privacy and vulnerability reporting
 
 ### credentials
 
@@ -221,7 +221,7 @@ the server asset contains the release Linux `o-sfu` binary
 the client JavaScript asset is the Odoo-compatible `odoo_sfu.js` bundle with
 embedded WASM. the same-basename declaration asset carries its public types and
 API documentation for TypeScript and editor tooling. see the
-[client API reference](crates/client/API.md)
+[client API reference](../crates/client/API.md)
 
 the SBOM asset is extracted from the version-tag container image SBOM
 

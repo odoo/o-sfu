@@ -24,7 +24,7 @@
    and approve the `release` environment if prompted. Wait for all jobs to pass.
 6. Confirm the GitHub release has its assets and
    `ghcr.io/odoo/o-sfu:v0.11.5` is available. `latest` follows the latest
-   non-prerelease release. Follow [deployment verification](../DEPLOYMENT.md#release-integrity)
+   non-prerelease release. Follow [deployment verification](../doc/deployment.md#release-integrity)
    before rollout.
 
 The workflow creates the GitHub release. Do not create it manually.

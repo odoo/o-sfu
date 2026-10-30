@@ -430,7 +430,7 @@ jobs:
 
           the container SBOM is attached to this release as \`${{ steps.release.outputs.sbom_asset }}\`
 
-          Read the [DEPLOYMENT.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/DEPLOYMENT.md) for more information.
+          Read the [deployment.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/doc/deployment.md) for more information.
 
           EOF
           } > release/notes.md

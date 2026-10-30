@@ -1,8 +1,8 @@
 # Odoo SFU Dev Deployment Guide
 
-This document explains how to set up the SFU server for Odoo development. It is not intended as a general deployment guide. For general deployment instructions, see [DEPLOYMENT](/DEPLOYMENT.md).
+This document explains how to set up the SFU server for Odoo development. It is not intended as a general deployment guide. For general deployment instructions, see [DEPLOYMENT](deployment.md).
 
-Before starting, you may want to read [CONTRIBUTING.md](/.github/CONTRIBUTING.md) and the [coding guidelines](/.github/coding_guidelines.md).
+Before starting, you may want to read [CONTRIBUTING.md](../.github/CONTRIBUTING.md) and the [coding guidelines](coding_guidelines.md).
 ## Prerequisites
 
 1. Install the [Rust toolchain](https://rust-lang.org/tools/install/):
