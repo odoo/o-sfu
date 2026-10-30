@@ -109,6 +109,7 @@ async fn protocol_core_replays_latest_subscribe_after_real_rtc_server_recovery()
     );
     assert!(peer_reached_state(&bob, BundleConnectionState::Recovering));
     assert!(peer_reached_state(&bob, BundleConnectionState::Connected));
+    server.shutdown().await;
     Ok(())
 }
 
@@ -208,12 +209,13 @@ async fn protocol_core_recording_requests_resolve_as_unsupported_without_backend
         consume_peer_info_update(&mut peer, UserId::Integer(63), info.snapshot_complete()).await,
         "ordinary info update should return after recording refusals",
     )?;
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_replays_latest_info_after_real_server_recovery() -> TestResult {
-    let (_server, _channel, mut alice, mut bob) =
+    let (server, _channel, mut alice, mut bob) =
         Box::pin(recovery_peers(UserId::Integer(71), UserId::Integer(72))).await?;
 
     require_some(
@@ -268,12 +270,13 @@ async fn protocol_core_replays_latest_info_after_real_server_recovery() -> TestR
     );
     assert!(peer_reached_state(&bob, BundleConnectionState::Recovering));
     assert!(peer_reached_state(&bob, BundleConnectionState::Connected));
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_replays_latest_publish_after_real_server_recovery() -> TestResult {
-    let (_server, _channel, mut alice, mut bob) =
+    let (server, _channel, mut alice, mut bob) =
         Box::pin(recovery_peers(UserId::Integer(81), UserId::Integer(82))).await?;
 
     require_some(
@@ -298,5 +301,6 @@ async fn protocol_core_replays_latest_publish_after_real_server_recovery() -> Te
         .await,
         "publisher recovery should replay camera publish",
     )?;
+    server.shutdown().await;
     Ok(())
 }

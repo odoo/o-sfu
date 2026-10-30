@@ -269,10 +269,10 @@ impl MediaTransport {
         effect: &TransportRelayRouteEffect,
     ) -> Result<(), TransportAdapterError> {
         if effect.action == TransportRelayRouteAction::Release {
-            self.teardown([TransportTeardown::ReleaseRelayRoute {
-                source: effect.source.clone(),
-                target_media_worker_id: effect.target_media_worker_id,
-            }])
+            self.teardown([TransportTeardown::release_relay_route(
+                effect.source.clone(),
+                effect.target_media_worker_id,
+            )])
             .await;
             return Ok(());
         }

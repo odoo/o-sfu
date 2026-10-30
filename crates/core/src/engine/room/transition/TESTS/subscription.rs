@@ -628,9 +628,7 @@ async fn relay_setup_failure_releases_pending_setup_for_retry() {
         .transport_user_key(&publisher_id, publisher_connection_id)
         .await;
     media_transport
-        .teardown([TransportTeardown::CloseSession {
-            session_key: publisher_session_key,
-        }])
+        .teardown([TransportTeardown::close_session(publisher_session_key)])
         .await;
 
     commit_scalable_video(

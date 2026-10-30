@@ -1,6 +1,7 @@
 use super::{output::RoomOutputPlan, transport::RoomTransportPlan};
 use crate::engine::{
     media_transport::MediaTransport,
+    obligation::Obligation,
     room::{
         Room, SourcePolicyGuard,
         media_graph::{
@@ -89,12 +90,15 @@ impl<'a> RoomEffectContext<'a> {
 ///
 /// Publication commits return [`PublicationEffects`] so their execution requires
 /// the source-policy guard held since the state commit.
+/// A nonempty batch retains its obligation until transport, policy and output
+/// finish. Cancellation after transport still leaves the batch unfinished.
 #[derive(Debug, Default)]
 #[must_use = "room effect batches must be executed after the state transition commits"]
 pub struct RoomEffects {
     transport: RoomTransportPlan,
     output: RoomOutputPlan,
     source_policy: SourcePolicyTurn,
+    obligation: Option<Obligation>,
 }
 
 /// Requires the source-policy guard held continuously from the publication commit.
@@ -107,13 +111,20 @@ pub(in crate::engine::room) struct PublicationEffects {
 }
 
 impl RoomEffects {
+    fn pending() -> Self {
+        Self {
+            obligation: Some(Obligation::new("room effects")),
+            ..Self::default()
+        }
+    }
+
     pub(in crate::engine::room) fn from_join(
         effects: LifecycleEffects,
         transport_plan: RoomTransportPlan,
     ) -> Self {
         let mut batch = Self {
             transport: transport_plan,
-            ..Self::default()
+            ..Self::pending()
         };
         batch.source_policy.request();
         batch.output.lifecycle = effects;
@@ -121,7 +132,7 @@ impl RoomEffects {
     }
 
     pub(in crate::engine::room) fn from_connection_close(commit: ConnectionCloseCommit) -> Self {
-        let mut batch = Self::default();
+        let mut batch = Self::pending();
         match commit {
             ConnectionCloseCommit::Current {
                 session_teardown,
@@ -144,7 +155,7 @@ impl RoomEffects {
     pub(in crate::engine::room) fn from_disconnect(commit: DisconnectCommit) -> Self {
         let mut batch = Self {
             transport: commit.transport_plan,
-            ..Self::default()
+            ..Self::pending()
         };
         batch.source_policy.request();
         batch.output.lifecycle = commit.effects;
@@ -153,14 +164,14 @@ impl RoomEffects {
     }
 
     pub(in crate::engine::room) fn from_presence(commit: PresenceCommit) -> Self {
-        let mut batch = Self::default();
+        let mut batch = Self::pending();
         batch.output.user_info = Some(commit.fanout);
         batch.source_policy.request();
         batch
     }
 
     pub(in crate::engine::room) fn from_publish(commit: PublishCommit) -> PublicationEffects {
-        let mut batch = Self::default();
+        let mut batch = Self::pending();
         batch
             .transport
             .push_receiver_work(commit.receiver_route_work, ConsumerSetupOrigin::Publish);
@@ -184,7 +195,7 @@ impl RoomEffects {
             presence,
         } = commit;
         let policy_before_transport = update.activity().is_active();
-        let mut batch = Self::default();
+        let mut batch = Self::pending();
         batch
             .transport
             .extend_remote_source_activity(remote_activity_effects);
@@ -216,7 +227,7 @@ impl RoomEffects {
     }
 
     fn from_receiver_route(work: ReceiverRouteWork, origin: ConsumerSetupOrigin) -> Self {
-        let mut batch = Self::default();
+        let mut batch = Self::pending();
         batch.transport.push_receiver_work(work, origin);
         batch
     }
@@ -232,6 +243,10 @@ impl RoomEffects {
             .execute(room, context.media_transport(), None)
             .await;
         output.emit_after_policy();
+        // Teardown completion does not discharge the remaining policy and output work.
+        if let Some(obligation) = self.obligation {
+            obligation.complete();
+        }
     }
 }
 
@@ -256,5 +271,12 @@ impl PublicationEffects {
             .execute_guarded(guard, context.media_transport(), None)
             .await;
         output.emit_after_policy();
+        if let Some(obligation) = self.batch.obligation {
+            obligation.complete();
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "TESTS/batch.rs"]
+mod tests;

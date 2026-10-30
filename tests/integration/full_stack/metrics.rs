@@ -91,7 +91,7 @@ async fn fake_rtc_peer_room_stats_and_gauges_follow_lifecycle() -> s::TestResult
     mt::wait_for_room_gauges(&server, mt::RoomGaugeValues::default())
         .await
         .expect("room gauges should converge");
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -115,7 +115,7 @@ async fn fake_rtc_peers_export_transport_lifetimes_after_teardown() -> s::TestRe
 
     assert_eq!(lifetime_metrics.count, 2);
     assert!(lifetime_metrics.sum_seconds > 0.0);
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -181,5 +181,5 @@ async fn fake_rtc_peers_export_transport_and_rtp_metrics_during_live_media() -> 
             - during_live_metrics.transport_health_transitions_connected_to_unset,
         2
     );
-    Ok(())
+    server.join().await
 }

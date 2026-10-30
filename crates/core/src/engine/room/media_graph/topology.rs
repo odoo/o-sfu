@@ -589,18 +589,18 @@ impl RoomTopology {
     ) -> impl Iterator<Item = TransportTeardown> {
         sources
             .into_iter()
-            .map(|source| TransportTeardown::RemoveMedia {
-                session_key: source.session_key().clone(),
-                transport_media_id: source.transport_media_id(),
+            .map(|source| {
+                TransportTeardown::remove_media(
+                    source.session_key().clone(),
+                    source.transport_media_id(),
+                )
             })
-            .chain(
-                routes
-                    .into_iter()
-                    .map(|route| TransportTeardown::RemoveMedia {
-                        session_key: route.consumer_session_key().clone(),
-                        transport_media_id: route.consumer_transport_media_id(),
-                    }),
-            )
+            .chain(routes.into_iter().map(|route| {
+                TransportTeardown::remove_media(
+                    route.consumer_session_key().clone(),
+                    route.consumer_transport_media_id(),
+                )
+            }))
     }
 
     /// Advances the revision only when the exact source connection changes activity.
@@ -683,9 +683,7 @@ impl RoomTopology {
         let replacement_transport_plan = previous_session_key.as_ref().map_or_else(
             RoomTransportPlan::default,
             |replaced_session_key| {
-                let close_session = TransportTeardown::CloseSession {
-                    session_key: replaced_session_key.clone(),
-                };
+                let close_session = TransportTeardown::close_session(replaced_session_key.clone());
                 // Session close removes source media while subscriber routes need
                 // explicit teardown.
                 let (_, removed_sources) = self.detach_user_sources(user_id);

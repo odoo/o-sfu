@@ -12,6 +12,7 @@
 //! RTC workers or room-state internals.
 
 pub mod media_transport;
+pub(crate) mod obligation;
 mod observability;
 pub mod packet_sink_registry;
 pub mod room;

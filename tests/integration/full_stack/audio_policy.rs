@@ -43,7 +43,7 @@ macro_rules! opus_vad_test {
                 .await;
             }
             assert_opus_vad_flow(&mut peers, $level, $voice_activity, $state, $reason).await;
-            Ok(())
+            peers.server.join().await
         }
     };
 }

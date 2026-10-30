@@ -84,10 +84,10 @@ impl ReceiverSetupTurn {
                 let _ = sender.send_remote_tracks(track_snapshot);
             }
             ConsumerSetupOutcome::Released(route, relays) => {
-                let teardown = [TransportTeardown::RemoveMedia {
-                    session_key: route.consumer_session_key().clone(),
-                    transport_media_id: route.consumer_transport_media_id(),
-                }];
+                let teardown = [TransportTeardown::remove_media(
+                    route.consumer_session_key().clone(),
+                    route.consumer_transport_media_id(),
+                )];
                 execute_relays_and_teardown(media_transport, relays, teardown).await;
             }
         }

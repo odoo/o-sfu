@@ -4,13 +4,16 @@
     reason = "transition tests fail loudly when fixed room setup is invalid"
 )]
 
-use std::sync::Arc;
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::Arc,
+};
 
 use o_sfu_router::{
     rtp::MediaCapabilities, test_support::rtp_samples::sample_simulcast_video_rtp_parameters,
 };
 
-use super::PublishStageOutcome;
+use super::{PublishStageOutcome, StagedPublish};
 use crate::engine::{
     ConnectionId, TestSourceKind, UserId, UserPermissions,
     media_transport::{
@@ -104,21 +107,101 @@ async fn staged_media_id(
 }
 
 #[tokio::test]
-#[should_panic(expected = "publish reservation dropped while still reserved")]
+#[should_panic(expected = "unfinished lifecycle obligation: staged publication")]
 async fn dropping_staged_publish_diagnoses_unreleased_reservation() {
     let (room, _media_transport, user_id, connection_id) = staged_room().await;
-    let staged = {
-        let mut state = room.state.write().await;
-        state
-            .staged_publishes
-            .take(
-                &user_id,
-                connection_id,
-                &stream_id_for_source(TestSourceKind::ScalableVideo),
-            )
-            .expect("test publish should be staged")
-    };
+    let staged = take_staged_publish(&room, &user_id, connection_id).await;
     drop(staged);
+}
+
+async fn take_staged_publish(
+    room: &Room,
+    user_id: &UserId,
+    connection_id: ConnectionId,
+) -> StagedPublish {
+    room.state
+        .write()
+        .await
+        .staged_publishes
+        .take(
+            user_id,
+            connection_id,
+            &stream_id_for_source(TestSourceKind::ScalableVideo),
+        )
+        .expect("test publish should be staged")
+}
+
+#[tokio::test]
+#[should_panic(expected = "unfinished lifecycle obligation: staged publication")]
+async fn dropping_transferred_publish_teardown_diagnoses_unfinished_cleanup() {
+    let (room, _media_transport, user_id, connection_id) = staged_room().await;
+    let staged = take_staged_publish(&room, &user_id, connection_id).await;
+    drop(staged.release_into_teardown());
+}
+
+#[tokio::test]
+async fn unfinished_publish_teardown_preserves_original_panic() {
+    let (room, _media_transport, user_id, connection_id) = staged_room().await;
+    let staged = take_staged_publish(&room, &user_id, connection_id).await;
+    let teardown = staged.release_into_teardown();
+    let panic = catch_unwind(AssertUnwindSafe(move || {
+        let _pending_teardown = teardown;
+        panic!("publication unwind sentinel");
+    }))
+    .expect_err("the original panic should escape unfinished cleanup");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"publication unwind sentinel")
+    );
+}
+
+#[tokio::test]
+async fn cancelled_staged_rollback_diagnoses_unacknowledged_teardown() {
+    let (room, media_transport, user_id, connection_id) = staged_room().await;
+    let transport_media_id = staged_media_id(&room, &user_id, connection_id).await;
+    let session_key = room.transport_user_key(&user_id, connection_id).await;
+    assert!(
+        media_transport
+            .transport_media_mid(&session_key, transport_media_id)
+            .await
+            .expect("MID observation must complete")
+            .is_some()
+    );
+    let release_worker = media_transport
+        .test_api()
+        .pause_first_worker()
+        .await
+        .expect("the publication worker should pause");
+    let stream_id = stream_id_for_source(TestSourceKind::ScalableVideo);
+    let mut rollback = Box::pin(
+        room.user_operation(&user_id, connection_id, &media_transport)
+            .rollback_staged_publish(&stream_id),
+    );
+    assert!(futures_util::poll!(rollback.as_mut()).is_pending());
+    assert_eq!(room.staged_count(&user_id, connection_id).await, 0);
+    assert!(
+        media_transport
+            .worker_pressure_snapshots()
+            .iter()
+            .any(|worker| worker.command_backlog_depth > 0),
+        "rollback should queue cleanup behind the paused worker"
+    );
+    // Queued cleanup remains pending until the worker acknowledges its completion.
+    let cancellation = catch_unwind(AssertUnwindSafe(|| drop(rollback)));
+    release_worker
+        .send(())
+        .expect("the publication worker should resume");
+    let panic = cancellation.expect_err("cancelled cleanup should diagnose its pending obligation");
+    assert!(panic.downcast_ref::<String>().is_some_and(|message| {
+        message.contains("unfinished lifecycle obligation: staged publication")
+    }));
+    assert!(
+        media_transport
+            .transport_media_mid(&session_key, transport_media_id)
+            .await
+            .expect("queued cleanup should precede MID observation")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -154,6 +237,7 @@ async fn staged_publish_is_not_visible_in_room_graph_before_answer() {
 async fn missing_answered_producer_parameters_release_reserved_publish() {
     let (room, media_transport, user_id, connection_id) = staged_room().await;
     let transport_media_id = staged_media_id(&room, &user_id, connection_id).await;
+    let session_key = room.transport_user_key(&user_id, connection_id).await;
 
     room.user_operation(&user_id, connection_id, &media_transport)
         .commit_staged_publishes(&AppliedSessionAnswer::default())
@@ -163,10 +247,9 @@ async fn missing_answered_producer_parameters_release_reserved_publish() {
     assert_eq!(room.staged_count(&user_id, connection_id).await, 0);
     assert!(
         media_transport
-            .test_api()
-            .route_entry_by_media_id(transport_media_id)
+            .transport_media_mid(&session_key, transport_media_id)
             .await
-            .expect("test probe must complete")
+            .expect("MID observation must complete")
             .is_none()
     );
 }
@@ -200,6 +283,7 @@ async fn stale_connection_commit_rejects_and_releases_reserved_publish() {
 async fn rollback_before_answer_consumes_reserved_publish_once() {
     let (room, media_transport, user_id, connection_id) = staged_room().await;
     let transport_media_id = staged_media_id(&room, &user_id, connection_id).await;
+    let session_key = room.transport_user_key(&user_id, connection_id).await;
 
     assert!(
         room.user_operation(&user_id, connection_id, &media_transport)
@@ -215,10 +299,9 @@ async fn rollback_before_answer_consumes_reserved_publish_once() {
     );
     assert!(
         media_transport
-            .test_api()
-            .route_entry_by_media_id(transport_media_id)
+            .transport_media_mid(&session_key, transport_media_id)
             .await
-            .expect("test probe must complete")
+            .expect("MID observation must complete")
             .is_none()
     );
 }

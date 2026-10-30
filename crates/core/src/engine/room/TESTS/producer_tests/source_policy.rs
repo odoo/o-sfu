@@ -1824,10 +1824,10 @@ async fn rejected_route_control_reconciles_sibling_budget_to_committed_selection
     };
     scenario
         .adapter
-        .teardown([TransportTeardown::RemoveMedia {
-            session_key: session_key.clone(),
-            transport_media_id: first_consumer_media,
-        }])
+        .teardown([TransportTeardown::remove_media(
+            session_key.clone(),
+            first_consumer_media,
+        )])
         .await;
     let transitions_before = route_transition_counts(&scenario.room);
     let capture = test_tracing::capture().await;
@@ -2254,7 +2254,7 @@ async fn rejected_ridless_pause_preserves_observed_committed_bitrate() {
     };
     scenario
         .adapter
-        .teardown([TransportTeardown::CloseSession { session_key }])
+        .teardown([TransportTeardown::close_session(session_key)])
         .await;
     let transitions_before = route_transition_counts(&scenario.room);
     let capture = test_tracing::capture().await;
@@ -2404,9 +2404,7 @@ async fn source_policy_rejected_transport_gate_does_not_commit_selector_update()
 
     scenario
         .adapter
-        .teardown([TransportTeardown::CloseSession {
-            session_key: receiver_session_key,
-        }])
+        .teardown([TransportTeardown::close_session(receiver_session_key)])
         .await;
     let transitions_before = route_transition_counts(&scenario.room);
     let selection_updates_before = source_selection_update_count(&scenario.room, "encoding");
@@ -3396,10 +3394,10 @@ async fn remove_consumer_transport(scenario: &SourcePolicyScenario, publisher: i
     };
     scenario
         .adapter
-        .teardown([TransportTeardown::RemoveMedia {
-            session_key: route.consumer_session_key().clone(),
-            transport_media_id: route.consumer_transport_media_id(),
-        }])
+        .teardown([TransportTeardown::remove_media(
+            route.consumer_session_key().clone(),
+            route.consumer_transport_media_id(),
+        )])
         .await;
 }
 
@@ -3634,10 +3632,10 @@ async fn rejected_audio_control_preserves_committed_future_video_deadlines() {
         };
         scenario
             .adapter
-            .teardown([TransportTeardown::RemoveMedia {
-                session_key: audio_route.consumer_session_key().clone(),
-                transport_media_id: audio_route.consumer_transport_media_id(),
-            }])
+            .teardown([TransportTeardown::remove_media(
+                audio_route.consumer_session_key().clone(),
+                audio_route.consumer_transport_media_id(),
+            )])
             .await;
         let subscription = scenario.adapter.source_policy_subscription();
         let _ = subscription.take_pending_updates();

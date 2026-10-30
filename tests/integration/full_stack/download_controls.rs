@@ -18,7 +18,7 @@ async fn fake_rtc_peers_forward_media_and_stop_after_download_mute_without_brows
         &mut subscriber,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -33,5 +33,5 @@ async fn fake_rtc_peers_pause_and_resume_retained_upload_route() -> s::TestResul
 
     f::assert_audio_publication_pause_and_resume(&server, &room, &mut publisher, &mut subscriber)
         .await;
-    Ok(())
+    server.join().await
 }

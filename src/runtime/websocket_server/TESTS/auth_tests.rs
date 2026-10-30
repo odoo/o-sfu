@@ -74,6 +74,7 @@ async fn websocket_rejects_pre_auth_connections_over_configured_capacity() {
         1
     );
     assert!(first.close(None).await.is_ok());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -114,6 +115,7 @@ async fn websocket_rejects_pre_auth_connections_over_origin_capacity() {
         1
     );
     assert!(first.close(None).await.is_ok());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -143,6 +145,7 @@ async fn websocket_pre_auth_origin_cap_allows_distinct_trusted_origins() {
 
     assert!(first.close(None).await.is_ok());
     assert!(second.close(None).await.is_ok());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -170,6 +173,7 @@ async fn websocket_times_out_when_client_never_authenticates() {
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_connections_accepted(), 1);
     assert_eq!(metrics.ws_handshake_rejected_timeout(), 1);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -200,6 +204,7 @@ async fn websocket_pre_auth_permit_is_released_after_auth_timeout() {
         second.is_some(),
         "pre-auth permit should be reusable after auth timeout"
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -237,6 +242,7 @@ async fn websocket_pre_auth_permit_is_released_after_auth_failure() {
         second.is_some(),
         "pre-auth permit should be reusable after auth failure"
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -263,6 +269,7 @@ async fn websocket_pre_auth_permit_is_released_after_early_client_close() {
         second.is_some(),
         "pre-auth permit should be reusable after early client close"
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -347,6 +354,7 @@ async fn websocket_closes_authenticated_user_when_room_is_full() -> TestResult {
     assert_eq!(metrics.ws_handshake_rejected_authentication_failed(), 1);
     assert_eq!(metrics.ws_handshake_rejected_room_full(), 1);
     assert!(alice.close(None).await.is_ok());
+    server.shutdown().await;
     Ok(())
 }
 
@@ -382,6 +390,7 @@ async fn websocket_pre_auth_permit_is_released_after_auth_success() {
         "pre-auth permit should be reusable after auth succeeds"
     );
     assert!(first.close(None).await.is_ok());
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -457,6 +466,7 @@ async fn websocket_startup_send_timeout_releases_room_membership() {
     );
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_user_loops_started(), 0);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -498,6 +508,7 @@ async fn websocket_authenticates_odoo_internal_session_identity() -> TestResult 
             .has_session(room.uuid(), &UserId::Integer(42))
             .await
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -534,6 +545,7 @@ async fn websocket_authenticates_odoo_guest_session_identity() -> TestResult {
             .has_session(room.uuid(), &UserId::Integer(171))
             .await
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -575,6 +587,7 @@ async fn websocket_rejects_missing_or_malformed_participant_identity() -> TestRe
         );
     }
     assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    server.shutdown().await;
     Ok(())
 }
 
@@ -604,6 +617,7 @@ async fn websocket_authenticates_legacy_room_scoped_token_with_explicit_room_id(
 
     let welcome = read_welcome(&mut websocket).await;
     assert!(welcome.is_some(), "welcome payload should exist");
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -637,6 +651,7 @@ async fn websocket_rejects_explicit_room_id_that_disagrees_with_claims() {
         read_close_code(&mut websocket).await,
         Some(CloseCode::Library(4106)),
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -666,6 +681,7 @@ async fn websocket_rejects_explicit_room_token_signed_with_another_key() {
         read_close_code(&mut websocket).await,
         Some(CloseCode::Library(4106)),
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -691,6 +707,7 @@ async fn websocket_rejects_oversized_auth_token_with_auth_failure() {
         read_close_code(&mut websocket).await,
         Some(CloseCode::Library(4106)),
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -746,6 +763,7 @@ async fn websocket_rejects_non_auth_handshake_frame_with_protocol_metric() {
     assert_eq!(metrics.ws_handshake_credentials_received(), 0);
     assert_eq!(metrics.ws_handshake_rejected_protocol_error(), 1);
     assert_eq!(metrics.ws_handshake_rejected_error(), 0);
+    server.shutdown().await;
 }
 
 async fn connect_slow_reader(
@@ -832,6 +850,7 @@ async fn websocket_requires_unexpired_credentials() -> TestResult {
         );
     }
     assert_eq!(server.state.metrics.snapshot().ws_users_joined(), 0);
+    server.shutdown().await;
     Ok(())
 }
 
@@ -873,6 +892,7 @@ async fn websocket_rejects_seventeenth_trusted_origin_in_same_ipv6_subnet() -> T
     for mut socket in sockets {
         socket.close(None).await?;
     }
+    server.shutdown().await;
     Ok(())
 }
 
@@ -903,5 +923,6 @@ async fn websocket_reports_unavailable_workers_as_server_error() -> TestResult {
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_handshake_rejected_error(), 1);
     assert_eq!(metrics.ws_handshake_rejected_authentication_failed(), 0);
+    server.shutdown().await;
     Ok(())
 }

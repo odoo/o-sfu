@@ -327,7 +327,7 @@ async fn close_remaining_peers(peers: sp::LargeRoomSpilloverFakePeers) -> s::Tes
         s::require_some(peer.close().await, "remaining large-room peer should close")?;
         wait_for_user_absence(&server, &room, &user_id).await;
     }
-    Ok(())
+    server.join().await
 }
 
 async fn publish_source(

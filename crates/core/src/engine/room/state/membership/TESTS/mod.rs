@@ -19,7 +19,9 @@ use crate::{
     RoomMediaLimits, VideoAdaptationTuning,
     engine::{
         ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind,
-        media_transport::{TransportConsumerRoute, TransportMediaId, TransportTeardown},
+        media_transport::{
+            TransportConsumerRoute, TransportMediaId, TransportTeardown, TransportTeardownAction,
+        },
         metrics::RuntimeMetrics,
         room::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
@@ -52,11 +54,11 @@ fn test_sender() -> UserOutboundSender {
 }
 
 fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
-    state
+    let commit = state
         .apply_join(user_id, test_sender())
-        .expect("test user should join")
-        .transport_session_key
-        .connection_id()
+        .expect("test user should join");
+    commit.transport_plan.discard_for_test();
+    commit.transport_session_key.connection_id()
 }
 
 fn join_test_user_on_placement(
@@ -64,16 +66,34 @@ fn join_test_user_on_placement(
     user_id: &UserId,
     placement: RouterPlacement,
 ) -> ConnectionId {
-    state
+    let commit = state
         .apply_join_on_placement(
             user_id,
             test_sender(),
             UserJoinedFanout::Suppress,
             placement,
         )
-        .expect("test user should join on placement")
-        .transport_session_key
-        .connection_id()
+        .expect("test user should join on placement");
+    commit.transport_plan.discard_for_test();
+    commit.transport_session_key.connection_id()
+}
+
+fn discard_close_commit(commit: ConnectionCloseCommit) {
+    match commit {
+        ConnectionCloseCommit::Current {
+            session_teardown,
+            transport_plan,
+            ..
+        } => {
+            if let Some(teardown) = session_teardown {
+                teardown.discard_for_test();
+            }
+            transport_plan.discard_for_test();
+        }
+        ConnectionCloseCommit::StalePlacement { session_teardown } => {
+            session_teardown.discard_for_test();
+        }
+    }
 }
 
 fn commit_test_publication(
@@ -160,8 +180,8 @@ fn source_relay_teardown_count(teardown: &[TransportTeardown], relay: &RelayedSo
         .iter()
         .filter(|operation| {
             matches!(
-                operation,
-                TransportTeardown::ReleaseRelayRoute {
+                operation.action(),
+                TransportTeardownAction::ReleaseRelayRoute {
                     source,
                     target_media_worker_id,
                 } if source == relay.route.source()
@@ -178,9 +198,7 @@ fn disconnect_sessions_removes_current_members_and_fanouts_departures() {
     let user_b = UserId::Integer(2);
     let connection_a = join_test_user(&mut state, &user_a);
     let connection_b = join_test_user(&mut state, &user_b);
-
     let outcome = state.apply_disconnect_users(&[user_a.clone(), user_b.clone()]);
-
     assert_eq!(state.users.len(), 0);
     assert_eq!(outcome.session_teardowns.len(), 2);
     assert!(outcome.session_teardowns.iter().any(|operation| {
@@ -193,6 +211,10 @@ fn disconnect_sessions_removes_current_members_and_fanouts_departures() {
     }));
     assert_eq!(outcome.effects.close_requests.len(), 2);
     assert_eq!(outcome.effects.fanouts.len(), 2);
+    for teardown in outcome.session_teardowns {
+        teardown.discard_for_test();
+    }
+    outcome.transport_plan.discard_for_test();
 }
 
 #[test]
@@ -212,24 +234,24 @@ fn stale_close_unregisters_committed_placement_and_returns_teardown() {
         .users
         .remove(&user_id)
         .expect("test should leave a stale committed placement");
-
     let commit = state
         .close_connection(&user_id, connection_id)
         .expect("stale committed placement should close");
-
     assert!(matches!(
-        commit,
+        &commit,
         ConnectionCloseCommit::StalePlacement {
-            session_teardown: TransportTeardown::CloseSession {
-                session_key: teardown_key,
-            },
-            ..
-        } if teardown_key == session_key
+            session_teardown,
+        } if matches!(
+            session_teardown.action(),
+            TransportTeardownAction::CloseSession { session_key: teardown_key }
+                if teardown_key == &session_key
+        )
     ));
     assert_eq!(
         state.committed_transport_user_key(&user_id, connection_id),
         None
     );
+    discard_close_commit(commit);
 }
 
 #[test]
@@ -265,13 +287,12 @@ fn leave_removes_consumer_routes_for_departed_session() {
         setup_outcome,
         ConsumerSetupOutcome::Committed { .. }
     ));
-
     let outcome = state.close_connection(&UserId::Integer(2), consumer_connection_id);
-
     assert!(outcome.is_some());
     assert_eq!(state.consumer_count(), 0);
     assert_eq!(state.producer_count(), 1);
     assert!(state.topology.source_descriptor(source_id).is_some());
+    discard_close_commit(outcome.expect("departed consumer should have a close commit"));
 }
 
 #[test]
@@ -318,7 +339,6 @@ fn disconnect_sessions_ignores_missing_members() {
 fn replacement_join_releases_relay_with_displaced_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
-
     let outcome = state
         .apply_join_on_placement(
             relay.route.source_session_key().user_id(),
@@ -339,65 +359,66 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
         relay.route.source_session_key().media_worker_id()
     );
     let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
-
     assert!(relays.is_empty());
     assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
     assert!(teardown.iter().any(|operation| {
         matches!(
-            operation,
-            TransportTeardown::CloseSession {
+            operation.action(),
+            TransportTeardownAction::CloseSession {
                 session_key,
             } if session_key == relay.route.source_session_key()
         )
     }));
     assert!(!teardown.iter().any(|operation| {
         matches!(
-            operation,
-            TransportTeardown::RemoveMedia { session_key, .. }
+            operation.action(),
+            TransportTeardownAction::RemoveMedia { session_key, .. }
                 if session_key == relay.route.source_session_key()
         )
     }));
     assert!(teardown.iter().any(|operation| {
         matches!(
-            operation,
-            TransportTeardown::RemoveMedia {
+            operation.action(),
+            TransportTeardownAction::RemoveMedia {
                 session_key,
                 transport_media_id,
             } if session_key == relay.route.consumer_session_key()
                 && *transport_media_id == relay.route.consumer_transport_media_id()
         )
     }));
+    outcome.transport_plan.discard_for_test();
 }
 
 #[test]
 fn leave_releases_relay_before_forgetting_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
-
     let outcome = state
         .close_connection(
             relay.route.source_session_key().user_id(),
             relay.route.source_session_key().connection_id(),
         )
         .expect("publisher leave should succeed");
-    let ConnectionCloseCommit::Current { transport_plan, .. } = outcome else {
+    let ConnectionCloseCommit::Current { transport_plan, .. } = &outcome else {
         panic!("publisher leave should remove the current user");
     };
     let (relays, teardown) = transport_plan.relays_and_teardown();
-
     assert!(relays.is_empty());
     assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
+    discard_close_commit(outcome);
 }
 
 #[test]
 fn disconnect_releases_relay_before_forgetting_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
-
     let outcome =
         state.apply_disconnect_users(from_ref(relay.route.source_session_key().user_id()));
     let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
-
     assert!(relays.is_empty());
     assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
+    for teardown in outcome.session_teardowns {
+        teardown.discard_for_test();
+    }
+    outcome.transport_plan.discard_for_test();
 }

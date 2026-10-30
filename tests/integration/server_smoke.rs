@@ -195,7 +195,7 @@ async fn websocket_welcome_and_initial_offer_expose_real_rtc_transport_details()
         "candidate should expose an RTC port",
     )?;
     assert!(rtc_port_range.ports().any(|candidate| candidate == port));
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -212,7 +212,7 @@ async fn websocket_candidate_free_answer_establishes_rtc_transport() -> TestResu
         client.wait_until_connected(Duration::from_secs(5)).await,
         "candidate-free answer should establish ICE and DTLS",
     )?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -238,7 +238,7 @@ async fn websocket_offer_advertises_configured_public_ip_in_rtc_mode() -> TestRe
     } else {
         panic!("expected SDP candidate line");
     }
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -289,7 +289,7 @@ async fn websocket_slow_consumer_overflow_allows_reconnection() -> TestResult {
         ),
         Some(1)
     );
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn numeric_string_user_ids_share_one_runtime_identity() -> TestResult {
     assert_peer_left(&mut observer, UserId::Integer(42)).await?;
     require_some(observer.close().await, "observer should close")?;
     assert!(server.wait_for_room_absence(&room).await);
-    Ok(())
+    server.join().await
 }
 
 async fn assert_peer_left(client: &mut ProtocolWebSocketClient, user_id: UserId) -> TestResult {
@@ -421,7 +421,7 @@ async fn bulk_disconnected_socket_cannot_broadcast_after_logical_removal() -> Te
     assert_eq!(bob.read_close_code().await, Some(CloseCode::Library(4108)));
     require_some(alice.close().await, "alice should close")?;
     assert!(server.wait_for_room_absence(&room).await);
-    Ok(())
+    server.join().await
 }
 
 fn slow_consumer_overflow_config() -> Config {
