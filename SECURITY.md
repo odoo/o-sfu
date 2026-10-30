@@ -46,7 +46,7 @@ data left in memory.
 
 `AUTH_KEY_FILE` and `DIAGNOSTICS_AUTH_TOKEN_FILE` load credentials from mounted
 secrets. Leave `AUTH_KEY` and `DIAGNOSTICS_AUTH_TOKEN` unset when using their
-file alternatives. See [Deployment](DEPLOYMENT.md) for configuration.
+file alternatives. See [Deployment](doc/deployment.md) for configuration.
 
 ### Admission & Resource Limits
 

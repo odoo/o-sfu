@@ -32,6 +32,6 @@ uses [Str0m](https://github.com/algesten/str0m) as the WebRTC engine
 
 <div align="center">
 
-**[CONTRIBUTING](.github/CONTRIBUTING.md)** • **[GUIDELINES](.github/coding_guidelines.md)** • **[DEPLOYMENT](DEPLOYMENT.md)** • **[SECURITY & PRIVACY](SECURITY.md)**
+**[CONTRIBUTING](.github/CONTRIBUTING.md)** • **[GUIDELINES](doc/coding_guidelines.md)** • **[DEPLOYMENT](doc/deployment.md)** • **[SECURITY & PRIVACY](SECURITY.md)**
 
 </div>

@@ -4,7 +4,7 @@ Keep operator choices such as codecs, media policy and limits in runtime
 configuration so one build can serve different deployments. Define variables
 under [`src/config`](../../src/config/), load them through `Env::var` in
 `Config::from_env` and document them in
-[`DEPLOYMENT.md`](../../DEPLOYMENT.md). Validate defaults and supplied values,
+[`deployment.md`](../deployment.md). Validate defaults and supplied values,
 rejecting unsupported, conflicting or retired settings. When renaming a
 variable, define which name takes precedence or reject configurations that
 supply both.

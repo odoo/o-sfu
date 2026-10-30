@@ -124,5 +124,5 @@ tests representative of production behavior.
 
 ---
 
-For formatting and contributor workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For formatting and contributor workflow, see [CONTRIBUTING.md](../.github/CONTRIBUTING.md).
 For verification commands, see [`tests/README.md`](../tests/README.md).

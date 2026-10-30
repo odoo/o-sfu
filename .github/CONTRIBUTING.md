@@ -15,7 +15,7 @@
 
 ## Coding guidelines
 
-Repository design principles and architectural invariants are in [coding_guidelines.md](coding_guidelines.md).
+Repository design principles and architectural invariants are in [coding_guidelines.md](../doc/coding_guidelines.md).
 
 ## Tooling and formatting
 
@@ -92,8 +92,8 @@ possible `module`:
 
 ## Deployment
 
-Deployment and local container usage are covered in [DEPLOYMENT.md](../DEPLOYMENT.md).
-For Odoo development, refer to [Odoo SFU Dev Deployment Guide](odoo_setup.md).
+Deployment and local container usage are covered in [deployment.md](../doc/deployment.md).
+For Odoo development, refer to [Odoo SFU Dev Deployment Guide](../doc/odoo_setup.md).
 
 ## Learning Rust
 
