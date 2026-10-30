@@ -10,6 +10,7 @@ use crate::engine::{
         AppliedSessionAnswer, MediaTransport, SessionUploadEncoding, TransportMediaId,
         TransportTeardown,
     },
+    obligation::Obligation,
     room::{
         SourcePolicyGuard,
         effects::batch::{RoomEffectContext, RoomEffects},
@@ -31,7 +32,7 @@ type StagedPublishKey = (UserId, ConnectionId, UserStreamId);
 pub struct StagedPublish {
     pub(super) descriptor: ValidatedPublish,
     pub(super) media: TransportMediaId,
-    reservation: PublishReservation,
+    reservation: Obligation,
 }
 
 impl StagedPublishes {
@@ -123,7 +124,7 @@ impl StagedPublish {
         Self {
             descriptor,
             media: transport_media_id,
-            reservation: PublishReservation::new(),
+            reservation: Obligation::new("staged publication"),
         }
     }
 
@@ -222,58 +223,10 @@ impl StagedPublish {
             media,
             reservation,
         } = self;
-        reservation.release();
-        TransportTeardown::RemoveMedia {
-            session_key: descriptor.session_key,
-            transport_media_id: media,
-        }
+        TransportTeardown::remove_reserved_media(descriptor.session_key, media, reservation)
     }
 
     fn commit_reservation(self) {
-        self.reservation.commit();
-    }
-}
-
-#[derive(Debug)]
-#[must_use = "publish reservations must be committed or released"]
-/// Requires reserved transport media to be committed or released.
-///
-/// Tests and debug builds diagnose an armed reservation on `Drop`. Cleanup
-/// paths must explicitly convert reserved media into [`TransportTeardown`].
-struct PublishReservation {
-    armed: bool,
-}
-
-impl PublishReservation {
-    fn new() -> Self {
-        Self { armed: true }
-    }
-
-    fn commit(mut self) {
-        self.disarm();
-    }
-
-    fn release(mut self) {
-        self.disarm();
-    }
-
-    fn disarm(&mut self) {
-        debug_assert!(self.armed);
-        self.armed = false;
-    }
-}
-
-impl Drop for PublishReservation {
-    fn drop(&mut self) {
-        #[cfg(test)]
-        assert!(
-            !self.armed,
-            "publish reservation dropped while still reserved"
-        );
-        #[cfg(all(debug_assertions, not(test)))]
-        debug_assert!(
-            !self.armed,
-            "publish reservation dropped while still reserved"
-        );
+        self.reservation.complete();
     }
 }

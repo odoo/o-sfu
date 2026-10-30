@@ -101,6 +101,9 @@ impl TestServer {
             .set_packet_loop_delays_ms(delays_ms);
     }
 
+    /// Drains server tasks before the test runtime ends. Dropping the handle
+    /// aborts shutdown and can leave WebSocket lifecycle obligations unfinished.
+    ///
     /// # Errors
     ///
     /// Returns an error when the server fails, panics or is cancelled.

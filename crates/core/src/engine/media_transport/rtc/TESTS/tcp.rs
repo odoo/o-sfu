@@ -363,7 +363,7 @@ async fn acceptor_closes_authenticated_connection_when_session_is_closed() {
     let (session_key, _stream, _client, client_addr) =
         connect_client_over_tcp(server_addr, &transport).await;
     transport
-        .teardown([TransportTeardown::CloseSession { session_key }])
+        .teardown([TransportTeardown::close_session(session_key)])
         .await;
     let reason = closure_reason(client_addr).await;
     assert!(

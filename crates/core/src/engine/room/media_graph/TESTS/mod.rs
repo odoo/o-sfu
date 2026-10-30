@@ -100,11 +100,29 @@ fn test_sender() -> UserOutboundSender {
 }
 
 fn join_test_user(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
-    state
+    let commit = state
         .apply_join(user_id, test_sender())
-        .expect("test user should join")
-        .transport_session_key
-        .connection_id()
+        .expect("test user should join");
+    commit.transport_plan.discard_for_test();
+    commit.transport_session_key.connection_id()
+}
+
+fn discard_close_commit(commit: ConnectionCloseCommit) {
+    match commit {
+        ConnectionCloseCommit::Current {
+            session_teardown,
+            transport_plan,
+            ..
+        } => {
+            if let Some(teardown) = session_teardown {
+                teardown.discard_for_test();
+            }
+            transport_plan.discard_for_test();
+        }
+        ConnectionCloseCommit::StalePlacement { session_teardown } => {
+            session_teardown.discard_for_test();
+        }
+    }
 }
 
 fn set_test_user_ready(state: &mut RoomState, user_id: &UserId) -> ConnectionId {
@@ -830,10 +848,11 @@ fn pending_intent_follows_join_departure_and_receiver_replacement() {
     let promoted_key = SubscriptionKey::new(&receiver, &UserId::Integer(11), &stream);
     assert_eq!(state.topology.subscription_intent(&promoted_key), pause);
     let close = state.close_connection(&member, member_connection).unwrap();
-    let ConnectionCloseCommit::Current { evictions, .. } = close else {
+    let ConnectionCloseCommit::Current { evictions, .. } = &close else {
         panic!("expected current member close");
     };
-    assert_eq!(evictions, 1);
+    assert_eq!(*evictions, 1);
+    discard_close_commit(close);
     let displaced_key = SubscriptionKey::new(&receiver, &UserId::Integer(12), &stream);
     assert!(
         state
@@ -857,9 +876,11 @@ fn pending_intent_follows_join_departure_and_receiver_replacement() {
             .subscription_intent(&evicted_after_replacement)
             .is_empty()
     );
-    assert!(state.close_connection(&receiver, replacement).is_some());
+    let close = state.close_connection(&receiver, replacement);
+    assert!(close.is_some());
     assert!(state.topology.subscription_intent(&member_key).is_empty());
     assert_eq!(state.media_counts().subscriptions, 0);
+    discard_close_commit(close.expect("departed receiver should have a close commit"));
 }
 
 #[test]

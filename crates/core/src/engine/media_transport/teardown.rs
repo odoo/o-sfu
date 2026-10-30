@@ -6,10 +6,17 @@ use super::{
     MediaTransport, TransportAdapterError, TransportMediaId, TransportRelayRouteAction,
     TransportSessionKey, TransportSourceKey, rtc::RtcWorkerCommand,
 };
-use crate::engine::MediaWorkerId;
+use crate::engine::{MediaWorkerId, obligation::Obligation};
 
 #[derive(Debug)]
-pub(crate) enum TransportTeardown {
+#[must_use = "transport cleanup must execute or transfer its obligation"]
+pub(crate) struct TransportTeardown {
+    action: TransportTeardownAction,
+    obligation: Obligation,
+}
+
+#[derive(Debug)]
+pub(crate) enum TransportTeardownAction {
     CloseSession {
         session_key: TransportSessionKey,
     },
@@ -24,12 +31,68 @@ pub(crate) enum TransportTeardown {
 }
 
 impl TransportTeardown {
+    pub(crate) fn close_session(session_key: TransportSessionKey) -> Self {
+        Self {
+            action: TransportTeardownAction::CloseSession { session_key },
+            obligation: Obligation::new("transport session teardown"),
+        }
+    }
+
+    pub(crate) fn remove_media(
+        session_key: TransportSessionKey,
+        transport_media_id: TransportMediaId,
+    ) -> Self {
+        Self::remove_reserved_media(
+            session_key,
+            transport_media_id,
+            Obligation::new("transport media teardown"),
+        )
+    }
+
+    /// Retains the publication reservation's obligation through transport cleanup.
+    pub(crate) fn remove_reserved_media(
+        session_key: TransportSessionKey,
+        transport_media_id: TransportMediaId,
+        obligation: Obligation,
+    ) -> Self {
+        Self {
+            action: TransportTeardownAction::RemoveMedia {
+                session_key,
+                transport_media_id,
+            },
+            obligation,
+        }
+    }
+
+    pub(crate) fn release_relay_route(
+        source: TransportSourceKey,
+        target_media_worker_id: MediaWorkerId,
+    ) -> Self {
+        Self {
+            action: TransportTeardownAction::ReleaseRelayRoute {
+                source,
+                target_media_worker_id,
+            },
+            obligation: Obligation::new("transport relay route teardown"),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn action(&self) -> &TransportTeardownAction {
+        &self.action
+    }
+
+    /// Completes cleanup simulated by a state-only test without a worker command.
+    #[cfg(any(test, feature = "testing-transport"))]
+    pub(crate) fn discard_for_test(self) {
+        self.obligation.complete();
+    }
+
     pub(crate) fn session_key(&self) -> &TransportSessionKey {
-        match self {
-            Self::CloseSession { session_key } | Self::RemoveMedia { session_key, .. } => {
-                session_key
-            }
-            Self::ReleaseRelayRoute { source, .. } => source.session_key(),
+        match &self.action {
+            TransportTeardownAction::CloseSession { session_key }
+            | TransportTeardownAction::RemoveMedia { session_key, .. } => session_key,
+            TransportTeardownAction::ReleaseRelayRoute { source, .. } => source.session_key(),
         }
     }
 }
@@ -39,18 +102,18 @@ impl MediaTransport {
     ///
     /// Each failed media or relay item escalates once to its session because
     /// partial worker state may remain. Errors are consumed so one failure cannot
-    /// suppress later cleanup.
+    /// suppress later cleanup. Obligations remain unfinished across worker awaits
+    /// so dropping the future diagnoses cancellation before the terminal outcome.
     pub(crate) async fn teardown(&self, teardowns: impl IntoIterator<Item = TransportTeardown>) {
-        for teardown in teardowns {
-            let (session_key, result, transport_media_id, target_media_worker_id) = match &teardown
-            {
-                TransportTeardown::CloseSession { session_key } => (
+        for TransportTeardown { action, obligation } in teardowns {
+            let (session_key, result, transport_media_id, target_media_worker_id) = match &action {
+                TransportTeardownAction::CloseSession { session_key } => (
                     session_key,
                     self.close_session(session_key).await,
                     None,
                     None,
                 ),
-                TransportTeardown::RemoveMedia {
+                TransportTeardownAction::RemoveMedia {
                     session_key,
                     transport_media_id,
                 } => (
@@ -59,7 +122,7 @@ impl MediaTransport {
                     Some(*transport_media_id),
                     None,
                 ),
-                TransportTeardown::ReleaseRelayRoute {
+                TransportTeardownAction::ReleaseRelayRoute {
                     source,
                     target_media_worker_id,
                 } => (
@@ -70,30 +133,30 @@ impl MediaTransport {
                     Some(*target_media_worker_id),
                 ),
             };
-            let Err(error) = result else {
-                continue;
-            };
-            self.metrics.record_transport_cleanup_failure();
-            warn!(
-                ?session_key,
-                ?transport_media_id,
-                ?target_media_worker_id,
-                ?error,
-                "media transport teardown reached terminal failure"
-            );
-            // `RemoveMedia` or `ReleaseRelayRoute` failure may leave worker state behind.
-            // Escalate once to `CloseSession`, whose own failure is already terminal.
-            if transport_media_id.is_some()
-                && let Err(fallback_error) = self.close_session(session_key).await
-            {
+            if let Err(error) = result {
+                self.metrics.record_transport_cleanup_failure();
                 warn!(
                     ?session_key,
                     ?transport_media_id,
                     ?target_media_worker_id,
-                    ?fallback_error,
-                    "media transport teardown session fallback failed"
+                    ?error,
+                    "media transport teardown reached terminal failure"
                 );
+                // `RemoveMedia` or `ReleaseRelayRoute` failure may leave worker state behind.
+                // Escalate once to `CloseSession`, whose own failure is already terminal.
+                if transport_media_id.is_some()
+                    && let Err(fallback_error) = self.close_session(session_key).await
+                {
+                    warn!(
+                        ?session_key,
+                        ?transport_media_id,
+                        ?target_media_worker_id,
+                        ?fallback_error,
+                        "media transport teardown session fallback failed"
+                    );
+                }
             }
+            obligation.complete();
         }
     }
 

@@ -58,5 +58,5 @@ async fn fake_rtc_peers_rejoin_the_room_they_left_during_its_departure_grace() -
     .await;
     let mut clock = s::FakeClock::default();
     m::assert_packet_forwarded(&mut publisher, &mut subscriber, &mut source, &mut clock).await;
-    Ok(())
+    server.join().await
 }

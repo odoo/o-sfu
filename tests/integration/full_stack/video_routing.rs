@@ -74,7 +74,7 @@ async fn fake_rtc_mid_only_ridless_publisher_forwards_authenticated_rtp() -> s::
         forwarded,
         "authenticated MID-only RTP should reach the subscriber"
     );
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -141,7 +141,7 @@ async fn fake_rtc_vp8_ssrc_switch_rewrites_serialized_descriptor() -> s::TestRes
 
     assert_eq!(vp8_identity(&restarted_input), Some((1, 1)));
     assert_eq!(vp8_identity(&restarted_output.payload), Some((2, 2)));
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -209,7 +209,7 @@ async fn fake_rtc_vp8_selected_rid_drops_other_rids_after_activation() -> s::Tes
         &mut clock,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -278,7 +278,7 @@ async fn fake_rtc_peer_rejects_invalid_synthetic_send_paths_without_panics() -> 
             .await
             .is_none()
     );
-    Ok(())
+    server.join().await
 }
 
 async fn assert_video_source_forwarded(
@@ -317,7 +317,7 @@ async fn assert_video_source_forwarded(
         &mut clock,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 async fn assert_selected_rid_delivery(
@@ -361,7 +361,7 @@ async fn assert_selected_rid_delivery(
         &mut clock,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 type VideoRoomFuture<'a> =

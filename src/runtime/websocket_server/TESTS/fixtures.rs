@@ -125,6 +125,20 @@ impl TestServer {
     pub(super) fn url(&self) -> String {
         format!("ws://{}/", self.addr)
     }
+
+    /// Close frames and membership removal precede effect completion. Drain the
+    /// tracked sessions before the test runtime can cancel their cleanup.
+    pub(super) async fn shutdown(mut self) {
+        self.state.session_tasks.close();
+        self.state.session_shutdown.cancel();
+        let drained = timeout(Duration::from_secs(5), async {
+            (&mut self.handle).await.expect("test listener should stop");
+            self.state.session_tasks.wait().await;
+            self.media_transport.shutdown().await;
+        })
+        .await;
+        assert!(drained.is_ok(), "test server cleanup should finish");
+    }
 }
 
 impl Drop for TestServer {
@@ -193,11 +207,13 @@ impl TestServerBuilder {
             "test listener address should resolve",
         )
         .ok()?;
+        let shutdown = runtime.state.session_shutdown.clone();
         let handle = tokio::spawn(async move {
             let result = axum::serve(
                 listener,
                 app(state_for_server, addr).into_make_service_with_connect_info::<SocketAddr>(),
             )
+            .with_graceful_shutdown(shutdown.cancelled_owned())
             .await;
             assert!(
                 result.is_ok(),

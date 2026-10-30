@@ -13,8 +13,12 @@ cargo +nightly fmt --all --check
 cargo check --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --release
+cargo test --locked -p o-sfu -p o-sfu-tests -p o-sfu-core-room-tests -p o-sfu-proofs
 npm --prefix crates/client run verify
 ```
+
+The debug test run exercises lifecycle obligation assertions in dependency
+crates. Release tests only log unfinished obligations in those crates.
 
 ## Browser suites
 

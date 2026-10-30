@@ -49,6 +49,7 @@ async fn protocol_core_replays_real_server_welcome_peer_snapshot() -> TestResult
             ProtocolSessionInfo::default().snapshot_complete(),
         )]))]
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -100,13 +101,13 @@ async fn protocol_core_maps_real_server_auth_failure_to_closed_state() -> TestRe
         ]
     );
     assert!(peer.timers.is_empty());
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_answers_real_server_offer_when_enabled() -> TestResult {
-    let (_server, _room, peer) =
-        setup_protocol_peer("issuer-protocol", UserId::Integer(33)).await?;
+    let (server, _room, peer) = setup_protocol_peer("issuer-protocol", UserId::Integer(33)).await?;
 
     assert_eq!(peer.core.state(), BundleConnectionState::Connected);
     assert!(
@@ -115,12 +116,13 @@ async fn protocol_core_answers_real_server_offer_when_enabled() -> TestResult {
         }),
         "protocol offer handling should drive the protocol core into the connected state"
     );
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_receives_protocol_broadcast_and_peer_updates() -> TestResult {
-    let (_server, _room, mut alice, mut bob) = Box::pin(setup_protocol_peers(
+    let (server, _room, mut alice, mut bob) = Box::pin(setup_protocol_peers(
         "issuer-protocol-events",
         UserId::Integer(41),
         UserId::Integer(42),
@@ -190,6 +192,7 @@ async fn protocol_core_receives_protocol_broadcast_and_peer_updates() -> TestRes
             user_id: ProtocolSessionId::Integer(42),
         }))
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -207,6 +210,7 @@ async fn protocol_user_emits_peerjoined_message_for_existing_peers() -> TestResu
         matches!(peer_joined, ServerMessage::PeerJoined(_)),
         "existing peers should receive peerjoined rather than a generic peerinfo frame on join"
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -276,5 +280,6 @@ async fn protocol_user_replacement_emits_peerleft_then_peerjoined_for_existing_p
         .await,
         "replacement should clean up",
     )?;
+    server.shutdown().await;
     Ok(())
 }

@@ -947,14 +947,8 @@ async fn media_transport_terminal_teardown_falls_back_and_continues_batch() {
 
     adapter
         .teardown([
-            TransportTeardown::RemoveMedia {
-                session_key: wrong_owner.clone(),
-                transport_media_id: source_media_id,
-            },
-            TransportTeardown::RemoveMedia {
-                session_key: later_session,
-                transport_media_id: later_media_id,
-            },
+            TransportTeardown::remove_media(wrong_owner.clone(), source_media_id),
+            TransportTeardown::remove_media(later_session, later_media_id),
         ])
         .await;
 
@@ -982,11 +976,12 @@ async fn media_transport_terminal_teardown_falls_back_and_continues_batch() {
     worker.cancel();
     worker.wait_for_shutdown().await;
     adapter
-        .teardown([TransportTeardown::CloseSession {
-            session_key: source_session,
-        }])
+        .teardown([
+            TransportTeardown::remove_media(source_session.clone(), source_media_id),
+            TransportTeardown::close_session(source_session),
+        ])
         .await;
-    assert_eq!(transport_cleanup_failures(&adapter), 2);
+    assert_eq!(transport_cleanup_failures(&adapter), 3);
 }
 
 #[tokio::test]
@@ -1078,9 +1073,9 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
         .remove_media(&remote_consumer_session, remote_consumer_media_id)
         .await?;
     assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
-    let release = |session_key| TransportTeardown::ReleaseRelayRoute {
-        source: TransportSourceKey::new(session_key, source_media_id),
-        target_media_worker_id: remote_consumer_session.media_worker_id(),
+    let release = |session_key| {
+        let source = TransportSourceKey::new(session_key, source_media_id);
+        TransportTeardown::release_relay_route(source, remote_consumer_session.media_worker_id())
     };
     adapter
         .teardown([release(local_consumer_session.clone())])
@@ -1120,10 +1115,10 @@ async fn dead_relay_target_teardown_preserves_healthy_source() {
     target_worker.wait_for_shutdown().await;
 
     adapter
-        .teardown([TransportTeardown::ReleaseRelayRoute {
-            source: TransportSourceKey::new(source_session.clone(), source_media_id),
-            target_media_worker_id: target_session.media_worker_id(),
-        }])
+        .teardown([TransportTeardown::release_relay_route(
+            TransportSourceKey::new(source_session.clone(), source_media_id),
+            target_session.media_worker_id(),
+        )])
         .await;
 
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;

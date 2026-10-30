@@ -81,6 +81,7 @@ async fn websocket_rejects_unknown_protocol_envelope_tag() {
     assert_eq!(metrics.ws_bus_parse_failures(), 1);
     assert_eq!(metrics.ws_bus_invalid_input_failures(), 0);
     assert_eq!(metrics.ws_bus_unsupported_feature_failures(), 1);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -103,6 +104,7 @@ async fn websocket_rejects_invalid_json_payload() {
     assert_eq!(metrics.ws_bus_parse_failures(), 1);
     assert_eq!(metrics.ws_bus_invalid_input_failures(), 1);
     assert_eq!(metrics.ws_bus_unsupported_feature_failures(), 0);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -136,6 +138,7 @@ async fn websocket_rejects_oversized_auth_frame() {
 
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_handshake_rejected_error(), 1);
+    server.shutdown().await;
 }
 
 #[tokio::test]
@@ -162,11 +165,12 @@ async fn websocket_rejects_batches_over_protocol_envelope_limit() {
     assert_eq!(metrics.ws_bus_parse_failures(), 1);
     assert_eq!(metrics.ws_bus_invalid_input_failures(), 1);
     assert_eq!(metrics.ws_bus_unsupported_feature_failures(), 0);
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn websocket_rejects_mismatched_negotiation_response_kind() {
-    let (_server, _room, mut websocket) =
+    let (server, _room, mut websocket) =
         authenticated_protocol_websocket("issuer-mismatched-negotiation", UserId::Integer(21))
             .await;
     let (request_id, request) = require_some(
@@ -204,11 +208,12 @@ async fn websocket_rejects_mismatched_negotiation_response_kind() {
         read_close_code_promptly(&mut websocket).await,
         Some(CloseCode::Protocol),
     );
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn invalid_protocol_initial_answer_closes_before_user_negotiates() {
-    let (_server, room, mut websocket) =
+    let (server, room, mut websocket) =
         authenticated_protocol_websocket("issuer-invalid-publish-answer", UserId::Integer(91))
             .await;
     let publish_frame = encode_client_frame(&[serde_json::json!({
@@ -255,4 +260,5 @@ async fn invalid_protocol_initial_answer_closes_before_user_negotiates() {
             .await,
         "invalid initial answer must not let queued publish state commit through a fallback-ready user"
     );
+    server.shutdown().await;
 }

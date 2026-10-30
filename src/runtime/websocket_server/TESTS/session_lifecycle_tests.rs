@@ -47,6 +47,7 @@ async fn websocket_sends_ping_frames_and_accepts_pongs() -> TestResult {
         close_socket_and_wait_for_session_cleanup(&mut websocket, &room, &user_id).await,
         "closing the socket should clean the session",
     )?;
+    server.shutdown().await;
     Ok(())
 }
 
@@ -91,6 +92,7 @@ async fn websocket_closes_when_pong_times_out() -> TestResult {
     )?;
     let metrics = server.state.metrics.snapshot();
     assert_eq!(metrics.ws_user_loop_exits_ping_timeout(), 1);
+    server.shutdown().await;
     Ok(())
 }
 
@@ -197,6 +199,7 @@ async fn shutdown_waits_for_in_flight_mutations_and_retires_sessions_once() -> T
     assert_eq!(metrics.ws_handshake_rejected_protocol_error(), 0);
     assert_eq!(metrics.ws_handshake_rejected_room_full(), 0);
     assert_eq!(metrics.ws_handshake_rejected_error(), 0);
+    server.shutdown().await;
     Ok(())
 }
 
@@ -216,7 +219,9 @@ async fn websocket_closes_when_rtc_transport_disconnects() -> TestResult {
         setup_negotiated_session(&server, &room, user_id.clone()).await,
         "negotiated user should start",
     )?;
-    assert_transport_disconnect(&server, &room, &user_id, &mut websocket).await
+    assert_transport_disconnect(&server, &room, &user_id, &mut websocket).await?;
+    server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
@@ -247,7 +252,9 @@ async fn websocket_closes_when_rtc_transport_disconnects_during_initial_negotiat
         read_protocol_server_batch(&mut websocket).await,
         "initial offer should arrive",
     )?;
-    assert_transport_disconnect(&server, &room, &user_id, &mut websocket).await
+    assert_transport_disconnect(&server, &room, &user_id, &mut websocket).await?;
+    server.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]
@@ -293,6 +300,7 @@ async fn stale_replaced_socket_close_cleans_only_the_stale_transport_user() -> T
         wait_for_active_transport_users(&server, 0).await.is_some(),
         "closing the replacement socket should clean the final transport user"
     );
+    server.shutdown().await;
     Ok(())
 }
 
@@ -374,6 +382,7 @@ async fn overflow_does_not_revive_a_replaced_session() -> TestResult {
         room.test_api().user_connection_id(&user_id).await,
         Some(replacement)
     );
+    server.shutdown().await;
     Ok(())
 }
 

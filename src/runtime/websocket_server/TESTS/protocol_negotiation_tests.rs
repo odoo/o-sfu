@@ -76,6 +76,7 @@ async fn protocol_user_does_not_overlap_topology_renegotiations() {
         .is_some(),
         "publisher session should clean up after explicit close"
     );
+    server.shutdown().await;
 }
 
 async fn assert_no_protocol_request_before_idle(websocket: &mut TestWebSocket) {

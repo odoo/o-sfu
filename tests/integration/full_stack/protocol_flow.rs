@@ -4,7 +4,7 @@ use super::support::{self as s, metrics as mt, protocol as p, setup as st};
 async fn fake_peers_publish_and_receive_track_snapshot_over_real_server_entries() -> s::TestResult {
     let _guard = st::full_stack_test_guard().await;
     let st::RoomFakePeers {
-        server: _server,
+        server,
         room: _room,
         mut publisher,
         mut subscriber,
@@ -29,7 +29,7 @@ async fn fake_peers_publish_and_receive_track_snapshot_over_real_server_entries(
         true,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -92,7 +92,7 @@ async fn fake_peers_keep_room_topology_isolation_with_same_user_ids() -> s::Test
     s::require_some(publisher_a.close().await, "room A publisher should close")?;
     p::assert_departure_message_protocol(&mut subscriber_a, s::UserId::Integer(90)).await;
     p::assert_no_server_message_protocol(&mut subscriber_b).await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -133,5 +133,5 @@ async fn fake_peers_cover_user_replacement_and_republish_over_protocol_user_flow
         true,
     )
     .await;
-    Ok(())
+    server.join().await
 }

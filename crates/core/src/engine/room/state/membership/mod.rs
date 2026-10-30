@@ -292,12 +292,12 @@ impl RoomState {
                 .topology
                 .retire_committed_placement(user_id, connection_id)?;
             return Some(ConnectionCloseCommit::StalePlacement {
-                session_teardown: TransportTeardown::CloseSession { session_key },
+                session_teardown: TransportTeardown::close_session(session_key),
             });
         }
         let session_teardown = self
             .committed_transport_user_key(user_id, connection_id)
-            .map(|session_key| TransportTeardown::CloseSession { session_key });
+            .map(TransportTeardown::close_session);
         let mut source_recipients = self
             .topology
             .committed_consumer_user_ids_for_owner_sources(user_id);
@@ -391,9 +391,7 @@ impl RoomState {
             let Some(connection_id) = self.users.get(user_id).map(|user| user.connection_id) else {
                 continue;
             };
-            let session_teardown = TransportTeardown::CloseSession {
-                session_key: self.transport_user_key(user_id, connection_id),
-            };
+            let session_key = self.transport_user_key(user_id, connection_id);
             let Some((user, user_transport_plan, user_evictions)) =
                 self.remove_runtime_user(user_id)
             else {
@@ -401,7 +399,7 @@ impl RoomState {
             };
             transport_plan.extend(user_transport_plan);
             evictions += user_evictions;
-            session_teardowns.push(session_teardown);
+            session_teardowns.push(TransportTeardown::close_session(session_key));
             close_requests.push(UserCloseRequest {
                 sender: user.sender,
                 reason: UserCloseReason::RemovedByRuntime,

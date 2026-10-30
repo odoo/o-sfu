@@ -10,6 +10,7 @@ use crate::engine::{
         TransportConsumerRoute, TransportRelayRouteAction, TransportRelayRouteEffect,
         TransportSourceActivityEffect, TransportSourceKey, TransportTeardown,
     },
+    obligation::Obligation,
     room::{
         Room,
         media_graph::{
@@ -21,12 +22,14 @@ use crate::engine::{
 };
 
 #[derive(Debug, Default)]
+#[must_use = "room transport plans must execute after the state transition commits"]
 pub(in crate::engine::room) struct RoomTransportPlan {
     relays: Vec<TransportRelayRouteEffect>,
     remote_source_activity: Vec<TransportSourceActivityEffect>,
     teardown: Vec<TransportTeardown>,
     route_control: RoomRouteEffects,
     setup_turns: Vec<ReceiverSetupTurn>,
+    obligation: Option<Obligation>,
 }
 
 impl RoomTransportPlan {
@@ -37,11 +40,13 @@ impl RoomTransportPlan {
         let mut teardown = Vec::new();
         extract_relay_teardown(&mut relays, &mut teardown);
         teardown.extend(additional_teardown);
-        Self {
+        let mut plan = Self {
             relays,
             teardown,
             ..Self::default()
-        }
+        };
+        plan.arm_if_nonempty();
+        plan
     }
 
     pub(in crate::engine::room) fn extend(&mut self, other: Self) {
@@ -51,6 +56,10 @@ impl RoomTransportPlan {
         self.teardown.extend(other.teardown);
         self.route_control.append(other.route_control);
         self.setup_turns.extend(other.setup_turns);
+        self.obligation = match (self.obligation.take(), other.obligation) {
+            (Some(current), Some(donor)) => Some(current.merge(donor)),
+            (current, donor) => current.or(donor),
+        };
     }
 
     pub(in crate::engine::room) fn extend_teardown(
@@ -58,6 +67,7 @@ impl RoomTransportPlan {
         teardown: impl IntoIterator<Item = TransportTeardown>,
     ) {
         self.teardown.extend(teardown);
+        self.arm_if_nonempty();
     }
 
     pub(super) fn push_producer(
@@ -68,6 +78,7 @@ impl RoomTransportPlan {
     ) {
         self.route_control
             .producer_activity(source, stream_id, update);
+        self.arm_if_nonempty();
     }
 
     pub(super) fn extend_remote_source_activity(
@@ -75,6 +86,7 @@ impl RoomTransportPlan {
         effects: impl IntoIterator<Item = TransportSourceActivityEffect>,
     ) {
         self.remote_source_activity.extend(effects);
+        self.arm_if_nonempty();
     }
 
     pub(super) fn push_receiver_work(
@@ -91,10 +103,25 @@ impl RoomTransportPlan {
         for setup in work.setups {
             self.setup_turns.push(ReceiverSetupTurn::new(setup, origin));
         }
+        self.arm_if_nonempty();
+    }
+
+    fn arm_if_nonempty(&mut self) {
+        if self.obligation.is_none()
+            && (!self.relays.is_empty()
+                || !self.remote_source_activity.is_empty()
+                || !self.teardown.is_empty()
+                || !self.route_control.is_empty()
+                || !self.setup_turns.is_empty())
+        {
+            self.obligation = Some(Obligation::new("room transport plan"));
+        }
     }
 
     pub(super) async fn execute(self, room: &Room, media_transport: Option<&MediaTransport>) {
         let Some(media_transport) = media_transport else {
+            #[cfg(any(test, feature = "testing-transport"))]
+            self.discard_for_test();
             return;
         };
         execute_relay_route_effects(media_transport, self.relays).await;
@@ -103,8 +130,23 @@ impl RoomTransportPlan {
             .execute(room.uuid(), media_transport)
             .await;
         media_transport.teardown(self.teardown).await;
+        // Teardown completion does not release pending consumer setup responsibility.
         for turn in self.setup_turns {
             turn.execute(room, media_transport).await;
+        }
+        if let Some(obligation) = self.obligation {
+            obligation.complete();
+        }
+    }
+
+    /// A state-only simulation applies topology changes without worker cleanup.
+    #[cfg(any(test, feature = "testing-transport"))]
+    pub(in crate::engine::room) fn discard_for_test(self) {
+        for teardown in self.teardown {
+            teardown.discard_for_test();
+        }
+        if let Some(obligation) = self.obligation {
+            obligation.complete();
         }
     }
 
@@ -370,9 +412,8 @@ fn extract_relay_teardown(
             .extract_if(.., |effect| {
                 effect.action == TransportRelayRouteAction::Release
             })
-            .map(|effect| TransportTeardown::ReleaseRelayRoute {
-                source: effect.source,
-                target_media_worker_id: effect.target_media_worker_id,
+            .map(|effect| {
+                TransportTeardown::release_relay_route(effect.source, effect.target_media_worker_id)
             }),
     );
 }

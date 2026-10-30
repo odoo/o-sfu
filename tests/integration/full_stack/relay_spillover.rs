@@ -36,7 +36,7 @@ async fn fake_rtc_cross_worker_vp8_selected_rid_survives_relay() -> s::TestResul
         LowRidProbe::DropThenForwardSelected,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -74,7 +74,7 @@ async fn fake_rtc_cross_worker_h264_selected_rid_forwards_opaque_payload() -> s:
         LowRidProbe::None,
     )
     .await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -108,7 +108,7 @@ async fn fake_rtc_overload_spillover_releases_remote_route_after_subscriber_leav
         &spillover_subscriber_user_id,
     ))
     .await?;
-    Ok(())
+    server.join().await
 }
 
 async fn assert_selected_video_relay(
@@ -184,5 +184,5 @@ async fn fake_rtc_overload_spillover_preserves_download_mute_after_subscriber_re
         spillover_subscriber_user_id,
     ))
     .await?;
-    Ok(())
+    server.join().await
 }

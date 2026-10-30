@@ -376,7 +376,7 @@ async fn fake_rtc_recovers_publisher_video_loss_with_nack_and_rtx() -> s::TestRe
         read_payload(&mut subscriber, &expected_payload, RECOVERY_TIMEOUT).await?,
         "subscriber should receive the normalized replacement repair",
     )?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -497,7 +497,7 @@ async fn fake_rtc_does_not_forward_late_primary_after_rtx() -> s::TestResult {
         1,
         "subscriber should receive one wire packet for the recovered sequence"
     );
-    Ok(())
+    peers.server.join().await
 }
 
 #[tokio::test]
@@ -588,7 +588,7 @@ async fn fake_rtc_recovers_before_delayed_publisher_rtx() -> s::TestResult {
         "subscriber should emit the recovered payload once"
     );
     assert_eq!(trace.keyframe_requests, 0);
-    Ok(())
+    peers.server.join().await
 }
 
 #[tokio::test]
@@ -602,7 +602,7 @@ async fn fake_rtc_recovers_ridless_fid_publisher_video_loss() -> s::TestResult {
     ))
     .await?;
     let st::ReadyRoomFakePeers {
-        server: _server,
+        server,
         room: _room,
         mut publisher,
         mut subscriber,
@@ -616,7 +616,7 @@ async fn fake_rtc_recovers_ridless_fid_publisher_video_loss() -> s::TestResult {
     )
     .await?;
     assert_eq!(recovered.rid, None);
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -630,7 +630,7 @@ async fn fake_rtc_recovers_dynamic_rtx_after_answer_refresh() -> s::TestResult {
     ))
     .await?;
     let st::ReadyRoomFakePeers {
-        server: _server,
+        server,
         room: _room,
         mut publisher,
         mut subscriber,
@@ -648,7 +648,7 @@ async fn fake_rtc_recovers_dynamic_rtx_after_answer_refresh() -> s::TestResult {
         Some("lo"),
     )
     .await?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -714,7 +714,7 @@ async fn fake_rtc_recovers_dynamic_rtx_after_pause_and_resume() -> s::TestResult
         Some("lo"),
     )
     .await?;
-    Ok(())
+    server.join().await
 }
 
 async fn assert_publisher_gap_nack(
@@ -824,7 +824,7 @@ async fn fake_rtc_does_not_forward_publisher_rtx_after_primary_delivery() -> s::
     ))
     .await?;
     let st::ReadyRoomFakePeers {
-        server: _server,
+        server,
         room: _room,
         mut publisher,
         mut subscriber,
@@ -908,7 +908,7 @@ async fn fake_rtc_does_not_forward_publisher_rtx_after_primary_delivery() -> s::
             .await?
             .is_none()
     );
-    Ok(())
+    server.join().await
 }
 
 async fn restart_publisher_vp8_and_assert_rewrite(
@@ -1039,7 +1039,7 @@ async fn fake_rtc_recovers_subscriber_video_loss_with_nack_and_rtx() -> s::TestR
     ))
     .await?;
     let st::ReadyRoomFakePeers {
-        server: _server,
+        server,
         room: _room,
         mut publisher,
         mut subscriber,
@@ -1104,7 +1104,7 @@ async fn fake_rtc_recovers_subscriber_video_loss_with_nack_and_rtx() -> s::TestR
     assert_eq!(subscriber_trace.keyframe_requests, 0);
 
     assert_no_publisher_repair_feedback(&mut publisher).await?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -1174,7 +1174,7 @@ async fn fake_rtc_recovers_after_first_downstream_rtx_loss() -> s::TestResult {
     );
     assert_eq!(subscriber_trace.keyframe_requests, 0);
     assert_no_publisher_repair_feedback(&mut publisher).await?;
-    Ok(())
+    peers.server.join().await
 }
 
 fn assert_retired_repair_pair_unused(trace: &s::RtcPeerTrace, primary_ssrc: u32, repair_ssrc: u32) {

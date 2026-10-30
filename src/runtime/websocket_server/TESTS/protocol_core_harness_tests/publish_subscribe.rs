@@ -40,12 +40,13 @@ async fn protocol_core_projects_camera_publish_without_presence_as_active() -> T
     assert_eq!(track_binding.user_id, ProtocolSessionId::Integer(53));
     assert_eq!(track_binding.stream_type, ProtocolStreamType::Camera);
     assert!(track_binding.active);
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_publish_round_trips_through_real_rtc_server_user_protocol() -> TestResult {
-    let (_server, _room, mut alice, mut bob) = require_some(
+    let (server, _room, mut alice, mut bob) = require_some(
         Box::pin(setup_real_rtc_protocol_peers(
             "issuer-protocol-rtc-publish",
             UserId::Integer(71),
@@ -80,6 +81,7 @@ async fn protocol_core_publish_round_trips_through_real_rtc_server_user_protocol
         bob.read_server_frame().await,
         "subscriber should receive the rtc-backed follow-up renegotiation request",
     )?;
+    server.shutdown().await;
     Ok(())
 }
 
@@ -138,12 +140,13 @@ async fn protocol_handshake_uses_answer_derived_client_capabilities_for_user_sta
         codec_names.iter().all(|codec| codec != "H264"),
         "the stored client RTP capabilities must reflect the real RTC answer"
     );
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_queues_one_follow_up_offer_until_first_answer() -> TestResult {
-    let (_server, room, mut alice, mut bob) = require_some(
+    let (server, room, mut alice, mut bob) = require_some(
         Box::pin(setup_real_rtc_protocol_peers(
             "issuer-protocol-rtc-publish-queue",
             UserId::Integer(73),
@@ -245,12 +248,13 @@ async fn protocol_core_queues_one_follow_up_offer_until_first_answer() -> TestRe
             .is_some(),
         "subscriber websocket should close cleanly before the test server is dropped"
     );
+    server.shutdown().await;
     Ok(())
 }
 
 #[tokio::test]
 async fn protocol_core_unpublish_cancels_pending_publish_before_commit() {
-    let Some((_server, _channel, mut alice, mut bob)) = Box::pin(setup_real_rtc_protocol_peers(
+    let Some((server, _channel, mut alice, mut bob)) = Box::pin(setup_real_rtc_protocol_peers(
         "issuer-protocol-rtc-publish-cancel",
         UserId::Integer(75),
         UserId::Integer(76),
@@ -317,4 +321,5 @@ async fn protocol_core_unpublish_cancels_pending_publish_before_commit() {
         no_server_frame(&mut bob, Duration::from_millis(150)).await,
         "subscriber should not observe track or renegotiation updates for a publish canceled before commit"
     );
+    server.shutdown().await;
 }

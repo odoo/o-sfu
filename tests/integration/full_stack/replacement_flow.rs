@@ -66,7 +66,7 @@ async fn fake_rtc_peers_rebootstrap_user_replacement_without_stale_media_routes(
     )
     .await;
     m::assert_packet_forwarded(&mut replacement, &mut subscriber, &mut source, &mut clock).await;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -89,7 +89,7 @@ async fn fake_rtc_subscriber_replacement_preserves_download_mute_after_renegotia
         ),
     )
     .await?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -123,7 +123,7 @@ async fn fake_rtc_replaced_socket_cannot_emit_presence_updates_after_rejoin() ->
     p::assert_peer_joined_message_protocol(&mut observer, s::UserId::Integer(84)).await;
     p::assert_no_server_message_protocol(&mut observer).await;
     s::require_some(replacement.close().await, "replacement should close")?;
-    Ok(())
+    server.join().await
 }
 
 #[tokio::test]
@@ -194,5 +194,5 @@ async fn fake_rtc_replaced_socket_cannot_finish_a_queued_publish_negotiation() -
     )
     .await;
     m::assert_packet_forwarded(&mut replacement, &mut subscriber, &mut source, &mut clock).await;
-    Ok(())
+    server.join().await
 }
