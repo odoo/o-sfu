@@ -47,9 +47,7 @@ pub(crate) use route_control::{
 pub(in crate::engine::media_transport) use route_control::{
     ConsumerRouteControlFailure, ProducerRouteControl,
 };
-pub(crate) use teardown::TransportTeardown;
-#[cfg(test)]
-pub(crate) use teardown::TransportTeardownAction;
+pub(crate) use teardown::{TransportTeardown, TransportTeardownAction};
 #[cfg(feature = "internal-benchmarks")]
 pub mod benchmark_support {
     pub use super::rtc::benchmark_support::*;

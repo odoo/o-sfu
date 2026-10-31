@@ -1,8 +1,12 @@
+use std::iter;
+
 use o_sfu_router::MediaKind;
 use o_sfu_telemetry::schema::event as telemetry_event;
 use tracing::{info, warn};
 
 use super::receiver_route::ReceiverSetupTurn;
+#[cfg(any(test, feature = "testing-transport"))]
+use crate::engine::obligation::Simulate;
 use crate::engine::{
     media_transport::{
         ConsumerActivity, ConsumerRouteControl, ConsumerRouteControlOutcome, MediaControlPlan,
@@ -10,7 +14,7 @@ use crate::engine::{
         TransportConsumerRoute, TransportRelayRouteAction, TransportRelayRouteEffect,
         TransportSourceActivityEffect, TransportSourceKey, TransportTeardown,
     },
-    obligation::Obligation,
+    obligation::{Execute, Obligation, Work},
     room::{
         Room,
         media_graph::{
@@ -23,13 +27,20 @@ use crate::engine::{
 
 #[derive(Debug, Default)]
 #[must_use = "room transport plans must execute after the state transition commits"]
-pub(in crate::engine::room) struct RoomTransportPlan {
+pub(in crate::engine::room) struct RoomTransportPlan(Obligation<RoomTransportWork>);
+
+#[derive(Debug, Default)]
+struct RoomTransportWork {
     relays: Vec<TransportRelayRouteEffect>,
     remote_source_activity: Vec<TransportSourceActivityEffect>,
     teardown: Vec<TransportTeardown>,
     route_control: RoomRouteEffects,
     setup_turns: Vec<ReceiverSetupTurn>,
-    obligation: Option<Obligation>,
+}
+
+enum TransportUpdate {
+    Producer(TransportSourceKey, UserStreamId, SourceActivityUpdate),
+    Receiver(ReceiverRouteWork, ConsumerSetupOrigin),
 }
 
 impl RoomTransportPlan {
@@ -40,34 +51,22 @@ impl RoomTransportPlan {
         let mut teardown = Vec::new();
         extract_relay_teardown(&mut relays, &mut teardown);
         teardown.extend(additional_teardown);
-        let mut plan = Self {
+        Self(Obligation::new(RoomTransportWork {
             relays,
             teardown,
-            ..Self::default()
-        };
-        plan.arm_if_nonempty();
-        plan
+            ..RoomTransportWork::default()
+        }))
     }
 
     pub(in crate::engine::room) fn extend(&mut self, other: Self) {
-        self.relays.extend(other.relays);
-        self.remote_source_activity
-            .extend(other.remote_source_activity);
-        self.teardown.extend(other.teardown);
-        self.route_control.append(other.route_control);
-        self.setup_turns.extend(other.setup_turns);
-        self.obligation = match (self.obligation.take(), other.obligation) {
-            (Some(current), Some(donor)) => Some(current.merge(donor)),
-            (current, donor) => current.or(donor),
-        };
+        self.0.merge(other.0);
     }
 
     pub(in crate::engine::room) fn extend_teardown(
         &mut self,
         teardown: impl IntoIterator<Item = TransportTeardown>,
     ) {
-        self.teardown.extend(teardown);
-        self.arm_if_nonempty();
+        self.0.extend(teardown);
     }
 
     pub(super) fn push_producer(
@@ -76,46 +75,25 @@ impl RoomTransportPlan {
         stream_id: UserStreamId,
         update: SourceActivityUpdate,
     ) {
-        self.route_control
-            .producer_activity(source, stream_id, update);
-        self.arm_if_nonempty();
+        self.0.extend(iter::once(TransportUpdate::Producer(
+            source, stream_id, update,
+        )));
     }
 
     pub(super) fn extend_remote_source_activity(
         &mut self,
         effects: impl IntoIterator<Item = TransportSourceActivityEffect>,
     ) {
-        self.remote_source_activity.extend(effects);
-        self.arm_if_nonempty();
+        self.0.extend(effects);
     }
 
     pub(super) fn push_receiver_work(
         &mut self,
-        mut work: ReceiverRouteWork,
+        work: ReceiverRouteWork,
         origin: ConsumerSetupOrigin,
     ) {
-        extract_relay_teardown(&mut work.relays, &mut self.teardown);
-        self.relays.extend(work.relays);
-        self.teardown.extend(work.teardown);
-        for activity in work.activities {
-            self.route_control.receiver_activity(activity);
-        }
-        for setup in work.setups {
-            self.setup_turns.push(ReceiverSetupTurn::new(setup, origin));
-        }
-        self.arm_if_nonempty();
-    }
-
-    fn arm_if_nonempty(&mut self) {
-        if self.obligation.is_none()
-            && (!self.relays.is_empty()
-                || !self.remote_source_activity.is_empty()
-                || !self.teardown.is_empty()
-                || !self.route_control.is_empty()
-                || !self.setup_turns.is_empty())
-        {
-            self.obligation = Some(Obligation::new("room transport plan"));
-        }
+        self.0
+            .extend(iter::once(TransportUpdate::Receiver(work, origin)));
     }
 
     pub(super) async fn execute(self, room: &Room, media_transport: Option<&MediaTransport>) {
@@ -124,37 +102,110 @@ impl RoomTransportPlan {
             self.discard_for_test();
             return;
         };
-        execute_relay_route_effects(media_transport, self.relays).await;
-        execute_remote_source_activity_effects(media_transport, self.remote_source_activity).await;
-        self.route_control
-            .execute(room.uuid(), media_transport)
-            .await;
-        media_transport.teardown(self.teardown).await;
-        // Teardown completion does not release pending consumer setup responsibility.
-        for turn in self.setup_turns {
-            turn.execute(room, media_transport).await;
-        }
-        if let Some(obligation) = self.obligation {
-            obligation.complete();
-        }
+        self.0.complete((room, media_transport)).await;
     }
 
-    /// A state-only simulation applies topology changes without worker cleanup.
+    /// Discards transport work after a state-only test has applied topology changes.
     #[cfg(any(test, feature = "testing-transport"))]
     pub(in crate::engine::room) fn discard_for_test(self) {
-        for teardown in self.teardown {
-            teardown.discard_for_test();
-        }
-        if let Some(obligation) = self.obligation {
-            obligation.complete();
-        }
+        self.0.simulate();
     }
 
     #[cfg(test)]
     pub(in crate::engine::room) fn relays_and_teardown(
         &self,
     ) -> (&[TransportRelayRouteEffect], &[TransportTeardown]) {
-        (&self.relays, &self.teardown)
+        let work = self.0.work();
+        (&work.relays, &work.teardown)
+    }
+}
+
+impl Work for RoomTransportWork {
+    fn label(&self) -> &'static str {
+        "room transport plan"
+    }
+
+    fn is_pending(&self) -> bool {
+        !self.relays.is_empty()
+            || !self.remote_source_activity.is_empty()
+            || !self.teardown.is_empty()
+            || !self.route_control.is_empty()
+            || !self.setup_turns.is_empty()
+    }
+}
+
+impl Extend<TransportUpdate> for RoomTransportWork {
+    fn extend<T: IntoIterator<Item = TransportUpdate>>(&mut self, updates: T) {
+        for update in updates {
+            match update {
+                TransportUpdate::Producer(source, stream_id, update) => {
+                    self.route_control
+                        .producer_activity(source, stream_id, update);
+                }
+                TransportUpdate::Receiver(mut work, origin) => {
+                    extract_relay_teardown(&mut work.relays, &mut self.teardown);
+                    self.relays.extend(work.relays);
+                    self.teardown.extend(work.teardown);
+                    for activity in work.activities {
+                        self.route_control.receiver_activity(activity);
+                    }
+                    for setup in work.setups {
+                        self.setup_turns.push(ReceiverSetupTurn::new(setup, origin));
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Extend<TransportTeardown> for RoomTransportWork {
+    fn extend<T: IntoIterator<Item = TransportTeardown>>(&mut self, teardown: T) {
+        self.teardown.extend(teardown);
+    }
+}
+
+impl Extend<TransportSourceActivityEffect> for RoomTransportWork {
+    fn extend<T: IntoIterator<Item = TransportSourceActivityEffect>>(&mut self, effects: T) {
+        self.remote_source_activity.extend(effects);
+    }
+}
+
+impl Extend<Self> for RoomTransportWork {
+    fn extend<T: IntoIterator<Item = Self>>(&mut self, work: T) {
+        for other in work {
+            self.relays.extend(other.relays);
+            self.remote_source_activity
+                .extend(other.remote_source_activity);
+            self.teardown.extend(other.teardown);
+            self.route_control.append(other.route_control);
+            self.setup_turns.extend(other.setup_turns);
+        }
+    }
+}
+
+impl Execute<(&Room, &MediaTransport)> for RoomTransportWork {
+    type Output = ();
+
+    async fn execute(self, (room, media_transport): (&Room, &MediaTransport)) {
+        execute_relay_route_effects(media_transport, self.relays).await;
+        execute_remote_source_activity_effects(media_transport, self.remote_source_activity).await;
+        self.route_control
+            .execute(room.uuid(), media_transport)
+            .await;
+        media_transport.teardown(self.teardown).await;
+        // The plan is still unfinished until the last consumer setup returns.
+        for turn in self.setup_turns {
+            turn.execute(room, media_transport).await;
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing-transport"))]
+impl Simulate for RoomTransportWork {
+    fn simulate(self) {
+        for teardown in self.teardown {
+            teardown.discard_for_test();
+        }
     }
 }
 

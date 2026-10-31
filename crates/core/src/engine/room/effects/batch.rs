@@ -1,7 +1,7 @@
 use super::{output::RoomOutputPlan, transport::RoomTransportPlan};
 use crate::engine::{
     media_transport::MediaTransport,
-    obligation::Obligation,
+    obligation::{Execute, Obligation, Work},
     room::{
         Room, SourcePolicyGuard,
         media_graph::{
@@ -94,11 +94,13 @@ impl<'a> RoomEffectContext<'a> {
 /// finish. Cancellation after transport still leaves the batch unfinished.
 #[derive(Debug, Default)]
 #[must_use = "room effect batches must be executed after the state transition commits"]
-pub struct RoomEffects {
+pub struct RoomEffects(Option<Obligation<RoomEffectWork>>);
+
+#[derive(Debug, Default)]
+struct RoomEffectWork {
     transport: RoomTransportPlan,
     output: RoomOutputPlan,
     source_policy: SourcePolicyTurn,
-    obligation: Option<Obligation>,
 }
 
 /// Requires the source-policy guard held continuously from the publication commit.
@@ -106,33 +108,26 @@ pub struct RoomEffects {
 #[derive(Debug)]
 #[must_use = "publication effects must execute with the guard held since their state commit"]
 pub(in crate::engine::room) struct PublicationEffects {
-    batch: RoomEffects,
+    batch: Obligation<RoomEffectWork>,
     policy_before_transport: bool,
 }
 
 impl RoomEffects {
-    fn pending() -> Self {
-        Self {
-            obligation: Some(Obligation::new("room effects")),
-            ..Self::default()
-        }
-    }
-
     pub(in crate::engine::room) fn from_join(
         effects: LifecycleEffects,
         transport_plan: RoomTransportPlan,
     ) -> Self {
-        let mut batch = Self {
+        let mut batch = RoomEffectWork {
             transport: transport_plan,
-            ..Self::pending()
+            ..RoomEffectWork::default()
         };
         batch.source_policy.request();
         batch.output.lifecycle = effects;
-        batch
+        Self(Some(Obligation::new(batch)))
     }
 
     pub(in crate::engine::room) fn from_connection_close(commit: ConnectionCloseCommit) -> Self {
-        let mut batch = Self::pending();
+        let mut batch = RoomEffectWork::default();
         match commit {
             ConnectionCloseCommit::Current {
                 session_teardown,
@@ -149,36 +144,36 @@ impl RoomEffects {
                 batch.transport.extend_teardown([session_teardown]);
             }
         }
-        batch
+        Self(Some(Obligation::new(batch)))
     }
 
     pub(in crate::engine::room) fn from_disconnect(commit: DisconnectCommit) -> Self {
-        let mut batch = Self {
+        let mut batch = RoomEffectWork {
             transport: commit.transport_plan,
-            ..Self::pending()
+            ..RoomEffectWork::default()
         };
         batch.source_policy.request();
         batch.output.lifecycle = commit.effects;
         batch.transport.extend_teardown(commit.session_teardowns);
-        batch
+        Self(Some(Obligation::new(batch)))
     }
 
     pub(in crate::engine::room) fn from_presence(commit: PresenceCommit) -> Self {
-        let mut batch = Self::pending();
+        let mut batch = RoomEffectWork::default();
         batch.output.user_info = Some(commit.fanout);
         batch.source_policy.request();
-        batch
+        Self(Some(Obligation::new(batch)))
     }
 
     pub(in crate::engine::room) fn from_publish(commit: PublishCommit) -> PublicationEffects {
-        let mut batch = Self::pending();
+        let mut batch = RoomEffectWork::default();
         batch
             .transport
             .push_receiver_work(commit.receiver_route_work, ConsumerSetupOrigin::Publish);
         batch.output.user_info_before_policy = commit.presence.map(|presence| presence.fanout);
         batch.source_policy.request();
         PublicationEffects {
-            batch,
+            batch: Obligation::new(batch),
             policy_before_transport: false,
         }
     }
@@ -195,7 +190,7 @@ impl RoomEffects {
             presence,
         } = commit;
         let policy_before_transport = update.activity().is_active();
-        let mut batch = Self::pending();
+        let mut batch = RoomEffectWork::default();
         batch
             .transport
             .extend_remote_source_activity(remote_activity_effects);
@@ -204,15 +199,14 @@ impl RoomEffects {
         batch.output.user_info_before_policy = presence.map(|presence| presence.fanout);
         batch.source_policy.request();
         PublicationEffects {
-            batch,
+            batch: Obligation::new(batch),
             policy_before_transport,
         }
     }
 
     pub(in crate::engine::room) fn from_receiver_intent(commit: ReceiverRouteCommit) -> Self {
-        let mut batch = Self::from_receiver_route(commit.work, ConsumerSetupOrigin::Subscribe);
-        batch.source_policy.request();
-        batch
+        let batch = Self::receiver_route_work(commit.work, ConsumerSetupOrigin::Subscribe);
+        Self(Some(Obligation::new(batch)))
     }
 
     pub(in crate::engine::room) fn from_consumer_readiness(commit: ReceiverRouteCommit) -> Self {
@@ -220,20 +214,44 @@ impl RoomEffects {
             work,
             track_snapshots,
         } = commit;
-        let mut batch = Self::from_receiver_route(work, ConsumerSetupOrigin::Readiness);
+        let mut batch = Self::receiver_route_work(work, ConsumerSetupOrigin::Readiness);
         batch.output.track_snapshots = track_snapshots;
-        batch.source_policy.request();
-        batch
+        Self(Some(Obligation::new(batch)))
     }
 
-    fn from_receiver_route(work: ReceiverRouteWork, origin: ConsumerSetupOrigin) -> Self {
-        let mut batch = Self::pending();
+    fn receiver_route_work(work: ReceiverRouteWork, origin: ConsumerSetupOrigin) -> RoomEffectWork {
+        let mut batch = RoomEffectWork::default();
         batch.transport.push_receiver_work(work, origin);
+        batch.source_policy.request();
         batch
     }
 
     /// preserves the room-wide side-effect order across transport and policy work
     pub async fn execute(self, room: &Room, context: RoomEffectContext<'_>) {
+        if let Some(batch) = self.0 {
+            batch.complete((room, context)).await;
+        }
+    }
+}
+
+impl PublicationEffects {
+    pub async fn execute(self, guard: &SourcePolicyGuard<'_>, context: RoomEffectContext<'_>) {
+        self.batch
+            .complete((guard, context, self.policy_before_transport))
+            .await;
+    }
+}
+
+impl Work for RoomEffectWork {
+    fn label(&self) -> &'static str {
+        "room effects"
+    }
+}
+
+impl Execute<(&Room, RoomEffectContext<'_>)> for RoomEffectWork {
+    type Output = ();
+
+    async fn execute(self, (room, context): (&Room, RoomEffectContext<'_>)) {
         let mut output = self.output;
         self.transport
             .execute(room, context.route_transport())
@@ -242,28 +260,33 @@ impl RoomEffects {
         self.source_policy
             .execute(room, context.media_transport(), None)
             .await;
+        // The batch is not complete until this last output is sent.
         output.emit_after_policy();
-        // Teardown completion does not discharge the remaining policy and output work.
-        if let Some(obligation) = self.obligation {
-            obligation.complete();
-        }
     }
 }
 
-impl PublicationEffects {
-    pub async fn execute(self, guard: &SourcePolicyGuard<'_>, context: RoomEffectContext<'_>) {
+impl Execute<(&SourcePolicyGuard<'_>, RoomEffectContext<'_>, bool)> for RoomEffectWork {
+    type Output = ();
+
+    async fn execute(
+        self,
+        (guard, context, policy_before_transport): (
+            &SourcePolicyGuard<'_>,
+            RoomEffectContext<'_>,
+            bool,
+        ),
+    ) {
         let room = guard.room();
-        let mut output = self.batch.output;
-        let mut source_policy = self.batch.source_policy;
-        if self.policy_before_transport {
+        let mut output = self.output;
+        let mut source_policy = self.source_policy;
+        if policy_before_transport {
             output.emit_user_info_before_policy();
             source_policy
                 .execute_guarded(guard, context.media_transport(), None)
                 .await;
             source_policy = SourcePolicyTurn::default();
         }
-        self.batch
-            .transport
+        self.transport
             .execute(room, context.route_transport())
             .await;
         output.emit_before_policy();
@@ -271,9 +294,6 @@ impl PublicationEffects {
             .execute_guarded(guard, context.media_transport(), None)
             .await;
         output.emit_after_policy();
-        if let Some(obligation) = self.batch.obligation {
-            obligation.complete();
-        }
     }
 }
 

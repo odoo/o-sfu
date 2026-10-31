@@ -242,11 +242,12 @@ async fn cancelled_final_consumer_setup_diagnoses_unfinished_transport_plan()
         },
         ConsumerSetupOrigin::Readiness,
     );
-    assert_eq!(plan.setup_turns.len(), 1);
-    assert!(plan.relays.is_empty());
-    assert!(plan.remote_source_activity.is_empty());
-    assert!(plan.route_control.is_empty());
-    assert!(plan.teardown.is_empty());
+    let work = plan.0.work();
+    assert_eq!(work.setup_turns.len(), 1);
+    assert!(work.relays.is_empty());
+    assert!(work.remote_source_activity.is_empty());
+    assert!(work.route_control.is_empty());
+    assert!(work.teardown.is_empty());
     let release_worker = media_transport
         .test_api()
         .pause_first_worker()

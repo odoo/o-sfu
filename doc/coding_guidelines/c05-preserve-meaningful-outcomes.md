@@ -8,18 +8,11 @@ Make the outcome clear in its type: use enums for distinct alternatives and
 named types for grouped values or ambiguous booleans, reserving tuples for
 small groups with obvious meanings.
 
-In core lifecycle types that require explicit completion, pair `#[must_use]`
-with an [`Obligation`](https://odoo.github.io/o-sfu/o_sfu_core/engine/obligation/index.html).
-Rust permits dropping a named value and the lint cannot detect cancellation
-after work starts. The guard diagnoses abandoned cleanup, staged publication
-and effect batches.
-
-Keep the guard with pending work across awaits and ownership transfers. Call
-`complete()` only after the defined terminal outcome, including required
-failure handling. Creating or enqueueing a cleanup command does not complete
-the work. The guard reports unfinished drops but performs no cleanup and does
-not make cancellation safe. Its rustdoc explains the completion discipline and
-provides usage examples.
+For lifecycle work that must finish, pair `#[must_use]` with a private
+[`Obligation<W>`](https://odoo.github.io/o-sfu/o_sfu_core/engine/obligation/index.html)
+field. The lint alone does not catch named values or execution futures being
+dropped. Completion must run the work and handle required failures. The guard
+reports unfinished drops but does not run cleanup.
 
 When the contract allows ignoring a fresh result, `let _ = expression`
 discards it without retaining the value. An `_`-prefixed binding instead keeps
@@ -35,19 +28,12 @@ choices.
 > [pedantic::must_use_candidate](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#must_use_candidate)
 > and [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_future).
 
-**Example:** Discarding `RoomEffects` skips the batch's transport, output and
-source-policy effects. `#[must_use]` warns when the batch is ignored and an
-obligation detects dropping a nonempty batch before those effects finish.
-`RoomEffects::default()` carries no obligation.
+**Example:** Dropping a nonempty `RoomEffects` batch before its transport,
+signaling and policy work finishes reports unfinished work.
 
 ```rust
 #[must_use = "room effect batches must be executed after the state transition commits"]
-pub struct RoomEffects {
-    transport: RoomTransportPlan,
-    output: RoomOutputPlan,
-    source_policy: SourcePolicyTurn,
-    obligation: Option<Obligation>,
-}
+pub struct RoomEffects(Option<Obligation<RoomEffectWork>>);
 ```
 
 **Rationale:** Explicit handling makes unfinished work and required decisions
