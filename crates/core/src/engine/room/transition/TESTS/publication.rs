@@ -133,10 +133,12 @@ async fn take_staged_publish(
 
 #[tokio::test]
 #[should_panic(expected = "unfinished lifecycle obligation: staged publication")]
-async fn dropping_transferred_publish_teardown_diagnoses_unfinished_cleanup() {
-    let (room, _media_transport, user_id, connection_id) = staged_room().await;
+async fn dropping_unpolled_publish_teardown_diagnoses_unfinished_cleanup() {
+    let (room, media_transport, user_id, connection_id) = staged_room().await;
     let staged = take_staged_publish(&room, &user_id, connection_id).await;
-    drop(staged.release_into_teardown());
+    let teardown = media_transport.teardown([staged.release_into_teardown()]);
+    // Creating an execution future cannot acknowledge cleanup before its first poll.
+    drop(teardown);
 }
 
 #[tokio::test]
@@ -256,27 +258,61 @@ async fn missing_answered_producer_parameters_release_reserved_publish() {
 
 #[tokio::test]
 async fn stale_connection_commit_rejects_and_releases_reserved_publish() {
-    let (room, media_transport, user_id, stale_connection_id) = staged_room().await;
-    let transport_media_id = staged_media_id(&room, &user_id, stale_connection_id).await;
-    let _new_connection_id = prepare_publish_session(&room, &media_transport, &user_id).await;
-    let applied_answer = AppliedSessionAnswer::from_negotiated_producers([(
-        transport_media_id,
-        sample_simulcast_video_rtp_parameters(None),
-    )]);
-
-    room.user_operation(&user_id, stale_connection_id, &media_transport)
-        .commit_staged_publishes(&applied_answer)
-        .await;
-
-    assert_eq!(room.test_api().producer_count().await, 0);
-    assert!(
-        media_transport
-            .test_api()
-            .route_entry_by_media_id(transport_media_id)
-            .await
-            .expect("test probe must complete")
-            .is_none()
-    );
+    for cancel_cleanup in [false, true] {
+        let (room, media_transport, user_id, stale_connection_id) = staged_room().await;
+        let transport_media_id = staged_media_id(&room, &user_id, stale_connection_id).await;
+        let session_key = room.transport_user_key(&user_id, stale_connection_id).await;
+        // Reconnect drains staged publishes, so retain the reservation to exercise commit rejection.
+        let staged = take_staged_publish(&room, &user_id, stale_connection_id).await;
+        let _new_connection_id = prepare_publish_session(&room, &media_transport, &user_id).await;
+        assert!(
+            media_transport
+                .transport_media_mid(&session_key, transport_media_id)
+                .await
+                .expect("reserved media should remain until commit rejection cleanup")
+                .is_some()
+        );
+        let mut commit = Box::pin(staged.commit_with_parameters(
+            room.user_operation(&user_id, stale_connection_id, &media_transport),
+            sample_simulcast_video_rtp_parameters(None),
+        ));
+        if cancel_cleanup {
+            let release_worker = media_transport
+                .test_api()
+                .pause_first_worker()
+                .await
+                .expect("the publication worker should pause");
+            assert!(futures_util::poll!(commit.as_mut()).is_pending());
+            assert_eq!(room.test_api().producer_count().await, 0);
+            assert!(
+                media_transport
+                    .worker_pressure_snapshots()
+                    .iter()
+                    .any(|worker| worker.command_backlog_depth > 0),
+                "rejected commit should queue cleanup behind the paused worker"
+            );
+            let cancellation = catch_unwind(AssertUnwindSafe(|| drop(commit)));
+            release_worker
+                .send(())
+                .expect("the publication worker should resume");
+            let panic = cancellation
+                .expect_err("cancelled rejection cleanup should preserve its pending obligation");
+            assert_eq!(
+                panic.downcast_ref::<String>().map(String::as_str),
+                Some("unfinished lifecycle obligation: staged publication")
+            );
+        } else {
+            assert_eq!(commit.await, None);
+        }
+        assert_eq!(room.test_api().producer_count().await, 0);
+        assert!(
+            media_transport
+                .transport_media_mid(&session_key, transport_media_id)
+                .await
+                .expect("rejection cleanup should precede MID observation")
+                .is_none()
+        );
+    }
 }
 
 #[tokio::test]

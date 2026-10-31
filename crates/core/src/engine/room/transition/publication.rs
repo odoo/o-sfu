@@ -124,7 +124,7 @@ impl RoomUserOperation<'_> {
             // `publish_media` ran without the room lock. Revalidate connection
             // identity and stream uniqueness before room state accepts it.
             if state
-                .validate_publish_commit(&reserved_publish.descriptor, reserved_publish.media)
+                .validate_publish_commit(reserved_publish.descriptor(), reserved_publish.media())
                 .is_some()
             {
                 state.staged_publishes.stage(reserved_publish)

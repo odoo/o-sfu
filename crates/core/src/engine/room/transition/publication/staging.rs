@@ -8,13 +8,14 @@ use crate::engine::{
     ConnectionId, UserId,
     media_transport::{
         AppliedSessionAnswer, MediaTransport, SessionUploadEncoding, TransportMediaId,
-        TransportTeardown,
+        TransportTeardown, TransportTeardownAction,
     },
-    obligation::Obligation,
+    obligation::{Obligation, Transfer, TryComplete, Work},
     room::{
         SourcePolicyGuard,
         effects::batch::{RoomEffectContext, RoomEffects},
-        media_graph::ValidatedPublish,
+        media_graph::{PublishCommit, ValidatedPublish},
+        state::RoomState,
     },
     source_model::UserStreamId,
 };
@@ -30,9 +31,19 @@ type StagedPublishKey = (UserId, ConnectionId, UserStreamId);
 
 #[derive(Debug)]
 pub struct StagedPublish {
-    pub(super) descriptor: ValidatedPublish,
-    pub(super) media: TransportMediaId,
-    reservation: Obligation,
+    reservation: Obligation<PublishReservation>,
+}
+
+#[derive(Debug)]
+struct PublishReservation {
+    descriptor: ValidatedPublish,
+    media: TransportMediaId,
+}
+
+struct PublishAcceptance<'a> {
+    state: &'a mut RoomState,
+    rtp: RouterRtpParameters,
+    upload_encodings: &'a [SessionUploadEncoding],
 }
 
 impl StagedPublishes {
@@ -107,7 +118,7 @@ impl StagedPublishes {
         let stream_id = stream_id_for_source(stream_type);
         self.staged
             .get(&staged_publish_key(user_id, connection_id, &stream_id))
-            .map(|publish| publish.media)
+            .map(StagedPublish::media)
     }
 }
 
@@ -122,17 +133,26 @@ fn staged_publish_key(
 impl StagedPublish {
     pub fn new(descriptor: ValidatedPublish, transport_media_id: TransportMediaId) -> Self {
         Self {
-            descriptor,
-            media: transport_media_id,
-            reservation: Obligation::new("staged publication"),
+            reservation: Obligation::new(PublishReservation {
+                descriptor,
+                media: transport_media_id,
+            }),
         }
+    }
+
+    pub(super) fn descriptor(&self) -> &ValidatedPublish {
+        &self.reservation.work().descriptor
+    }
+
+    pub(super) fn media(&self) -> TransportMediaId {
+        self.reservation.work().media
     }
 
     fn key(&self) -> StagedPublishKey {
         staged_publish_key(
-            self.descriptor.session_key.user_id(),
-            self.descriptor.session_key.connection_id(),
-            self.descriptor.intent.stream_id(),
+            self.descriptor().session_key.user_id(),
+            self.descriptor().session_key.connection_id(),
+            self.descriptor().intent.stream_id(),
         )
     }
 
@@ -142,14 +162,14 @@ impl StagedPublish {
         media_transport: &MediaTransport,
         applied_answer: &AppliedSessionAnswer,
     ) -> Option<UserStreamId> {
-        let media = self.media;
+        let media = self.media();
         let Some(rtp) = applied_answer
             .negotiated_producer_parameters(media)
             .cloned()
         else {
-            let user = self.descriptor.session_key.user_id().clone();
-            let connection = self.descriptor.session_key.connection_id();
-            let stream_id = self.descriptor.intent.stream_id().clone();
+            let user = self.descriptor().session_key.user_id().clone();
+            let connection = self.descriptor().session_key.connection_id();
+            let stream_id = self.descriptor().intent.stream_id().clone();
             self.release_reserved_media(media_transport).await;
             warn!(
                 user_id = ?user,
@@ -173,29 +193,35 @@ impl StagedPublish {
         upload_encodings: &[SessionUploadEncoding],
     ) -> Option<UserStreamId> {
         let room = guard.room();
-        let user = self.descriptor.session_key.user_id().clone();
-        let connection = self.descriptor.session_key.connection_id();
-        let stream_id = self.descriptor.intent.stream_id().clone();
-        let media = self.media;
-        let worker = self.descriptor.session_key.media_worker_id();
+        let user = self.descriptor().session_key.user_id().clone();
+        let connection = self.descriptor().session_key.connection_id();
+        let stream_id = self.descriptor().intent.stream_id().clone();
+        let media = self.media();
+        let worker = self.descriptor().session_key.media_worker_id();
         let committed = {
             let mut state = room.state.write().await;
-            state.commit_publish_reservation(self.descriptor.clone(), rtp, upload_encodings, media)
+            self.reservation.try_complete(PublishAcceptance {
+                state: &mut state,
+                rtp,
+                upload_encodings,
+            })
         };
-        let Some(commit) = committed else {
-            self.release_reserved_media(media_transport).await;
-            warn!(
-                user_id = ?user,
-                connection_id = ?connection,
-                stream_id = %stream_id,
-                transport_media_id = ?media,
-                "room rejected staged negotiated publish during commit"
-            );
-            return None;
+        let commit = match committed {
+            Ok(commit) => commit,
+            Err(reservation) => {
+                Self { reservation }
+                    .release_reserved_media(media_transport)
+                    .await;
+                warn!(
+                    user_id = ?user,
+                    connection_id = ?connection,
+                    stream_id = %stream_id,
+                    transport_media_id = ?media,
+                    "room rejected staged negotiated publish during commit"
+                );
+                return None;
+            }
         };
-        // Room topology now owns the transport media. Disarm only after
-        // acceptance so rejected commits still take the explicit teardown path.
-        self.commit_reservation();
         RoomEffects::from_publish(commit)
             .execute(guard, RoomEffectContext::runtime(media_transport))
             .await;
@@ -218,15 +244,41 @@ impl StagedPublish {
     }
 
     pub(super) fn release_into_teardown(self) -> TransportTeardown {
-        let Self {
-            descriptor,
-            media,
-            reservation,
-        } = self;
-        TransportTeardown::remove_reserved_media(descriptor.session_key, media, reservation)
+        TransportTeardown::from_obligation(self.reservation.transfer())
     }
+}
 
-    fn commit_reservation(self) {
-        self.reservation.complete();
+impl Work for PublishReservation {
+    fn label(&self) -> &'static str {
+        "staged publication"
+    }
+}
+
+impl TryComplete<PublishAcceptance<'_>> for PublishReservation {
+    type Output = PublishCommit;
+
+    fn try_complete(self, context: PublishAcceptance<'_>) -> Result<PublishCommit, Self> {
+        // Once the room accepts the media, the reservation can finish before
+        // effects await. A rejected reservation still needs transport cleanup.
+        context
+            .state
+            .commit_publish_reservation(
+                self.descriptor.clone(),
+                context.rtp,
+                context.upload_encodings,
+                self.media,
+            )
+            .ok_or(self)
+    }
+}
+
+impl Transfer for PublishReservation {
+    type Target = TransportTeardownAction;
+
+    fn transfer(self) -> Self::Target {
+        TransportTeardownAction::RemoveMedia {
+            session_key: self.descriptor.session_key,
+            transport_media_id: self.media,
+        }
     }
 }

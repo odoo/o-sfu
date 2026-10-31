@@ -45,10 +45,19 @@ async fn dropping_signaling_or_policy_only_batch_diagnoses_unfinished_room_effec
         )
         .expect("current user presence should commit");
     assert_unfinished_room_effects(RoomEffects::from_presence(presence));
-    assert_unfinished_room_effects(RoomEffects::from_receiver_intent(ReceiverRouteCommit {
-        work: ReceiverRouteWork::default(),
-        track_snapshots: Vec::new(),
-    }));
+    for start_execution in [false, true] {
+        let effects = RoomEffects::from_receiver_intent(ReceiverRouteCommit {
+            work: ReceiverRouteWork::default(),
+            track_snapshots: Vec::new(),
+        });
+        if start_execution {
+            assert_unfinished_room_effects(
+                effects.execute(&fixture.room, RoomEffectContext::state_only(None)),
+            );
+        } else {
+            assert_unfinished_room_effects(effects);
+        }
+    }
 }
 
 #[test]

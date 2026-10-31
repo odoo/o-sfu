@@ -10,8 +10,9 @@ explicitly permits it. Otherwise, finish the operation before honoring
 cancellation or move it into a tracked task whose result is handled. See
 [R6](r06-bound-externally-driven-work.md) for polling order and fairness.
 
-Use [completion obligations](c05-preserve-meaningful-outcomes.md) to diagnose
-cancellation that abandons required cleanup or effect execution.
+Use [completion obligations](c05-preserve-meaningful-outcomes.md) to detect cleanup
+or effects abandoned by cancellation. They do not finish the work or make
+cancellation safe.
 
 > [!NOTE]
 > Further reading: **[cancellation safety in Tokio](https://tokio.rs/tokio/tutorial/select#cancellation-safety)** and **[future execution in the Asynchronous Programming in Rust Book](https://rust-lang.github.io/async-book/02_execution/01_chapter.html)**.
