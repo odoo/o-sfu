@@ -116,21 +116,23 @@ impl SourceLayoutPolicy {
     /// override that receiver's layout. Without explicit intent, an active speaker
     /// uses `active_speaker_selector` when configured. If neither explicit intent
     /// nor active-speaker selection applies, `visible_selector` is used.
+    /// A missing preference resolves as [`VideoLayoutIntent::Automatic`].
     #[must_use]
     pub fn resolve(
         self,
         preference: Option<VideoLayoutIntent>,
         active_speaker: bool,
     ) -> SourceRoomPolicySelector {
-        match preference {
-            Some(VideoLayoutIntent::Pinned) => SourceRoomPolicySelector::Pinned,
-            Some(VideoLayoutIntent::Featured) => SourceRoomPolicySelector::Featured,
-            Some(VideoLayoutIntent::Hidden) => SourceRoomPolicySelector::Hidden,
-            Some(VideoLayoutIntent::Overflow) => SourceRoomPolicySelector::Overflow,
-            None if active_speaker => self
+        match preference.unwrap_or(VideoLayoutIntent::Automatic) {
+            VideoLayoutIntent::Pinned => SourceRoomPolicySelector::Pinned,
+            VideoLayoutIntent::Featured => SourceRoomPolicySelector::Featured,
+            VideoLayoutIntent::Hidden => SourceRoomPolicySelector::Hidden,
+            VideoLayoutIntent::Overflow => SourceRoomPolicySelector::Overflow,
+            VideoLayoutIntent::VisibleThumbnail => self.visible_selector,
+            VideoLayoutIntent::Automatic => self
                 .active_speaker_selector
+                .filter(|_| active_speaker)
                 .unwrap_or(self.visible_selector),
-            Some(VideoLayoutIntent::VisibleThumbnail) | None => self.visible_selector,
         }
     }
 }

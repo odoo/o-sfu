@@ -214,6 +214,7 @@ basic audio/video subscription.
 
 ```ts
 const VIDEO_LAYOUT_INTENTS = [
+    "automatic",
     "featured",
     "pinned",
     "visible_thumbnail",
@@ -238,6 +239,8 @@ sfu.subscribe(remoteSessionId, {
 The SFU uses the resolved layout role when selecting video quality for this
 receiver:
 
+- `automatic`: no explicit layout; the SFU applies the stream's default
+  treatment described below. Use it to undo an earlier layout value.
 - `pinned`: the user explicitly pinned this video; highest priority with
   explicit featured treatment.
 - `featured`: the UI explicitly treats this video as featured without
@@ -246,14 +249,15 @@ receiver:
 - `hidden`: the video is subscribed but not currently visible.
 - `overflow`: the video is outside the visible grid or in an overflow list.
 
-For camera video, if `cameraLayout` is omitted, the SFU keeps compatibility
-behavior: an active speaker can receive featured-quality treatment, and other
-cameras are treated as visible thumbnails.
+For camera video, until `cameraLayout` is set or after it is reset to
+`"automatic"`, the SFU keeps compatibility behavior: an active speaker can
+receive featured-quality treatment, and other cameras are treated as visible
+thumbnails.
 
-For screen share, if `screenLayout` is omitted, the SFU treats the stream as a
-screen-share readability route. A `screenLayout` value of `"visible_thumbnail"`
-keeps that screen-specific policy rather than turning the screen share into a
-camera thumbnail.
+For screen share, until `screenLayout` is set or after it is reset to
+`"automatic"`, the SFU treats the stream as a screen-share readability route.
+A `screenLayout` value of `"visible_thumbnail"` keeps that screen-specific
+policy rather than turning the screen share into a camera thumbnail.
 
 Layout-only updates are valid:
 
@@ -265,6 +269,11 @@ sfu.subscribe(remoteSessionId, {
 
 That call keeps the current audio/camera/screen download flags and only changes
 the server-side video priority for this receiver.
+
+Omitting a layout field keeps its previous value, so send `"automatic"` to
+return a stream to its default treatment. It is remembered like any other layout
+value: it applies to streams the remote participant publishes later, survives
+transient recovery and stays until another layout is selected.
 
 ### Common Subscription Patterns
 
@@ -300,6 +309,14 @@ Keep a screen share readable:
 ```js
 sfu.subscribe(remoteSessionId, {
     screen: true,
+});
+```
+
+Unpin a camera so active-speaker treatment applies again:
+
+```js
+sfu.subscribe(pinnedSessionId, {
+    cameraLayout: "automatic",
 });
 ```
 

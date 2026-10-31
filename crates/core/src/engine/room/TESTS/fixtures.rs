@@ -605,7 +605,7 @@ impl SourcePolicyScenario {
         .await;
     }
 
-    async fn subscribe(
+    pub(super) async fn subscribe(
         &self,
         receiver_user_id: i64,
         source_user_id: i64,

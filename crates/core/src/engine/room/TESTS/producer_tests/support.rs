@@ -6,8 +6,8 @@ pub(super) use o_sfu_router::{
 };
 pub(super) use o_sfu_telemetry::diagnostics::{
     DiagnosticsPolicyPauseReason, DiagnosticsRouteState, DiagnosticsSource,
-    DiagnosticsSourceSelector, DiagnosticsUserView, DiagnosticsVideoLayoutRole,
-    DiagnosticsVideoRoutePriority,
+    DiagnosticsSourceSelector, DiagnosticsSubscription, DiagnosticsUserView,
+    DiagnosticsVideoLayoutRole, DiagnosticsVideoRoutePriority,
 };
 pub(super) use str0m::{Candidate, Rtc, change::SdpOffer, media::Mid};
 
