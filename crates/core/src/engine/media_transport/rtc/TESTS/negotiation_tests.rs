@@ -817,9 +817,8 @@ async fn rtc_initial_session_offer_rejects_overlapping_pending_offer() {
         Err(TransportAdapterError::InvalidInput)
     );
     let probe_key = session_key.clone();
-    let (repeated_counter, registered_counter) = handle
-        .debug_handle
-        .probe(
+    let (repeated_counter, registered_counter) = adapter
+        .probe_debug_worker(
             move |state: &PacketLoopState, context: &WorkerCommandContext<'_>| {
                 let session_counter = state
                     .users

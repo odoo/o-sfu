@@ -313,8 +313,6 @@ impl RtcWorker {
         let relay_target_id =
             super::RelayTargetId::new(super::NEXT_RELAY_TARGET_ID.fetch_add(1, Ordering::Relaxed));
         let (command_tx, command_rx) = mpsc::channel(64);
-        #[cfg(any(test, feature = "testing-transport"))]
-        let debug_channels = super::super::test_support::RtcWorkerDebugChannels::new();
         let (relay_tx, relay_rx) = mpsc::channel(RELAY_MAILBOX_CAPACITY);
         // observability reads these side channels without entering the packet
         // loop, while authoritative state stays owned by the worker task
@@ -325,8 +323,6 @@ impl RtcWorker {
         let terminal = Arc::new(AtomicBool::new(false));
         let handle = RtcWorkerHandle {
             command_tx,
-            #[cfg(any(test, feature = "testing-transport"))]
-            debug_handle: debug_channels.handle(),
             relay_mailbox: RelayPacketMailbox::new(relay_tx),
             bitrate_registry: Arc::clone(&bitrate_registry),
             snapshot_state: Arc::clone(&snapshot_state),
@@ -336,12 +332,8 @@ impl RtcWorker {
         };
         let packet_loop_inputs =
             super::PacketLoopInputReceivers::new(command_rx, relay_rx, shutdown.clone());
-        #[cfg(any(test, feature = "testing-transport"))]
-        let packet_loop_inputs = debug_channels.install(packet_loop_inputs);
         let metrics = &deps.metrics;
         let rtc_metrics = metrics.register_rtc_worker();
-        #[cfg(test)]
-        let test_source_policy_signal = source_policy_signal.clone();
         let packet_loop_config = PacketLoopConfig {
             worker: RtcWorkerConfig {
                 bitrate_limits: config.bitrate_limits,
@@ -393,11 +385,7 @@ impl RtcWorker {
             thread: Mutex::new(Some(thread)),
             join_completion: CancellationToken::new(),
             observation_permits: Semaphore::new(OBSERVATION_CONCURRENCY_LIMIT),
-            #[cfg(any(test, feature = "testing-transport"))]
-            metrics: Arc::clone(metrics),
             rtc_metrics,
-            #[cfg(test)]
-            source_policy_signal: test_source_policy_signal,
         })
     }
 

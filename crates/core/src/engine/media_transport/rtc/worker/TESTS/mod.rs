@@ -1734,9 +1734,8 @@ async fn transport_health_events_use_session_room_id_and_deduplicate() {
 
     let handle = worker.test_handle();
     let probe_session = session.clone();
-    let room_id = handle
-        .debug_handle
-        .probe(
+    let room_id = worker
+        .probe_debug_worker(
             move |state: &PacketLoopState, _: &super::super::control::WorkerCommandContext<'_>| {
                 state
                     .users
@@ -1751,16 +1750,18 @@ async fn transport_health_events_use_session_room_id_and_deduplicate() {
         return;
     };
     assert_eq!(room_id.as_ref(), "public-room-uuid");
-    let rtc_metrics = worker.metrics.register_rtc_worker();
+    let metrics = RuntimeMetrics::default();
+    let rtc_metrics = metrics.register_rtc_worker();
+    let source_policy_signal = SourcePolicySignal::default();
     let mut nack_totals = RtcNackTotals::default();
 
     let mut observe = |event| {
         observe_rtc_event(RtcEventContext {
             snapshot_state: &handle.snapshot_state,
-            metrics: &worker.metrics,
+            metrics: &metrics,
             rtc_metrics: &rtc_metrics,
             nack_totals: &mut nack_totals,
-            source_policy_signal: &worker.source_policy_signal,
+            source_policy_signal: &source_policy_signal,
             room_id: &room_id,
             session_key: &session,
             event,
@@ -1966,12 +1967,10 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
         let config = packet_loop_config_for_test();
         let mut demux = super::super::packet_loop::routing_miss::DemuxRecoveryState::new();
         let mut turn = PacketLoopTurn::new(Instant::now());
-        let (_command_tx, command_rx) = mpsc::channel(1);
+        let (command_tx, command_rx) = mpsc::channel(2);
         let (_relay_tx, relay_rx) = mpsc::channel(1);
-        let (probe_tx, probe_rx) = mpsc::channel(2);
         let mut inputs =
-            PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new())
-                .with_probe_receiver(probe_rx);
+            PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new());
         let session = test_transport_session_key(418, 0, 419, UserId::Integer(420));
         let mut shared_socket = test_socket()?;
         let (dirty_response, dirty_result) = oneshot::channel();
@@ -1990,13 +1989,13 @@ fn packet_loop_waits_for_one_control_then_pumps_before_the_next_control() -> Res
         demux.record_miss(miss_key, &packet, source_addr, Instant::now());
         assert!(demux.should_skip_scan(miss_key, &packet));
         for response in [dirty_response, queued_response] {
-            probe_tx
-                .send(DebugProbeRequest::new(
+            command_tx
+                .send(RtcWorkerCommand::DebugProbe(DebugProbeRequest::new(
                     MarkSessionDirtyProbe {
                         session_key: session.clone(),
                     },
                     response,
-                ))
+                )))
                 .await
                 .map_err(|_error| "dirty probe should enqueue")?;
         }
@@ -2068,22 +2067,20 @@ fn due_heartbeat_yields_to_ready_control_without_reporting_health() -> Result<()
         let config = packet_loop_config_for_test();
         let mut demux = super::super::packet_loop::routing_miss::DemuxRecoveryState::new();
         let mut turn = PacketLoopTurn::new(started_at);
-        let (_command_tx, command_rx) = mpsc::channel(1);
+        let (command_tx, command_rx) = mpsc::channel(1);
         let (_relay_tx, relay_rx) = mpsc::channel(1);
-        let (probe_tx, probe_rx) = mpsc::channel(1);
         let mut inputs =
-            PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new())
-                .with_probe_receiver(probe_rx);
+            PacketLoopInputReceivers::new(command_rx, relay_rx, CancellationToken::new());
         let mut shared_socket = test_socket()?;
         let (response, _result) = oneshot::channel();
         assert!(
-            probe_tx
-                .send(DebugProbeRequest::new(
+            command_tx
+                .send(RtcWorkerCommand::DebugProbe(DebugProbeRequest::new(
                     MarkSessionDirtyProbe {
                         session_key: test_transport_session_key(422, 0, 423, UserId::Integer(424),),
                     },
                     response,
-                ))
+                )))
                 .await
                 .is_ok()
         );

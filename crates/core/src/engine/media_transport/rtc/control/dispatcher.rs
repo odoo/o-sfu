@@ -236,6 +236,8 @@ pub fn handle_worker_command(
             response,
             session::worker_register_tcp_outbox(state, tcp_egress, peer_addr, &ufrag, outbox_tx),
         ),
+        #[cfg(any(test, feature = "testing-transport"))]
+        RtcWorkerCommand::DebugProbe(probe) => probe.inspect(state, context),
     }
 }
 

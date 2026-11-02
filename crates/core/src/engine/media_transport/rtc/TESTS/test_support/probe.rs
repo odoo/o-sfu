@@ -1,4 +1,4 @@
-//! a probe is a cfg-gated request that runs on the packet-loop worker and
+//! a probe is a cfg-gated command that runs on the packet-loop worker and
 //! returns one typed observation or setup outcome
 //! it is the test-support
 //! boundary for facts that live inside [`PacketLoopState`] and cannot be read
@@ -12,8 +12,8 @@
 //!
 //! ```text
 //! rtc test helper
-//!   -> RtcWorkerDebugHandle::probe(P)
-//!   -> packet-loop control input
+//!   -> RtcWorkerCommand::DebugProbe(P)
+//!   -> packet-loop command mailbox
 //!   -> P::inspect(PacketLoopState, WorkerCommandContext)
 //!   -> typed response
 //! ```
@@ -31,12 +31,11 @@ use std::{error::Error, fmt};
 use std::{net::SocketAddr, time::Instant};
 
 use str0m::media::Mid;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use super::super::{
     control::WorkerCommandContext,
     state::{PacketLoopState, route_control::PacketLayerGate},
-    worker::PacketLoopInputReceivers,
 };
 #[cfg(test)]
 use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
@@ -57,74 +56,6 @@ impl fmt::Display for DebugProbeUnavailable {
 
 impl Error for DebugProbeUnavailable {}
 
-const DEBUG_PROBE_CHANNEL_CAPACITY: usize = 64;
-
-/// sender-side handle for cfg-gated worker probes
-///
-/// the handle belongs to tests and `testing-transport` helpers that need to
-/// inspect packet-loop state through the worker task that owns it
-/// cloning the handle clones only the mailbox sender, not the worker state
-#[derive(Clone)]
-pub struct RtcWorkerDebugHandle {
-    tx: mpsc::Sender<DebugProbeRequest>,
-}
-
-impl fmt::Debug for RtcWorkerDebugHandle {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_struct("RtcWorkerDebugHandle").finish()
-    }
-}
-
-impl RtcWorkerDebugHandle {
-    /// runs one typed probe on the packet-loop worker
-    ///
-    /// callers pass a concrete probe value and receive that probe's exact
-    /// output type
-    /// Returns `DebugProbeUnavailable` when the request cannot reach the worker
-    /// or its response is dropped before delivery.
-    pub async fn probe<P>(&self, probe: P) -> Result<P::Output, DebugProbeUnavailable>
-    where
-        P: DebugProbe,
-    {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.tx
-            .send(DebugProbeRequest::new(probe, response_tx))
-            .await
-            .map_err(|_send_error| DebugProbeUnavailable)?;
-        response_rx
-            .await
-            .map_err(|_receive_error| DebugProbeUnavailable)
-    }
-}
-
-/// paired sender and receiver used during test-capable worker startup
-///
-/// construction stays outside production worker boot
-/// installing the receiver extends the packet-loop input bundle with a probe
-/// mailbox while normal commands keep their existing priority
-pub struct RtcWorkerDebugChannels {
-    handle: RtcWorkerDebugHandle,
-    rx: mpsc::Receiver<DebugProbeRequest>,
-}
-
-impl RtcWorkerDebugChannels {
-    pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel(DEBUG_PROBE_CHANNEL_CAPACITY);
-        Self {
-            handle: RtcWorkerDebugHandle { tx },
-            rx,
-        }
-    }
-
-    pub fn handle(&self) -> RtcWorkerDebugHandle {
-        self.handle.clone()
-    }
-
-    pub fn install(self, inputs: PacketLoopInputReceivers) -> PacketLoopInputReceivers {
-        inputs.with_probe_receiver(self.rx)
-    }
-}
-
 /// contract implemented by one packet-loop probe
 ///
 /// a probe owns the request data needed for one inspection or setup action
@@ -134,7 +65,9 @@ impl RtcWorkerDebugChannels {
 /// [`PacketLoopState`]
 /// it may also use [`WorkerCommandContext`] for shared
 /// cold-path side stores such as snapshots or bitrate registries
-pub trait DebugProbe: Send + 'static {
+pub(in crate::engine::media_transport::rtc) trait DebugProbe:
+    Send + 'static
+{
     type Output: Send + 'static;
 
     /// reads or prepares worker-local state for one test probe
@@ -189,13 +122,16 @@ where
     }
 }
 
-/// erased probe envelope consumed by packet-loop control input
+/// erased probe envelope carried by `RtcWorkerCommand::DebugProbe`
 pub struct DebugProbeRequest {
     probe: Box<dyn ErasedDebugProbe>,
 }
 
 impl DebugProbeRequest {
-    pub fn new<P>(probe: P, response: oneshot::Sender<P::Output>) -> Self
+    pub(in crate::engine::media_transport::rtc) fn new<P>(
+        probe: P,
+        response: oneshot::Sender<P::Output>,
+    ) -> Self
     where
         P: DebugProbe,
     {
@@ -204,18 +140,13 @@ impl DebugProbeRequest {
         }
     }
 
-    pub fn inspect(self, state: &mut PacketLoopState, context: &WorkerCommandContext<'_>) {
+    pub(in crate::engine::media_transport::rtc) fn inspect(
+        self,
+        state: &mut PacketLoopState,
+        context: &WorkerCommandContext<'_>,
+    ) {
         self.probe.inspect(state, context);
     }
-}
-
-/// dispatches one test probe against the authoritative worker state
-pub fn handle_debug_probe(
-    state: &mut PacketLoopState,
-    context: &WorkerCommandContext<'_>,
-    probe: DebugProbeRequest,
-) {
-    probe.inspect(state, context);
 }
 
 #[cfg(test)]
@@ -495,54 +426,5 @@ fn debug_packet_gate(packet_gate: &PacketLayerGate) -> DebugPacketGate {
         PacketLayerGate::Open => DebugPacketGate::Open,
         PacketLayerGate::Block => DebugPacketGate::Block,
         PacketLayerGate::Rid(rid) => DebugPacketGate::Rid(rid.to_string()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn closed_probe_mailbox_reports_unavailable() {
-        let channels = RtcWorkerDebugChannels::new();
-        let handle = channels.handle();
-        drop(channels);
-        assert_eq!(
-            handle
-                .probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| None::<u32>)
-                .await,
-            Err(DebugProbeUnavailable)
-        );
-    }
-
-    #[tokio::test]
-    async fn dropped_probe_response_reports_unavailable() {
-        let mut channels = RtcWorkerDebugChannels::new();
-        let handle = channels.handle();
-        let (result, ()) = tokio::join!(
-            handle.probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| 7_u32),
-            async {
-                let request = channels
-                    .rx
-                    .recv()
-                    .await
-                    .expect("probe request should arrive");
-                drop(request);
-            }
-        );
-        assert_eq!(result, Err(DebugProbeUnavailable));
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "negative assertion requires an available worker")]
-    async fn unavailable_worker_cannot_satisfy_negative_observation() {
-        let channels = RtcWorkerDebugChannels::new();
-        let handle = channels.handle();
-        drop(channels);
-        let observed = handle
-            .probe(|_: &PacketLoopState, _: &WorkerCommandContext<'_>| None::<u32>)
-            .await
-            .expect("negative assertion requires an available worker");
-        assert_eq!(observed, None);
     }
 }

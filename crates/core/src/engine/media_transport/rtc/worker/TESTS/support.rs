@@ -19,22 +19,26 @@ use {
             },
         },
     },
-    std::{net::SocketAddr, sync::Arc},
+    std::{net::SocketAddr, ops::Deref, sync::Arc},
 };
 #[cfg(any(test, feature = "testing-transport"))]
 use {
     super::super::{control::WorkerCommandContext, state::PacketLoopState},
-    std::sync::mpsc,
-    tokio::{sync::oneshot, task::JoinHandle},
+    std::sync::mpsc as std_mpsc,
+    tokio::{
+        sync::{mpsc, oneshot},
+        task::JoinHandle,
+    },
 };
 
 use super::{
     super::{
+        commands::RtcWorkerCommand,
         state::TransportSessionHealth,
         test_support::{
-            DebugProbe, DebugProbeUnavailable, DebugRouteEntry, ObserveAudioActivityProbe,
-            ReceiverBweTargetProbe, RecordIncomingMediaProbe, RouteEntryByConsumerMidProbe,
-            RouteEntryByMediaIdProbe, RouteEntryProbe,
+            DebugProbe, DebugProbeRequest, DebugProbeUnavailable, DebugRouteEntry,
+            ObserveAudioActivityProbe, ReceiverBweTargetProbe, RecordIncomingMediaProbe,
+            RouteEntryByConsumerMidProbe, RouteEntryByMediaIdProbe, RouteEntryProbe,
         },
     },
     RtcWorker,
@@ -45,8 +49,32 @@ use crate::engine::media_transport::rtc::UfragWorkerMap;
 use crate::engine::media_transport::{TransportMediaId, TransportQualitySample};
 use crate::{
     Bitrate,
-    engine::{media_transport::TransportSessionKey, metrics},
+    engine::{
+        media_transport::TransportSessionKey,
+        metrics::{self, RuntimeMetrics},
+    },
 };
+
+/// Runs `probe` on the worker behind `command_tx` after every command queued before it.
+async fn send_debug_probe<P>(
+    command_tx: &mpsc::Sender<RtcWorkerCommand>,
+    probe: P,
+) -> Result<P::Output, DebugProbeUnavailable>
+where
+    P: DebugProbe,
+{
+    let (response_tx, response_rx) = oneshot::channel();
+    command_tx
+        .send(RtcWorkerCommand::DebugProbe(DebugProbeRequest::new(
+            probe,
+            response_tx,
+        )))
+        .await
+        .map_err(|_send_error| DebugProbeUnavailable)?;
+    response_rx
+        .await
+        .map_err(|_receive_error| DebugProbeUnavailable)
+}
 
 impl RtcWorker {
     #[cfg(test)]
@@ -57,18 +85,20 @@ impl RtcWorker {
     #[cfg(any(test, feature = "testing-transport"))]
     pub(in crate::engine::media_transport) async fn pause_for_test(
         &self,
-    ) -> Option<(mpsc::Sender<()>, JoinHandle<Option<()>>)> {
+    ) -> Option<(std_mpsc::Sender<()>, JoinHandle<Option<()>>)> {
         let (entered_tx, entered_rx) = oneshot::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let debug_handle = self.handle.debug_handle.clone();
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let command_tx = self.handle.command_tx.clone();
         let probe = tokio::spawn(async move {
-            debug_handle
-                .probe(move |_: &PacketLoopState, _: &WorkerCommandContext<'_>| {
+            send_debug_probe(
+                &command_tx,
+                move |_: &PacketLoopState, _: &WorkerCommandContext<'_>| {
                     let _ = entered_tx.send(());
                     let _result = release_rx.recv();
-                })
-                .await
-                .ok()
+                },
+            )
+            .await
+            .ok()
         });
         entered_rx.await.ok()?;
         Some((release_tx, probe))
@@ -85,8 +115,11 @@ impl RtcWorker {
         clippy::expect_used,
         reason = "test fixture mutation must fail when its snapshot lock is poisoned"
     )]
+    /// Records the health transition in `metrics`, which must be the worker's
+    /// runtime metrics for transport user gauges to stay consistent.
     pub fn debug_set_session_transport_health(
         &self,
+        metrics: &RuntimeMetrics,
         session_key: &TransportSessionKey,
         health: TransportSessionHealth,
     ) {
@@ -96,7 +129,7 @@ impl RtcWorker {
             .lock()
             .expect("test snapshot state must be available")
             .set_transport_health(session_key, health);
-        self.metrics.record_transport_health_transition(
+        metrics.record_transport_health_transition(
             previous.map(metrics::transport_health_state),
             Some(metrics::transport_health_state(health)),
         );
@@ -119,11 +152,14 @@ impl RtcWorker {
         snapshot_state.update_transport_quality(session_key, |sample| *sample = quality);
     }
 
-    async fn probe_debug_worker<P>(&self, probe: P) -> Result<P::Output, DebugProbeUnavailable>
+    pub(in crate::engine::media_transport::rtc) async fn probe_debug_worker<P>(
+        &self,
+        probe: P,
+    ) -> Result<P::Output, DebugProbeUnavailable>
     where
         P: DebugProbe,
     {
-        self.handle.debug_handle.probe(probe).await
+        send_debug_probe(&self.handle.command_tx, probe).await
     }
 
     #[cfg(test)]
@@ -384,13 +420,23 @@ impl RtcWorker {
     }
 }
 
+/// Test worker with the shared services it reports into.
 #[cfg(test)]
-impl RtcWorker {
+pub(crate) struct TestRtcWorker {
+    pub worker: RtcWorker,
+    pub metrics: Arc<RuntimeMetrics>,
+    pub source_policy_signal: SourcePolicySignal,
+}
+
+#[cfg(test)]
+impl TestRtcWorker {
     #[must_use]
-    pub(crate) fn for_test(config: MediaTransportConfig) -> Self {
+    pub(crate) fn start(config: MediaTransportConfig) -> Self {
         let profile = RtpProfile::compile(config.codec_flags, config.codec_preferences)
             .expect("test RTP profile should compile");
-        Self::start(
+        let deps = test_media_transport_deps();
+        let source_policy_signal = SourcePolicySignal::default();
+        let worker = RtcWorker::start(
             &config,
             Arc::new(profile),
             WorkerAssignment {
@@ -398,18 +444,47 @@ impl RtcWorker {
                 media_id_base: 0,
                 media_worker_id: MediaWorkerId::from_raw(0),
             },
-            &test_media_transport_deps(),
-            SourcePolicySignal::default(),
+            &deps,
+            source_policy_signal.clone(),
             UfragWorkerMap::default(),
         )
-        .expect("test RTC worker should start")
+        .expect("test RTC worker should start");
+        Self {
+            worker,
+            metrics: deps.metrics,
+            source_policy_signal,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for TestRtcWorker {
+    fn default() -> Self {
+        Self::start(test_media_transport_config(1, test_rtc_port_range()))
+    }
+}
+
+#[cfg(test)]
+impl Deref for TestRtcWorker {
+    type Target = RtcWorker;
+
+    fn deref(&self) -> &RtcWorker {
+        &self.worker
+    }
+}
+
+#[cfg(test)]
+impl RtcWorker {
+    #[must_use]
+    pub(crate) fn for_test(config: MediaTransportConfig) -> Self {
+        TestRtcWorker::start(config).worker
     }
 }
 
 #[cfg(test)]
 impl Default for RtcWorker {
     fn default() -> Self {
-        Self::for_test(test_media_transport_config(1, test_rtc_port_range()))
+        TestRtcWorker::default().worker
     }
 }
 
@@ -453,7 +528,7 @@ mod worker_exit_tests {
     async fn assert_terminal_after_sink_panic(backend: RtcUdpIoBackend) {
         let mut config = test_media_transport_config(1, test_rtc_port_range());
         config.rtc_udp_io_backend = backend;
-        let failed_worker = RtcWorker::for_test(config);
+        let failed_worker = TestRtcWorker::start(config);
         let other_worker = RtcWorker::default();
         let session_key = test_transport_session_key(1, 0, 1, UserId::Integer(1));
         assert_eq!(failed_worker.session_transport_health(&session_key), None);
@@ -463,9 +538,7 @@ mod worker_exit_tests {
         let control_recorder = metrics.register_rtc_worker();
         let probe_session = session_key.clone();
         let probe_result = failed_worker
-            .test_handle()
-            .debug_handle
-            .probe(move |_: &PacketLoopState, _: &WorkerCommandContext<'_>| {
+            .probe_debug_worker(move |_: &PacketLoopState, _: &WorkerCommandContext<'_>| {
                 let src_media = TransportMediaId::new(1);
                 let packet =
                     sample_already_relayed_packet(probe_session, src_media, "aud-up", b"payload");
