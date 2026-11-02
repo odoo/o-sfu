@@ -26,7 +26,7 @@ pub use probe::{DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, D
 pub(super) use probe::{
     DebugProbe, DebugProbeRequest, ObserveAudioActivityProbe, ReceiverBweTargetProbe,
     RecordIncomingMediaProbe, RouteEntryByConsumerMidProbe, RouteEntryByMediaIdProbe,
-    RouteEntryProbe, RtcWorkerDebugChannels, RtcWorkerDebugHandle, handle_debug_probe,
+    RouteEntryProbe,
 };
 #[cfg(test)]
 pub(super) use probe::{

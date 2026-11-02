@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use tokio::time::timeout;
 
 use super::{
-    super::{state::route_control::PacketLayerGate, test_support::RecordIncomingMediaProbe},
+    super::{state::route_control::PacketLayerGate, worker::test_support::TestRtcWorker},
     fixtures::*,
 };
 
@@ -16,7 +16,7 @@ fn assert_applied(outcome: WorkerMediaControlBatchOutcome) {
 
 #[tokio::test]
 async fn rtc_metrics_track_live_transport_users_without_double_counting() {
-    let adapter = RtcWorker::default();
+    let adapter = TestRtcWorker::default();
     let session_key = transport_key(1, 16, UserId::Integer(16));
 
     assert_eq!(adapter.metrics.snapshot().active_transport_users(), 0);
@@ -436,35 +436,6 @@ async fn rtc_consumer_packet_gate_update_waits_for_live_rid_before_strict_aggreg
 }
 
 #[tokio::test]
-async fn incoming_media_probe_does_not_register_missing_publications() {
-    let adapter = RtcWorker::default();
-    let session_key = transport_key(1, 21, UserId::Integer(21));
-    let _offer = expect_initial_offer(&adapter, &session_key).await;
-    let now = Instant::now();
-
-    let recorded = adapter
-        .test_handle()
-        .debug_handle
-        .probe(RecordIncomingMediaProbe {
-            transport_media_id: TransportMediaId::new(99),
-            payload_bytes: 120,
-            now,
-        })
-        .await;
-
-    assert_eq!(recorded, Ok(false));
-    assert!(
-        adapter
-            .test_handle()
-            .bitrate_registry
-            .lock()
-            .expect("bitrate registry mutex should not be poisoned")
-            .incoming_bitrates_by_session
-            .is_empty()
-    );
-}
-
-#[tokio::test]
 async fn rtc_incoming_bitrate_snapshot_counts_recent_media_bytes() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 21, UserId::Integer(21));
@@ -606,7 +577,7 @@ async fn rtc_active_speaker_source_snapshot_orders_recent_audio_sources() {
 
 #[tokio::test]
 async fn active_speaker_expiry_wakes_policy_without_input() {
-    let adapter = RtcWorker::default();
+    let adapter = TestRtcWorker::default();
     let session_key = transport_key(9, 41, UserId::Integer(41));
     let rtp_parameters = sample_router_rtp_parameters("aud-up", 94_001);
 

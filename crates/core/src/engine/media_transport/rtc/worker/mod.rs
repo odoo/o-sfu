@@ -59,7 +59,7 @@ pub(super) mod session_drain_peer;
 
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/support.rs"]
-mod test_support;
+pub(super) mod test_support;
 
 use std::{
     fmt,
@@ -81,10 +81,6 @@ use super::{
         relay_registry::{RelayPacketMailbox, RelayTargetId},
     },
 };
-#[cfg(test)]
-use crate::engine::media_transport::SourcePolicySignal;
-#[cfg(any(test, feature = "testing-transport"))]
-use crate::engine::metrics::RuntimeMetrics;
 use crate::engine::{
     media_transport::{
         SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey,
@@ -97,8 +93,6 @@ static NEXT_RELAY_TARGET_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) struct RtcWorkerHandle {
     pub(super) command_tx: mpsc::Sender<RtcWorkerCommand>,
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub(super) debug_handle: super::test_support::RtcWorkerDebugHandle,
     pub(super) relay_mailbox: RelayPacketMailbox,
     pub(super) bitrate_registry: Arc<Mutex<BitrateRegistry>>,
     pub(super) snapshot_state: Arc<Mutex<RtcSnapshotState>>,
@@ -113,8 +107,6 @@ impl fmt::Debug for RtcWorkerHandle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("RtcWorkerHandle");
         debug.field("command_tx", &self.command_tx);
-        #[cfg(any(test, feature = "testing-transport"))]
-        debug.field("debug_handle", &self.debug_handle);
         debug.field("relay_mailbox", &self.relay_mailbox);
         debug.finish_non_exhaustive()
     }
@@ -128,11 +120,7 @@ pub struct RtcWorker {
     thread: Mutex<Option<thread::JoinHandle<()>>>,
     join_completion: CancellationToken,
     observation_permits: Semaphore,
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub metrics: Arc<RuntimeMetrics>,
     rtc_metrics: Arc<RtcMetricsRecorder>,
-    #[cfg(test)]
-    pub(super) source_policy_signal: SourcePolicySignal,
 }
 
 impl RtcWorker {

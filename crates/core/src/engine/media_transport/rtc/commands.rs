@@ -17,6 +17,8 @@ use str0m::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+#[cfg(any(test, feature = "testing-transport"))]
+use super::test_support::DebugProbeRequest;
 use super::{
     codec::{ParsedAnswerRids, RepairSummary, validate_answer_sdp},
     state::{
@@ -389,6 +391,9 @@ pub enum RtcWorkerCommand {
         outbox_tx: mpsc::Sender<TcpFrame>,
         response: RtcWorkerResponse<()>,
     },
+    /// run one test probe against worker state in mailbox order
+    #[cfg(any(test, feature = "testing-transport"))]
+    DebugProbe(DebugProbeRequest),
 }
 
 impl RtcWorkerCommand {
@@ -417,6 +422,8 @@ impl RtcWorkerCommand {
             | Self::ApplyMediaControlBatch { .. }
             | Self::RouteControl { .. }
             | Self::RegisterTcpOutbox { .. } => None,
+            #[cfg(any(test, feature = "testing-transport"))]
+            Self::DebugProbe(_) => None,
         }
     }
 
@@ -438,6 +445,9 @@ impl RtcWorkerCommand {
             Self::ResolveMediaMid { .. } => false,
             #[cfg(test)]
             Self::ResolveNegotiatedProducerParameters { .. } => false,
+            // A probe may seed session or remote-address indexes.
+            #[cfg(any(test, feature = "testing-transport"))]
+            Self::DebugProbe(_) => true,
         }
     }
 }

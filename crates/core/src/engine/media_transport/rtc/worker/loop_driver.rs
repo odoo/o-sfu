@@ -47,7 +47,8 @@ use super::super::recovery::PendingKeyframeRequest;
 use super::{
     super::{
         RtcWorkerConfig,
-        control::WorkerCommandContext,
+        commands::RtcWorkerCommand,
+        control::{WorkerCommandContext, handle_worker_command},
         egress::{RtcEgress, TcpEgress},
         packet_loop::{
             ForwardingEffects, IngressPacket, PacketForwarder, RtcIngress, drain_relay_packets,
@@ -60,7 +61,7 @@ use super::{
     },
     buffers::{MAX_RELAY_PACKETS_PER_ITERATION, PacketLoopBuffers},
     delay::{PacketLoopDelayPublisher, PacketLoopDelaySnapshot},
-    input::{PacketLoopControlInput, PacketLoopInputReceivers, PacketLoopMailboxInput},
+    input::{PacketLoopInputReceivers, PacketLoopMailboxInput},
     session_drain::{SessionDrainContext, drain_ready_sessions},
 };
 #[cfg(feature = "internal-benchmarks")]
@@ -101,7 +102,7 @@ pub(crate) struct WaitPhaseSnapshot {
 
 pub(crate) enum PacketLoopTurnInput {
     Timeout,
-    Control(PacketLoopControlInput),
+    Control(RtcWorkerCommand),
     RelayPacket,
     Datagram(IngressPacket),
 }
@@ -409,7 +410,7 @@ impl PacketLoopTurn {
             PacketLoopTurnInput::Timeout | PacketLoopTurnInput::RelayPacket => {}
             PacketLoopTurnInput::Control(command) => {
                 let topology_may_change = command.may_change_demux_topology();
-                command.dispatch(
+                handle_worker_command(
                     context.packet_loop_state,
                     context.tcp_egress,
                     &WorkerCommandContext {
@@ -421,6 +422,7 @@ impl PacketLoopTurn {
                         runtime_metrics: &context.config.metrics,
                         rtc_metrics: &context.config.rtc_metrics,
                     },
+                    command,
                 );
                 if topology_may_change {
                     context.demux.clear_on_topology_change();

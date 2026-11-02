@@ -6,13 +6,13 @@ use tokio::{
     time::{advance, pause, resume},
 };
 
-use super::super::{super::commands::RtcWorkerCommand, RtcWorker};
+use super::super::{super::commands::RtcWorkerCommand, test_support::TestRtcWorker};
 use crate::engine::{
     media_transport::TransportAdapterError,
     metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
 };
 
-fn active_speaker_timeout_count(worker: &RtcWorker) -> u64 {
+fn active_speaker_timeout_count(worker: &TestRtcWorker) -> u64 {
     worker.metrics.snapshot().counter_value(
         MetricName::RtcWorkerObservationTimeoutsTotal,
         &[("kind", "active_speaker_sources")],
@@ -21,7 +21,7 @@ fn active_speaker_timeout_count(worker: &RtcWorker) -> u64 {
 
 #[tokio::test(flavor = "current_thread")]
 async fn full_mailbox_observation_times_out_before_enqueue() {
-    let worker = RtcWorker::default();
+    let worker = TestRtcWorker::default();
     let (release, paused) = worker.pause_for_test().await.expect("worker should pause");
     let sender = &worker.test_handle().command_tx;
     for _ in 0..sender.max_capacity() {
@@ -56,7 +56,7 @@ async fn full_mailbox_observation_times_out_before_enqueue() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn enqueued_observation_times_out_without_changing_worker_state() {
-    let worker = RtcWorker::default();
+    let worker = TestRtcWorker::default();
     let (release, paused) = worker.pause_for_test().await.expect("worker should pause");
     let sender = &worker.test_handle().command_tx;
     pause();
@@ -83,8 +83,8 @@ async fn enqueued_observation_times_out_without_changing_worker_state() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn saturated_worker_observation_gate_does_not_block_another_worker() {
-    let saturated = RtcWorker::default();
-    let healthy = RtcWorker::default();
+    let saturated = TestRtcWorker::default();
+    let healthy = TestRtcWorker::default();
     let permit_count = u32::try_from(saturated.observation_permits.available_permits())
         .expect("observation gate should fit a u32 permit count");
     let held = saturated
@@ -119,7 +119,7 @@ async fn saturated_worker_observation_gate_does_not_block_another_worker() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn closed_worker_rejects_observation_without_timeout() {
-    let worker = RtcWorker::default();
+    let worker = TestRtcWorker::default();
     worker.wait_for_shutdown().await;
     assert_eq!(
         worker.active_speaker_source_snapshot().await,
@@ -132,7 +132,7 @@ async fn closed_worker_rejects_observation_without_timeout() {
 async fn mutation_reply_remains_pending_past_observation_deadline() {
     use crate::engine::{UserId, media_transport::rtc::test_support::test_transport_session_key};
 
-    let worker = RtcWorker::default();
+    let worker = TestRtcWorker::default();
     let (release, paused) = worker.pause_for_test().await.expect("worker should pause");
     let session_key = test_transport_session_key(1, 0, 1, UserId::Integer(1));
     pause();

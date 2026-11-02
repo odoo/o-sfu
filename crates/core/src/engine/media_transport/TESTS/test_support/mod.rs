@@ -156,7 +156,7 @@ impl MediaTransportTestApi<'_> {
         self.transport
             .worker_for_user(session_key)
             .expect("test session worker must exist")
-            .debug_set_session_transport_health(session_key, health);
+            .debug_set_session_transport_health(&self.transport.metrics, session_key, health);
     }
 
     /// Overrides a real RTC session quality snapshot in test builds.

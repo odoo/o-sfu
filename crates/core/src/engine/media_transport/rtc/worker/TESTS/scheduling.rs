@@ -28,7 +28,7 @@ use crate::{
                 },
                 state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
                 worker::{
-                    input::{PacketLoopControlInput, PacketLoopInputReceivers},
+                    input::PacketLoopInputReceivers,
                     loop_driver::{
                         PacketLoopApplyContext, PacketLoopConfig, PacketLoopTurn,
                         PacketLoopTurnInput, WaitPhaseSnapshot,
@@ -178,9 +178,9 @@ impl SchedulingHarness {
 fn assert_control(input: &PacketLoopTurnInput, expected: u64) {
     assert!(matches!(
         input,
-        PacketLoopTurnInput::Control(PacketLoopControlInput::Command(
+        PacketLoopTurnInput::Control(
             RtcWorkerCommand::ResolveMediaMid { transport_media_id, .. }
-        )) if *transport_media_id == TransportMediaId::new(expected)
+        ) if *transport_media_id == TransportMediaId::new(expected)
     ));
 }
 

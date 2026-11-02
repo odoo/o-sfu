@@ -7,6 +7,7 @@ use crate::engine::media_transport::rtc::{
     commands::{RtcWorkerCommand, WorkerMediaControlBatch},
     packet_loop::{transport_health_from_event, transport_ice_state},
     state::TransportSessionHealth,
+    worker::test_support::TestRtcWorker,
 };
 
 fn expect_first_candidate_port(offer_sdp: &str) -> u16 {
@@ -99,11 +100,15 @@ async fn rtc_transport_close_session_allows_recreating_the_initial_offer() {
 
 #[tokio::test]
 async fn rtc_transport_close_session_cleans_transport_health_snapshot() {
-    let adapter = RtcWorker::default();
+    let adapter = TestRtcWorker::default();
     let session_key = transport_key(1, 143, UserId::Integer(143));
     let _offer = expect_initial_offer(&adapter, &session_key).await;
 
-    adapter.debug_set_session_transport_health(&session_key, TransportSessionHealth::Disconnected);
+    adapter.debug_set_session_transport_health(
+        &adapter.metrics,
+        &session_key,
+        TransportSessionHealth::Disconnected,
+    );
     let metrics_snapshot = adapter.metrics.snapshot();
     assert_eq!(metrics_snapshot.connected_transport_users(), 0);
     assert_eq!(metrics_snapshot.disconnected_transport_users(), 1);
@@ -244,7 +249,7 @@ async fn rtc_worker_finishes_accepted_commands_and_cancelled_drop_is_nonblocking
 
 #[tokio::test]
 async fn rtc_transport_distinguishes_same_session_id_across_channels() {
-    let adapter = RtcWorker::default();
+    let adapter = TestRtcWorker::default();
     let first_session_key = transport_key_on_worker(1, 0, 30, UserId::Integer(30));
     let second_session_key = transport_key_on_worker(2, 1, 30, UserId::Integer(30));
 
@@ -252,6 +257,7 @@ async fn rtc_transport_distinguishes_same_session_id_across_channels() {
     let _offer = expect_initial_offer(&adapter, &second_session_key).await;
 
     adapter.debug_set_session_transport_health(
+        &adapter.metrics,
         &second_session_key,
         TransportSessionHealth::Disconnected,
     );
