@@ -19,16 +19,6 @@ impl UfragRegistry {
         self.session_by_ufrag.get(ufrag)
     }
 
-    #[cfg(test)]
-    pub(in super::super) fn ufrag_for(&self, session_key: &TransportSessionKey) -> Option<&str> {
-        self.ufrag_by_session.get(session_key).map(String::as_str)
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn is_empty(&self) -> bool {
-        self.session_by_ufrag.is_empty() && self.ufrag_by_session.is_empty()
-    }
-
     /// replaces the local ICE ufrag registered for a session
     ///
     /// each session owns at most one local ufrag

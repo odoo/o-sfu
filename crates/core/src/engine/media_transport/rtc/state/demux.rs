@@ -37,11 +37,6 @@ impl RemoteTransportAddr {
         Self { addr, protocol }
     }
 
-    #[cfg(test)]
-    pub fn udp(addr: SocketAddr) -> Self {
-        Self::new(addr, Protocol::Udp)
-    }
-
     pub fn from_candidate(candidate: &Candidate) -> Self {
         Self::new(candidate.addr(), candidate.proto())
     }
@@ -257,33 +252,6 @@ impl RemoteAddrDemux {
                 self.remote_candidate_addr_index.remove(&candidate_addr);
             }
         }
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn session_addrs_for(
-        &self,
-        session_key: &TransportSessionKey,
-    ) -> Option<&[RemoteTransportAddr]> {
-        self.remote_addrs_by_session
-            .get(session_key)
-            .map(|session_addrs| session_addrs.addrs.as_slice())
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn remote_candidate_addrs_for(
-        &self,
-        session_key: &TransportSessionKey,
-    ) -> Option<&[RemoteTransportAddr]> {
-        self.remote_candidate_addrs_by_session
-            .get(session_key)
-            .map(Vec::as_slice)
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn is_empty(&self) -> bool {
-        self.remote_addrs_by_session.is_empty()
-            && self.overflowed_sessions.is_empty()
-            && self.remote_candidate_addrs_by_session.is_empty()
     }
 
     fn remove_remote_addr(

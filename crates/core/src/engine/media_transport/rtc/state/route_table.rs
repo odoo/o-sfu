@@ -244,23 +244,6 @@ impl RouteTable {
         Some(removed)
     }
 
-    #[cfg(test)]
-    pub(in super::super) fn set_source_active(
-        &mut self,
-        source_id: TransportMediaId,
-        active: bool,
-    ) -> Result<(), TransportAdapterError> {
-        self.sources
-            .get_mut(&source_id)
-            .ok_or(TransportAdapterError::TransportUnavailable)?
-            .set_source_active(active);
-        if !active {
-            self.keyframe_requests.forget_source(source_id);
-            self.publisher_keyframes.cancel_source(source_id);
-        }
-        Ok(())
-    }
-
     pub(in super::super) fn apply_source_activity(
         &mut self,
         source_id: TransportMediaId,
@@ -628,19 +611,6 @@ impl RouteTable {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(in super::super) fn producer_rid_is_ready(
-        &self,
-        source_id: TransportMediaId,
-        rid: Rid,
-        now: Instant,
-        max_age: Duration,
-    ) -> bool {
-        self.sources
-            .get(&source_id)
-            .is_some_and(|source| source.producer.rid_is_ready(rid, now, max_age))
-    }
-
     pub(in super::super) fn collect_ready_producer_rids(
         &self,
         source_id: TransportMediaId,
@@ -704,24 +674,6 @@ impl RouteTable {
 
     pub(in super::super) fn next_kf_deadline(&self) -> Option<Instant> {
         self.keyframe_requests.next_deadline()
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn set_local_pkt_gate(
-        &mut self,
-        source_id: TransportMediaId,
-        packet_gate: Option<PacketLayerGate>,
-    ) {
-        if packet_gate.is_none() && !self.sources.contains_key(&source_id) {
-            return;
-        }
-        self.source_mut(source_id).set_local_pkt_gate(packet_gate);
-        self.prune_empty(source_id);
-        debug!(
-            ?source_id,
-            effective_packet_gate = ?self.effective_packet_gate(source_id),
-            "updated source packet gate"
-        );
     }
 
     pub(in super::super) fn observe_audio_activity(
@@ -824,16 +776,6 @@ impl RouteTable {
             .and_then(RouteSource::effective_packet_gate)
     }
 
-    #[cfg(test)]
-    pub(in super::super) fn relay_targets_for_source(
-        &self,
-        source_id: TransportMediaId,
-    ) -> Option<&[ActiveRelayTarget]> {
-        self.sources
-            .get(&source_id)
-            .and_then(RouteSource::active_relay_targets)
-    }
-
     pub(in super::super) fn add_relay_target(
         &mut self,
         source_id: TransportMediaId,
@@ -893,20 +835,6 @@ impl RouteTable {
         })
     }
 
-    #[cfg(test)]
-    pub(in super::super) fn relay_target_count(&self, source_id: TransportMediaId) -> usize {
-        self.sources
-            .get(&source_id)
-            .map_or(0, RouteSource::relay_target_count)
-    }
-
-    #[cfg(test)]
-    pub(in super::super) fn active_relay_target_count(&self, source_id: TransportMediaId) -> usize {
-        self.sources
-            .get(&source_id)
-            .map_or(0, RouteSource::active_relay_target_count)
-    }
-
     fn remove_remote_source(&mut self, source_id: TransportMediaId) {
         self.remote.remove(source_id);
         self.forget_packet_state(source_id);
@@ -937,3 +865,7 @@ impl RouteTable {
         self.active.drop_src(source_id);
     }
 }
+
+#[cfg(test)]
+#[path = "TESTS/route_table.rs"]
+mod tests;

@@ -219,20 +219,6 @@ impl ConsumerStreamStore {
         }
     }
 
-    #[cfg(test)]
-    pub fn rtx_cache_is_armed(&self, handle: ConsumerStreamHandle) -> bool {
-        self.streams
-            .get(handle)
-            .is_some_and(|stream| stream.rtx_cache_deadline.is_some())
-    }
-
-    #[cfg(test)]
-    pub fn rtx_write_counts(&self, handle: ConsumerStreamHandle) -> Option<(usize, usize)> {
-        self.streams
-            .get(handle)
-            .map(|stream| (stream.queued_primary_writes, stream.stale_primary_writes))
-    }
-
     /// Projects source RTP and its clock pair into one receiver stream.
     ///
     /// # Projection rules
@@ -441,25 +427,6 @@ struct RtpProjection {
 }
 
 impl RtpProjection {
-    #[cfg(test)]
-    const fn new(next_seq_no: SeqNo) -> Self {
-        Self {
-            next_seq_no,
-            timeline: RtpTimeline::Empty,
-        }
-    }
-
-    #[cfg(test)]
-    fn next_source_seq(&self, source_ssrc: Ssrc) -> Option<SeqNo> {
-        match self.timeline {
-            RtpTimeline::Active { mapping, .. } if mapping.ssrc == source_ssrc => {
-                Some((*mapping.highest_src_seq + 1).into())
-            }
-            RtpTimeline::Active { .. } => Some(SeqNo::default()),
-            RtpTimeline::Empty => None,
-        }
-    }
-
     /// Projects one packet without changing identity or clock state on rejection.
     ///
     /// Returns `None` for repairs outside the active SSRC sequence window,

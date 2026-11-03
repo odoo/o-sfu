@@ -8,6 +8,38 @@ use crate::engine::{
     media_transport::{TransportSessionKey, rtc::test_support::test_transport_session_key},
 };
 
+impl RemoteTransportAddr {
+    pub fn udp(addr: SocketAddr) -> Self {
+        Self::new(addr, Protocol::Udp)
+    }
+}
+
+impl RemoteAddrDemux {
+    pub(in crate::engine::media_transport::rtc) fn session_addrs_for(
+        &self,
+        session_key: &TransportSessionKey,
+    ) -> Option<&[RemoteTransportAddr]> {
+        self.remote_addrs_by_session
+            .get(session_key)
+            .map(|session_addrs| session_addrs.addrs.as_slice())
+    }
+
+    pub(in crate::engine::media_transport::rtc) fn remote_candidate_addrs_for(
+        &self,
+        session_key: &TransportSessionKey,
+    ) -> Option<&[RemoteTransportAddr]> {
+        self.remote_candidate_addrs_by_session
+            .get(session_key)
+            .map(Vec::as_slice)
+    }
+
+    pub(in crate::engine::media_transport::rtc) fn is_empty(&self) -> bool {
+        self.remote_addrs_by_session.is_empty()
+            && self.overflowed_sessions.is_empty()
+            && self.remote_candidate_addrs_by_session.is_empty()
+    }
+}
+
 fn session_key(room_instance_id: u64, session_numeric_id: i64) -> TransportSessionKey {
     test_transport_session_key(0, 0, room_instance_id, UserId::Integer(session_numeric_id))
 }
