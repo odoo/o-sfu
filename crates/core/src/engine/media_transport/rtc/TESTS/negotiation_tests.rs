@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     AudioCodecPreference, RtcTcpConfig, VideoCodecPreference,
-    engine::media_transport::{SessionUploadSlot, TransportMediaId},
+    engine::media_transport::{AppliedSessionAnswer, SessionUploadSlot, TransportMediaId},
 };
 
 const CHROME_OFFER_AUDIO_ONLY: &str = include_str!("testdata/chrome_offer_audio_only.sdp");
@@ -502,11 +502,10 @@ async fn rtc_simulcast_publish_intent_preserves_negotiated_encoding_facts() {
         .await
         .expect("simulcast answer should apply");
 
-    let negotiated_parameters = adapter
-        .negotiated_producer_parameters(&session_key, transport_media_id)
-        .await
+    let negotiated_parameters = applied_answer
+        .negotiated_producer_parameters(transport_media_id)
         .expect("answered simulcast publish should project router RTP parameters");
-    assert_renumbered_simulcast_repair(&negotiated_parameters);
+    assert_renumbered_simulcast_repair(negotiated_parameters);
     let upload_encodings = applied_answer.negotiated_producer_upload_encodings(transport_media_id);
     assert_eq!(
         upload_encodings
@@ -888,7 +887,7 @@ async fn rtc_session_renegotiation_offer_stages_protocol_producer_additions() {
     );
     let fid_pair = fid_pair_for_mid(&answer_sdp, &negotiated_mid)
         .expect("RID-less producer answer should signal a FID pair");
-    adapter
+    let applied_answer = adapter
         .apply_session_answer(&session_key, &answer_sdp)
         .await
         .expect("RID-less FID answer should apply");
@@ -910,9 +909,8 @@ async fn rtc_session_renegotiation_offer_stages_protocol_producer_additions() {
         "renegotiated recv media should reapply the incoming bitrate cap after the answer lands"
     );
 
-    let negotiated_parameters = adapter
-        .negotiated_producer_parameters(&session_key, transport_media_id)
-        .await
+    let negotiated_parameters = applied_answer
+        .negotiated_producer_parameters(transport_media_id)
         .expect("answered producer negotiation should project router RTP parameters");
     assert_eq!(negotiated_parameters.mid(), Some(&*negotiated_mid));
     let formats = negotiated_parameters.formats().collect::<Vec<_>>();
@@ -1030,9 +1028,8 @@ async fn rtc_protocol_publish_projects_rid_bindings_when_publish_intent_is_empty
             accepted,
             "answer pruning must preserve the offered RID bitrate and resolution"
         );
-        let negotiated_parameters = adapter
-            .negotiated_producer_parameters(&session_key, transport_media_id)
-            .await
+        let negotiated_parameters = applied
+            .negotiated_producer_parameters(transport_media_id)
             .expect("protocol publish should project negotiated RTP parameters");
         assert_eq!(
             negotiated_parameters
@@ -1072,7 +1069,7 @@ async fn rtc_session_renegotiation_projects_multiple_protocol_producers_from_one
         .create_session_renegotiation_offer(&session_key)
         .await
         .expect("staged renegotiation offer should be available");
-    apply_offer_answer(
+    let applied_answer = apply_offer_answer(
         &adapter,
         &session_key,
         &mut remote,
@@ -1080,19 +1077,17 @@ async fn rtc_session_renegotiation_projects_multiple_protocol_producers_from_one
     )
     .await;
 
-    let audio_parameters = adapter
-        .negotiated_producer_parameters(&session_key, audio_media_id)
-        .await;
     assert!(
-        audio_parameters.is_ok(),
-        "audio publish should project negotiated RTP parameters after a shared answer, got {audio_parameters:?}"
+        applied_answer
+            .negotiated_producer_parameters(audio_media_id)
+            .is_some(),
+        "audio publish should project negotiated RTP parameters after a shared answer, got {applied_answer:?}"
     );
-    let video_parameters = adapter
-        .negotiated_producer_parameters(&session_key, video_media_id)
-        .await;
     assert!(
-        video_parameters.is_ok(),
-        "video publish should project negotiated RTP parameters after a shared answer, got {video_parameters:?}"
+        applied_answer
+            .negotiated_producer_parameters(video_media_id)
+            .is_some(),
+        "video publish should project negotiated RTP parameters after a shared answer, got {applied_answer:?}"
     );
 }
 
@@ -1358,9 +1353,10 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_producer_removal() {
     apply_offer_answer(&adapter, &session_key, &mut remote, removal_sdp).await;
     assert_eq!(
         adapter
-            .negotiated_producer_parameters(&session_key, producer_media_id)
-            .await,
-        Err(TransportAdapterError::TransportUnavailable)
+            .debug_resolve_mid(producer_media_id)
+            .await
+            .expect("test probe must complete"),
+        None
     );
     assert_eq!(
         adapter
@@ -1421,9 +1417,10 @@ async fn rtc_session_renegotiation_stages_follow_up_removal_for_cancelled_pendin
     assert!(removal_section.contains("a=inactive"));
     assert_eq!(
         adapter
-            .negotiated_producer_parameters(&session_key, producer_media_id)
-            .await,
-        Err(TransportAdapterError::TransportUnavailable)
+            .debug_resolve_mid(producer_media_id)
+            .await
+            .expect("test probe must complete"),
+        None
     );
 
     apply_offer_answer(&adapter, &session_key, &mut remote, removal_sdp).await;
@@ -1485,9 +1482,10 @@ async fn rtc_session_cleanup_releases_declined_staged_producer_without_follow_up
     );
     assert_eq!(
         adapter
-            .negotiated_producer_parameters(&session_key, producer_media_id)
-            .await,
-        Err(TransportAdapterError::TransportUnavailable)
+            .debug_resolve_mid(producer_media_id)
+            .await
+            .expect("test probe must complete"),
+        None
     );
     assert_eq!(
         adapter
@@ -1892,7 +1890,7 @@ async fn apply_offer_answer(
     session_key: &TransportSessionKey,
     remote: &mut Rtc,
     offer_sdp: String,
-) {
+) -> AppliedSessionAnswer {
     let offer =
         SdpOffer::from_sdp_string(&offer_sdp).expect("adapter should return parseable SDP offer");
     assert!(offer.session.end_of_candidates());
@@ -1901,13 +1899,10 @@ async fn apply_offer_answer(
         .accept_offer(offer)
         .expect("remote answer should build");
     let answer_sdp = answer.to_sdp_string();
-    assert!(
-        adapter
-            .apply_session_answer(session_key, &answer_sdp)
-            .await
-            .is_ok(),
-        "{answer_sdp}"
-    );
+    adapter
+        .apply_session_answer(session_key, &answer_sdp)
+        .await
+        .unwrap_or_else(|error| panic!("answer should apply, got {error:?}: {answer_sdp}"))
 }
 
 async fn setup_queued_removal_sources(

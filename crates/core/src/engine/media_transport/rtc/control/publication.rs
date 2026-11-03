@@ -19,11 +19,6 @@ use str0m::{
     format::PayloadParams,
     media::{Direction, MediaKind as Str0mMediaKind, Mid, Rid},
 };
-#[cfg(test)]
-use {
-    super::super::state::media_registry::RegisteredMediaHandle,
-    crate::engine::media_transport::TransportMediaId, tracing::warn,
-};
 
 use super::{
     super::{
@@ -180,56 +175,6 @@ fn apply_projected_recv_streams(
     {
         session_state.max_bitrate_in = Some(max_bitrate_in);
     }
-}
-
-/// Resolve the router-native RTP parameters for one producer after answer-side
-/// projection has populated them for the owning user.
-#[cfg(test)]
-pub(super) fn worker_resolve_negotiated_producer_parameters(
-    state: &PacketLoopState,
-    session_key: &TransportSessionKey,
-    transport_media_id: TransportMediaId,
-) -> Result<RouterRtpParameters, TransportAdapterError> {
-    let Some(handle) = state.media_handle(transport_media_id) else {
-        return Err(TransportAdapterError::TransportUnavailable);
-    };
-    let mid = match handle {
-        RegisteredMediaHandle::Producer {
-            session_key: owner_session_key,
-            mid,
-        } if owner_session_key == session_key => *mid,
-        RegisteredMediaHandle::Producer { .. } | RegisteredMediaHandle::Consumer { .. } => {
-            return Err(TransportAdapterError::InvalidInput);
-        }
-    };
-    let Some(session_state) = state.users.get(session_key) else {
-        return Err(TransportAdapterError::TransportUnavailable);
-    };
-    let result = session_state
-        .sdp_negotiation
-        .negotiated_producer_parameters
-        .get(&mid)
-        .cloned()
-        .ok_or(TransportAdapterError::UnsupportedFeature);
-    if let Err(TransportAdapterError::UnsupportedFeature) = &result {
-        warn!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            ?transport_media_id,
-            ?mid,
-            initial_offer_applied = session_state.sdp_negotiation.initial_offer_applied,
-            pending_offer = session_state.sdp_negotiation.pending_offer.is_some(),
-            staged_offer = session_state.sdp_negotiation.staged_offer.is_some(),
-            negotiated_mids = ?session_state
-                .sdp_negotiation
-                .negotiated_producer_parameters
-                .keys()
-                .copied()
-                .collect::<Vec<_>>(),
-            "negotiated producer parameters were not projected for the staged producer media"
-        );
-    }
-    result
 }
 
 fn project_media_formats(

@@ -12,8 +12,6 @@ use std::{
 
 use tokio::sync::oneshot;
 
-#[cfg(test)]
-use super::publication;
 use super::{
     super::{
         RtcWorkerConfig,
@@ -116,19 +114,6 @@ pub fn handle_worker_command(
                 context.config.bitrate_limits.max_bitrate_in(),
                 &session_key,
                 answer,
-            ),
-        ),
-        #[cfg(test)]
-        RtcWorkerCommand::ResolveNegotiatedProducerParameters {
-            session_key,
-            transport_media_id,
-            response,
-        } => respond(
-            response,
-            publication::worker_resolve_negotiated_producer_parameters(
-                state,
-                &session_key,
-                transport_media_id,
             ),
         ),
         #[cfg(test)]

@@ -185,18 +185,14 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         .create_session_renegotiation_offer(&publisher_session_key)
         .await
         .expect("protocol publish should stage a follow-up offer");
-    apply_offer_answer(
-        &scenario.media_transport,
-        &publisher_session_key,
-        &mut publisher_remote,
-        publish_offer.into_parts().0,
-    )
-    .await;
+    let publish_answer = remote_answer_sdp(&mut publisher_remote, &publish_offer.into_parts().0);
     let negotiated_parameters = scenario
         .media_transport
-        .test_api()
-        .negotiated_producer_parameters(&publisher_session_key, transport_media_id)
+        .apply_session_answer(&publisher_session_key, &publish_answer)
         .await
+        .expect("protocol publish answer should apply")
+        .negotiated_producer_parameters(transport_media_id)
+        .cloned()
         .expect("answered protocol publish should expose negotiated producer parameters");
 
     assert!(
