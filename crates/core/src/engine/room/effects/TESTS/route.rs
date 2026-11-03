@@ -35,7 +35,8 @@ use crate::{
             media_graph::SubscriptionKey,
         },
         source_model::{
-            ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, UserStreamId,
+            ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceSyncPolicy,
+            UserStreamId,
         },
     },
 };
@@ -414,17 +415,17 @@ impl RouteFixture {
                 &sample_rtp_parameters("cam-up", 71_000),
             )
             .await?;
-        let consumer_media = media_transport
-            .consume_media(
+        let source = TransportSourceKey::new(source_session.clone(), source_media);
+        let (consumer_media, _mid) = media_transport
+            .consume_media_with_mid(
                 &consumer_session,
                 MediaKind::Video,
-                &source_session,
-                source_media,
+                &source,
+                SourceSyncPolicy::Independent,
                 &sample_rtp_parameters("cam-down", 72_000),
                 ConsumerActivity::Active,
             )
             .await?;
-        let source = TransportSourceKey::new(source_session.clone(), source_media);
         let route = TransportConsumerRoute::new(consumer_session.clone(), consumer_media, source);
         let target = ConsumerRouteTarget::for_test(
             route.clone(),

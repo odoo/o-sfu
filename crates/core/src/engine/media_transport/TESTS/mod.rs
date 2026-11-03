@@ -31,6 +31,7 @@ use crate::{
             },
         },
         metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+        source_model::SourceSyncPolicy,
         sync::lock_unpoisoned,
     },
 };
@@ -78,17 +79,18 @@ async fn consume_audio(
     source_media_id: TransportMediaId,
     rtp_parameters: &MediaStream,
 ) -> TransportMediaId {
-    adapter
-        .consume_media(
+    let (media_id, _mid) = adapter
+        .consume_media_with_mid(
             consumer_session_key,
             MediaKind::Audio,
-            source_session_key,
-            source_media_id,
+            &TransportSourceKey::new(source_session_key.clone(), source_media_id),
+            SourceSyncPolicy::Independent,
             rtp_parameters,
             ConsumerActivity::Active,
         )
         .await
-        .unwrap_or_else(|error| panic!("test audio consumption should succeed: {error:?}"))
+        .unwrap_or_else(|error| panic!("test audio consumption should succeed: {error:?}"));
+    media_id
 }
 
 async fn apply_relay_route_effect(
@@ -356,30 +358,30 @@ async fn media_transport_plan_updates_source_route() {
         )
         .await
         .unwrap_or_else(|error| panic!("peer video publication should succeed: {error:?}"));
-    let peer_consumer_media_id = adapter
-        .consume_media(
+    let source = TransportSourceKey::new(source_session.clone(), source_media_id);
+    let peer_source = TransportSourceKey::new(peer_source_session.clone(), peer_source_media_id);
+    let (peer_consumer_media_id, _mid) = adapter
+        .consume_media_with_mid(
             &peer_source_session,
             MediaKind::Video,
-            &peer_source_session,
-            peer_source_media_id,
+            &peer_source,
+            SourceSyncPolicy::Independent,
             &consumer_rtp_parameters,
             ConsumerActivity::Active,
         )
         .await
         .unwrap_or_else(|error| panic!("peer video consumption should succeed: {error:?}"));
-    let consumer_media_id = adapter
-        .consume_media(
+    let (consumer_media_id, _mid) = adapter
+        .consume_media_with_mid(
             &consumer_session,
             MediaKind::Video,
-            &source_session,
-            source_media_id,
+            &source,
+            SourceSyncPolicy::Independent,
             &consumer_rtp_parameters,
             ConsumerActivity::Active,
         )
         .await
         .unwrap_or_else(|error| panic!("test video consumption should succeed: {error:?}"));
-    let source = TransportSourceKey::new(source_session.clone(), source_media_id);
-    let peer_source = TransportSourceKey::new(peer_source_session.clone(), peer_source_media_id);
     let route =
         TransportConsumerRoute::new(consumer_session.clone(), consumer_media_id, source.clone());
     let peer_route = TransportConsumerRoute::new(

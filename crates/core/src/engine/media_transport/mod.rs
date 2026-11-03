@@ -310,39 +310,6 @@ impl MediaTransport {
         .await
     }
 
-    /// Declares a new consumer route from a source session to a consumer session.
-    ///
-    /// The source and consumer sessions must belong to the same room instance.
-    /// Cross-worker routing is an implementation detail hidden behind this
-    /// method. The initial activity controls whether the packet loop can
-    /// forward packets before later room policy updates arrive.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportAdapterError`] when either session cannot be
-    /// addressed, the source media id is unknown or the active backend cannot
-    /// create the consumer.
-    pub async fn consume_media(
-        &self,
-        consumer_session_key: &TransportSessionKey,
-        media_kind: MediaKind,
-        source_session_key: &TransportSessionKey,
-        source_media_id: TransportMediaId,
-        consumer_rtp_parameters: &RouterRtpParameters,
-        initial_activity: ConsumerActivity,
-    ) -> Result<TransportMediaId, TransportAdapterError> {
-        self.consume_media_with_mid(
-            consumer_session_key,
-            media_kind,
-            &TransportSourceKey::new(source_session_key.clone(), source_media_id),
-            SourceSyncPolicy::Independent,
-            consumer_rtp_parameters,
-            initial_activity,
-        )
-        .await
-        .map(|(transport_media_id, _mid)| transport_media_id)
-    }
-
     /// Declares consumer media and returns the MID from the same worker turn.
     ///
     /// # Errors
