@@ -32,6 +32,39 @@ use crate::{
     },
 };
 
+impl ConsumerStreamStore {
+    pub fn rtx_cache_is_armed(&self, handle: ConsumerStreamHandle) -> bool {
+        self.streams
+            .get(handle)
+            .is_some_and(|stream| stream.rtx_cache_deadline.is_some())
+    }
+
+    pub fn rtx_write_counts(&self, handle: ConsumerStreamHandle) -> Option<(usize, usize)> {
+        self.streams
+            .get(handle)
+            .map(|stream| (stream.queued_primary_writes, stream.stale_primary_writes))
+    }
+}
+
+impl RtpProjection {
+    const fn new(next_seq_no: SeqNo) -> Self {
+        Self {
+            next_seq_no,
+            timeline: RtpTimeline::Empty,
+        }
+    }
+
+    fn next_source_seq(&self, source_ssrc: Ssrc) -> Option<SeqNo> {
+        match self.timeline {
+            RtpTimeline::Active { mapping, .. } if mapping.ssrc == source_ssrc => {
+                Some((*mapping.highest_src_seq + 1).into())
+            }
+            RtpTimeline::Active { .. } => Some(SeqNo::default()),
+            RtpTimeline::Empty => None,
+        }
+    }
+}
+
 const VP8_PAYLOAD_TYPE: u8 = 96;
 
 fn projected(

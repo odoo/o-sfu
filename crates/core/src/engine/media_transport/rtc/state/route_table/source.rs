@@ -485,20 +485,6 @@ impl RouteSource {
             .is_some_and(|registration| registration.is_target_active(target_id))
     }
 
-    #[cfg(test)]
-    pub(super) fn relay_target_count(&self) -> usize {
-        self.relay
-            .as_ref()
-            .map_or(0, RelaySourceRegistration::target_count)
-    }
-
-    #[cfg(test)]
-    pub(super) fn active_relay_target_count(&self) -> usize {
-        self.relay
-            .as_ref()
-            .map_or(0, RelaySourceRegistration::active_target_count)
-    }
-
     pub(super) fn forget_packet_state(&mut self) {
         let previous_gate = self.packet_filter_gate();
         self.packet.clear();
@@ -614,13 +600,6 @@ impl ProducerSourceState {
             now,
         ));
         true
-    }
-
-    #[cfg(test)]
-    pub(super) fn rid_is_ready(&self, rid: Rid, now: Instant, max_age: Duration) -> bool {
-        self.rids
-            .iter()
-            .any(|liveness| liveness.rid == rid && liveness.is_ready(now, max_age))
     }
 
     pub(super) fn collect_ready_rids(
@@ -872,3 +851,7 @@ fn remote_pkt_gate_for_route(
         (_, None) => PacketLayerGate::Block,
     }
 }
+
+#[cfg(test)]
+#[path = "../TESTS/route_source.rs"]
+mod tests;
