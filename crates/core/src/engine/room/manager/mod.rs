@@ -545,15 +545,6 @@ impl RoomManager {
         drop(directory);
     }
 
-    #[cfg(test)]
-    pub(super) async fn with_current_room<T, F, Fut>(&self, room_id: &str, action: F) -> Option<T>
-    where
-        F: FnOnce(Arc<Room>) -> Fut,
-        Fut: Future<Output = T>,
-    {
-        self.run_current_room_mutation(room_id, action, None).await
-    }
-
     async fn run_current_room_mutation<T, F, Fut>(
         &self,
         room_id: &str,

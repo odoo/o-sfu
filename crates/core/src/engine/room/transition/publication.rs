@@ -24,12 +24,10 @@ use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use tracing::warn;
 
 use super::super::{
-    Room, RoomUserOperation, SourcePolicyGuard,
+    RoomUserOperation, SourcePolicyGuard,
     effects::batch::{RoomEffectContext, RoomEffects},
     media_graph::{ProducerActivityCommit, PublishIntentPlan, ValidatedPublish},
 };
-#[cfg(any(test, feature = "testing-transport"))]
-use crate::engine::{ConnectionId, UserId};
 use crate::engine::{
     media_transport::{AppliedSessionAnswer, MediaTransport, TransportAdapterError},
     source_model::{SourceDeactivateIntent, SourcePublishIntent, UserStreamId},
@@ -67,20 +65,6 @@ pub enum PublishStageOutcome {
 }
 
 impl RoomUserOperation<'_> {
-    #[cfg(test)]
-    pub async fn stage_negotiated_publish(
-        self,
-        intent: &SourcePublishIntent,
-    ) -> Result<PublishStageOutcome, TransportAdapterError> {
-        let Some(validated_descriptor) = ({
-            let state = self.room.state.read().await;
-            state.validate_publish(self.user_id, self.connection_id, intent)
-        }) else {
-            return Ok(PublishStageOutcome::Rejected);
-        };
-        self.stage_validated_publish(validated_descriptor).await
-    }
-
     async fn stage_validated_publish(
         self,
         validated_descriptor: ValidatedPublish,
@@ -256,23 +240,6 @@ async fn execute_publication_activity(
     RoomEffects::from_publication_activity(commit)
         .execute(guard, RoomEffectContext::runtime(media_transport))
         .await;
-}
-
-impl Room {
-    #[cfg(any(test, feature = "testing-transport"))]
-    #[must_use]
-    pub async fn has_staged_publish(
-        &self,
-        user_id: &UserId,
-        connection_id: ConnectionId,
-        stream_id: &UserStreamId,
-    ) -> bool {
-        self.state
-            .read()
-            .await
-            .staged_publishes
-            .contains(user_id, connection_id, stream_id)
-    }
 }
 
 #[cfg(test)]

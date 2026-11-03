@@ -4,12 +4,13 @@
 //! unassigned primary router. Admission selects a packet worker from current
 //! delay samples and may add a router within [`RoomWorkerPolicy`].
 
+#[cfg(any(test, feature = "testing-transport"))]
+use std::sync::Arc;
+
 use o_sfu_router::RouterId;
 pub use o_sfu_router::topology::{
     PlacementSnapshot, RouterPlacement, RouterPlacements, RouterPlacementsError,
 };
-#[cfg(any(test, feature = "testing-transport"))]
-use {std::sync::Arc, tokio::sync::Barrier};
 
 use super::{
     Room, RoomJoinError,
@@ -24,6 +25,13 @@ use crate::{
         media_transport::{MediaTransport, WorkerPlacementState},
     },
 };
+
+#[cfg(any(test, feature = "testing-transport"))]
+#[path = "TESTS/placement_support.rs"]
+mod test_support;
+
+#[cfg(any(test, feature = "testing-transport"))]
+pub use test_support::JoinPlacementTestGate;
 
 /// Initial router placement context for one room instance.
 ///
@@ -89,13 +97,6 @@ impl RoomRuntimeContext {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
-impl Room {
-    pub(super) async fn placement_usage_snapshot(&self) -> PlacementSnapshot {
-        self.state.read().await.placement_usage_snapshot()
-    }
-}
-
 enum WorkerPlacementSource<'a> {
     Transport(&'a MediaTransport),
     #[cfg(any(test, feature = "testing-transport"))]
@@ -137,29 +138,9 @@ impl JoinAdmissionTurn<'_> {
             gate: None,
         }
     }
-
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub(super) fn for_test(
-        request: JoinUserRequest,
-        delays_ms: Vec<Option<u64>>,
-        spillover_router_id: RouterId,
-    ) -> JoinAdmissionTurn<'static, impl FnOnce() -> RouterId> {
-        JoinAdmissionTurn {
-            request,
-            worker_states: WorkerPlacementSource::Fixed(delays_ms),
-            allocate_spillover_router: move || spillover_router_id,
-            gate: None,
-        }
-    }
 }
 
 impl<A: FnOnce() -> RouterId> JoinAdmissionTurn<'_, A> {
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub(super) fn with_gate(mut self, gate: Option<Arc<JoinPlacementTestGate>>) -> Self {
-        self.gate = gate;
-        self
-    }
-
     pub(super) async fn commit(
         self,
         room: &Room,
@@ -316,37 +297,6 @@ fn worker_delay(workers: &[WorkerPlacementState], worker: MediaWorkerId) -> u64 
 fn room_worker_start(room_instance_id: RoomInstanceId, worker_count: usize) -> usize {
     let worker_count = u64::try_from(worker_count.max(1)).unwrap_or(u64::MAX);
     usize::try_from(room_instance_id.as_u64() % worker_count).unwrap_or_default()
-}
-
-#[cfg(any(test, feature = "testing-transport"))]
-#[derive(Debug)]
-pub struct JoinPlacementTestGate {
-    ready: Barrier,
-    release: Barrier,
-}
-
-#[cfg(any(test, feature = "testing-transport"))]
-impl JoinPlacementTestGate {
-    #[must_use]
-    pub fn new(expected: usize) -> Self {
-        Self {
-            ready: Barrier::new(expected + 1),
-            release: Barrier::new(expected + 1),
-        }
-    }
-
-    async fn wait_before_commit(&self) {
-        self.ready.wait().await;
-        self.release.wait().await;
-    }
-
-    pub async fn hold_all_ready(&self) {
-        self.ready.wait().await;
-    }
-
-    pub async fn release_all(&self) {
-        self.release.wait().await;
-    }
 }
 
 #[cfg(test)]
