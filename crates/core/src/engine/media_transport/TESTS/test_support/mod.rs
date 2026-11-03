@@ -13,9 +13,8 @@ use {
 };
 #[cfg(test)]
 use {
-    super::{MediaTransportBuildError, TransportAdapterError, rtc::WorkerMediaControlBatch},
+    super::{MediaTransportBuildError, rtc::WorkerMediaControlBatch},
     crate::engine::sync::lock_unpoisoned,
-    o_sfu_router::rtp::MediaStream as RouterRtpParameters,
     std::sync::Mutex,
 };
 #[cfg(any(test, feature = "internal-benchmarks"))]
@@ -121,19 +120,6 @@ impl MediaTransportTestApi<'_> {
         self.transport
             .source_diagnostics_requests
             .load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn negotiated_producer_parameters(
-        self,
-        session_key: &TransportSessionKey,
-        transport_media_id: TransportMediaId,
-    ) -> Result<RouterRtpParameters, TransportAdapterError> {
-        self.transport
-            .worker_for_user(session_key)
-            .ok_or(TransportAdapterError::TransportUnavailable)?
-            .negotiated_producer_parameters(session_key, transport_media_id)
-            .await
     }
 
     /// Overrides a real RTC session health snapshot in test builds.

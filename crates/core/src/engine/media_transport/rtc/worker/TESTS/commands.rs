@@ -91,22 +91,6 @@ impl RtcWorker {
     }
 
     #[cfg(test)]
-    pub async fn negotiated_producer_parameters(
-        &self,
-        session_key: &TransportSessionKey,
-        transport_media_id: TransportMediaId,
-    ) -> Result<RouterRtpParameters, TransportAdapterError> {
-        self.request_worker(
-            |response| RtcWorkerCommand::ResolveNegotiatedProducerParameters {
-                session_key: session_key.clone(),
-                transport_media_id,
-                response,
-            },
-        )
-        .await
-    }
-
-    #[cfg(test)]
     pub async fn add_recv_media(
         &self,
         session_key: &TransportSessionKey,

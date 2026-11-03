@@ -327,17 +327,6 @@ pub enum RtcWorkerCommand {
         transport_media_id: TransportMediaId,
         response: RtcWorkerResponse<()>,
     },
-    /// resolve negotiated producer parameters for adapter tests
-    ///
-    /// this test-only command reads the answer-derived producer state after
-    /// negotiation so adapter tests can assert the transport boundary without
-    /// reaching into private registries
-    #[cfg(test)]
-    ResolveNegotiatedProducerParameters {
-        session_key: TransportSessionKey,
-        transport_media_id: TransportMediaId,
-        response: RtcWorkerResponse<RouterRtpParameters>,
-    },
     /// resolve the MID stored by a registered media handle
     ///
     /// returns `None` when this worker has no current handle for the id, including
@@ -408,10 +397,6 @@ impl RtcWorkerCommand {
             }
             #[cfg(test)]
             Self::ResolveMediaMid { .. } => Some(RtcWorkerObservationKind::ResolveMediaMid),
-            #[cfg(test)]
-            Self::ResolveNegotiatedProducerParameters { .. } => {
-                Some(RtcWorkerObservationKind::NegotiatedProducerParameters)
-            }
             Self::CreateInitialSessionOffer { .. }
             | Self::CreateSessionRenegotiationOffer { .. }
             | Self::ApplySessionAnswer { .. }
@@ -443,8 +428,6 @@ impl RtcWorkerCommand {
             | Self::RegisterTcpOutbox { .. } => false,
             #[cfg(test)]
             Self::ResolveMediaMid { .. } => false,
-            #[cfg(test)]
-            Self::ResolveNegotiatedProducerParameters { .. } => false,
             // A probe may seed session or remote-address indexes.
             #[cfg(any(test, feature = "testing-transport"))]
             Self::DebugProbe(_) => true,
