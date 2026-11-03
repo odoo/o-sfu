@@ -3,7 +3,7 @@ use std::{
     fmt,
     sync::{
         Arc, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -91,7 +91,6 @@ impl fmt::Debug for RegisteredPacketSink {
 }
 
 pub struct RoomPacketSinkRegistry {
-    any_active: AtomicBool,
     generation: AtomicU64,
     active_rooms: RwLock<HashMap<RoomInstanceId, RegisteredPacketSink>>,
 }
@@ -99,7 +98,6 @@ pub struct RoomPacketSinkRegistry {
 impl Default for RoomPacketSinkRegistry {
     fn default() -> Self {
         Self {
-            any_active: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             active_rooms: RwLock::new(HashMap::new()),
         }
@@ -139,16 +137,6 @@ struct PacketSinkRegistrySnapshot {
 }
 
 impl RoomPacketSinkRegistry {
-    #[inline]
-    pub fn sink_for_room(&self, room_instance_id: RoomInstanceId) -> Option<RegisteredPacketSink> {
-        if !self.any_active.load(Ordering::Acquire) {
-            return None;
-        }
-        read_unpoisoned(&self.active_rooms)
-            .get(&room_instance_id)
-            .cloned()
-    }
-
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
@@ -173,7 +161,6 @@ impl RoomPacketSinkRegistry {
     ) {
         let mut active_rooms = write_unpoisoned(&self.active_rooms);
         active_rooms.insert(room_instance_id, RegisteredPacketSink::new(sink, kind));
-        self.any_active.store(true, Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
         drop(active_rooms);
     }
@@ -185,8 +172,6 @@ impl RoomPacketSinkRegistry {
     pub fn unregister_room(&self, room_instance_id: RoomInstanceId) {
         let mut active_rooms = write_unpoisoned(&self.active_rooms);
         active_rooms.remove(&room_instance_id);
-        self.any_active
-            .store(!active_rooms.is_empty(), Ordering::Release);
         self.generation.fetch_add(1, Ordering::AcqRel);
         drop(active_rooms);
     }
@@ -200,7 +185,6 @@ impl fmt::Debug for RoomPacketSinkRegistry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RoomPacketSinkRegistry")
-            .field("any_active", &self.any_active.load(Ordering::Relaxed))
             .field("active_room_count", &self.active_room_count())
             .finish_non_exhaustive()
     }

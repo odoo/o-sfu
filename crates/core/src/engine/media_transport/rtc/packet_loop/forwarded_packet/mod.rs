@@ -173,15 +173,6 @@ impl ForwardedPacket {
         self.source.session_key(state)
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
-    #[must_use]
-    pub fn stable_src_key(&self) -> Option<&TransportSessionKey> {
-        match &self.source {
-            ForwardedPacketSource::Local { .. } => None,
-            ForwardedPacketSource::Relayed(session_key) => Some(session_key),
-        }
-    }
-
     #[must_use]
     pub const fn received_at(&self) -> Instant {
         self.received_at
