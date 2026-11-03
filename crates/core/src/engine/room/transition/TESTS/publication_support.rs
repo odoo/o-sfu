@@ -1,13 +1,13 @@
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 
 #[cfg(test)]
-use super::Room;
+use super::PublishStageOutcome;
 use super::{RoomUserOperation, StagedPublish};
-use crate::engine::source_model::UserStreamId;
-#[cfg(test)]
-use crate::engine::{ConnectionId, UserId};
+use crate::engine::{ConnectionId, UserId, room::Room, source_model::UserStreamId};
 #[cfg(test)]
 use crate::engine::{TestSourceKind, media_transport::TransportMediaId};
+#[cfg(test)]
+use crate::engine::{media_transport::TransportAdapterError, source_model::SourcePublishIntent};
 
 impl StagedPublish {
     pub(crate) async fn commit_with_parameters(
@@ -46,5 +46,37 @@ impl Room {
             connection_id,
             stream_type,
         )
+    }
+}
+
+#[cfg(test)]
+impl RoomUserOperation<'_> {
+    pub async fn stage_negotiated_publish(
+        self,
+        intent: &SourcePublishIntent,
+    ) -> Result<PublishStageOutcome, TransportAdapterError> {
+        let Some(validated_descriptor) = ({
+            let state = self.room.state.read().await;
+            state.validate_publish(self.user_id, self.connection_id, intent)
+        }) else {
+            return Ok(PublishStageOutcome::Rejected);
+        };
+        self.stage_validated_publish(validated_descriptor).await
+    }
+}
+
+impl Room {
+    #[must_use]
+    pub async fn has_staged_publish(
+        &self,
+        user_id: &UserId,
+        connection_id: ConnectionId,
+        stream_id: &UserStreamId,
+    ) -> bool {
+        self.state
+            .read()
+            .await
+            .staged_publishes
+            .contains(user_id, connection_id, stream_id)
     }
 }

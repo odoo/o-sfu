@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::future::Future;
 use std::{sync::Arc, time::Duration};
 
 use o_sfu_router::test_support::rtp_samples::sample_client_rtp_capabilities;
@@ -8,6 +10,8 @@ use super::{
     super::{RoomAdmissionPolicy, RoomRuntimePolicy},
     RoomManager,
 };
+#[cfg(test)]
+use crate::engine::room::Room;
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::sync::lock_unpoisoned;
 use crate::{
@@ -19,6 +23,19 @@ const DEFAULT_TEST_RESERVATION_TTL: Duration = Duration::from_mins(1);
 const DEFAULT_TEST_DEPARTURE_GRACE: Duration = Duration::from_mins(1);
 
 impl RoomManager {
+    #[cfg(test)]
+    pub(in crate::engine::room) async fn with_current_room<T, F, Fut>(
+        &self,
+        room_id: &str,
+        action: F,
+    ) -> Option<T>
+    where
+        F: FnOnce(Arc<Room>) -> Fut,
+        Fut: Future<Output = T>,
+    {
+        self.run_current_room_mutation(room_id, action, None).await
+    }
+
     #[must_use]
     pub fn for_test() -> Self {
         Self::for_test_with_runtime_policy(test_runtime_policy(RoomAdmissionPolicy::new(

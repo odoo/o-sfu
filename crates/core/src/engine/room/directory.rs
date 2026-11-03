@@ -20,6 +20,10 @@ use tracing::error;
 use super::Room;
 use crate::engine::{RoomInstanceId, sync::lock_unpoisoned};
 
+#[cfg(any(test, feature = "testing-transport"))]
+#[path = "TESTS/directory_support.rs"]
+mod test_support;
+
 const UNKNOWN_REMOTE_ADDRESS: &str = "unknown";
 
 fn rfc3339_now() -> String {
@@ -157,48 +161,6 @@ impl RoomLifecycle {
                 expires_at: Instant::now() + state.reservation_ttl,
             }
         }
-    }
-
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub(crate) fn expire_reservation_now_for_test(&self) {
-        lock_unpoisoned(&self.state).phase = RoomLifecyclePhase::Reservation {
-            expires_at: Instant::now(),
-        };
-    }
-
-    #[cfg(any(test, feature = "testing-transport"))]
-    #[must_use]
-    pub(crate) fn has_reservation_deadline_for_test(&self) -> bool {
-        matches!(
-            lock_unpoisoned(&self.state).phase,
-            RoomLifecyclePhase::Reservation { .. }
-        )
-    }
-
-    #[cfg(any(test, feature = "testing-transport"))]
-    #[must_use]
-    pub(crate) fn has_departure_grace_for_test(&self) -> bool {
-        matches!(
-            lock_unpoisoned(&self.state).phase,
-            RoomLifecyclePhase::Grace { .. }
-        )
-    }
-
-    /// expires an armed departure grace, and reports whether one was armed
-    ///
-    /// this never arms a grace, so a test cannot expire a phase the room never
-    /// reached
-    #[cfg(any(test, feature = "testing-transport"))]
-    #[must_use]
-    pub(crate) fn expire_departure_grace_now_for_test(&self) -> bool {
-        let mut state = lock_unpoisoned(&self.state);
-        if !matches!(state.phase, RoomLifecyclePhase::Grace { .. }) {
-            return false;
-        }
-        state.phase = RoomLifecyclePhase::Grace {
-            expires_at: Instant::now(),
-        };
-        true
     }
 
     /// Accepts a lease unless immediate removal is pending or already claimed.
