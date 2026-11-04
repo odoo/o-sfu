@@ -6,6 +6,13 @@
 //! semantics for non-`Copy` values are affine in this sense: moving transfers
 //! ownership, but leaving scope without calling `commit` or `close` is legal.
 //!
+//! ```text
+//!                     used 0 times      used once     used twice
+//! affine (`!Copy`)    ok (drop/forget)    ok          compile error
+//! obligation          runtime error       ok          compile error
+//! linear (ideal)      compile error       ok          compile error
+//! ```
+//!
 //! [`Obligation`] owns work that must finish before it is dropped. Calling
 //! `complete(context).await` runs that work's [`Execute`] implementation. There
 //! is no separate call to mark it complete, no mutable access to replace the work
