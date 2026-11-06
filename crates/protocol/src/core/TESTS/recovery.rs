@@ -466,6 +466,48 @@ fn protocol_core_updates_sticky_intents_while_recovering_before_replay() {
 }
 
 #[test]
+fn protocol_core_replays_automatic_layout_resets_after_recovery() {
+    let mut core = core_at(AttemptStage::Connected);
+    for states in [
+        DownloadStates {
+            camera: Some(true),
+            camera_layout: Some(VideoLayoutIntent::Pinned),
+            screen_layout: Some(VideoLayoutIntent::Hidden),
+            ..DownloadStates::default()
+        },
+        DownloadStates {
+            camera_layout: Some(VideoLayoutIntent::Automatic),
+            screen_layout: Some(VideoLayoutIntent::Automatic),
+            ..DownloadStates::default()
+        },
+        DownloadStates {
+            audio: Some(true),
+            ..DownloadStates::default()
+        },
+    ] {
+        let _ = core.subscribe(String::from("peer-7").into(), states);
+    }
+    let _ = core.on_ws_close(1011);
+    let _ = core.on_timer(RECOVERY_TIMER_ID);
+    let commands = core.accept_welcome(sample_welcome_payload());
+    assert_sent_client_envelopes(
+        &commands,
+        vec![ClientEnvelope::Message(ClientMessage::Subscribe(
+            SubscribePayload {
+                user_id: String::from("peer-7").into(),
+                states: DownloadStates {
+                    audio: Some(true),
+                    camera: Some(true),
+                    camera_layout: Some(VideoLayoutIntent::Automatic),
+                    screen_layout: Some(VideoLayoutIntent::Automatic),
+                    screen: None,
+                },
+            },
+        ))],
+    );
+}
+
+#[test]
 fn protocol_core_replays_latest_reactivated_publish_after_recovery() {
     let mut core = ProtocolCore::new();
     let _ = core.connect("wss://sfu.example.com/socket", "signed-token", None);

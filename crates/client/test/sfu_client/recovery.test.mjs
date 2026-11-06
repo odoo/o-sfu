@@ -187,6 +187,39 @@ test("real protocol core replays the latest sticky intents changed while recover
     ]);
 });
 
+test("real protocol core replays automatic layout resets after recovery", async () => {
+    const harness = createRecoveryHarness();
+    const { client, sockets, connect, emitMessage, open } = harness;
+
+    await connect();
+
+    await open();
+    await emitMessage(buildWelcomeFrame());
+
+    client.subscribe(7, { camera: true, cameraLayout: "pinned", screenLayout: "hidden" });
+    client.subscribe(7, { cameraLayout: "automatic", screenLayout: "automatic" });
+    client.subscribe(7, { audio: true });
+    await tick();
+
+    sockets[0].emitClose(1011);
+    await tick();
+
+    await authenticateRecovery(harness);
+
+    assert.deepEqual(decodeSentFrame(sockets[1], 1), [
+        {
+            t: "subscribe",
+            p: {
+                sessionId: 7,
+                audio: true,
+                camera: true,
+                cameraLayout: "automatic",
+                screenLayout: "automatic"
+            }
+        }
+    ]);
+});
+
 test("explicit disconnect neutralizes a stale recovery timer", async () => {
     const harness = createRecoveryHarness();
     const { client, sockets, connect, emitMessage, open, timers } = harness;

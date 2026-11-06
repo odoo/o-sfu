@@ -2309,6 +2309,130 @@ async fn pinned_camera_layout_overrides_active_speaker_bias_for_that_receiver() 
 }
 
 #[tokio::test]
+async fn automatic_camera_layout_undoes_a_pin_for_that_receiver() {
+    let scenario = SourcePolicyScenario::with_ready_users(&[1, 2, 3, 4]).await;
+    scenario.publish_audio_and_camera_for_users(&[1, 3]).await;
+    let third_audio_media_id = scenario.audio_media_id(3).await;
+    scenario.mark_active_speaker(third_audio_media_id).await;
+    scenario.refresh_policy().await;
+
+    for publisher in [1, 3] {
+        scenario
+            .set_scalable_video_layout(2, publisher, VideoLayoutIntent::Pinned)
+            .await;
+        assert_eq!(
+            diagnostics_subscription(&scenario, 2, publisher, TestSourceKind::ScalableVideo)
+                .await
+                .layout_role,
+            Some(DiagnosticsVideoLayoutRole::Pinned)
+        );
+        scenario
+            .set_scalable_video_layout(2, publisher, VideoLayoutIntent::Automatic)
+            .await;
+    }
+
+    // Receiver 4 never selected a layout, so it shows the automatic outcome.
+    for (publisher, expected_role) in [
+        (1, DiagnosticsVideoLayoutRole::VisibleThumbnail),
+        (3, DiagnosticsVideoLayoutRole::ActiveSpeaker),
+    ] {
+        for receiver in [2, 4] {
+            assert_eq!(
+                diagnostics_subscription(
+                    &scenario,
+                    receiver,
+                    publisher,
+                    TestSourceKind::ScalableVideo
+                )
+                .await
+                .layout_role,
+                Some(expected_role)
+            );
+        }
+    }
+
+    scenario
+        .set_scalable_video_layout(2, 3, VideoLayoutIntent::Pinned)
+        .await;
+    assert_eq!(
+        diagnostics_subscription(&scenario, 2, 3, TestSourceKind::ScalableVideo)
+            .await
+            .layout_role,
+        Some(DiagnosticsVideoLayoutRole::Pinned)
+    );
+}
+
+#[tokio::test]
+async fn automatic_screen_layout_restores_readable_detail_after_hiding() {
+    let scenario = SourcePolicyScenario::with_ready_users(&[1, 2]).await;
+    publish_track(
+        &scenario.room,
+        &UserId::Integer(1),
+        TestSourceKind::ReadableVideo,
+        test_video_rtp_parameters(),
+        &scenario.adapter,
+    )
+    .await;
+
+    for (layout, expected_role) in [
+        (
+            VideoLayoutIntent::Hidden,
+            DiagnosticsVideoLayoutRole::Hidden,
+        ),
+        (
+            VideoLayoutIntent::Automatic,
+            DiagnosticsVideoLayoutRole::ReadableDetail,
+        ),
+    ] {
+        scenario
+            .subscribe(
+                2,
+                1,
+                TestSubscriptionStates {
+                    readable_video_layout: Some(layout),
+                    ..TestSubscriptionStates::default()
+                },
+            )
+            .await;
+        assert_eq!(
+            diagnostics_subscription(&scenario, 2, 1, TestSourceKind::ReadableVideo)
+                .await
+                .layout_role,
+            Some(expected_role)
+        );
+    }
+}
+
+#[tokio::test]
+async fn automatic_layout_keeps_an_inactive_subscription_inactive_for_a_later_route() {
+    let scenario = SourcePolicyScenario::with_ready_users(&[1, 2]).await;
+    scenario
+        .subscribe(
+            2,
+            1,
+            TestSubscriptionStates {
+                scalable_video: Some(false),
+                scalable_video_layout: Some(VideoLayoutIntent::Pinned),
+                ..TestSubscriptionStates::default()
+            },
+        )
+        .await;
+    scenario
+        .set_scalable_video_layout(2, 1, VideoLayoutIntent::Automatic)
+        .await;
+
+    publish_simulcast_camera(&scenario.room, &UserId::Integer(1), &scenario.adapter).await;
+
+    let subscription =
+        diagnostics_subscription(&scenario, 2, 1, TestSourceKind::ScalableVideo).await;
+    assert_eq!(subscription.state, DiagnosticsRouteState::Inactive);
+    assert_eq!(
+        subscription.layout_role,
+        Some(DiagnosticsVideoLayoutRole::VisibleThumbnail)
+    );
+}
+
+#[tokio::test]
 async fn screen_share_layout_uses_screen_specific_priority_in_diagnostics() {
     let (room, adapter, mut publisher_rx, mut subscriber_rx) = setup_two_ready_users().await;
 
@@ -2957,6 +3081,25 @@ async fn policy_at(
     if let Some(tx) = tx {
         tx.execute(&scenario.room, &scenario.adapter).await;
     }
+}
+
+async fn diagnostics_subscription(
+    scenario: &SourcePolicyScenario,
+    receiver: i64,
+    publisher: i64,
+    stream_type: TestSourceKind,
+) -> DiagnosticsSubscription {
+    let (users, _) = diagnostics_room_views(&scenario.room, &scenario.adapter).await;
+    users
+        .into_iter()
+        .find(|view| view.user_id == UserId::Integer(receiver))
+        .and_then(|view| {
+            view.subscriptions.into_iter().find(|subscription| {
+                subscription.producer_user_id == UserId::Integer(publisher)
+                    && subscription.stream_id == stream_id_for_source(stream_type).to_string()
+            })
+        })
+        .expect("diagnostics should include the receiver subscription")
 }
 
 async fn bandwidth_for(

@@ -26,6 +26,7 @@ import {
     publishSyntheticScreen,
     roomUserInfo,
     setStreamDownload,
+    setStreamLayout,
     spawnLiveServer,
     streamDiagnostics,
     updateInfo,
@@ -1115,6 +1116,61 @@ test("middle camera RID delivers half-resolution decoded video", async ({
             body: JSON.stringify({ diagnostics, frame }),
             contentType: "application/json"
         });
+        await server.stop();
+    }
+});
+
+test("automatic layouts restore default camera and screen priority", async ({
+    browserName,
+    context
+}) => {
+    test.setTimeout(60_000);
+    const server = await spawnLiveServer({
+        bindPort: browserName === "firefox" ? 18094 : 18093,
+        rtcMinPort: browserName === "firefox" ? 28616 : 28584,
+        rtcMaxPort: browserName === "firefox" ? 28647 : 28615
+    });
+    try {
+        const channelUuid = await createChannel({
+            authKey: server.authKey,
+            httpBaseUrl: server.httpBaseUrl
+        });
+        const publisher = await createPeerPage(context);
+        const receiver = await createPeerPage(context);
+        for (const [page, sessionId] of [
+            [publisher, 41],
+            [receiver, 42]
+        ]) {
+            await connectPeer(page, {
+                channelUuid,
+                jwt: createConnectToken(channelUuid, sessionId),
+                url: server.wsUrl
+            });
+            await expect.poll(async () => (await peerSnapshot(page)).state).toBe("connected");
+        }
+        await publishSyntheticCamera(publisher, "automatic-camera");
+        await publishSyntheticScreen(publisher, "automatic-screen");
+        const layoutRole = async (streamType) =>
+            (
+                await streamDiagnostics({
+                    consumerSessionId: 42,
+                    httpBaseUrl: server.httpBaseUrl,
+                    producerSessionId: 41,
+                    roomId: channelUuid,
+                    streamType
+                })
+            ).subscription?.layoutRole;
+
+        for (const [streamType, override, defaultRole] of [
+            ["camera", "pinned", "visible_thumbnail"],
+            ["screen", "hidden", "readable_detail"]
+        ]) {
+            await setStreamLayout(receiver, 41, streamType, override);
+            await expect.poll(() => layoutRole(streamType)).toBe(override);
+            await setStreamLayout(receiver, 41, streamType, "automatic");
+            await expect.poll(() => layoutRole(streamType)).toBe(defaultRole);
+        }
+    } finally {
         await server.stop();
     }
 });

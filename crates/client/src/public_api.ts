@@ -21,6 +21,7 @@ export const STREAM_TYPES = ["audio", "camera", "screen"] as const;
 export type StreamType = (typeof STREAM_TYPES)[number];
 
 export const VIDEO_LAYOUT_INTENTS = [
+    "automatic",
     "featured",
     "pinned",
     "visible_thumbnail",

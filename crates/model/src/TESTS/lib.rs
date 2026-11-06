@@ -1,4 +1,4 @@
-use super::UserId;
+use super::{DownloadStates, UserId, VideoLayoutIntent};
 
 #[test]
 fn user_id_normalization_keeps_numeric_runtime_identity_canonical() {
@@ -75,4 +75,58 @@ fn user_id_decode_counts_decoded_utf8_bytes_in_escaped_json() -> serde_json::Res
     );
     assert!(serde_json::from_str::<UserId>(&rejected).is_err());
     Ok(())
+}
+
+#[test]
+fn video_layout_intents_keep_their_wire_values() -> serde_json::Result<()> {
+    for (intent, wire_value) in [
+        (VideoLayoutIntent::Automatic, "automatic"),
+        (VideoLayoutIntent::Featured, "featured"),
+        (VideoLayoutIntent::Pinned, "pinned"),
+        (VideoLayoutIntent::VisibleThumbnail, "visible_thumbnail"),
+        (VideoLayoutIntent::Hidden, "hidden"),
+        (VideoLayoutIntent::Overflow, "overflow"),
+    ] {
+        assert_eq!(serde_json::to_value(intent)?, wire_value);
+        assert_eq!(
+            serde_json::from_value::<VideoLayoutIntent>(wire_value.into())?,
+            intent
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn automatic_layout_replaces_only_its_layout_until_another_is_selected() {
+    let mut states = DownloadStates {
+        camera: Some(false),
+        camera_layout: Some(VideoLayoutIntent::Pinned),
+        screen_layout: Some(VideoLayoutIntent::Hidden),
+        ..DownloadStates::default()
+    };
+
+    states.apply_partial_update(&DownloadStates {
+        camera_layout: Some(VideoLayoutIntent::Automatic),
+        ..DownloadStates::default()
+    });
+    states.apply_partial_update(&DownloadStates {
+        audio: Some(true),
+        ..DownloadStates::default()
+    });
+    assert_eq!(
+        states,
+        DownloadStates {
+            audio: Some(true),
+            camera: Some(false),
+            camera_layout: Some(VideoLayoutIntent::Automatic),
+            screen_layout: Some(VideoLayoutIntent::Hidden),
+            ..DownloadStates::default()
+        }
+    );
+
+    states.apply_partial_update(&DownloadStates {
+        camera_layout: Some(VideoLayoutIntent::Featured),
+        ..DownloadStates::default()
+    });
+    assert_eq!(states.camera_layout, Some(VideoLayoutIntent::Featured));
 }
