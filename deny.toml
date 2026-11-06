@@ -3,7 +3,11 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # Remove once the dependency chain no longer includes pin-utils:
+    # o-sfu-signaling-proxy -> rama-core -> tokio-graceful -> loom 0.7.2 -> pin-utils
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils is an unmaintained transitive dependency of the signaling test proxy" },
+]
 
 [bans]
 multiple-versions = "warn"
