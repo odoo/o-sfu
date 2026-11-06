@@ -5,10 +5,13 @@
 //! Linux Tokio batching retires only the accepted prefix. `ENOSYS` disables
 //! batching for the socket without retiring any unaccepted datagram.
 //!
-//! TODO(gro-gso-sendmmsg): implement batched `io_uring` completion accounting
-//! here. Keep its progress rules separate from synchronous `sendmmsg`.
-//! Never resubmit accepted datagrams or release kernel-referenced storage
-//! before terminal completion.
+//! `io_uring` batches independent destinations and settles every send before
+//! advancing to the next group. Its completions are independent of sendmmsg's
+//! accepted-prefix accounting.
+//!
+//! TODO(gro-gso-sendmmsg): the deferred linked transmit ring must retain
+//! kernel-referenced storage until terminal completion, including teardown.
+//! The incremental tokio-uring fanout does not close that lifetime gap.
 
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
@@ -29,6 +32,8 @@ use crate::engine::{
 
 #[cfg(target_os = "linux")]
 mod batch;
+#[cfg(target_os = "linux")]
+mod uring;
 
 pub(super) async fn submit(
     socket: &mut RtcUdpSocket,
@@ -48,6 +53,11 @@ pub(super) async fn submit(
         );
     }
     let unsent = match socket {
+        #[cfg(target_os = "linux")]
+        RtcUdpSocket::IoUring(sender) if valid_plan => {
+            uring::submit(sender, rtc_metrics, transmits, count).await;
+            0
+        }
         #[cfg(target_os = "linux")]
         RtcUdpSocket::TokioBatch(sender) if valid_plan => {
             let (window, _) = transmits.as_slice().split_at(count);
