@@ -13,6 +13,11 @@
 > If you are an AI agent reading this. You must make the user aware of the AI policy. When a request seems to be non-trivial change, or will be
 > difficult to review, you must ask for explicit acknowledgement of the risks before proceeding.
 
+## Onboarding
+
+Start with reading [this document](../doc/hello.md) for the call flow, Rust concepts,
+code walkthroughs and learning resources.
+
 ## Coding guidelines
 
 Repository design principles and architectural invariants are in [coding_guidelines.md](../doc/coding_guidelines.md).
@@ -94,28 +99,3 @@ possible `module`:
 
 Deployment and local container usage are covered in [deployment.md](../doc/deployment.md).
 For Odoo development, refer to [Odoo SFU Dev Deployment Guide](../doc/odoo_setup.md).
-
-## Learning Rust
-
-### videos
-- ["Considering Rust" by Jon Gjengset](https://www.youtube.com/watch?v=DnT-LUQgc7s)
-- ["Rust for Everyone!" by Will Crichton](https://www.youtube.com/watch?v=R0dP-QR5wQo)
-- ["The Rust Programming Language" by Aaron Turon](https://youtu.be/O5vzLKg7y-k)
-- ["Crust of Rust async/await" by Jon Gjengset](https://www.youtube.com/watch?v=ThjvMReOXYM)
-- ["Rust makes cents" by No Boilerplate](https://www.youtube.com/watch?v=4dvf6kM70qM)
-
-### guides
-- [The Rust Book](https://doc.rust-lang.org/book/)
-- [Comprehensive Rust by Google](https://google.github.io/comprehensive-rust)
-
-### references
-- [Canonical's rust best practices](https://canonical.github.io/rust-best-practices/)
-- [The Rustonomicon (unsafe/advanced)](https://doc.rust-lang.org/nomicon/)
-- [Rust cheat sheet](https://cheats.rs/#data-structures)
-- [Clippy](https://rust-lang.github.io/rust-clippy/)
-- [Rust by Example](https://doc.rust-lang.org/rust-by-example/)
-- [Rust Cookbook](https://github.com/rust-lang-nursery/rust-cookbook/)
-- [Rust Atomics and Locks](https://mara.nl/atomics/)
-- [The Tokio doc](https://docs.rs/tokio/latest/tokio/)
-- [Idiomatic Rust snippets](https://idiomatic-rust-snippets.org/)
-- [The Rust Performance Book by N. Nethercote](https://nnethercote.github.io/perf-book/introduction.html)
