@@ -10,7 +10,7 @@ Use [M3](m03-choose-the-simplest-clear-design.md) to justify storage,
 [C4](c04-put-each-invariant-in-its-lowest-owner.md) to assign ownership and
 [R6](r06-bound-externally-driven-work.md) for externally driven retention.
 
-Treat lossy keys, digests and summaries as candidate filters, verifying the
+Treat lossy keys, digests and summaries as candidate filters and verify the
 underlying value before a false positive can change behavior.
 
 > [!NOTE]

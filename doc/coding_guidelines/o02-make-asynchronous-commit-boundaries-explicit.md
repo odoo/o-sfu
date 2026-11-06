@@ -3,7 +3,7 @@
 Never hold a blocking lock guard across `.await` and release room-state guards
 before I/O or async effects. Capture what the effect needs while reading or
 updating the state, then leave the guard's scope before executing it. If I/O must
-succeed before a state change can commit, run it without the guard then
+succeed before a state change can commit, run it without the guard, then
 reacquire the guard to revalidate and commit.
 
 An async ordering guard, such as `Room::source_policy_turn`, may span `.await`

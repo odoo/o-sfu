@@ -5,7 +5,9 @@ formatting rules. These guidelines cover design choices they cannot enforce
 such as API boundaries, ownership, side effects, compatibility and
 verification.
 
-Some rules may be a matter of opinion and some design philosophies may recomend otherwise, but gaving consistent patterns and expectations in a codebase is better than having contradictory patterns that coexist without a clear direction.
+Some rules may be a matter of opinion and some design philosophies may
+recommend otherwise. One consistent set of patterns and expectations is still
+better than contradictory patterns that coexist without a clear direction.
 
 ## Coding and design practices
 
@@ -92,9 +94,9 @@ use and keep invariants enforceable as implementations evolve.
 
 ### M. Maintainability
 
-Code is read and reviewed far more often than it is written. Lowering
-cognitive overhead reduces reviewer burden, prevents regressions during
-maintenance and sustains development velocity as the codebase grows.
+Code is read and reviewed far more often than it is written. Code that is
+easy to follow is faster to review and less likely to regress during
+maintenance, so development stays fast as the codebase grows.
 
 - [M1. Comment contracts, not mechanics](coding_guidelines/m01-comment-contracts-not-mechanics.md)
 - [M2. Use consistent names, explicit imports and narrow visibility](coding_guidelines/m02-make-names-imports-and-visibility-reveal-ownership.md)
@@ -121,8 +123,35 @@ tests representative of production behavior.
 - [R8. Make tests prove real behavior](coding_guidelines/r08-test-observable-behavior-deterministically.md)
 - [R9. Prefer `expect` for lint exceptions](coding_guidelines/r09-prefer-expect-for-lint-exceptions.md)
 
-
 ---
 
 For formatting and contributor workflow, see [CONTRIBUTING.md](../.github/CONTRIBUTING.md).
 For verification commands, see [`tests/README.md`](../tests/README.md).
+
+## Rust learning resources
+
+### Talks
+
+- ["Considering Rust" by Jon Gjengset](https://www.youtube.com/watch?v=DnT-LUQgc7s)
+- ["Rust for Everyone!" by Will Crichton](https://www.youtube.com/watch?v=R0dP-QR5wQo)
+- ["The Rust Programming Language" by Aaron Turon](https://youtu.be/O5vzLKg7y-k)
+- ["Crust of Rust async/await" by Jon Gjengset](https://www.youtube.com/watch?v=ThjvMReOXYM)
+- ["Rust makes cents" by No Boilerplate](https://www.youtube.com/watch?v=4dvf6kM70qM)
+
+### General overview
+
+- [The Rust Book](https://doc.rust-lang.org/book/)
+- [Comprehensive Rust by Google](https://google.github.io/comprehensive-rust)
+
+### References
+
+- [Canonical's rust best practices](https://canonical.github.io/rust-best-practices/)
+- [The Rustonomicon (unsafe/advanced)](https://doc.rust-lang.org/nomicon/)
+- [Rust cheat sheet](https://cheats.rs/#data-structures)
+- [Clippy](https://rust-lang.github.io/rust-clippy/)
+- [Rust by Example](https://doc.rust-lang.org/rust-by-example/)
+- [Rust Cookbook](https://github.com/rust-lang-nursery/rust-cookbook/)
+- [Rust Atomics and Locks](https://mara.nl/atomics/)
+- [The Tokio doc](https://docs.rs/tokio/latest/tokio/)
+- [Idiomatic Rust snippets](https://idiomatic-rust-snippets.org/)
+- [The Rust Performance Book by N. Nethercote](https://nnethercote.github.io/perf-book/introduction.html)

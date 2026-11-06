@@ -3,7 +3,7 @@
 Prefer `Iterator`, `Option` and `Result` combinators when they express a query
 or transformation more clearly than manual loops, accumulators or indexing. A
 short chain of methods such as `find`, `filter_map` and `collect` lets the
-reader follow the data without tracking (/allocating) temporary state.
+reader follow the data without tracking or allocating temporary state.
 
 Use a `for` loop when ordering, mutation of related state, `.await` or
 branching carries meaning that a chain would hide. Reserve `map` for

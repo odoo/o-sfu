@@ -26,7 +26,9 @@
 
 Odoo's multi-tenant SFU.
 
-uses [Str0m](https://github.com/algesten/str0m) as the WebRTC engine
+Curious and wanting to learn the whole stack? Check **["Hello, can you see my screen?"](doc/hello.md)**.
+
+uses [Tokio](https://tokio.rs/) as the async runtime and [Str0m](https://github.com/algesten/str0m) as the WebRTC engine
 
 ---
 

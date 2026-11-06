@@ -3,7 +3,7 @@
 Choose inputs that express how a function uses its data: a slice for indexed
 or repeated borrowed access, `impl IntoIterator` for a single pass and a
 concrete collection when its storage, ownership or ordering is part of the
-contract. Apply the same principle to outputs, returning an iterator for
+contract. Apply the same principle to outputs: return an iterator for
 traversal or a slice for repeated borrowed access. Return an owned collection
 only when the caller needs more than traversal.
 
