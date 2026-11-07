@@ -10,7 +10,7 @@
 //! explicitly instead of sleeping. they spawn no tasks, which keeps paused-time
 //! auto-advance from reaching any other timer
 
-use std::{sync::Arc, time::Duration};
+use std::{panic, sync::Arc, time::Duration};
 
 use tokio::time::advance;
 
@@ -85,6 +85,26 @@ async fn an_expired_reservation_is_claimed_once_and_is_terminal() {
     assert!(
         lifecycle.begin().is_none(),
         "a claimed reservation is terminal"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dropped_lease_reports_its_obligation_and_still_hands_back_admission() {
+    let lifecycle = RoomLifecycle::new(TEST_RESERVATION_TTL, TEST_DEPARTURE_GRACE);
+    let lease = lifecycle.begin().expect("a join should be accepted");
+
+    let panic = panic::catch_unwind(move || drop(lease))
+        .expect_err("an unfinished lease should report its obligation");
+    assert_eq!(
+        panic.downcast_ref::<String>().map(String::as_str),
+        Some("unfinished lifecycle obligation: room lifecycle lease")
+    );
+
+    advance_past_reservation_deadline().await;
+    assert_eq!(
+        lifecycle.claim_expired_room(),
+        Some(ExpiryReason::ReservationLapsed),
+        "the reaper can claim the room only once the dropped lease released admission"
     );
 }
 
