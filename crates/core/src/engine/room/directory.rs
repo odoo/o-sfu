@@ -5,8 +5,6 @@
 //! removal until the final mutation finishes. Reservation expiry removes only
 //! idle entries claimed by that gate.
 
-#[cfg(test)]
-use std::thread;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -15,10 +13,13 @@ use std::{
 
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::time::Instant;
-use tracing::error;
 
 use super::Room;
-use crate::engine::{RoomInstanceId, sync::lock_unpoisoned};
+use crate::engine::{
+    RoomInstanceId,
+    obligation::{Obligation, TryComplete, Work},
+    sync::lock_unpoisoned,
+};
 
 #[cfg(any(test, feature = "testing-transport"))]
 #[path = "TESTS/directory_support.rs"]
@@ -177,10 +178,10 @@ impl RoomLifecycle {
             return None;
         }
         state.active_mutations = state.active_mutations.checked_add(1)?;
-        let lease = RoomLifecycleLease {
+        let lease = RoomLifecycleLease(Obligation::new(LeaseWork {
             state: Arc::clone(&self.state),
-            finished: false,
-        };
+            released: false,
+        }));
         drop(state);
         Some(lease)
     }
@@ -192,36 +193,50 @@ pub(crate) enum RoomRemovalPolicy {
     Immediately,
 }
 
-/// cancellation-safe permit for work accepted against a directory entry
+/// Admission lease for work accepted against a directory entry.
 ///
-/// dropping the lease releases admission without requesting removal
-/// manager
-/// teardown paths call [`Self::finish`] after checking whether the room is empty
+/// Manager teardown paths call [`Self::finish`] after checking whether the
+/// room is empty. Dropping an unfinished lease releases admission without
+/// requesting removal, then reports an unfinished [`Obligation`].
 #[derive(Debug)]
-pub(crate) struct RoomLifecycleLease {
-    /// shared lease state for the directory entry that accepted this work
-    state: Arc<Mutex<RoomLifecycleState>>,
-    /// Prevents `Drop` from releasing a lease already completed by `finish`.
-    finished: bool,
-}
+#[must_use = "room lifecycle leases must finish their obligation"]
+pub(crate) struct RoomLifecycleLease(Obligation<LeaseWork>);
 
 impl RoomLifecycleLease {
     /// Releases the lease and returns whether this caller claimed directory removal.
     #[must_use]
     pub(crate) fn finish(
-        mut self,
+        self,
         on_empty: Option<RoomRemovalPolicy>,
         room_can_be_removed: bool,
     ) -> bool {
-        self.release(on_empty, room_can_be_removed)
+        // `LeaseWork::try_complete` is infallible.
+        self.0
+            .try_complete((on_empty, room_can_be_removed))
+            .unwrap_or_default()
     }
 
+    pub(crate) fn clear_expiration(&self) {
+        lock_unpoisoned(&self.0.work().state).phase = RoomLifecyclePhase::Alive;
+    }
+}
+
+/// Admission held by one accepted lease.
+#[derive(Debug)]
+struct LeaseWork {
+    /// Shared lease state for the directory entry that accepted this work.
+    state: Arc<Mutex<RoomLifecycleState>>,
+    /// Prevents `Drop` from releasing a lease already completed by `try_complete`.
+    released: bool,
+}
+
+impl LeaseWork {
     #[must_use]
     fn release(&mut self, on_empty: Option<RoomRemovalPolicy>, room_can_be_removed: bool) -> bool {
-        if self.finished {
+        if self.released {
             return false;
         }
-        self.finished = true;
+        self.released = true;
         let mut state = lock_unpoisoned(&self.state);
         // Keep the strongest policy; promote 0 seconds grace to immediate removal.
         let removal_policy = match state.pending_removal.max(on_empty) {
@@ -261,23 +276,27 @@ impl RoomLifecycleLease {
             None => false,
         }
     }
+}
 
-    pub(crate) fn clear_expiration(&self) {
-        lock_unpoisoned(&self.state).phase = RoomLifecyclePhase::Alive;
+impl Work for LeaseWork {
+    fn label(&self) -> &'static str {
+        "room lifecycle lease"
     }
 }
 
-impl Drop for RoomLifecycleLease {
+impl TryComplete<(Option<RoomRemovalPolicy>, bool)> for LeaseWork {
+    type Output = bool;
+
+    fn try_complete(
+        mut self,
+        (on_empty, room_can_be_removed): (Option<RoomRemovalPolicy>, bool),
+    ) -> Result<bool, Self> {
+        Ok(self.release(on_empty, room_can_be_removed))
+    }
+}
+
+impl Drop for LeaseWork {
     fn drop(&mut self) {
-        if self.finished {
-            return;
-        }
-        error!("room lifecycle lease dropped without completing explicit cleanup");
-        #[cfg(test)]
-        assert!(
-            thread::panicking(),
-            "room lifecycle lease dropped without completing explicit cleanup"
-        );
         let _ = self.release(None, false);
     }
 }
