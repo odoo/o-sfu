@@ -87,7 +87,7 @@ impl ConsumerGateBatchBenchFixture {
     pub fn updates_applied(&self) -> bool {
         let route = self.state.routes.local_route(self.src_media);
         route.is_some_and(|r| {
-            r.destinations
+            r.destinations()
                 .iter()
                 .all(|dst| dst.delivery.pending_gate().is_some())
         })

@@ -11,7 +11,7 @@ use super::super::{
         relay_registry::{RelayPacketMailbox, RelayTargetId},
         route_control::PacketLayerGate,
         route_table::{RidReadinessScratch, RouteTable},
-        slots::ConsumerStreamHandle,
+        slots::{ConsumerStreamHandle, RouteDestinationHandle},
         source_route::{DecoderDelivery, MediaRouteDestination},
     },
     test_support::test_transport_session_key,
@@ -60,6 +60,18 @@ fn assert_single_active_speaker_diagnostic(
     assert_eq!(diagnostic.reason(), reason);
 }
 
+fn route_destination(
+    state: &RouteTable,
+    src_media: TransportMediaId,
+    destination: RouteDestinationHandle,
+    consumer_media: TransportMediaId,
+) -> &MediaRouteDestination {
+    state
+        .local_route(src_media)
+        .and_then(|route| route.destination(destination, consumer_media))
+        .expect("consumer destination should remain routed")
+}
+
 #[test]
 fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     let mut state = RouteTable::default();
@@ -67,10 +79,10 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     let consumer_media = TransportMediaId::new(11);
     let consumer_session = test_transport_session_key(10, 0, 11, UserId::Integer(12));
     let selected_rid = Rid::from("hi");
-    let dst_idx = state.add_consumer_route(
+    let handle = state.add_consumer_route(
         src_media,
         MediaRouteDestination {
-            dest_session: consumer_session.clone(),
+            dest_session: consumer_session,
             dest_transport_media_id: consumer_media,
             dest_stream: ConsumerStreamHandle::default(),
             dest_mid: Mid::from("cam-down"),
@@ -82,16 +94,16 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     );
 
     let update = state
-        .set_consumer_active(src_media, dst_idx, &consumer_session, consumer_media, false)
+        .set_consumer_active(src_media, handle, consumer_media, false)
         .unwrap();
     assert!(update.route_changed);
     assert!(!update.repair_delivery_changed);
     let update = state
-        .set_consumer_active(src_media, dst_idx, &consumer_session, consumer_media, true)
+        .set_consumer_active(src_media, handle, consumer_media, true)
         .unwrap();
     assert!(update.route_changed);
     assert!(!update.repair_delivery_changed);
-    let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
+    let destination = route_destination(&state, src_media, handle, consumer_media);
     assert_eq!(
         destination.delivery.effective_gate(),
         PacketLayerGate::Block
@@ -107,7 +119,7 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
         panic!("repair-disabled destination invalidated repair state")
     });
     assert_eq!(
-        state.local_route(src_media).unwrap().destinations[dst_idx]
+        route_destination(&state, src_media, handle, consumer_media)
             .delivery
             .effective_gate(),
         PacketLayerGate::Block
@@ -116,7 +128,7 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     state.update_decoder_readiness(src_media, Some(selected_rid), true, &mut scratch, |_| {
         panic!("repair-disabled destination invalidated repair state")
     });
-    let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
+    let destination = route_destination(&state, src_media, handle, consumer_media);
     assert_eq!(
         destination.delivery.effective_gate(),
         PacketLayerGate::Rid(selected_rid)
@@ -125,20 +137,14 @@ fn video_route_resumes_only_from_its_selected_rid_keyframe() {
     assert!(destination.delivery.generation() >= 3);
 
     let update = state
-        .set_consumer_pkt_gate(
-            src_media,
-            dst_idx,
-            &consumer_session,
-            consumer_media,
-            PacketLayerGate::Open,
-        )
+        .set_consumer_pkt_gate(src_media, handle, consumer_media, PacketLayerGate::Open)
         .unwrap();
     assert!(update.route_changed);
     assert!(!update.repair_delivery_changed);
     state.update_decoder_readiness(src_media, None, true, &mut scratch, |_| {
         panic!("repair-disabled destination invalidated repair state");
     });
-    let destination = &state.local_route(src_media).unwrap().destinations[dst_idx];
+    let destination = route_destination(&state, src_media, handle, consumer_media);
     assert_eq!(destination.delivery.effective_gate(), PacketLayerGate::Open);
     assert_eq!(destination.delivery.pending_gate(), None);
 }
@@ -416,7 +422,7 @@ fn route_control_refreshes_source_gate_after_relay_gate_removal() {
     let consumer_session = test_transport_session_key(121, 0, 122, UserId::Integer(123));
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let relay_target = RelayTargetId::new(1);
-    let dst_idx = state.add_consumer_route(
+    let handle = state.add_consumer_route(
         src_media,
         MediaRouteDestination {
             dest_session: consumer_session,
@@ -445,7 +451,7 @@ fn route_control_refreshes_source_gate_after_relay_gate_removal() {
         Some(PacketLayerGate::Rid("hi".into()))
     );
     assert_eq!(
-        state.local_route(src_media).unwrap().destinations[dst_idx]
+        route_destination(&state, src_media, handle, consumer_media)
             .delivery
             .generation(),
         0

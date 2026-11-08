@@ -306,7 +306,7 @@ impl LocalWriteDrainFixture {
             .consumer_streams
             .allocate(mid);
         let src_media = TransportMediaId::new(10);
-        let dst_idx = state.routes.add_consumer_route(
+        state.routes.add_consumer_route(
             src_media,
             MediaRouteDestination {
                 dest_session: consumer.clone(),
@@ -319,8 +319,9 @@ impl LocalWriteDrainFixture {
                 delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
             },
         );
+        // The source route's only destination occupies its first slot.
         let ForwardingDestination::LocalRtc(destination) =
-            ForwardingDestination::from_local_route_destination(src_media, dst_idx)
+            ForwardingDestination::from_local_route_destination(src_media, 0)
         else {
             return Err("local write fixture requires a local RTC destination");
         };

@@ -134,16 +134,8 @@ impl ForwardingHarness {
             Arc::new(MediaBitrateCounter::new(Instant::now())),
         );
         let consumer_mid = Mid::from("cam-down");
-        let consumer_media = self
-            .state
-            .register_media_handle(RegisteredMediaHandle::Consumer {
-                session_key: consumer.clone(),
-                mid: consumer_mid,
-                src_media,
-            });
-        self.state.routes.add_consumer_route(
-            src_media,
-            MediaRouteDestination {
+        self.state
+            .register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
                 dest_session: consumer,
                 dest_transport_media_id: consumer_media,
                 dest_stream: ConsumerStreamHandle::default(),
@@ -152,8 +144,7 @@ impl ForwardingHarness {
                 repair_enabled: false,
                 active: true,
                 delivery: DecoderDelivery::new(true, PacketLayerGate::Rid(selected_rid)),
-            },
-        );
+            });
         src_media
     }
 

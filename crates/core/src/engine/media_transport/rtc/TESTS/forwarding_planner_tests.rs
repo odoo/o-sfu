@@ -80,7 +80,7 @@ fn local_destination_session<'a>(
     state
         .routes
         .local_route(src_media)?
-        .destinations
+        .destinations()
         .get(dst_idx)
         .map(|destination| &destination.dest_session)
 }
@@ -225,7 +225,7 @@ fn plan_forwards_skips_inactive_consumer_destinations() {
     let src_media = scenario.source(producer_session.clone(), Mid::from("cam-up"));
     let inactive_transport_media_id = scenario.destination(
         src_media,
-        inactive_consumer_session.clone(),
+        inactive_consumer_session,
         Mid::from("cam-down-inactive"),
     );
     scenario.destination(
@@ -234,12 +234,14 @@ fn plan_forwards_skips_inactive_consumer_destinations() {
         Mid::from("cam-down-active"),
     );
 
+    let inactive_destination = state
+        .consumer_destination_handle(inactive_transport_media_id)
+        .unwrap();
     state
         .routes
         .set_consumer_active(
             src_media,
-            0,
-            &inactive_consumer_session,
+            inactive_destination,
             inactive_transport_media_id,
             false,
         )
@@ -763,12 +765,13 @@ fn plan_forwards_omits_gate_metrics_without_routed_destinations() {
 
     let consumer_media = MediaWorkerScenario::new(&mut state).destination(
         src_media,
-        consumer_session.clone(),
+        consumer_session,
         Mid::from("aud-down"),
     );
+    let destination = state.consumer_destination_handle(consumer_media).unwrap();
     state
         .routes
-        .set_consumer_active(src_media, 0, &consumer_session, consumer_media, false)
+        .set_consumer_active(src_media, destination, consumer_media, false)
         .unwrap();
     state
         .routes

@@ -12,7 +12,7 @@ use super::super::{
         PacketLoopState,
         media_registry::RegisteredMediaHandle,
         route_control::PacketLayerGate,
-        slots::ConsumerStreamHandle,
+        slots::{ConsumerStreamHandle, RouteDestinationHandle},
         source_route::{DecoderDelivery, MediaRouteDestination},
     },
 };
@@ -121,39 +121,51 @@ impl<'a> MediaWorkerScenario<'a> {
         packet_gate: PacketLayerGate,
         pending_gate: Option<PacketLayerGate>,
     ) -> TransportMediaId {
-        let transport_media_id =
-            self.state
-                .register_media_handle(RegisteredMediaHandle::Consumer {
-                    session_key: session_key.clone(),
-                    mid,
-                    src_media,
-                });
-        let bind_session_key = session_key.clone();
-        let dst_idx = self.state.routes.add_consumer_route(
-            src_media,
-            MediaRouteDestination {
+        self.state
+            .register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
                 dest_session: session_key,
-                dest_transport_media_id: transport_media_id,
+                dest_transport_media_id: consumer_media,
                 dest_stream: ConsumerStreamHandle::default(),
                 dest_mid: mid,
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,
                 delivery: DecoderDelivery::fixture(true, packet_gate, pending_gate),
-            },
-        );
-        self.state.set_consumer_dst_idx(
-            &bind_session_key,
-            mid,
-            transport_media_id,
-            src_media,
-            Some(dst_idx),
-        );
-        transport_media_id
+            })
     }
 }
 
 impl PacketLoopState {
+    /// returns the handle the source route issued for one consumer media
+    pub fn consumer_destination_handle(
+        &self,
+        consumer_media: TransportMediaId,
+    ) -> Option<RouteDestinationHandle> {
+        match self.media_handle(consumer_media)? {
+            RegisteredMediaHandle::Consumer { destination, .. } => Some(*destination),
+            RegisteredMediaHandle::Producer { .. } => None,
+        }
+    }
+
+    /// returns the route destination registered for one consumer media
+    #[cfg(test)]
+    pub fn consumer_route_destination(
+        &self,
+        consumer_media: TransportMediaId,
+    ) -> Option<&MediaRouteDestination> {
+        let RegisteredMediaHandle::Consumer {
+            src_media,
+            destination,
+            ..
+        } = self.media_handle(consumer_media)?
+        else {
+            return None;
+        };
+        self.routes
+            .local_route(*src_media)?
+            .destination(*destination, consumer_media)
+    }
+
     pub fn refresh_producer_ssrcs(
         &mut self,
         session_key: &TransportSessionKey,

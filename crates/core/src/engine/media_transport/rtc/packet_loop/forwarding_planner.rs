@@ -118,7 +118,7 @@ fn reserve_forward_capacity(
 ) {
     let planned_forwards = usize::from(origin_sink.is_some())
         + relay_targets.map_or(0, RelayForwardView::len)
-        + route_entry.map_or(0, |entry| entry.destinations.len());
+        + route_entry.map_or(0, |entry| entry.destinations().len());
     if forwards.capacity().saturating_sub(forwards.len()) < planned_forwards {
         forwards.reserve(planned_forwards);
     }
@@ -160,11 +160,11 @@ fn populate_local_forwards(
     packet_rid: Option<Rid>,
     forwards: &mut Vec<ForwardingDestination>,
 ) {
-    let all_active = route_entry.active_destination_count == route_entry.destinations.len();
+    let destinations = route_entry.destinations();
+    let all_active = route_entry.active_destination_count() == destinations.len();
     // `extend` avoids per-destination gate-result setup in Rust 1.95 x86 codegen.
     forwards.extend(
-        route_entry
-            .destinations
+        destinations
             .iter()
             .enumerate()
             .filter(|(_, dst)| {

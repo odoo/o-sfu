@@ -85,7 +85,7 @@ impl LocalSendBenchFixture {
         direct_api.declare_media(mid, MediaKind::Video);
         direct_api.declare_stream_tx(Ssrc::from(78), None, mid, None);
 
-        let dst_idx = state.routes.add_consumer_route(
+        state.routes.add_consumer_route(
             src_media,
             MediaRouteDestination {
                 dest_session: consumer.clone(),
@@ -104,8 +104,9 @@ impl LocalSendBenchFixture {
 
         let packet = sample_forwarded_packet(producer, "cam-up", LOCAL_SEND_PAYLOAD);
         let observed_at = packet.received_at();
+        // The source route's only destination occupies its first slot.
         let ForwardingDestination::LocalRtc(destination) =
-            ForwardingDestination::from_local_route_destination(src_media, dst_idx)
+            ForwardingDestination::from_local_route_destination(src_media, 0)
         else {
             panic!("benchmark destination should be a local RTC route");
         };

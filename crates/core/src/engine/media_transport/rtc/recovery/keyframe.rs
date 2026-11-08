@@ -443,28 +443,24 @@ pub fn worker_request_consumer_kf(
     let src_key = route.source_session_key();
     let src_media = route.source_transport_media_id();
     state.ensure_existing_route_src(consumer_key, route.source())?;
-    match state.media_handle(consumer_media) {
+    let destination = match state.media_handle(consumer_media) {
         Some(RegisteredMediaHandle::Consumer {
             session_key,
             src_media: consumer_src_media,
+            destination,
             ..
-        }) if session_key == consumer_key && *consumer_src_media == src_media => {}
+        }) if session_key == consumer_key && *consumer_src_media == src_media => *destination,
         Some(RegisteredMediaHandle::Producer { .. } | RegisteredMediaHandle::Consumer { .. }) => {
             return Err(TransportAdapterError::InvalidInput);
         }
         None => return Err(TransportAdapterError::TransportUnavailable),
-    }
+    };
     let (route_entry, source_active) = state
         .routes
         .local_route_and_activity(src_media)
         .ok_or(TransportAdapterError::TransportUnavailable)?;
     let destination = route_entry
-        .destinations
-        .iter()
-        .find(|destination| {
-            destination.dest_session == *consumer_key
-                && destination.dest_transport_media_id == consumer_media
-        })
+        .destination(destination, consumer_media)
         .ok_or(TransportAdapterError::TransportUnavailable)?;
     if !source_active || !destination.active {
         return Ok(());

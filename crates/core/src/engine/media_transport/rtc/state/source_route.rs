@@ -11,7 +11,10 @@ pub(in super::super) use decoder_delivery::{
     DecoderDelivery, DestinationKeyframeTarget, SelectedRefresh,
 };
 
-use super::{route_control::PacketLayerGate, slots::ConsumerStreamHandle};
+use super::{
+    route_control::PacketLayerGate,
+    slots::{ConsumerStreamHandle, RouteDestinationHandle, RouteDestinationSlot, SlotStore},
+};
 use crate::engine::media_transport::{TransportMediaId, TransportSessionKey};
 
 /// forwarding destination selected for one source media route
@@ -49,15 +52,35 @@ pub(in super::super) struct MediaRouteDestination {
 
 /// local packet-loop fanout for one producer media id
 ///
-/// callers must mutate `destinations` through this type's helpers
+/// the entry issues a [`RouteDestinationHandle`] for each destination and keeps
+/// it valid while other destinations are removed
+/// a handle can outlive its entry when the route is dropped and recreated, so
+/// lookups also match the consumer media id, which a worker never reuses
+/// dense positions change on removal and are valid only under one route
+/// borrow, such as one packet-loop turn
 /// `active_destination_count` is a cached admission invariant used by the hot
 /// planner before it walks the destination vector
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(in super::super) struct MediaRouteEntry {
     /// active local destinations cached for source-route admission checks
-    pub(in super::super) active_destination_count: usize,
+    active_destination_count: usize,
     /// local consumer destinations reached from this source media id
-    pub(in super::super) destinations: Vec<MediaRouteDestination>,
+    destinations: Vec<MediaRouteDestination>,
+    /// handle bookkeeping read by lookups and removals, never by fanout
+    ///
+    /// boxed because the route table stores every source by value, so inline
+    /// bookkeeping would enlarge each source entry and its map nodes
+    slots: Box<DestinationSlots>,
+}
+
+#[derive(Debug, Default)]
+struct DestinationSlots {
+    /// handle of the destination at the same position
+    ///
+    /// kept outside `MediaRouteDestination` so the fanout walk does not load it
+    handles: Vec<RouteDestinationHandle>,
+    /// current dense position of each live handle's destination
+    positions: SlotStore<usize, RouteDestinationSlot>,
 }
 
 impl MediaRouteEntry {
@@ -66,6 +89,7 @@ impl MediaRouteEntry {
         Self {
             active_destination_count: 0,
             destinations: Vec::new(),
+            slots: Box::default(),
         }
     }
 
@@ -77,26 +101,126 @@ impl MediaRouteEntry {
         self.active_destination_count > 0
     }
 
-    /// appends one destination while preserving the active-count invariant
+    pub(in super::super) const fn active_destination_count(&self) -> usize {
+        self.active_destination_count
+    }
+
+    /// destinations in fanout order
+    pub(in super::super) fn destinations(&self) -> &[MediaRouteDestination] {
+        &self.destinations
+    }
+
+    /// destinations in fanout order for delivery updates
+    ///
+    /// activity changes must use [`Self::set_destination_active`] so the
+    /// cached active count stays exact
+    pub(in super::super) fn destinations_mut(&mut self) -> &mut [MediaRouteDestination] {
+        &mut self.destinations
+    }
+
+    /// returns the destination this entry issued `handle` for
+    ///
+    /// `None` means the handle is stale or names another consumer media
+    pub(in super::super) fn destination(
+        &self,
+        handle: RouteDestinationHandle,
+        dest_transport_media_id: TransportMediaId,
+    ) -> Option<&MediaRouteDestination> {
+        self.destinations
+            .get(self.resolve(handle, dest_transport_media_id)?)
+    }
+
+    /// returns the destination this entry issued `handle` for
+    ///
+    /// activity changes must use [`Self::set_destination_active`] so the
+    /// cached active count stays exact
+    pub(in super::super) fn destination_mut(
+        &mut self,
+        handle: RouteDestinationHandle,
+        dest_transport_media_id: TransportMediaId,
+    ) -> Option<&mut MediaRouteDestination> {
+        let position = self.resolve(handle, dest_transport_media_id)?;
+        self.destinations.get_mut(position)
+    }
+
+    /// appends one destination and returns its handle
     ///
     /// route registration is the only caller that should add destinations
     /// directly because it owns source validation and consumer media ownership
-    pub(in super::super) fn push_destination(&mut self, destination: MediaRouteDestination) {
+    pub(in super::super) fn push_destination(
+        &mut self,
+        destination: MediaRouteDestination,
+    ) -> RouteDestinationHandle {
+        let handle = self.slots.positions.insert(self.destinations.len());
         self.active_destination_count += usize::from(destination.active);
         self.destinations.push(destination);
+        self.slots.handles.push(handle);
+        handle
     }
 
-    /// removes one destination while preserving the active-count invariant
+    /// removes one consumer media handle's destination and invalidates its handle
     ///
-    /// callers pass the index they found under the same mutable route borrow
     /// destination order is not semantically observable, so removal keeps the
-    /// vector dense by moving the final destination into the cleared slot
-    /// callers that cache destination indexes must repair the moved destination
-    /// before feedback can use the cache again
-    pub(in super::super) fn remove_destination(&mut self, index: usize) -> MediaRouteDestination {
-        let destination = self.destinations.swap_remove(index);
+    /// vector dense by moving the final destination into the cleared position
+    pub(in super::super) fn remove_destination(
+        &mut self,
+        dest_session: &TransportSessionKey,
+        dest_transport_media_id: TransportMediaId,
+    ) -> Option<MediaRouteDestination> {
+        let position = self.destinations.iter().position(|destination| {
+            destination.dest_transport_media_id == dest_transport_media_id
+                && destination.dest_session == *dest_session
+        })?;
+        let destination = self.destinations.swap_remove(position);
+        let DestinationSlots { handles, positions } = &mut *self.slots;
+        positions.remove(handles.swap_remove(position));
+        if let Some(moved) = handles.get(position)
+            && let Some(moved_position) = positions.get_mut(*moved)
+        {
+            *moved_position = position;
+        }
         self.active_destination_count -= usize::from(destination.active);
-        destination
+        Some(destination)
+    }
+
+    /// removes every destination of one consumer session in fanout order
+    ///
+    /// returns whether any destination was removed
+    pub(in super::super) fn remove_session_destinations(
+        &mut self,
+        dest_session: &TransportSessionKey,
+    ) -> bool {
+        let Self {
+            active_destination_count,
+            destinations,
+            slots,
+        } = self;
+        let DestinationSlots { handles, positions } = &mut **slots;
+        let destination_count = destinations.len();
+        handles.retain(|handle| {
+            let retained = positions
+                .get(*handle)
+                .and_then(|position| destinations.get(*position))
+                .is_some_and(|destination| destination.dest_session != *dest_session);
+            if !retained {
+                positions.remove(*handle);
+            }
+            retained
+        });
+        destinations.retain(|destination| destination.dest_session != *dest_session);
+        if destinations.len() == destination_count {
+            return false;
+        }
+        for (position, handle) in handles.iter().enumerate() {
+            if let Some(handle_position) = positions.get_mut(*handle) {
+                *handle_position = position;
+            }
+        }
+        *active_destination_count = destinations
+            .iter()
+            .filter(|destination| destination.active)
+            .count();
+        true
     }
 
     pub(in super::super) fn advance_delivery(&mut self) {
@@ -111,17 +235,20 @@ impl MediaRouteEntry {
         }
     }
 
-    /// updates destination activity and reports whether the route changed
+    /// updates the activity of the destination this entry issued `handle` for
     ///
-    /// a missing index is treated as unchanged because stale worker commands
-    /// are rejected by the caller's ownership checks before reaching the route
-    /// mutation
-    pub(in super::super) fn set_destination_active(&mut self, index: usize, active: bool) -> bool {
-        let Some(destination) = self.destinations.get_mut(index) else {
-            return false;
-        };
+    /// returns whether the activity changed, or `None` when the handle is stale
+    /// or names another consumer media
+    pub(in super::super) fn set_destination_active(
+        &mut self,
+        handle: RouteDestinationHandle,
+        dest_transport_media_id: TransportMediaId,
+        active: bool,
+    ) -> Option<bool> {
+        let position = self.resolve(handle, dest_transport_media_id)?;
+        let destination = self.destinations.get_mut(position)?;
         if destination.active == active {
-            return false;
+            return Some(false);
         }
         if active {
             self.active_destination_count += 1;
@@ -130,6 +257,16 @@ impl MediaRouteEntry {
         }
         destination.delivery.pause();
         destination.active = active;
-        true
+        Some(true)
+    }
+
+    fn resolve(
+        &self,
+        handle: RouteDestinationHandle,
+        dest_transport_media_id: TransportMediaId,
+    ) -> Option<usize> {
+        let position = *self.slots.positions.get(handle)?;
+        (self.destinations.get(position)?.dest_transport_media_id == dest_transport_media_id)
+            .then_some(position)
     }
 }

@@ -74,7 +74,7 @@ fn inactive_selection_does_not_request_fallback_refresh() -> Result<(), &'static
         .state
         .routes
         .local_route(route.src_media)
-        .and_then(|entry| entry.destinations.first())
+        .and_then(|entry| entry.destinations().first())
         .map(|destination| destination.dest_transport_media_id)
         .ok_or("selected RID fixture should have a destination")?;
     let consumer = TransportConsumerRoute::new(
@@ -114,7 +114,7 @@ fn selected_keyframe_suppresses_sibling_fallback_for_that_packet() -> Result<(),
             .state
             .routes
             .local_route(route.src_media)
-            .and_then(|entry| entry.destinations.first())
+            .and_then(|entry| entry.destinations().first())
             .map(|destination| destination.dest_transport_media_id)
             .ok_or("selected RID fixture should have a destination")?;
         let selected_route = TransportConsumerRoute::new(
