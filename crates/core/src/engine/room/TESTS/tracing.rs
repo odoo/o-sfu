@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use o_sfu_telemetry::schema::field as telemetry_field;
 use serde_json::{Map, Value};
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use tracing::{Level, subscriber::set_global_default};
@@ -73,7 +74,10 @@ pub(crate) fn assert_exact(name: &str, fields: &[(&str, Value)]) {
         .iter()
         .map(|(field, value)| ((*field).to_owned(), value.clone()))
         .collect::<Map<_, _>>();
-    expected.insert("event".to_owned(), Value::String(name.to_owned()));
+    expected.insert(
+        telemetry_field::EVENT.to_owned(),
+        Value::String(name.to_owned()),
+    );
     let events = EVENTS.lock().unwrap_or_else(PoisonError::into_inner);
     let mut matches = 0;
     for line in events
@@ -90,7 +94,7 @@ pub(crate) fn assert_exact(name: &str, fields: &[(&str, Value)]) {
         {
             matches += 1;
             assert_eq!(fields.len(), expected.len() + 1);
-            assert!(fields.contains_key("message"));
+            assert!(fields.contains_key(telemetry_field::MESSAGE));
         }
     }
     drop(events);
@@ -110,7 +114,10 @@ pub(crate) fn assert_no_event(name: &str, fields: &[(&str, Value)]) {
         let event_fields = event["fields"]
             .as_object()
             .expect("tracing event should contain fields");
-        let matches = event_fields.get("event").and_then(Value::as_str) == Some(name)
+        let matches = event_fields
+            .get(telemetry_field::EVENT)
+            .and_then(Value::as_str)
+            == Some(name)
             && fields
                 .iter()
                 .all(|(field, value)| event_fields.get(*field) == Some(value));

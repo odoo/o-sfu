@@ -8,9 +8,7 @@
 use std::sync::Arc;
 
 use o_sfu_router::RouterId;
-pub use o_sfu_router::topology::{
-    PlacementSnapshot, RouterPlacement, RouterPlacements, RouterPlacementsError,
-};
+pub use o_sfu_router::topology::{PlacementSnapshot, RouterPlacement, RouterPlacements};
 
 use super::{
     Room, RoomJoinError,
@@ -64,21 +62,6 @@ impl RoomRuntimeContext {
             primary_router,
             initial_router_placements: None,
         }
-    }
-
-    /// # Errors
-    ///
-    /// returns [`RouterPlacementsError::Empty`] when `placements` is empty
-    pub fn try_from_placements(
-        instance: RoomInstanceId,
-        placements: Vec<RouterPlacement>,
-    ) -> Result<Self, RouterPlacementsError> {
-        let routers = RouterPlacements::try_from_vec(placements)?;
-        Ok(Self {
-            instance,
-            primary_router: routers.primary().router,
-            initial_router_placements: Some(routers),
-        })
     }
 
     #[must_use]

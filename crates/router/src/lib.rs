@@ -203,7 +203,6 @@ pub mod negotiation {
 pub mod topology {
     pub use crate::model::topology::{
         PlacementSnapshot, RoutedConsumerId, RoutedProducerId, RouterPlacement, RouterPlacements,
-        RouterPlacementsError,
     };
 }
 

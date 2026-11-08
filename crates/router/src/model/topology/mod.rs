@@ -26,9 +26,9 @@
 //! +------------------------------------+          +------------------------------------+
 //!
 //! Lifecycle & Cascade Teardowns:
-//!   - Producer P1 Removed (`Router::remove_producer`):
-//!     -> Cascades down to remove local C1 and foreign C2 on Router 1.
-//!     -> The shadow session for Conn_2 becomes empty and is automatically pruned.
+//!   - User 1 Disconnects (`Router::remove_session`):
+//!     -> Removes Producer P1 and its local C1 and foreign C2 dependents on Router 1.
+//!     -> Prunes the Conn_2 foreign shadow if it becomes empty.
 //!   - User 2 Disconnects / Replaces Connection:
 //!     -> Removes User 2's Home Session on Router 2.
 //!     -> Removes C2 from P1's dependents and prunes the foreign shadow on Router 1.
@@ -124,11 +124,6 @@ pub struct RouterPlacements {
     spillover: Vec<RouterPlacement>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouterPlacementsError {
-    Empty,
-}
-
 impl RouterPlacements {
     #[must_use]
     pub fn new(primary: RouterPlacement, spillover: Vec<RouterPlacement>) -> Self {
@@ -142,17 +137,6 @@ impl RouterPlacements {
             }
         }
         placements
-    }
-
-    /// # Errors
-    ///
-    /// returns [`RouterPlacementsError::Empty`] when `placements` is empty
-    pub fn try_from_vec(placements: Vec<RouterPlacement>) -> Result<Self, RouterPlacementsError> {
-        let mut placements = placements.into_iter();
-        let Some(primary) = placements.next() else {
-            return Err(RouterPlacementsError::Empty);
-        };
-        Ok(Self::new(primary, placements.collect()))
     }
 
     #[must_use]
@@ -330,36 +314,11 @@ impl Router {
         Some(worker)
     }
 
-    /// # Panics
-    ///
-    /// panics when `connection` has no committed placement
-    #[expect(
-        clippy::unreachable,
-        reason = "route planning requires a committed connection placement"
-    )]
-    #[must_use]
-    pub fn media_worker_id_for_connection(&self, connection: ConnectionId) -> MediaWorkerId {
-        let Some(user) = self.users.get(&connection) else {
-            unreachable!("media worker lookup requires committed connection placement");
-        };
-        let Some(session) = self.sessions.get(user) else {
-            unreachable!("connection owner must have a committed session");
-        };
-        session.placement.media_worker
-    }
-
     #[must_use]
     pub fn primary_worker(&self) -> Option<MediaWorkerId> {
         self.placements
             .as_ref()
             .map(|placements| placements.primary().media_worker)
-    }
-
-    pub fn assigned_media_workers(&self) -> impl Iterator<Item = MediaWorkerId> + '_ {
-        self.placements
-            .iter()
-            .flat_map(RouterPlacements::iter)
-            .map(|placement| placement.media_worker)
     }
 
     #[must_use]
@@ -491,25 +450,6 @@ impl Router {
             dependents.remove(&consumer);
         }
         self.prune_foreign_session(consumer.router_id(), consumer.connection_id());
-        Ok(())
-    }
-
-    /// remove one producer and every dependent consumer
-    ///
-    /// # Errors
-    ///
-    /// returns a missing router or producer error
-    pub fn remove_producer(&mut self, producer: RoutedProducerId) -> Result<(), RouterError> {
-        let local = self
-            .routers
-            .get_mut(&producer.router_id())
-            .ok_or(RouterError::MissingRouter(producer.router_id()))?;
-        let consumers = local
-            .sessions
-            .get_mut(&producer.connection_id())
-            .and_then(|session| session.producers.remove(&producer.producer_id()))
-            .ok_or(RouterError::MissingProducer(producer))?;
-        self.remove_dependents(producer.router_id(), consumers);
         Ok(())
     }
 

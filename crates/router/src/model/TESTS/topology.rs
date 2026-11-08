@@ -4,7 +4,7 @@ use crate::{
     ConnectionId, ConsumerId, MediaWorkerId, ProducerId, Router, RouterError, RouterId,
     model::topology::test_support::InvariantView,
     rtp::MediaCapabilities,
-    topology::{RoutedProducerId, RouterPlacement, RouterPlacements, RouterPlacementsError},
+    topology::{RoutedProducerId, RouterPlacement, RouterPlacements},
 };
 
 fn placement(router: u64, worker: usize) -> RouterPlacement {
@@ -198,11 +198,8 @@ fn replacement_rehomes_the_session_and_retires_its_old_graph() -> Result<(), Rou
         router.remove_consumer(consumer),
         Err(RouterError::MissingConsumer(consumer))
     );
-    assert_eq!(
-        router.remove_producer(producer),
-        Err(RouterError::MissingProducer(producer))
-    );
     let view = InvariantView::new(&router);
+    assert!(!view.has_producer(producer));
     assert_eq!(replacement_producer.router_id(), RouterId(12));
     assert!(view.has_producer(replacement_producer));
     assert!(view.has_consumer(replacement_consumer));
@@ -239,34 +236,6 @@ fn foreign_session_lives_until_its_last_consumer() -> Result<(), RouterError> {
     assert_eq!(view.dependent_count(producer), Some(0));
     assert_eq!(view.session_count(RouterId(9)), Some(1));
     assert_eq!(view.home_router(&receiver), Some(RouterId(10)));
-    assert!(view.is_valid());
-    Ok(())
-}
-
-#[test]
-fn producer_teardown_cascades_only_its_dependents() -> Result<(), RouterError> {
-    let mut router = router();
-    let publisher = UserId::Integer(10);
-    let first_receiver = UserId::Integer(20);
-    let second_receiver = UserId::Integer(30);
-    join(&mut router, &publisher, 1, 9, 0);
-    join(&mut router, &first_receiver, 2, 10, 1);
-    join(&mut router, &second_receiver, 3, 11, 2);
-    let removed = router.add_producer(&publisher, ProducerId(7))?;
-    let retained = router.add_producer(&publisher, ProducerId(8))?;
-    let first_removed = router.add_consumer(&first_receiver, ConsumerId(9), removed)?;
-    let second_removed = router.add_consumer(&second_receiver, ConsumerId(10), removed)?;
-    let retained_consumer = router.add_consumer(&first_receiver, ConsumerId(11), retained)?;
-
-    router.remove_producer(removed)?;
-
-    let view = InvariantView::new(&router);
-    assert!(!view.has_producer(removed));
-    assert!(!view.has_consumer(first_removed));
-    assert!(!view.has_consumer(second_removed));
-    assert!(view.has_producer(retained));
-    assert!(view.has_consumer(retained_consumer));
-    assert_eq!(view.session_count(RouterId(9)), Some(2));
     assert!(view.is_valid());
     Ok(())
 }
@@ -383,10 +352,6 @@ fn session_retirement_keeps_spillover_placement() {
 
 #[test]
 fn placement_values_preserve_worker_assignment() {
-    assert_eq!(
-        RouterPlacements::try_from_vec(Vec::new()),
-        Err(RouterPlacementsError::Empty)
-    );
     let placements = RouterPlacements::new(
         placement(9, 0),
         vec![placement(10, 1), placement(10, 2), placement(9, 3)],

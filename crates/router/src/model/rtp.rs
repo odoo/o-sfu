@@ -164,7 +164,6 @@ impl CodecSetting {
 pub struct HeaderExtension {
     uri: HeaderExtensionUri,
     id: HeaderExtensionId,
-    encrypt: bool,
 }
 
 impl HeaderExtension {
@@ -173,14 +172,7 @@ impl HeaderExtension {
         Self {
             uri: uri.into(),
             id: id.into(),
-            encrypt: false,
         }
-    }
-
-    #[must_use]
-    pub fn with_encryption(mut self, encrypt: bool) -> Self {
-        self.encrypt = encrypt;
-        self
     }
 
     #[must_use]
@@ -196,11 +188,6 @@ impl HeaderExtension {
     #[must_use]
     pub fn uri(&self) -> &str {
         self.uri.as_str()
-    }
-
-    #[must_use]
-    pub fn encrypt(&self) -> bool {
-        self.encrypt
     }
 }
 

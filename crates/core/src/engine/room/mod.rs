@@ -52,7 +52,7 @@ pub use outbound::{
     UserOutboundOverflowKind, UserOutboundQueueLimits, UserOutboundReceiver, UserOutboundSendError,
     UserOutboundSender,
 };
-pub use placement::{RoomRuntimeContext, RouterPlacement, RouterPlacements, RouterPlacementsError};
+pub use placement::{RoomRuntimeContext, RouterPlacement, RouterPlacements};
 pub use read_model::{
     IncomingBitrateSnapshot, RoomDetailCapture, RoomOverviewCapture, RoomUserCapture,
     RoomUserStatsSnapshot, RoomUsersCapture,
