@@ -53,7 +53,7 @@ pub fn assert_consumer_packet_gate(
     pending_gate: Option<&PacketLayerGate>,
 ) {
     assert!(state.routes.local_route(src_media).is_some_and(|route| {
-        route.destinations.iter().any(|dst| {
+        route.destinations().iter().any(|dst| {
             dst.dest_session == *consumer_session
                 && &dst.delivery.effective_gate() == packet_gate
                 && dst.delivery.pending_gate().as_ref() == pending_gate

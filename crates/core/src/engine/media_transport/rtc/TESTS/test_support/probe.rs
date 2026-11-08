@@ -402,14 +402,14 @@ fn debug_route_entry(
         .map(|entry| DebugRouteEntry {
             source_transport_media_id: src_media,
             source_active: state.routes.source_is_active(src_media),
-            active_destination_count: entry.active_destination_count,
+            active_destination_count: entry.active_destination_count(),
             effective_packet_gate: state
                 .routes
                 .effective_packet_gate(src_media)
                 .as_ref()
                 .map_or(DebugPacketGate::Open, debug_packet_gate),
             destinations: entry
-                .destinations
+                .destinations()
                 .iter()
                 .map(|destination| DebugRouteDestination {
                     dest_session: destination.dest_session.clone(),

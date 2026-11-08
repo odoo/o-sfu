@@ -70,7 +70,7 @@ use crate::{
                     relay_registry::{RelayPacketMailbox, RelayTargetId},
                     route_control::PacketLayerGate,
                     route_table::RemoteSourceRegistration,
-                    slots::ConsumerStreamHandle,
+                    slots::{ConsumerStreamHandle, RouteDestinationHandle},
                 },
                 test_support::{
                     MediaWorkerScenario, add_source_rid_stream, assert_consumer_packet_gate,
@@ -124,7 +124,7 @@ fn arm_destination_repair(
         .local_route(src_media)
         .and_then(|entry| {
             entry
-                .destinations
+                .destinations()
                 .iter()
                 .find(|destination| destination.dest_session == *consumer_session)
         })
@@ -151,26 +151,10 @@ fn arm_destination_repair(
             destination.dest_transport_media_id,
         )
         .ok_or("local route destination should remain registered")?;
-    if let Some(moved) = &removed.moved {
-        state.set_consumer_dst_idx(
-            &moved.session_key,
-            moved.mid,
-            moved.media_id,
-            src_media,
-            Some(moved.dst_idx),
-        );
-    }
     let mut removed = removed.destination;
     removed.dest_stream = dest_stream;
     removed.repair_enabled = true;
-    let dst_idx = state.routes.add_consumer_route(src_media, removed);
-    state.set_consumer_dst_idx(
-        &destination.dest_session,
-        destination.dest_mid,
-        destination.dest_transport_media_id,
-        src_media,
-        Some(dst_idx),
-    );
+    state.routes.add_consumer_route(src_media, removed);
     let session = state
         .users
         .get_mut(&destination.dest_session)
@@ -469,19 +453,29 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
     );
 }
 
+/// Registers consumer media sharing an m-section without a route destination.
+fn register_routeless_consumer(
+    state: &mut PacketLoopState,
+    session_key: &TransportSessionKey,
+    mid: Mid,
+    src_media: TransportMediaId,
+) -> TransportMediaId {
+    state.register_media_handle(RegisteredMediaHandle::Consumer {
+        session_key: session_key.clone(),
+        mid,
+        src_media,
+        destination: RouteDestinationHandle::default(),
+    })
+}
+
 #[test]
 fn nack_totals_reset_after_the_last_mid_handle_is_removed() -> Result<(), &'static str> {
     let mut route = LocalVideoRoute::new(98, 98_000);
     let shared_mid = Mid::from("cam-down");
     let unrelated_mid = Mid::from("screen-up");
     let consumer_key = route.consumer_session.clone();
-    let sibling_media = route
-        .state
-        .register_media_handle(RegisteredMediaHandle::Consumer {
-            session_key: consumer_key.clone(),
-            mid: shared_mid,
-            src_media: route.src_media,
-        });
+    let sibling_media =
+        register_routeless_consumer(&mut route.state, &consumer_key, shared_mid, route.src_media);
     arm_route_repair(&mut route, Instant::now())?;
 
     let Some(session) = route.state.users.get_mut(&consumer_key) else {
@@ -546,13 +540,7 @@ fn nack_totals_reset_after_the_last_mid_handle_is_removed() -> Result<(), &'stat
             .stream_tx_by_mid(shared_mid, None)
             .is_none()
     );
-    route
-        .state
-        .register_media_handle(RegisteredMediaHandle::Consumer {
-            session_key: consumer_key.clone(),
-            mid: shared_mid,
-            src_media: route.src_media,
-        });
+    register_routeless_consumer(&mut route.state, &consumer_key, shared_mid, route.src_media);
     let Some(session) = route.state.users.get_mut(&consumer_key) else {
         panic!("consumer session should remain after media recreation");
     };
@@ -861,12 +849,11 @@ fn consumer_follow_up_failures_are_isolated_and_classified() {
         TransportMediaId::new(u64::MAX),
         failed.source().clone(),
     );
-    route.state.set_consumer_dst_idx(
+    // A declined answer removes the destination but keeps the consumer media handle.
+    route.state.remove_consumer_route(
         failed.consumer_session_key(),
-        Mid::from("cam-down"),
         failed.consumer_transport_media_id(),
         route.src_media,
-        None,
     );
     let _ = drain_ready_sessions(&mut route.state);
 
@@ -1005,16 +992,14 @@ fn relay_demand_does_not_keep_local_publisher_feedback_alive() {
             .routes
             .has_local_kf_demand(route.src_media, None)
     );
+    let destination = route
+        .state
+        .consumer_destination_handle(route.consumer_media)
+        .expect("consumer destination should be registered");
     route
         .state
         .routes
-        .set_consumer_active(
-            route.src_media,
-            0,
-            &route.consumer_session,
-            route.consumer_media,
-            false,
-        )
+        .set_consumer_active(route.src_media, destination, route.consumer_media, false)
         .expect("consumer destination should exist");
     assert!(route.state.routes.has_kf_demand(route.src_media, None));
     assert!(
@@ -1118,7 +1103,7 @@ fn set_consumer_pkt_gate_updates_one_route_without_rewriting_the_source_gate() {
     );
     assert!(matches!(
         state.routes.local_route(src_media),
-        Some(route_entry) if route_entry.destinations.iter().any(|destination| {
+        Some(route_entry) if route_entry.destinations().iter().any(|destination| {
             destination.dest_session == first_consumer_session
                 && destination.delivery.effective_gate() == PacketLayerGate::Block
                 && destination.delivery.pending_gate() == Some(PacketLayerGate::Rid("lo".into()))
@@ -1133,7 +1118,7 @@ fn set_consumer_pkt_gate_updates_one_route_without_rewriting_the_source_gate() {
     );
     assert!(matches!(
         state.routes.local_route(src_media),
-        Some(route_entry) if route_entry.destinations.iter().any(|destination| {
+        Some(route_entry) if route_entry.destinations().iter().any(|destination| {
             destination.dest_session == second_consumer_session
                 && destination.delivery.effective_gate() == PacketLayerGate::Open
         })
@@ -1145,40 +1130,78 @@ fn set_consumer_pkt_gate_updates_one_route_without_rewriting_the_source_gate() {
 }
 
 #[test]
-fn removing_consumer_route_clears_feedback_index_and_repairs_moved_route() {
-    let first_consumer_session = test_transport_session_key(64, 1, 65, UserId::Integer(66));
-    let second_consumer_session = test_transport_session_key(64, 1, 67, UserId::Integer(68));
-    let first_consumer_mid = Mid::from("cam-down-first");
-    let second_consumer_mid = Mid::from("cam-down-second");
-    let src_media = TransportMediaId::new(64_100);
-    let rid = Rid::from("hi");
+fn consumer_route_removal_keeps_moved_destinations_addressable() {
+    let src_key = test_transport_session_key(64, 1, 64, UserId::Integer(64));
+    let mid = Mid::from("cam-down");
     let mut state = PacketLoopState::default();
-    let mut scenario = MediaWorkerScenario::new(&mut state);
-    let first_consumer_media = scenario.destination(
-        src_media,
-        first_consumer_session.clone(),
-        first_consumer_mid,
-    );
-    scenario.destination_with_gate(
-        src_media,
-        second_consumer_session.clone(),
-        second_consumer_mid,
-        PacketLayerGate::Rid(rid),
-    );
-
-    state.remove_consumer_route(&first_consumer_session, first_consumer_media, src_media);
-
-    assert_eq!(
-        state.active_consumer_kf_target(&first_consumer_session, first_consumer_mid, None,),
-        None
-    );
-    assert_eq!(
-        state.active_consumer_kf_target(&second_consumer_session, second_consumer_mid, None,),
-        Some(ConsumerKeyframeTarget {
+    let src_media = prepare_source_session(&mut state, &src_key, Mid::from("cam-up"), 64_100);
+    let source = TransportSourceKey::new(src_key, src_media);
+    let add_consumer = |state: &mut PacketLoopState, id: u8, rid: &str| {
+        let session = test_transport_session_key(64, 1, u64::from(id), UserId::Integer(id.into()));
+        let media = MediaWorkerScenario::new(state).destination_with_gate(
             src_media,
-            rid: Some(rid),
-        })
+            session.clone(),
+            mid,
+            PacketLayerGate::Rid(rid.into()),
+        );
+        TransportConsumerRoute::new(session, media, source.clone())
+    };
+    let assert_target =
+        |state: &PacketLoopState, route: &TransportConsumerRoute, rid: Option<&str>| {
+            assert_eq!(
+                state.active_consumer_kf_target(route.consumer_session_key(), mid, None),
+                rid.map(|rid| ConsumerKeyframeTarget {
+                    src_media,
+                    rid: Some(rid.into()),
+                }),
+            );
+        };
+    let mut consumers = [(65, "a"), (66, "b"), (67, "c")]
+        .map(|(id, rid)| (add_consumer(&mut state, id, rid), rid))
+        .to_vec();
+    let first = consumers[0].0.clone();
+    // Removing the first destination moves the last one into its position.
+    for _ in 0..2 {
+        let (removed, _) = consumers.swap_remove(0);
+        state.remove_consumer_route(
+            removed.consumer_session_key(),
+            removed.consumer_transport_media_id(),
+            src_media,
+        );
+        assert_eq!(
+            state.set_consumer_active(&removed, false),
+            Err(TransportAdapterError::TransportUnavailable),
+        );
+        assert_target(&state, &removed, None);
+        let (moved, _) = &consumers[0];
+        assert_eq!(state.set_consumer_active(moved, false), Ok(()));
+        assert_target(&state, moved, None);
+        assert_eq!(state.set_consumer_active(moved, true), Ok(()));
+        for (route, rid) in &consumers {
+            assert_target(&state, route, Some(rid));
+        }
+    }
+
+    let (survivor, _) = &consumers[0];
+    state.remove_source_route(src_media);
+    assert_eq!(
+        state.set_consumer_active(survivor, false),
+        Err(TransportAdapterError::TransportUnavailable),
     );
+    assert_target(&state, survivor, None);
+
+    // The recreated route issues the first consumer's handle again.
+    let recreated = add_consumer(&mut state, 68, "d");
+    assert_eq!(
+        state.consumer_destination_handle(first.consumer_transport_media_id()),
+        state.consumer_destination_handle(recreated.consumer_transport_media_id()),
+    );
+    assert_eq!(
+        state.set_consumer_active(&first, false),
+        Err(TransportAdapterError::TransportUnavailable),
+    );
+    assert_target(&state, &first, None);
+    assert_target(&state, &recreated, Some("d"));
 }
 
 #[test]
@@ -1233,7 +1256,7 @@ fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict()
         .state
         .routes
         .local_route(route.src_media)
-        .and_then(|entry| entry.destinations.first())
+        .and_then(|entry| entry.destinations().first())
         .map(|destination| destination.dest_transport_media_id)
         .ok_or("selected RID fixture should have a destination")?;
     route
@@ -1350,7 +1373,7 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
         .state
         .routes
         .local_route(route.src_media)
-        .and_then(|entry| entry.destinations.first())
+        .and_then(|entry| entry.destinations().first())
         .cloned()
         .ok_or("selected RID route should have a destination")?;
     let source_ssrc = Ssrc::from(88_301);
@@ -1387,7 +1410,7 @@ fn repaired_selected_keyframe_activation_invalidates_before_projection() -> Resu
         .state
         .routes
         .local_route(route.src_media)
-        .and_then(|entry| entry.destinations.first())
+        .and_then(|entry| entry.destinations().first())
         .map(|destination| destination.delivery.generation())
         .ok_or("activated route should keep its destination")?;
     assert_ne!(delivery_generation, destination.delivery.generation());
@@ -1500,7 +1523,7 @@ fn bootstrap_fallback_rotates_then_preserves_current_repair() -> Result<(), &'st
         .state
         .routes
         .local_route(route.src_media)
-        .and_then(|entry| entry.destinations.first())
+        .and_then(|entry| entry.destinations().first())
     else {
         panic!("pending selected RID fixture must install one local destination");
     };
@@ -1524,7 +1547,7 @@ fn bootstrap_fallback_rotates_then_preserves_current_repair() -> Result<(), &'st
             .state
             .routes
             .local_route(route.src_media)
-            .and_then(|entry| entry.destinations.first())
+            .and_then(|entry| entry.destinations().first())
             .map(|destination| destination.delivery.generation()),
         Some(delivery_generation)
     );
@@ -1771,13 +1794,16 @@ fn relayed_selected_rid_retries_while_decoder_demand_remains() {
         route.target_id,
         PacketLayerGate::Open,
     );
+    let destination = route
+        .state
+        .consumer_destination_handle(route.consumer_media)
+        .expect("selected RID destination should be registered");
     route
         .state
         .routes
         .set_consumer_pkt_gate(
             route.src_media,
-            0,
-            &route.consumer_session,
+            destination,
             route.consumer_media,
             PacketLayerGate::Rid(selected_rid),
         )
@@ -2698,7 +2724,7 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
             .routes
             .local_route(src_media)
             .is_some_and(
-                |route_entry| route_entry.destinations.iter().any(|destination| {
+                |route_entry| route_entry.destinations().iter().any(|destination| {
                     destination.dest_transport_media_id == TransportMediaId::new(1)
                         && destination.dest_payload_type == Some(Pt::from(96))
                 })
@@ -2797,7 +2823,7 @@ fn add_send_media_declares_a_destination_local_primary_and_repair_pair() {
         state
             .routes
             .local_route(src_media)
-            .and_then(|route| route.destinations.first())
+            .and_then(|route| route.destinations().first())
             .is_some_and(|destination| destination.repair_enabled)
     );
 }

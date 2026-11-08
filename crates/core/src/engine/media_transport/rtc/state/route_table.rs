@@ -7,7 +7,7 @@
 //! aggregate source gate from one source lookup.
 //!
 //! [`PacketLoopState`](super::PacketLoopState) couples destination changes to
-//! session MID indexes and stream retirement. [`recovery`](super::super::recovery)
+//! stream retirement. [`recovery`](super::super::recovery)
 //! dispatches producer feedback after `PacketLoopState` commits decoder gates
 //! together with RTX invalidation.
 //! The table retains source/RID retry state across those feedback attempts.
@@ -56,6 +56,7 @@ use super::{
     },
     relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
     route_control::PacketLayerGate,
+    slots::RouteDestinationHandle,
     source_route::{MediaRouteDestination, MediaRouteEntry},
 };
 
@@ -209,8 +210,8 @@ impl RouteTable {
         &mut self,
         source_id: TransportMediaId,
         destination: MediaRouteDestination,
-    ) -> usize {
-        let (index, became_forwarding) = self
+    ) -> RouteDestinationHandle {
+        let (handle, became_forwarding) = self
             .sources
             .entry(source_id)
             .or_default()
@@ -219,7 +220,7 @@ impl RouteTable {
             self.forwarding_sources += 1;
         }
         self.refresh_src_pkt_gate(source_id);
-        index
+        handle
     }
 
     pub(in super::super) fn remove_consumer_route(
@@ -264,8 +265,7 @@ impl RouteTable {
     pub(in super::super) fn set_consumer_active(
         &mut self,
         source_id: TransportMediaId,
-        dst_idx: usize,
-        session_key: &TransportSessionKey,
+        destination: RouteDestinationHandle,
         media_id: TransportMediaId,
         active: bool,
     ) -> Result<ConsumerRouteUpdate, TransportAdapterError> {
@@ -273,7 +273,7 @@ impl RouteTable {
             .sources
             .get_mut(&source_id)
             .ok_or(TransportAdapterError::TransportUnavailable)?
-            .set_consumer_active(dst_idx, session_key, media_id, active)?;
+            .set_consumer_active(destination, media_id, active)?;
         if !self.has_local_kf_demand(source_id, None) {
             self.publisher_keyframes.retire_local(source_id);
         }
@@ -286,15 +286,14 @@ impl RouteTable {
     pub(in super::super) fn set_consumer_pkt_gate(
         &mut self,
         source_id: TransportMediaId,
-        dst_idx: usize,
-        session_key: &TransportSessionKey,
+        destination: RouteDestinationHandle,
         media_id: TransportMediaId,
         packet_gate: PacketLayerGate,
     ) -> Result<ConsumerRouteUpdate, TransportAdapterError> {
         self.sources
             .get_mut(&source_id)
             .ok_or(TransportAdapterError::TransportUnavailable)?
-            .set_consumer_pkt_gate(dst_idx, session_key, media_id, packet_gate)
+            .set_consumer_pkt_gate(destination, media_id, packet_gate)
     }
 
     pub(in super::super) fn update_decoder_readiness(
@@ -335,22 +334,11 @@ impl RouteTable {
         Some(removed.route)
     }
 
-    pub(in super::super) fn remove_dsts_for_session(
-        &mut self,
-        session_key: &TransportSessionKey,
-        mut reindex: impl FnMut(TransportMediaId, &MediaRouteDestination, usize),
-    ) {
+    pub(in super::super) fn remove_dsts_for_session(&mut self, session_key: &TransportSessionKey) {
         let mut affected = Vec::new();
         let mut removed_forwarding_sources = 0;
         for (source_id, source) in &mut self.sources {
             if let Some(change) = source.remove_dsts_for_session(session_key) {
-                // Retaining destinations preserves fanout order but shifts MID
-                // indexes. Repair surviving feedback targets before returning.
-                if let Some(route) = source.local_route() {
-                    for (dst_idx, destination) in route.destinations.iter().enumerate() {
-                        reindex(*source_id, destination, dst_idx);
-                    }
-                }
                 removed_forwarding_sources += usize::from(change.stopped_forwarding());
                 affected.push(*source_id);
             }
@@ -516,7 +504,7 @@ impl RouteTable {
     pub(in super::super) fn prune_unrouted_remote_src(&mut self, source_id: TransportMediaId) {
         if self
             .local_route(source_id)
-            .is_some_and(|route| !route.destinations.is_empty())
+            .is_some_and(|route| !route.destinations().is_empty())
         {
             return;
         }

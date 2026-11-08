@@ -21,8 +21,8 @@ use super::{
     super::{codec, packet_loop::forwarded_packet::ForwardedPacketSource},
     PacketLoopState,
     route_table::RouteTable,
-    slots::SessionHandle,
-    source_route::DestinationKeyframeTarget,
+    slots::{RouteDestinationHandle, SessionHandle},
+    source_route::{DestinationKeyframeTarget, MediaRouteDestination},
 };
 use crate::engine::{
     RoomInstanceId,
@@ -43,6 +43,8 @@ pub(in super::super) enum RegisteredMediaHandle {
         session_key: TransportSessionKey,
         mid: Mid,
         src_media: TransportMediaId,
+        /// destination the source route issued for this consumer media
+        destination: RouteDestinationHandle,
     },
 }
 
@@ -56,7 +58,7 @@ pub(in super::super) struct ConsumerKeyframeTarget {
 struct ConsumerMidBinding {
     consumer_media: TransportMediaId,
     src_media: TransportMediaId,
-    dst_idx: Option<usize>,
+    destination: RouteDestinationHandle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,22 +160,6 @@ pub(in super::super) struct SessionMediaLookup {
 }
 
 impl SessionMediaLookup {
-    /// Repairs a destination slot only while the MID still names the same route.
-    pub(in super::super) fn set_consumer_dst_idx(
-        &mut self,
-        consumer_mid: Mid,
-        consumer_media: TransportMediaId,
-        src_media: TransportMediaId,
-        dst_idx: Option<usize>,
-    ) {
-        let Some(binding) = self.consumer_mids.get_mut(&consumer_mid) else {
-            return;
-        };
-        if binding.consumer_media == consumer_media && binding.src_media == src_media {
-            binding.dst_idx = dst_idx;
-        }
-    }
-
     fn insert_owned_media(&mut self, transport_media_id: TransportMediaId) {
         if !self.owned_media.contains(&transport_media_id) {
             self.owned_media.push(transport_media_id);
@@ -346,12 +332,6 @@ impl<K: Eq, V: Copy> TinyLookup<K, V> {
             .find_map(|(entry_key, value)| (entry_key == key).then_some(*value))
     }
 
-    fn get_mut(&mut self, key: &K) -> Option<&mut V> {
-        self.entries
-            .iter_mut()
-            .find_map(|(entry_key, value)| (entry_key == key).then_some(value))
-    }
-
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -362,8 +342,40 @@ impl PacketLoopState {
         &mut self,
         handle: RegisteredMediaHandle,
     ) -> TransportMediaId {
+        let transport_media_id = self.allocate_media_id();
+        self.insert_media_handle(transport_media_id, handle);
+        transport_media_id
+    }
+
+    /// Registers consumer media together with the source route destination built for its id.
+    pub(in super::super) fn register_consumer_destination(
+        &mut self,
+        src_media: TransportMediaId,
+        destination: impl FnOnce(TransportMediaId) -> MediaRouteDestination,
+    ) -> TransportMediaId {
+        let consumer_media = self.allocate_media_id();
+        let destination = destination(consumer_media);
+        let handle = RegisteredMediaHandle::Consumer {
+            session_key: destination.dest_session.clone(),
+            mid: destination.dest_mid,
+            src_media,
+            destination: self.routes.add_consumer_route(src_media, destination),
+        };
+        self.insert_media_handle(consumer_media, handle);
+        consumer_media
+    }
+
+    fn allocate_media_id(&mut self) -> TransportMediaId {
         let transport_media_id = TransportMediaId::new(self.next_media_id);
         self.next_media_id = self.next_media_id.saturating_add(1);
+        transport_media_id
+    }
+
+    fn insert_media_handle(
+        &mut self,
+        transport_media_id: TransportMediaId,
+        handle: RegisteredMediaHandle,
+    ) {
         if let RegisteredMediaHandle::Producer { session_key, mid } = &handle {
             let session_lookup = self.session_media.entry(session_key.clone()).or_default();
             session_lookup.insert_owned_media(transport_media_id);
@@ -375,6 +387,7 @@ impl PacketLoopState {
             session_key,
             mid,
             src_media,
+            destination,
         } = &handle
         {
             let session_lookup = self.session_media.entry(session_key.clone()).or_default();
@@ -384,7 +397,7 @@ impl PacketLoopState {
                 ConsumerMidBinding {
                     consumer_media: transport_media_id,
                     src_media: *src_media,
-                    dst_idx: None,
+                    destination: *destination,
                 },
             );
         }
@@ -395,7 +408,6 @@ impl PacketLoopState {
                 producer_encodings: Vec::new(),
             },
         );
-        transport_media_id
     }
 
     pub(in super::super) fn resolve_mid(
@@ -797,10 +809,8 @@ impl PacketLoopState {
             .get(&consumer_mid)?;
         let (route_entry, source_active) =
             self.routes.local_route_and_activity(binding.src_media)?;
-        // a miss means feedback raced with route teardown or index repair
-        let destination = route_entry.destinations.get(binding.dst_idx?)?;
-        debug_assert_eq!(&destination.dest_session, consumer_key);
-        debug_assert_eq!(destination.dest_transport_media_id, binding.consumer_media);
+        // a miss means feedback raced with route teardown
+        let destination = route_entry.destination(binding.destination, binding.consumer_media)?;
         if !source_active || !destination.active {
             return None;
         }
@@ -813,39 +823,6 @@ impl PacketLoopState {
             src_media: binding.src_media,
             rid,
         })
-    }
-
-    /// updates the cached destination slot for one consumer MID binding
-    ///
-    /// callers pass both sides of the route identity so a late repair from an
-    /// old route cannot relink a MID to a different source
-    pub(in super::super) fn set_consumer_dst_idx(
-        &mut self,
-        consumer_key: &TransportSessionKey,
-        consumer_mid: Mid,
-        consumer_media: TransportMediaId,
-        src_media: TransportMediaId,
-        dst_idx: Option<usize>,
-    ) {
-        if let Some(consumer_lookup) = self.session_media.get_mut(consumer_key) {
-            consumer_lookup.set_consumer_dst_idx(consumer_mid, consumer_media, src_media, dst_idx);
-        }
-    }
-
-    pub(in super::super) fn consumer_dst_idx(
-        &self,
-        consumer_key: &TransportSessionKey,
-        consumer_mid: Mid,
-        consumer_media: TransportMediaId,
-        src_media: TransportMediaId,
-    ) -> Option<usize> {
-        let binding = self
-            .session_media
-            .get(consumer_key)?
-            .consumer_mids
-            .get(&consumer_mid)?;
-        (binding.consumer_media == consumer_media && binding.src_media == src_media)
-            .then_some(binding.dst_idx?)
     }
 
     fn source_room_instance_id(&self, src_media: TransportMediaId) -> Option<RoomInstanceId> {

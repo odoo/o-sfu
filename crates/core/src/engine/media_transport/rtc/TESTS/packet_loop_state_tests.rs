@@ -1,4 +1,3 @@
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use str0m::media::Rid;
 
 use super::{
@@ -7,11 +6,14 @@ use super::{
         state::{
             PacketLoopState,
             bitrate::{BitrateRegistry, IncomingBitrateObservation},
+            media_registry::ConsumerKeyframeTarget,
+            route_control::PacketLayerGate,
         },
-        test_support::collect_ready_session_keys,
+        test_support::{MediaWorkerScenario, collect_ready_session_keys},
     },
     fixtures::*,
 };
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 
 fn insert_live_session(state: &mut PacketLoopState, session_key: &TransportSessionKey) {
     assert!(matches!(
@@ -181,16 +183,12 @@ fn packet_loop_state_clears_dirty_and_timeout_schedule_for_removed_session() {
 }
 
 #[test]
-fn closing_session_repairs_surviving_consumer_feedback_indexes() {
+fn closing_session_keeps_surviving_consumer_feedback_targets() {
     use std::sync::Mutex;
 
     use super::super::{
         control::{SessionCloseDisposition, worker_close_session},
-        state::{
-            RtcSnapshotState, media_registry::ConsumerKeyframeTarget,
-            route_control::PacketLayerGate,
-        },
-        test_support::MediaWorkerScenario,
+        state::RtcSnapshotState,
     };
     use crate::engine::metrics::RuntimeMetrics;
 
@@ -236,11 +234,47 @@ fn closing_session_repairs_surviving_consumer_feedback_indexes() {
             .routes
             .local_route(source)
             .expect("surviving consumers keep the source route")
-            .destinations
+            .destinations()
             .iter()
             .map(|destination| &destination.dest_session)
             .collect::<Vec<_>>(),
         vec![&first, &second],
+    );
+}
+
+#[test]
+fn route_control_reaches_consumer_handle_shadowed_by_mid_reuse() {
+    let mut state = PacketLoopState::default();
+    let src_key = transport_key(1, 60, UserId::Integer(60));
+    let consumer = transport_key(1, 61, UserId::Integer(61));
+    let mid = Mid::from("cam-down");
+    insert_live_session(&mut state, &src_key);
+    let mut scenario = MediaWorkerScenario::new(&mut state);
+    let src_media = scenario.source(src_key.clone(), Mid::from("cam-up"));
+    let earlier = scenario.destination(src_media, consumer.clone(), mid);
+    let latest = scenario.destination_with_gate(
+        src_media,
+        consumer.clone(),
+        mid,
+        PacketLayerGate::Rid("hi".into()),
+    );
+    let earlier_route = transport_consumer_route(&consumer, earlier, &src_key, src_media);
+
+    assert_eq!(state.set_consumer_active(&earlier_route, false), Ok(()));
+
+    let activity = |media| {
+        state
+            .consumer_route_destination(media)
+            .map(|destination| destination.active)
+    };
+    assert_eq!(activity(earlier), Some(false));
+    assert_eq!(activity(latest), Some(true));
+    assert_eq!(
+        state.active_consumer_kf_target(&consumer, mid, None),
+        Some(ConsumerKeyframeTarget {
+            src_media,
+            rid: Some("hi".into()),
+        }),
     );
 }
 

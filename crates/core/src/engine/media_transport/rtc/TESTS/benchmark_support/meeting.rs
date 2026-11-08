@@ -116,7 +116,7 @@ use super::super::{
         media_registry::RegisteredMediaHandle,
         relay_registry::{RelayPacketMailbox, RelayTargetId},
         route_control::PacketLayerGate,
-        slots::SessionHandle,
+        slots::{RouteDestinationHandle, SessionHandle},
         source_route::{DecoderDelivery, MediaRouteDestination},
     },
     test_support::{
@@ -435,8 +435,8 @@ impl VideoLayerFrames {
 struct MeetingVideoDestination {
     route: TransportConsumerRoute,
     receiver: usize,
-    /// index of this destination inside its source's route, for route-state reads
-    dst_idx: usize,
+    /// handle the source route issued, for route-state reads
+    handle: RouteDestinationHandle,
     mid: Mid,
     featured: bool,
 }
@@ -994,7 +994,10 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                 continue;
             };
             for destination in &publisher.destinations {
-                let Some(routed) = route.destinations.get(destination.dst_idx) else {
+                let Some(routed) = route.destination(
+                    destination.handle,
+                    destination.route.consumer_transport_media_id(),
+                ) else {
                     continue;
                 };
                 if routed.delivery.effective_gate() != featured_gate {
@@ -1499,7 +1502,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                 } else {
                     THUMBNAIL_RID
                 };
-                let (consumer_media, dst_idx) = self.install_local_destination(
+                let consumer_media = self.install_local_destination(
                     receiver,
                     source.transport_media_id(),
                     video_down_mid(receiver, publisher),
@@ -1507,6 +1510,10 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                     video_down_ssrc(receiver, publisher),
                     PacketLayerGate::Rid(Rid::from(rid)),
                 );
+                let handle = self
+                    .state
+                    .consumer_destination_handle(consumer_media)
+                    .expect("meeting benchmark video destination should be registered");
                 let Some(entry) = self.video_publishers.get_mut(publisher) else {
                     continue;
                 };
@@ -1517,7 +1524,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                         source,
                     ),
                     receiver,
-                    dst_idx,
+                    handle,
                     mid: video_down_mid(receiver, publisher),
                     featured,
                 });
@@ -1530,9 +1537,8 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
     /// the destination declares real `str0m` media and an outbound stream so the
     /// flush phase performs an actual RTC write instead of a lookup miss
     ///
-    /// returns the consumer media id and the destination's index in its source
-    /// route, which is what lets the layout checks read a gate back out of the
-    /// route table instead of trusting the fixture's own copy
+    /// returns the consumer media id, which lets the layout checks read a gate
+    /// back out of the route table instead of trusting the fixture's own copy
     fn install_local_destination(
         &mut self,
         receiver: usize,
@@ -1541,7 +1547,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
         kind: MediaKind,
         ssrc: u32,
         packet_gate: PacketLayerGate,
-    ) -> (TransportMediaId, usize) {
+    ) -> TransportMediaId {
         let session_key = meeting_session_key(receiver);
         let session = self
             .state
@@ -1557,13 +1563,6 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
             .lock()
             .expect("meeting benchmark bitrate registry should lock")
             .register_session_egress(&session_key, egress_bitrate);
-        let consumer_media = self
-            .state
-            .register_media_handle(RegisteredMediaHandle::Consumer {
-                session_key: session_key.clone(),
-                mid,
-                src_media,
-            });
         // a video consumer negotiated the same VP8 payload as its camera source,
         // so the destination starts with the same route state production
         // `register_consumer_route` builds: the effective gate stays blocked
@@ -1580,10 +1579,9 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
             codec::requires_decoder_refresh(parameters, dest_payload_type)
         });
         let delivery = DecoderDelivery::new(requires_decoder_refresh, packet_gate);
-        let dst_idx = self.state.routes.add_consumer_route(
-            src_media,
-            MediaRouteDestination {
-                dest_session: session_key.clone(),
+        self.state
+            .register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
+                dest_session: session_key,
                 dest_transport_media_id: consumer_media,
                 dest_stream,
                 dest_mid: mid,
@@ -1591,16 +1589,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                 repair_enabled: false,
                 active: true,
                 delivery,
-            },
-        );
-        self.state.set_consumer_dst_idx(
-            &session_key,
-            mid,
-            consumer_media,
-            src_media,
-            Some(dst_idx),
-        );
-        (consumer_media, dst_idx)
+            })
     }
 
     /// registers cross-worker relay fanout for the busiest sources

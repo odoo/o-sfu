@@ -110,7 +110,7 @@ impl PacketLoopState {
         let Some(route) = routes.local_route(src_media) else {
             return;
         };
-        for destination in &route.destinations {
+        for destination in route.destinations() {
             if destination.repair_enabled
                 && let Some(session_state) = users.get_mut(&destination.dest_session)
             {

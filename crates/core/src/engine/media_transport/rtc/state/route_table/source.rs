@@ -3,10 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use str0m::{
-    media::{Mid, Rid},
-    rtp::Ssrc,
-};
+use str0m::{media::Rid, rtp::Ssrc};
 use tracing::debug;
 
 use super::{
@@ -17,6 +14,7 @@ use super::{
         route_control::{
             PacketLayerGate, SourceAudioPolicyState, aggregate_packet_gates, intersect_packet_gates,
         },
+        slots::RouteDestinationHandle,
         source_route::{
             DestinationKeyframeTarget, MediaRouteDestination, MediaRouteEntry, SelectedRefresh,
         },
@@ -73,17 +71,8 @@ pub enum RidReadinessSelectedGateUpdate {
 }
 
 #[derive(Debug)]
-pub struct MovedConsumerRoute {
-    pub session_key: TransportSessionKey,
-    pub mid: Mid,
-    pub media_id: TransportMediaId,
-    pub dst_idx: usize,
-}
-
-#[derive(Debug)]
 pub struct RemovedConsumerRoute {
     pub destination: MediaRouteDestination,
-    pub moved: Option<MovedConsumerRoute>,
     pub(super) stopped_forwarding: bool,
 }
 
@@ -162,12 +151,13 @@ impl RouteSource {
     pub(super) fn add_consumer_route(
         &mut self,
         destination: MediaRouteDestination,
-    ) -> (usize, bool) {
+    ) -> (RouteDestinationHandle, bool) {
         let became_forwarding = self.local_route.is_none() && self.relay.is_none();
-        let route = self.local_route.get_or_insert_with(MediaRouteEntry::new);
-        let index = route.destinations.len();
-        route.push_destination(destination);
-        (index, became_forwarding)
+        let handle = self
+            .local_route
+            .get_or_insert_with(MediaRouteEntry::new)
+            .push_destination(destination);
+        (handle, became_forwarding)
     }
 
     pub(super) fn remove_consumer_route(
@@ -176,27 +166,13 @@ impl RouteSource {
         media_id: TransportMediaId,
     ) -> Option<RemovedConsumerRoute> {
         let route = self.local_route.as_mut()?;
-        let index = route.destinations.iter().position(|destination| {
-            destination.dest_session == *session_key
-                && destination.dest_transport_media_id == media_id
-        })?;
-        let destination = route.remove_destination(index);
-        let moved = route
-            .destinations
-            .get(index)
-            .map(|destination| MovedConsumerRoute {
-                session_key: destination.dest_session.clone(),
-                mid: destination.dest_mid,
-                media_id: destination.dest_transport_media_id,
-                dst_idx: index,
-            });
-        let stopped_forwarding = route.destinations.is_empty() && self.relay.is_none();
-        if route.destinations.is_empty() {
+        let destination = route.remove_destination(session_key, media_id)?;
+        let stopped_forwarding = route.destinations().is_empty() && self.relay.is_none();
+        if route.destinations().is_empty() {
             self.local_route = None;
         }
         Some(RemovedConsumerRoute {
             destination,
-            moved,
             stopped_forwarding,
         })
     }
@@ -229,8 +205,7 @@ impl RouteSource {
 
     pub(super) fn set_consumer_active(
         &mut self,
-        dst_idx: usize,
-        session_key: &TransportSessionKey,
+        destination: RouteDestinationHandle,
         media_id: TransportMediaId,
         active: bool,
     ) -> Result<ConsumerRouteUpdate, TransportAdapterError> {
@@ -238,24 +213,26 @@ impl RouteSource {
             .local_route
             .as_mut()
             .ok_or(TransportAdapterError::TransportUnavailable)?;
-        let destination = validate_destination(route, dst_idx, session_key, media_id)?;
-        let repair_enabled = destination.repair_enabled;
-        let changed = route.set_destination_active(dst_idx, active);
+        let changed = route
+            .set_destination_active(destination, media_id, active)
+            .ok_or(TransportAdapterError::TransportUnavailable)?;
+        let repair_enabled = route
+            .destination(destination, media_id)
+            .is_some_and(|destination| destination.repair_enabled);
         Ok(ConsumerRouteUpdate::new(changed, changed && repair_enabled))
     }
 
     pub(super) fn set_consumer_pkt_gate(
         &mut self,
-        dst_idx: usize,
-        session_key: &TransportSessionKey,
+        destination: RouteDestinationHandle,
         media_id: TransportMediaId,
         packet_gate: PacketLayerGate,
     ) -> Result<ConsumerRouteUpdate, TransportAdapterError> {
-        let route = self
+        let dst = self
             .local_route
             .as_mut()
+            .and_then(|route| route.destination_mut(destination, media_id))
             .ok_or(TransportAdapterError::TransportUnavailable)?;
-        let dst = validate_destination(route, dst_idx, session_key, media_id)?;
         let transition = dst.delivery.select(packet_gate);
         Ok(ConsumerRouteUpdate::new(
             transition.changed(),
@@ -300,20 +277,11 @@ impl RouteSource {
         session_key: &TransportSessionKey,
     ) -> Option<ForwardingChange> {
         let route = self.local_route.as_mut()?;
-        let destination_count = route.destinations.len();
-        route
-            .destinations
-            .retain(|destination| destination.dest_session != *session_key);
-        if route.destinations.len() == destination_count {
+        if !route.remove_session_destinations(session_key) {
             return None;
         }
-        route.active_destination_count = route
-            .destinations
-            .iter()
-            .filter(|destination| destination.active)
-            .count();
-        let stopped_forwarding = route.destinations.is_empty() && self.relay.is_none();
-        if route.destinations.is_empty() {
+        let stopped_forwarding = route.destinations().is_empty() && self.relay.is_none();
+        if route.destinations().is_empty() {
             self.local_route = None;
         }
         Some(if stopped_forwarding {
@@ -339,7 +307,7 @@ impl RouteSource {
     pub(super) fn has_local_kf_demand(&self, rid: Option<Rid>) -> bool {
         self.source_active
             && self.local_route.as_ref().is_some_and(|route| {
-                route.destinations.iter().any(|destination| {
+                route.destinations().iter().any(|destination| {
                     destination.active
                         && (matches!(
                             destination.delivery.keyframe_target_rid(None),
@@ -662,22 +630,6 @@ impl ProducerRidLiveness {
     }
 }
 
-fn validate_destination<'a>(
-    route: &'a mut MediaRouteEntry,
-    index: usize,
-    session_key: &TransportSessionKey,
-    media_id: TransportMediaId,
-) -> Result<&'a mut MediaRouteDestination, TransportAdapterError> {
-    let dst = route
-        .destinations
-        .get_mut(index)
-        .ok_or(TransportAdapterError::TransportUnavailable)?;
-    if dst.dest_session != *session_key || dst.dest_transport_media_id != media_id {
-        return Err(TransportAdapterError::TransportUnavailable);
-    }
-    Ok(dst)
-}
-
 fn update_decoder_ready_dsts(
     route: &mut MediaRouteEntry,
     source_id: TransportMediaId,
@@ -687,7 +639,7 @@ fn update_decoder_ready_dsts(
     mut on_repair_delivery_changed: impl FnMut(&MediaRouteDestination),
 ) -> RidReadinessRouteUpdate {
     let mut update = RidReadinessRouteUpdate::default();
-    for dst in &mut route.destinations {
+    for dst in route.destinations_mut() {
         if let Some(incoming_rid) = incoming_rid {
             suspend_stale_dst_gate(
                 dst,
@@ -786,7 +738,7 @@ fn activate_bootstrap_dsts(
     on_repair_delivery_changed: &mut impl FnMut(&MediaRouteDestination),
     update: &mut RidReadinessRouteUpdate,
 ) {
-    for dst in &mut route.destinations {
+    for dst in route.destinations_mut() {
         let Some(selected_rid) = dst.delivery.activate_fallback(incoming_rid) else {
             continue;
         };
@@ -821,7 +773,7 @@ fn push_unique_rid(rids: &mut Vec<Rid>, rid: Rid) {
 fn local_src_pkt_gate(route_entry: &MediaRouteEntry) -> Option<PacketLayerGate> {
     aggregate_packet_gates(
         route_entry
-            .destinations
+            .destinations()
             .iter()
             .filter(|destination| destination.active)
             .map(|destination| destination.delivery.effective_gate()),
@@ -841,7 +793,7 @@ fn remote_pkt_gate_for_route(
         // refresh can arrive despite the aggregate Block.
         (Some(route_entry), Some(PacketLayerGate::Block))
             if route_entry
-                .destinations
+                .destinations()
                 .iter()
                 .any(|destination| destination.delivery.pending_gate().is_some()) =>
         {

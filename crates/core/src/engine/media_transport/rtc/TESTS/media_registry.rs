@@ -29,6 +29,7 @@ fn consumer_media_lookup_uses_the_reverse_index() {
         session_key: consumer_session.clone(),
         mid: consumer_mid,
         src_media,
+        destination: RouteDestinationHandle::default(),
     });
 
     assert_eq!(
@@ -48,6 +49,7 @@ fn consumer_media_lookup_clears_when_the_handle_is_removed() {
         session_key: consumer_session.clone(),
         mid: consumer_mid,
         src_media,
+        destination: RouteDestinationHandle::default(),
     });
     assert_eq!(
         state.consumer_src_media_for_mid(&consumer_session, consumer_mid),
@@ -62,6 +64,7 @@ fn consumer_media_lookup_clears_when_the_handle_is_removed() {
             session_key,
             mid,
             src_media: removed_src_media,
+            ..
         }) if session_key == consumer_session
             && mid == consumer_mid
             && removed_src_media == src_media
@@ -88,6 +91,7 @@ fn session_media_index_drives_bulk_session_removal() {
         session_key: removed_session.clone(),
         mid: consumer_mid,
         src_media: producer_media_id,
+        destination: RouteDestinationHandle::default(),
     });
     let kept_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: kept_session.clone(),

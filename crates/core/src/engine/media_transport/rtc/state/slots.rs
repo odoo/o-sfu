@@ -23,9 +23,9 @@
 //! of touching new state
 //!
 //! the tag parameter is part of the contract
-//! it keeps session handles, media handles and consumer stream handles in
-//! separate type namespaces even though every handle is represented by the same
-//! compact index plus generation pair
+//! it keeps session, consumer stream and route destination handles in separate
+//! type namespaces even though every handle is represented by the same compact
+//! index plus generation pair
 
 use std::{collections::BTreeMap, marker::PhantomData};
 
@@ -47,10 +47,20 @@ pub(in super::super) struct SessionSlot;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(in super::super) struct ConsumerStreamSlot;
 
+/// handle namespace for destinations of one source route
+///
+/// consumer media registrations keep these handles so route control and
+/// keyframe feedback reach their destination without scanning the route
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(in super::super) struct RouteDestinationSlot;
+
 pub(in super::super) type SessionHandle = SlotHandle<SessionSlot>;
 
 /// generation-checked handle stored on route destinations for local RTP rewrite state
 pub(in super::super) type ConsumerStreamHandle = SlotHandle<ConsumerStreamSlot>;
+
+/// generation-checked handle a source route issues for one consumer destination
+pub(in super::super) type RouteDestinationHandle = SlotHandle<RouteDestinationSlot>;
 
 pub(in super::super) type SessionStore =
     KeyedSlotStore<TransportSessionKey, RtcSessionState, SessionSlot>;
@@ -113,7 +123,8 @@ impl<Tag> Default for SlotHandle<Tag> {
 ///
 /// # Type-Safe Tagging
 ///
-/// The `Tag` marker parameter ([`SessionSlot`], [`ConsumerStreamSlot`]) ensures
+/// The `Tag` marker parameter ([`SessionSlot`], [`ConsumerStreamSlot`],
+/// [`RouteDestinationSlot`]) ensures
 /// distinct identity-class handle types at compile time with zero memory overhead
 /// (`PhantomData<fn() -> Tag>`). It does not identify a particular store instance, so callers
 /// must use a handle only with the store that created it.
@@ -153,6 +164,7 @@ impl<Tag> Default for SlotHandle<Tag> {
 ///                       v  (mismatch)
 ///    - access returns `None` --> stale work safely discarded with 0 side-effects
 /// ```
+#[derive(Debug)]
 pub(in super::super) struct SlotStore<T, Tag> {
     entries: Vec<SlotEntry<T>>,
     free: Vec<usize>,
@@ -169,6 +181,7 @@ impl<T, Tag> Default for SlotStore<T, Tag> {
     }
 }
 
+#[derive(Debug)]
 struct SlotEntry<T> {
     generation: u64,
     value: Option<T>,

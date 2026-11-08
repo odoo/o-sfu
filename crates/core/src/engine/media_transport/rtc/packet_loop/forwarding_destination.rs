@@ -145,7 +145,7 @@ impl LocalRtcPacketDestination {
             let route_destination = state
                 .routes
                 .local_route(self.src_media)
-                .and_then(|route_entry| route_entry.destinations.get(self.dst_idx))?;
+                .and_then(|route_entry| route_entry.destinations().get(self.dst_idx))?;
             let session_handle = state
                 .users
                 .handle_for_key(&route_destination.dest_session)?;

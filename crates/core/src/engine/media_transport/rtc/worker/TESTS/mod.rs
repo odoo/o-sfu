@@ -429,8 +429,7 @@ fn insert_open_route(
     consumer_stream: ConsumerStreamHandle,
     consumer_mid: Mid,
 ) {
-    insert_consumer_route_fixture(
-        state,
+    state.routes.add_consumer_route(
         src_media,
         MediaRouteDestination {
             dest_session: consumer_session.clone(),
@@ -445,24 +444,6 @@ fn insert_open_route(
     );
 }
 
-fn insert_consumer_route_fixture(
-    state: &mut PacketLoopState,
-    src_media: TransportMediaId,
-    destination: MediaRouteDestination,
-) {
-    let dest_session = destination.dest_session.clone();
-    let dest_mid = destination.dest_mid;
-    let dest_transport_media_id = destination.dest_transport_media_id;
-    let dst_idx = state.routes.add_consumer_route(src_media, destination);
-    state.set_consumer_dst_idx(
-        &dest_session,
-        dest_mid,
-        dest_transport_media_id,
-        src_media,
-        Some(dst_idx),
-    );
-}
-
 fn register_producer_media(
     state: &mut PacketLoopState,
     producer_session: &TransportSessionKey,
@@ -471,19 +452,6 @@ fn register_producer_media(
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
         mid: Mid::from(producer_mid),
-    })
-}
-
-fn register_consumer_media(
-    state: &mut PacketLoopState,
-    consumer_session: &TransportSessionKey,
-    consumer_mid: Mid,
-    src_media: TransportMediaId,
-) -> TransportMediaId {
-    state.register_media_handle(RegisteredMediaHandle::Consumer {
-        session_key: consumer_session.clone(),
-        mid: consumer_mid,
-        src_media,
     })
 }
 
@@ -497,21 +465,16 @@ fn register_consumer_route_fixture(
     pending_gate: Option<PacketLayerGate>,
 ) {
     let consumer_mid = Mid::from(consumer_mid);
-    let consumer_media = register_consumer_media(state, consumer_session, consumer_mid, src_media);
-    insert_consumer_route_fixture(
-        state,
-        src_media,
-        MediaRouteDestination {
-            dest_session: consumer_session.clone(),
-            dest_transport_media_id: consumer_media,
-            dest_stream: ConsumerStreamHandle::default(),
-            dest_mid: consumer_mid,
-            dest_payload_type: None,
-            repair_enabled: false,
-            active,
-            delivery: DecoderDelivery::fixture(false, packet_gate, pending_gate),
-        },
-    );
+    state.register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
+        dest_session: consumer_session.clone(),
+        dest_transport_media_id: consumer_media,
+        dest_stream: ConsumerStreamHandle::default(),
+        dest_mid: consumer_mid,
+        dest_payload_type: None,
+        repair_enabled: false,
+        active,
+        delivery: DecoderDelivery::fixture(false, packet_gate, pending_gate),
+    });
 }
 
 fn register_open_consumer_route_fixture(
@@ -1220,16 +1183,9 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
         ),
     );
     let consumer_mid = Mid::from("cam-down");
-    let consumer_media = register_consumer_media(
-        &mut harness.state,
-        &consumer_session,
-        consumer_mid,
-        src_media,
-    );
-    insert_consumer_route_fixture(
-        &mut harness.state,
-        src_media,
-        MediaRouteDestination {
+    harness
+        .state
+        .register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
             dest_session: consumer_session,
             dest_transport_media_id: consumer_media,
             dest_stream: ConsumerStreamHandle::default(),
@@ -1242,8 +1198,7 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
                 PacketLayerGate::Block,
                 Some(PacketLayerGate::Rid(selected_rid)),
             ),
-        },
-    );
+        });
     let mut packets = [
         sample_forwarded_packet_with_rid(
             producer_session.clone(),
@@ -1357,7 +1312,7 @@ fn inactive_source_ignores_late_rid_readiness_and_first_ingress_feedback() {
     );
 
     assert!(state.routes.local_route(src_media).is_some_and(|route| {
-        route.destinations.iter().any(|destination| {
+        route.destinations().iter().any(|destination| {
             destination.delivery.effective_gate() == PacketLayerGate::Block
                 && destination.delivery.pending_gate() == Some(PacketLayerGate::Rid(selected_rid))
         })
@@ -2323,15 +2278,9 @@ fn silent_audio_packets_are_dropped_from_routed_fanout_after_transport_activity_
     let packet_sink_registry = RoomPacketSinkRegistry::default();
     let src_media = register_producer_media(&mut harness.state, &producer_session, "aud-up");
     let consumer_mid = Mid::from("aud-down");
-    let consumer_media = register_consumer_media(
-        &mut harness.state,
-        &consumer_session,
-        consumer_mid,
-        src_media,
-    );
-    harness.state.routes.add_consumer_route(
-        src_media,
-        MediaRouteDestination {
+    harness
+        .state
+        .register_consumer_destination(src_media, |consumer_media| MediaRouteDestination {
             dest_session: consumer_session.clone(),
             dest_transport_media_id: consumer_media,
             dest_stream: ConsumerStreamHandle::default(),
@@ -2340,15 +2289,7 @@ fn silent_audio_packets_are_dropped_from_routed_fanout_after_transport_activity_
             repair_enabled: false,
             active: true,
             delivery: DecoderDelivery::fixture(false, PacketLayerGate::Open, None),
-        },
-    );
-    harness.state.set_consumer_dst_idx(
-        &consumer_session,
-        consumer_mid,
-        consumer_media,
-        src_media,
-        Some(0),
-    );
+        });
     harness
         .buffers
         .pending_packets
