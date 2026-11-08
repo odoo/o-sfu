@@ -369,18 +369,6 @@ pub fn negotiate_consumer_rtp_parameters(
     Ok(negotiated)
 }
 
-/// Check whether a consumer capability set can negotiate at least one media codec.
-///
-/// This is the boolean gateway used by router-core when it only needs the final
-/// compatibility result and does not need the fully negotiated RTP output.
-#[must_use]
-pub fn can_consume(
-    consumable_parameters: &MediaStream,
-    consumer_capabilities: &MediaCapabilities,
-) -> bool {
-    negotiate_consumer_rtp_parameters(consumable_parameters, consumer_capabilities).is_ok()
-}
-
 /// Payload-type policy:
 ///
 /// - if the capability pins an explicit PT, that PT becomes authoritative in the

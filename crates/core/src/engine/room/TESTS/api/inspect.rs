@@ -137,7 +137,7 @@ impl RoomTestApi<'_> {
             state
                 .topology
                 .router()
-                .media_worker_id_for_connection(connection_id)
+                .committed_media_worker_id(user_id, connection_id)?
                 .as_usize(),
         )
     }

@@ -9,7 +9,7 @@ use o_sfu_rfc::{
 use crate::{
     MediaKind,
     negotiation::{
-        ParseDiagnostic, ParseDiagnosticKind, RtpNegotiationError, can_consume,
+        self, ParseDiagnostic, ParseDiagnosticKind, RtpNegotiationError,
         derive_consumable_rtp_parameters, negotiate_consumer_rtp_parameters,
     },
     rtp::{
@@ -17,6 +17,10 @@ use crate::{
         MediaStream, PayloadType, Rid, RtcpFeedback, RtcpFeedbackKind, StreamBinding,
     },
 };
+
+fn negotiates(stream: &MediaStream, capabilities: &MediaCapabilities) -> bool {
+    negotiation::negotiate_consumer_rtp_parameters(stream, capabilities).is_ok()
+}
 
 fn pt(value: u8) -> PayloadType {
     PayloadType::new(value)
@@ -406,7 +410,7 @@ fn consumer_negotiation_fails_when_no_media_codec_matches() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -541,7 +545,7 @@ fn consumer_negotiation_rejects_vp9_profile_mismatch() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -570,7 +574,7 @@ fn consumer_negotiation_rejects_vp9_profiles_incompatible_with_omission() {
             negotiated_result,
             Err(RtpNegotiationError::NoCompatibleConsumerCodec)
         );
-        assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+        assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
     }
 }
 
@@ -596,7 +600,7 @@ fn consumer_negotiation_accepts_missing_vp9_profile_id_for_profile_zero() {
     let negotiated_result =
         negotiate_consumer_rtp_parameters(&consumable_parameters, &consumer_capabilities);
     assert!(negotiated_result.is_ok());
-    assert!(can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -607,7 +611,7 @@ fn consumer_negotiation_accepts_h264_when_capability_level_is_higher() {
     let negotiated_result =
         negotiate_consumer_rtp_parameters(&consumable_parameters, &consumer_capabilities);
     assert!(negotiated_result.is_ok());
-    assert!(can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -621,7 +625,7 @@ fn consumer_negotiation_rejects_h264_when_capability_level_is_lower() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -635,7 +639,7 @@ fn consumer_negotiation_rejects_h264_level_1_1_for_level_1_capability() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -646,7 +650,7 @@ fn consumer_negotiation_accepts_h264_level_1b_for_level_1_1_capability() {
     let negotiated_result =
         negotiate_consumer_rtp_parameters(&consumable_parameters, &consumer_capabilities);
     assert!(negotiated_result.is_ok());
-    assert!(can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -660,7 +664,7 @@ fn consumer_negotiation_rejects_h264_high_profile_when_capability_omits_profile_
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -674,7 +678,7 @@ fn consumer_negotiation_rejects_h264_level_1_1_when_capability_omits_profile_lev
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -685,7 +689,7 @@ fn consumer_negotiation_accepts_h264_when_both_sides_omit_profile_level_id() {
     let negotiated_result =
         negotiate_consumer_rtp_parameters(&consumable_parameters, &consumer_capabilities);
     assert!(negotiated_result.is_ok());
-    assert!(can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -699,7 +703,7 @@ fn consumer_negotiation_rejects_h264_malformed_profile_level_id_when_capability_
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -713,7 +717,7 @@ fn consumer_negotiation_rejects_h264_zero_level_idc() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -727,7 +731,7 @@ fn consumer_negotiation_rejects_matching_malformed_h264_profile_level_id() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 #[test]
@@ -756,7 +760,7 @@ fn consumer_negotiation_rejects_malformed_h264_packetization_mode() {
         negotiated_result,
         Err(RtpNegotiationError::NoCompatibleConsumerCodec)
     );
-    assert!(!can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(!negotiates(&consumable_parameters, &consumer_capabilities));
 }
 
 fn h264_consumable_parameters(profile_level_id: &str) -> MediaStream {
@@ -910,5 +914,5 @@ fn consumer_negotiation_preserves_repair_ssrc_when_rtx_is_listed_first() {
             .collect::<Vec<_>>(),
         vec![(Some(5678), Some(5679))]
     );
-    assert!(can_consume(&consumable_parameters, &consumer_capabilities));
+    assert!(negotiates(&consumable_parameters, &consumer_capabilities));
 }

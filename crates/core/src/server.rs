@@ -115,7 +115,7 @@ pub mod room {
             RoomManager, RoomManagerJoinError, RoomManagerServeError, RoomMediaCounts,
             RoomOverviewCapture, RoomRuntimeContext, RoomRuntimePolicy, RoomUserAdmission,
             RoomUserCapture, RoomUserPermissions, RoomUserStatsSnapshot, RoomUsersCapture,
-            RouterPlacement, RouterPlacements, RouterPlacementsError, RuntimeRoomDirectorySnapshot,
+            RouterPlacement, RouterPlacements, RuntimeRoomDirectorySnapshot,
             RuntimeRoomStatsSnapshot, UserCloseReason, UserOutbound, UserOutboundEvent,
             UserOutboundOverflow, UserOutboundOverflowKind, UserOutboundQueueLimits,
             UserOutboundReceiver, UserOutboundSendError, UserOutboundSender,
