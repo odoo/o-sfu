@@ -1,0 +1,30 @@
+# Shared wasm-pack setup for jobs that build the client Wasm runtime.
+
+name: Set up wasm-pack
+description: Install wasm-pack and restore the release binaries it downloads
+
+runs:
+  using: composite
+  steps:
+    - name: Configure wasm-pack environment
+      shell: bash
+      run: |
+        {
+          echo "WASM_PACK_VERSION=0.15.0"
+          echo "WASM_PACK_CACHE=$RUNNER_TEMP/wasm-pack"
+        } >> "$GITHUB_ENV"
+
+    # wasm-pack downloads binaryen and the wasm-bindgen CLI from GitHub releases
+    # into WASM_PACK_CACHE and skips a download whose directory exists. A cold
+    # cache fails the build whenever a release download fails. The wasm-pack
+    # version pins binaryen and Cargo.lock pins wasm-bindgen.
+    - name: Restore wasm-pack downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # actions/cache v6.1.0
+      with:
+        path: ${{ env.WASM_PACK_CACHE }}
+        key: wasm-pack-${{ env.WASM_PACK_VERSION }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+        restore-keys: wasm-pack-${{ env.WASM_PACK_VERSION }}-${{ runner.os }}-
+
+    - name: Install wasm-pack
+      shell: bash
+      run: cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked

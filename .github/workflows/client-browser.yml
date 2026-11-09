@@ -58,8 +58,8 @@ jobs:
           cache: npm
           cache-dependency-path: crates/client/package-lock.json
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0 --locked
+      - name: Set up wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
 
       - name: Install dependencies
         run: npm ci
