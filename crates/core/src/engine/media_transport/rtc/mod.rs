@@ -44,6 +44,7 @@ mod egress;
 #[cfg(any(test, fuzzing))]
 #[path = "TESTS/fuzz_support/mod.rs"]
 pub(crate) mod fuzz_support;
+mod negotiation;
 mod packet_loop;
 mod recovery;
 mod state;

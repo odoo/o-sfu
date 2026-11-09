@@ -16,11 +16,10 @@ use super::{
     super::{
         RtcWorkerConfig,
         commands::RtcWorkerCommand,
+        negotiation::{self, OfferBootstrapConfig},
         state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
     },
-    media,
-    negotiation::{self, OfferBootstrapConfig},
-    session,
+    media, session,
 };
 use crate::engine::{
     media_transport::{

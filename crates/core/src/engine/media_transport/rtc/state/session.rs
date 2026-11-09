@@ -1,27 +1,20 @@
 //! Session-local str0m state, staged negotiation and ingress accounting.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    net::SocketAddr,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 
 use o_sfu_rfc::{rtp, tcp_framing::TcpFrame};
-use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
     Rtc,
-    change::{SdpOffer, SdpPendingOffer},
     media::{Mid, Rid},
     rtp::Ssrc,
 };
 use tokio::sync::mpsc;
 
 use super::{
-    super::{codec::RepairSummary, consumer_egress::ConsumerStreamStore},
+    super::{consumer_egress::ConsumerStreamStore, negotiation::SessionSdpNegotiationState},
     bitrate::MediaBitrateCounter,
 };
-use crate::{Bitrate, engine::media_transport::SessionUploadSlot};
+use crate::Bitrate;
 
 // Across str0m's three-second resend-cache window the local rate permits
 // 20_000 bytes. A maximally dense Generic NACK can therefore reference
@@ -176,76 +169,6 @@ impl RtcpIngressBudget {
             self.refill_remainder = fractional_credit % NANOS_PER_SECOND;
         }
     }
-}
-
-/// offer and answer staging state for one worker-local session
-///
-/// this preserves `str0m`'s one-outstanding-offer rule while media lifecycle
-/// code can stage additions or removals through serialized worker commands
-#[derive(Default)]
-pub(in super::super) struct SessionSdpNegotiationState {
-    /// initial audio and video MIDs reused across repeated bootstrap offer attempts
-    pub(in super::super) bootstrap_mids: Vec<Mid>,
-    /// Pending str0m changes paired with the repair mappings offered for them.
-    pub(in super::super) pending_offer: Option<PendingSessionOffer>,
-    /// follow-up local offer prepared by media lifecycle and not yet delivered
-    pub(in super::super) staged_offer: Option<Box<SdpOffer>>,
-    pub(in super::super) staged_offer_upload_slots: Vec<SessionUploadSlot>,
-    /// whether the remote side has answered the initial transport offer
-    pub(in super::super) initial_offer_applied: bool,
-    /// producer recv identities that must be rebound after answer application
-    ///
-    /// answer-time `str0m` updates can recreate `StreamRx` bindings, so the
-    /// worker keeps the intended SSRC and RID pairs until the matching answer
-    /// has been applied
-    pub(in super::super) pending_recv_streams: BTreeMap<Mid, Vec<PendingRecvStream>>,
-    /// negotiated producer RTP parameters keyed by producer MID
-    ///
-    /// answer application refreshes this table so transport handles can report
-    /// the exact upload encodings that are now committed
-    pub(in super::super) negotiated_producer_parameters: BTreeMap<Mid, RouterRtpParameters>,
-    /// negotiated MIDs whose inactive offer must wait for the current answer
-    pub(in super::super) queued_removal_mids: BTreeSet<Mid>,
-}
-
-impl SessionSdpNegotiationState {
-    /// Replaces the undelivered offer and the upload metadata retained through its answer.
-    pub(in super::super) fn stage_offer(
-        &mut self,
-        offer: SdpOffer,
-        pending_offer: SdpPendingOffer,
-        upload_slots: Vec<SessionUploadSlot>,
-    ) {
-        self.pending_offer = Some(PendingSessionOffer::new(&offer, pending_offer));
-        self.staged_offer = Some(Box::new(offer));
-        self.staged_offer_upload_slots = upload_slots;
-    }
-}
-
-/// A str0m answer token and the repair mappings from its corresponding local offer.
-pub(in super::super) struct PendingSessionOffer {
-    pub(in super::super) token: SdpPendingOffer,
-    pub(in super::super) repair: RepairSummary,
-}
-
-impl PendingSessionOffer {
-    pub(in super::super) fn new(offer: &SdpOffer, token: SdpPendingOffer) -> Self {
-        Self {
-            token,
-            repair: RepairSummary::from_offer(offer),
-        }
-    }
-}
-
-/// receive stream identity staged before a producer media addition is answered
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in super::super) struct PendingRecvStream {
-    /// producer SSRC expected by the receiving `str0m` media line
-    pub(in super::super) ssrc: Ssrc,
-    /// repair SSRC paired with the producer primary SSRC when RTX is negotiated
-    pub(in super::super) repair_ssrc: Option<Ssrc>,
-    /// simulcast RID for the producer encoding when the source uses RID identity
-    pub(in super::super) rid: Option<Rid>,
 }
 
 #[derive(Debug, Default)]

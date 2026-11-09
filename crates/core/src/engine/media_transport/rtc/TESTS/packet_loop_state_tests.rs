@@ -1,4 +1,3 @@
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 use str0m::media::Rid;
 
 use super::{
@@ -12,6 +11,7 @@ use super::{
     },
     fixtures::*,
 };
+use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
 
 fn insert_live_session(state: &mut PacketLoopState, session_key: &TransportSessionKey) {
     assert!(matches!(

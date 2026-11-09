@@ -5,7 +5,7 @@
 //! [`PacketLoopState`](super::state::PacketLoopState) operations that keep
 //! session, media and route indexes consistent.
 //!
-//! [`negotiation`] owns offer/answer exchange and uses [`publication`] to
+//! [`negotiation`](super::negotiation) owns offer/answer exchange and uses [`publication`] to
 //! reconcile producer bindings. [`media`] handles media declaration, removal
 //! and controls for existing routes.
 //!
@@ -15,9 +15,8 @@
 mod bwe;
 mod dispatcher;
 mod media;
-mod negotiation;
-mod publication;
-mod recv_stream;
+pub(super) mod publication;
+pub(super) mod recv_stream;
 mod session;
 
 pub use self::dispatcher::{WorkerCommandContext, handle_worker_command};

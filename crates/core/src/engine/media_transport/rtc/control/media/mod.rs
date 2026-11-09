@@ -3,7 +3,7 @@
 //! [`lifecycle`] combines str0m media changes with complete registration or
 //! removal in
 //! [`PacketLoopState`](crate::engine::media_transport::rtc::state::PacketLoopState).
-//! Media changes stage renegotiation offers. [`negotiation`](super::negotiation)
+//! Media changes stage renegotiation offers. [`negotiation`](super::super::negotiation)
 //! returns those offers and applies answers.
 //!
 //! [`responses`] handles media batches and relay commands. [`routes`] adjusts

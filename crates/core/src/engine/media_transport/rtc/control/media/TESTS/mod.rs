@@ -487,7 +487,7 @@ fn nack_totals_reset_after_the_last_mid_handle_is_removed() -> Result<(), &'stat
     let Some(session) = route.state.users.get_mut(&consumer_key) else {
         panic!("consumer session should exist after setup");
     };
-    session.sdp_negotiation.initial_offer_applied = true;
+    session.sdp_negotiation.mark_initial_offer_applied();
     let totals = &mut session.nack_totals;
     assert_eq!(
         (
@@ -2447,16 +2447,13 @@ fn prepare_consumer_awaiting_answer(
         .users
         .get_mut(consumer_session)
         .expect("consumer session must exist");
-    session.sdp_negotiation.initial_offer_applied = true;
+    session.sdp_negotiation.mark_initial_offer_applied();
     let (offer, pending) = {
         let mut api = session.rtc.sdp_api();
         api.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
         api.apply().expect("consumer offer must be staged")
     };
-    session
-        .sdp_negotiation
-        .stage_offer(offer, pending, Vec::new());
-    session.sdp_negotiation.staged_offer.take();
+    session.sdp_negotiation.set_delivered_offer(&offer, pending);
 }
 
 #[test]
@@ -2564,7 +2561,7 @@ fn consumer_sdp_groups_only_selected_publisher_tracks() {
         .get_mut(&consumer)
         .expect("consumer session must exist")
         .sdp_negotiation
-        .initial_offer_applied = true;
+        .mark_initial_offer_applied();
     let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
     // Declare the screen first so receiver stream order cannot make it the mic's pair.
     for (mid, kind, sync, source, ssrc) in [
@@ -2597,10 +2594,12 @@ fn consumer_sdp_groups_only_selected_publisher_tracks() {
     }
     let offer = state
         .users
-        .get(&consumer)
-        .and_then(|session| session.sdp_negotiation.staged_offer.as_ref())
+        .get_mut(&consumer)
+        .and_then(|session| session.sdp_negotiation.take_offer().ok())
         .expect("consumer media must produce an offer")
-        .to_sdp_string();
+        .into_session_offer()
+        .into_parts()
+        .0;
     let tracks: Vec<_> = offer
         .lines()
         .filter_map(|line| line.strip_prefix("a=msid:")?.split_once(' '))

@@ -191,8 +191,12 @@ impl SfuCoreError {
     pub const fn is_client_error(self) -> bool {
         matches!(
             self,
-            Self::Transport(TransportAdapterError::InvalidInput)
-                | Self::CapabilityProjection(_)
+            // Dependency rejection is still a protocol fault even though it now
+            // closes the RTC session before returning to the signaling layer.
+            Self::Transport(
+                TransportAdapterError::InvalidInput
+                    | TransportAdapterError::AnswerApplicationFailed
+            ) | Self::CapabilityProjection(_)
                 | Self::SessionNegotiationRejected
                 | Self::SessionRefreshRejected
                 | Self::SubscriptionUpdateRejected
@@ -312,8 +316,8 @@ impl MediaSession {
     ///
     /// a rejection before the worker consumes its pending offer leaves the
     /// application round in place so a direct caller may retry it
-    /// failures after the worker consumes that offer do not promise retry even
-    /// when the RTC backend rejects the answer
+    /// a str0m rejection after consuming the offer closes the session because
+    /// its transport state cannot be rolled back
     /// when queued publish intent needs another SDP round the returned offer
     /// must be sent to the client before the next answer
     ///
@@ -326,12 +330,20 @@ impl MediaSession {
         if !matches!(self.phase, SessionPhase::WaitingForAnswer(_)) {
             return Err(SessionError::NoPendingRequest);
         }
-        let applied_answer = self
+        let applied_answer = match self
             .core
             .media_transport
             .apply_session_answer(&self.transport_user_key, sdp)
             .await
-            .map_err(SfuCoreError::Transport)?;
+        {
+            Ok(answer) => answer,
+            Err(error) => {
+                if error == TransportAdapterError::AnswerApplicationFailed {
+                    self.close().await;
+                }
+                return Err(SfuCoreError::Transport(error).into());
+            }
+        };
         let InFlightOffer {
             purpose,
             queued_publishes,

@@ -5,13 +5,14 @@ use o_sfu_rfc::webrtc::sdp;
 use super::support::*;
 use crate::{
     engine::{
-        media_transport::TransportSourceKey,
+        media_transport::{TransportAdapterError, TransportSourceKey},
         room::{RoomRuntimePolicy, media_graph::ConsumerRouteState},
     },
     prelude::{
         MediaSession, NegotiationOffer, RoomWorkerPolicy, RuntimeFeatureFlags, SessionError,
         SfuCore, SourceDeactivateIntent,
     },
+    sfu::SfuCoreError,
 };
 
 #[tokio::test]
@@ -67,6 +68,55 @@ async fn media_session_keeps_pending_offer_after_invalid_answer() {
         .await
         .expect("pending offer should accept a later valid answer");
     assert!(offer.is_none());
+}
+
+#[tokio::test]
+async fn media_session_closes_after_str0m_answer_failure() {
+    let mut fixture = build_publisher_fixture(55_232).await;
+    let offer = fixture
+        .session
+        .establish()
+        .await
+        .expect("initial offer should be created")
+        .expect("initial offer should be present");
+    let key = fixture
+        .room
+        .transport_user_key(&fixture.user_id, fixture.session.connection_id())
+        .await;
+    let answer = remote_answer_sdp(&mut fixture.remote, &offer.sdp);
+    // Missing fingerprints pass SDP parsing and RTP preflight, then fail inside
+    // str0m after ICE/DTLS mutation. This must retire the whole session.
+    let invalid_answer = answer
+        .lines()
+        .filter(|line| !line.starts_with("a=fingerprint:"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n";
+    let error = fixture
+        .session
+        .answer(&invalid_answer)
+        .await
+        .expect_err("str0m must reject the answer");
+    assert!(matches!(
+        error,
+        SessionError::Core(SfuCoreError::Transport(
+            TransportAdapterError::AnswerApplicationFailed
+        ))
+    ));
+    assert!(
+        error.is_client_error(),
+        "a rejected answer must remain a terminal protocol fault"
+    );
+    assert!(!fixture.room.test_api().has_session(&fixture.user_id).await);
+    // The normal room close sends CloseSession to the worker, removing the RTC.
+    assert!(matches!(
+        fixture
+            .media_transport
+            .create_session_renegotiation_offer(&key)
+            .await,
+        Err(TransportAdapterError::TransportUnavailable)
+    ));
+    assert!(!fixture.session.close().await);
 }
 
 #[tokio::test]

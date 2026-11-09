@@ -71,6 +71,9 @@ pub enum TransportAdapterError {
     TransportUnavailable,
     #[error("invalid transport input")]
     InvalidInput,
+    /// str0m consumed the offer token, so the owning session must close.
+    #[error("session answer application failed")]
+    AnswerApplicationFailed,
     #[error("unsupported transport feature")]
     UnsupportedFeature,
 }

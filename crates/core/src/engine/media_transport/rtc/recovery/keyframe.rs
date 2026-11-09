@@ -537,8 +537,7 @@ fn producer_kf_target_rids(
         {
             push_unique_rid(&mut candidate_rids, candidate_rid);
         }
-        if let Some(pending_streams) = session_state.sdp_negotiation.pending_recv_streams.get(&mid)
-        {
+        if let Some(pending_streams) = session_state.sdp_negotiation.pending_recv_streams(mid) {
             for candidate_rid in pending_streams.iter().filter_map(|stream| stream.rid) {
                 push_unique_rid(&mut candidate_rids, candidate_rid);
             }
