@@ -18,22 +18,20 @@ use std::{
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
     bwe::Bitrate as Str0mBitrate,
-    media::{Direction, MediaKind, Mid},
-    rtp::Ssrc,
+    media::{MediaKind, Mid},
 };
 use tracing::{debug, warn};
 
-use super::{super::negotiation, AddSendMediaRequest};
+use super::AddSendMediaRequest;
 use crate::{
     Bitrate, VideoBitrateLimits,
     engine::{
         media_transport::{
-            SessionUploadSlot, TransportAdapterError, TransportMediaId, TransportResult,
-            TransportSessionKey,
+            TransportAdapterError, TransportMediaId, TransportResult, TransportSessionKey,
             rtc::{
-                RtpProfile, codec,
+                RtpProfile, codec, negotiation,
                 state::{
-                    ConsumerRouteRegistration, PacketLoopState, PendingRecvStream, RtcSessionState,
+                    ConsumerRouteRegistration, PacketLoopState, RtcSessionState,
                     bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
                     slots::ConsumerStreamHandle,
                 },
@@ -101,8 +99,8 @@ fn stage_last_mid_removal_before_unregistering_handle(
         // remains would invalidate that sibling's negotiated media.
         return Ok(());
     }
-    if session_state.sdp_negotiation.initial_offer_applied {
-        worker_stage_native_media_removal(session_state, handle.mid())
+    if session_state.sdp_negotiation.initial_offer_applied() {
+        negotiation::queue_removal(session_state, handle.mid())
     } else {
         session_state.rtc.direct_api().remove_media(handle.mid());
         Ok(())
@@ -117,8 +115,8 @@ fn can_unregister_unnegotiated_producer(
         RegisteredMediaHandle::Producer { session_key, mid }
             if let Some(session_state) = state.users.get(session_key) =>
         {
-            session_state.sdp_negotiation.initial_offer_applied
-                && !offer_is_awaiting_answer(session_state)
+            session_state.sdp_negotiation.initial_offer_applied()
+                && !session_state.sdp_negotiation.is_awaiting_answer()
                 && !session_state
                     .sdp_negotiation
                     .negotiated_producer_parameters
@@ -126,60 +124,6 @@ fn can_unregister_unnegotiated_producer(
         }
         RegisteredMediaHandle::Producer { .. } | RegisteredMediaHandle::Consumer { .. } => false,
     }
-}
-
-fn offer_is_awaiting_answer(session_state: &RtcSessionState) -> bool {
-    // `SdpPendingOffer` exists both before and after handout. Taking
-    // `staged_offer` is what marks the offer as visible to the remote peer.
-    session_state.sdp_negotiation.pending_offer.is_some()
-        && session_state.sdp_negotiation.staged_offer.is_none()
-}
-
-/// "Removal" for negotiated media means preserving the existing MID and
-/// disabling the m-section with `inactive`, not rejecting it out of the SDP.
-///
-/// If an earlier offer is already in flight, removal is deferred into the next
-/// follow-up offer so the worker keeps the one-outstanding-offer contract.
-fn worker_stage_native_media_removal(
-    session_state: &mut RtcSessionState,
-    mid: Mid,
-) -> Result<(), TransportAdapterError> {
-    if offer_is_awaiting_answer(session_state) {
-        session_state
-            .sdp_negotiation
-            .queued_removal_mids
-            .insert(mid);
-        return Ok(());
-    }
-    let Some(media) = session_state.rtc.media(mid) else {
-        return Err(TransportAdapterError::InvalidInput);
-    };
-    if media.direction() == Direction::Inactive {
-        session_state.reset_rtx_streams(mid);
-        return Ok(());
-    }
-
-    let existing_pending_offer = session_state
-        .sdp_negotiation
-        .pending_offer
-        .take()
-        .map(|pending| pending.token);
-    let applied = {
-        let mut sdp_api = session_state.rtc.sdp_api();
-        if let Some(pending_offer) = existing_pending_offer {
-            sdp_api.merge(pending_offer);
-        }
-        sdp_api.set_direction(mid, Direction::Inactive);
-        sdp_api.apply()
-    };
-    session_state.reset_rtx_streams(mid);
-    let Some((offer, pending_offer)) = applied else {
-        return Err(TransportAdapterError::InvalidInput);
-    };
-    let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer, Vec::new());
-    negotiation.queued_removal_mids.remove(&mid);
-    Ok(())
 }
 
 /// Declares one recv-only producer media for a publishing session.
@@ -200,10 +144,10 @@ pub fn worker_add_recv_media(
     let Some(session_state) = state.users.get_mut(session_key) else {
         return Err(TransportAdapterError::TransportUnavailable);
     };
-    let mid = if session_state.sdp_negotiation.initial_offer_applied {
+    let mid = if session_state.sdp_negotiation.initial_offer_applied() {
         // A negotiated description must change through an offer. Before the
         // first answer there is no remote description to keep in sync.
-        worker_stage_native_recv_media(
+        negotiation::stage_recv_media(
             session_state,
             media_kind,
             rtp_parameters,
@@ -213,7 +157,7 @@ pub fn worker_add_recv_media(
     } else {
         let mid = transport_mid(rtp_parameters).unwrap_or_default();
         let has_media = session_state.rtc.media(mid).is_some();
-        let recv_streams = recv_encoding_identities(rtp_parameters);
+        let recv_streams = negotiation::recv_encoding_identities(rtp_parameters);
         {
             let mut api = session_state.rtc.direct_api();
             if !has_media {
@@ -250,67 +194,6 @@ pub fn worker_add_recv_media(
         "declared recv-only media on rtc user for incoming producer RTP"
     );
     Ok(transport_media_id)
-}
-
-/// Stages a producer-side recv-only media section in the next local offer.
-fn worker_stage_native_recv_media(
-    session_state: &mut RtcSessionState,
-    media_kind: MediaKind,
-    rtp_parameters: &RouterRtpParameters,
-    profile: &RtpProfile,
-    video_bitrate_limits: VideoBitrateLimits,
-) -> TransportResult<Mid> {
-    if offer_is_awaiting_answer(session_state) {
-        return Err(TransportAdapterError::InvalidInput);
-    }
-
-    let existing_pending_offer = session_state
-        .sdp_negotiation
-        .pending_offer
-        .take()
-        .map(|pending| pending.token);
-    let mut sdp_api = session_state.rtc.sdp_api();
-    if let Some(pending_offer) = existing_pending_offer {
-        sdp_api.merge(pending_offer);
-    }
-    let mid = sdp_api.add_media(
-        media_kind,
-        Direction::RecvOnly,
-        None,
-        None,
-        codec::publish_recv_simulcast_or_default(
-            media_kind,
-            rtp_parameters,
-            profile,
-            video_bitrate_limits,
-        ),
-    );
-    let Some((offer, pending_offer)) = sdp_api.apply() else {
-        return Err(TransportAdapterError::TransportUnavailable);
-    };
-    let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(
-        offer,
-        pending_offer,
-        vec![upload_slot(
-            mid,
-            media_kind,
-            rtp_parameters,
-            profile,
-            video_bitrate_limits,
-        )],
-    );
-    // `accept_answer` can recreate `StreamRx` bindings. Retain SSRC and RID so
-    // answer application can restore publisher identity and the bitrate cap.
-    let pending_streams = recv_encoding_identities(rtp_parameters).collect::<Vec<_>>();
-    if pending_streams.is_empty() {
-        negotiation.pending_recv_streams.remove(&mid);
-    } else {
-        negotiation
-            .pending_recv_streams
-            .insert(mid, pending_streams);
-    }
-    Ok(mid)
 }
 
 /// Declares one send-only consumer media and installs its source route.
@@ -412,8 +295,8 @@ fn declare_consumer_stream(
     sync: SourceSyncPolicy,
     consumer_rtp_parameters: &RouterRtpParameters,
 ) -> TransportResult<(Mid, ConsumerStreamHandle, bool)> {
-    let mid = if session_state.sdp_negotiation.initial_offer_applied {
-        worker_stage_native_send_media(session_state, source, media_kind, sync)?
+    let mid = if session_state.sdp_negotiation.initial_offer_applied() {
+        negotiation::stage_send_media(session_state, source, media_kind, sync)?
     } else {
         let mid = transport_mid(consumer_rtp_parameters).unwrap_or_default();
         declare_direct_send_media(session_state, mid, media_kind, consumer_rtp_parameters);
@@ -422,62 +305,8 @@ fn declare_consumer_stream(
     Ok((
         mid,
         session_state.consumer_streams.allocate(mid),
-        !session_state.sdp_negotiation.initial_offer_applied,
+        !session_state.sdp_negotiation.initial_offer_applied(),
     ))
-}
-
-/// Stages one send-only consumer media section in the next local offer.
-///
-/// # Errors
-///
-/// Returns [`TransportAdapterError::InvalidInput`] after an offer has been
-/// handed out. A new MID cannot be merged into that offer and a second
-/// [`str0m::change::SdpApi::apply`] would invalidate the
-/// [`str0m::change::SdpPendingOffer`] needed by its answer.
-/// Returns [`TransportAdapterError::TransportUnavailable`] when str0m cannot
-/// apply the staged change.
-fn worker_stage_native_send_media(
-    session_state: &mut RtcSessionState,
-    source: &TransportSessionKey,
-    media_kind: MediaKind,
-    sync: SourceSyncPolicy,
-) -> TransportResult<Mid> {
-    if offer_is_awaiting_answer(session_state) {
-        warn!(
-            ?media_kind,
-            initial_offer_applied = session_state.sdp_negotiation.initial_offer_applied,
-            "cannot stage consumer media while a previous offer is still awaiting answer"
-        );
-        return Err(TransportAdapterError::InvalidInput);
-    }
-
-    let existing_pending_offer = session_state
-        .sdp_negotiation
-        .pending_offer
-        .take()
-        .map(|pending| pending.token);
-    let mut sdp_api = session_state.rtc.sdp_api();
-    if let Some(pending_offer) = existing_pending_offer {
-        sdp_api.merge(pending_offer);
-    }
-    // Browsers synchronize only one audio/video pair per SDP stream. Sources
-    // outside that pair need independent IDs so they cannot displace its video.
-    // https://webrtc.googlesource.com/src/+/refs/heads/main/call/call.cc
-    let stream_id = match sync {
-        SourceSyncPolicy::Independent => None,
-        SourceSyncPolicy::Publisher => Some(format!(
-            "sfu-{}-{}",
-            source.room_instance_id(),
-            source.connection_id()
-        )),
-    };
-    let mid = sdp_api.add_media(media_kind, Direction::SendOnly, stream_id, None, None);
-    let Some((offer, pending_offer)) = sdp_api.apply() else {
-        return Err(TransportAdapterError::TransportUnavailable);
-    };
-    let negotiation = &mut session_state.sdp_negotiation;
-    negotiation.stage_offer(offer, pending_offer, Vec::new());
-    Ok(mid)
 }
 
 /// Declares one RID-less downstream stream for the consumer.
@@ -519,58 +348,4 @@ fn declare_direct_send_media(
 
 fn transport_mid(rtp_parameters: &RouterRtpParameters) -> Option<Mid> {
     rtp_parameters.mid().map(Into::into)
-}
-
-fn recv_encoding_identities(
-    rtp_parameters: &RouterRtpParameters,
-) -> impl Iterator<Item = PendingRecvStream> + '_ {
-    rtp_parameters.bindings().filter_map(|encoding| {
-        encoding.ssrc().map(|ssrc| PendingRecvStream {
-            ssrc: Ssrc::from(ssrc),
-            repair_ssrc: encoding.repair_ssrc().map(Ssrc::from),
-            rid: encoding.rid().map(Into::into),
-        })
-    })
-}
-
-fn upload_slot(
-    mid: Mid,
-    media_kind: MediaKind,
-    rtp_parameters: &RouterRtpParameters,
-    profile: &RtpProfile,
-    video_bitrate_limits: VideoBitrateLimits,
-) -> SessionUploadSlot {
-    SessionUploadSlot {
-        mid: mid.to_string(),
-        kind: negotiation::upload_kind(media_kind),
-        codecs: upload_codecs(media_kind, rtp_parameters, profile),
-        simulcast_encodings: codec::publish_upload_encodings_or_default(
-            media_kind,
-            rtp_parameters,
-            profile,
-            video_bitrate_limits,
-        ),
-    }
-}
-
-fn upload_codecs(
-    media_kind: MediaKind,
-    rtp_parameters: &RouterRtpParameters,
-    profile: &RtpProfile,
-) -> Vec<String> {
-    let mut codecs = Vec::new();
-    for format in rtp_parameters.formats() {
-        let codec = format.codec_name();
-        if !codecs
-            .iter()
-            .any(|existing: &String| existing.as_str() == codec)
-        {
-            codecs.push(codec.to_owned());
-        }
-    }
-    if codecs.is_empty() {
-        profile.codec_names(media_kind).to_vec()
-    } else {
-        codecs
-    }
 }

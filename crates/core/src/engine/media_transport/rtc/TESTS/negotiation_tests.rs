@@ -1278,13 +1278,18 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
         .create_session_renegotiation_offer(&consumer_key)
         .await
         .expect("staged addition offer should be available");
-    apply_offer_answer(
-        &adapter,
-        &consumer_key,
-        &mut remote,
-        addition_offer.into_parts().0,
-    )
-    .await;
+    let addition_offer = SdpOffer::from_sdp_string(&addition_offer.into_parts().0)
+        .expect("addition offer should parse");
+    assert!(addition_offer.session.end_of_candidates());
+    let addition_answer = remote
+        .sdp_api()
+        .accept_offer(addition_offer)
+        .expect("remote answer should build")
+        .to_sdp_string();
+    adapter
+        .apply_session_answer(&consumer_key, &addition_answer)
+        .await
+        .expect("addition answer should apply");
 
     assert!(
         adapter
@@ -1298,6 +1303,15 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
             .await
             .expect("test probe must complete"),
         None
+    );
+
+    // Removal preserves the m-sections, so the prior answer passes preflight.
+    // It must not consume the removal draft before that offer is delivered.
+    assert_eq!(
+        adapter
+            .apply_session_answer(&consumer_key, &addition_answer)
+            .await,
+        Err(TransportAdapterError::InvalidInput)
     );
 
     let removal_offer = adapter

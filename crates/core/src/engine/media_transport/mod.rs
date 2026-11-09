@@ -241,8 +241,12 @@ impl MediaTransport {
     ///
     /// # Errors
     ///
-    /// Returns [`TransportAdapterError`] when the session cannot be addressed,
-    /// the answer is invalid or the active backend cannot apply it.
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the session
+    /// or its worker is unavailable, or [`TransportAdapterError::InvalidInput`]
+    /// when no offer is pending or answer preflight rejects the input.
+    /// Returns [`TransportAdapterError::AnswerApplicationFailed`] when str0m
+    /// rejects the answer after consuming the offer token. The caller must close
+    /// the session because its transport state cannot be restored for a retry.
     pub async fn apply_session_answer(
         &self,
         session_key: &TransportSessionKey,

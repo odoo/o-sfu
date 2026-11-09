@@ -16,19 +16,19 @@ use std::{
 
 use o_sfu_rfc::webrtc::MediaKind as ProtocolMediaKind;
 use str0m::{
-    change::{SdpAnswer, SdpApi},
+    change::SdpAnswer,
     media::{Direction, Media, MediaKind, Mid},
 };
 use tracing::debug;
 
 use super::{
-    super::{
-        RtpProfile, bootstrap, codec,
-        commands::{ParsedSessionAnswer, RtcSessionOffer},
-        state::{PacketLoopState, PendingSessionOffer, bitrate::BitrateRegistry},
+    RtpProfile, bootstrap, codec,
+    commands::{ParsedSessionAnswer, RtcSessionOffer},
+    control::{
+        publication::{answer_producer_projection, refresh_negotiated_producer_parameters},
+        recv_stream::{RecvStreamRepair, StaleSsrcPolicy, apply_recv_stream},
     },
-    publication::{answer_producer_projection, refresh_negotiated_producer_parameters},
-    recv_stream::{RecvStreamRepair, StaleSsrcPolicy, apply_recv_stream},
+    state::{PacketLoopState, bitrate::BitrateRegistry},
 };
 use crate::{
     Bitrate, RtcTcpConfig, VideoBitrateLimits,
@@ -42,8 +42,13 @@ use crate::{
     },
 };
 
-const INITIAL_NEGOTIATION_DIRECTION: Direction = Direction::RecvOnly;
-const INITIAL_NEGOTIATION_MEDIA_KINDS: [MediaKind; 2] = [MediaKind::Audio, MediaKind::Video];
+mod media;
+mod state;
+pub(super) use media::{
+    queue_removal, recv_encoding_identities, stage_recv_media, stage_send_media,
+};
+use state::PendingRecvStream;
+pub(super) use state::SessionSdpNegotiationState;
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferBootstrapConfig<'a> {
@@ -76,44 +81,17 @@ pub(super) fn worker_create_initial_session_offer(
     let Some(session_state) = state.users.get_mut(session_key) else {
         return Err(TransportAdapterError::TransportUnavailable);
     };
-    if session_state.sdp_negotiation.pending_offer.is_some() {
-        return Err(TransportAdapterError::InvalidInput);
-    }
-    if session_state.sdp_negotiation.initial_offer_applied {
-        return Err(TransportAdapterError::UnsupportedFeature);
-    }
-
-    let bootstrap_mids = &mut session_state.sdp_negotiation.bootstrap_mids;
-    let (offer, pending_offer) = {
-        let mut sdp_api = session_state.rtc.sdp_api();
-        ensure_initial_negotiation_media(
-            bootstrap_mids,
-            &mut sdp_api,
-            config.profile,
-            config.video_bitrate_limits,
-        );
-        sdp_api
-            .apply()
-            .ok_or(TransportAdapterError::TransportUnavailable)?
-    };
-
-    session_state.sdp_negotiation.pending_offer =
-        Some(PendingSessionOffer::new(&offer, pending_offer));
-    session_state.sdp_negotiation.staged_offer = None;
-    session_state
-        .sdp_negotiation
-        .staged_offer_upload_slots
-        .clear();
-    Ok(RtcSessionOffer::new(
-        offer,
-        initial_upload_slots(bootstrap_mids, config.profile, config.video_bitrate_limits),
-    ))
+    session_state.sdp_negotiation.create_initial_offer(
+        &mut session_state.rtc,
+        config.profile,
+        config.video_bitrate_limits,
+    )
 }
 
 /// Returns the one staged follow-up offer for `session_key`.
 ///
-/// Delivery consumes `staged_offer` but retains `pending_offer` until answer
-/// application. The same offer cannot be requested twice.
+/// Delivery retains the token and answer projection until answer application.
+/// The same offer cannot be requested twice.
 ///
 /// # Errors
 ///
@@ -129,20 +107,7 @@ pub(super) fn worker_create_session_renegotiation_offer(
     let Some(session_state) = state.users.get_mut(session_key) else {
         return Err(TransportAdapterError::TransportUnavailable);
     };
-    if !session_state.sdp_negotiation.initial_offer_applied {
-        return Err(TransportAdapterError::InvalidInput);
-    }
-    let Some(offer) = session_state.sdp_negotiation.staged_offer.take() else {
-        if session_state.sdp_negotiation.pending_offer.is_some() {
-            return Err(TransportAdapterError::InvalidInput);
-        }
-        return Err(TransportAdapterError::UnsupportedFeature);
-    };
-    let upload_slots = session_state
-        .sdp_negotiation
-        .staged_offer_upload_slots
-        .clone();
-    Ok(RtcSessionOffer::new(*offer, upload_slots))
+    session_state.sdp_negotiation.take_offer()
 }
 
 /// Accept the currently pending local offer and reconcile every worker-local
@@ -172,8 +137,7 @@ pub(super) fn worker_apply_session_answer(
     let offered_repair = state
         .users
         .get(session_key)
-        .and_then(|session| session.sdp_negotiation.pending_offer.as_ref())
-        .map(|pending| &pending.repair)
+        .and_then(|session| session.sdp_negotiation.offered_repair())
         .ok_or(TransportAdapterError::InvalidInput)?;
     // An answer can only retain repair mappings from the offer. The primary and RTX
     // payload types form one mapping.
@@ -207,24 +171,10 @@ pub(super) fn worker_apply_session_answer(
         let Some(session_state) = state.users.get_mut(session_key) else {
             return Err(TransportAdapterError::TransportUnavailable);
         };
-        let Some(pending_offer) = session_state
+        let staged_upload_slots = session_state
             .sdp_negotiation
-            .pending_offer
-            .take()
-            .map(|pending| pending.token)
-        else {
-            return Err(TransportAdapterError::InvalidInput);
-        };
-        session_state
-            .rtc
-            .sdp_api()
-            .accept_answer(pending_offer, answer)
-            .map_err(|_error| TransportAdapterError::InvalidInput)?;
+            .accept_answer(&mut session_state.rtc, answer)?;
         session_state.purge_removed_rtx_streams();
-        session_state.sdp_negotiation.initial_offer_applied = true;
-        session_state.sdp_negotiation.staged_offer = None;
-        let staged_upload_slots =
-            mem::take(&mut session_state.sdp_negotiation.staged_offer_upload_slots);
         apply_pending_recv_streams(session_state, max_bitrate_in);
         session_state.dtls_started = true;
         staged_upload_slots
@@ -307,7 +257,7 @@ fn offer_encodings_by_mid(
         .ok_or(TransportAdapterError::TransportUnavailable)?;
     let mut encodings = session_state
         .sdp_negotiation
-        .staged_offer_upload_slots
+        .upload_slots()
         .iter()
         .map(|slot| {
             (
@@ -379,7 +329,7 @@ fn answer_remote_candidate_addrs(answer: &SdpAnswer) -> Vec<RemoteTransportAddr>
 }
 
 fn apply_pending_recv_streams(
-    session_state: &mut super::super::state::RtcSessionState,
+    session_state: &mut super::state::RtcSessionState,
     max_bitrate_in: Bitrate,
 ) {
     // Answer-time recv refresh can recreate `StreamRx` bindings, so REMB must
@@ -422,75 +372,29 @@ fn apply_pending_recv_streams(
     }
 }
 
-fn stage_queued_removal_offer(session_state: &mut super::super::state::RtcSessionState) {
+fn stage_queued_removal_offer(session_state: &mut super::state::RtcSessionState) {
     if session_state.sdp_negotiation.queued_removal_mids.is_empty() {
         return;
     }
 
     let queued_removal_mids = mem::take(&mut session_state.sdp_negotiation.queued_removal_mids);
-    let applied = {
-        let mut sdp_api = session_state.rtc.sdp_api();
-        for mid in &queued_removal_mids {
-            sdp_api.set_direction(*mid, Direction::Inactive);
-        }
-        sdp_api.apply()
-    };
+    // No offer can be delivered between accepting the answer and this call in
+    // the same worker turn, so staging cannot reject an outstanding offer.
+    // Already inactive MIDs need no further SDP change.
+    let _ = session_state
+        .sdp_negotiation
+        .stage_change(&mut session_state.rtc, |api| {
+            for mid in &queued_removal_mids {
+                api.set_direction(*mid, Direction::Inactive);
+            }
+            ((), Vec::new())
+        });
     for mid in &queued_removal_mids {
         session_state.reset_rtx_streams(*mid);
     }
-    let Some((offer, pending_offer)) = applied else {
-        return;
-    };
-    session_state
-        .sdp_negotiation
-        .stage_offer(offer, pending_offer, Vec::new());
 }
 
-fn ensure_initial_negotiation_media(
-    bootstrap_mids: &mut Vec<Mid>,
-    sdp_api: &mut SdpApi<'_>,
-    profile: &RtpProfile,
-    video_bitrate_limits: VideoBitrateLimits,
-) {
-    if !bootstrap_mids.is_empty() {
-        return;
-    }
-    *bootstrap_mids = INITIAL_NEGOTIATION_MEDIA_KINDS
-        .into_iter()
-        .map(|media_kind| {
-            sdp_api.add_media(
-                media_kind,
-                INITIAL_NEGOTIATION_DIRECTION,
-                None,
-                None,
-                codec::bootstrap_recv_simulcast(media_kind, profile, video_bitrate_limits),
-            )
-        })
-        .collect();
-}
-
-fn initial_upload_slots(
-    bootstrap_mids: &[Mid],
-    profile: &RtpProfile,
-    video_bitrate_limits: VideoBitrateLimits,
-) -> Vec<SessionUploadSlot> {
-    INITIAL_NEGOTIATION_MEDIA_KINDS
-        .iter()
-        .zip(bootstrap_mids.iter())
-        .map(|(media_kind, mid)| SessionUploadSlot {
-            mid: mid.to_string(),
-            kind: upload_kind(*media_kind),
-            codecs: profile.codec_names(*media_kind).to_vec(),
-            simulcast_encodings: codec::bootstrap_upload_encodings(
-                *media_kind,
-                profile,
-                video_bitrate_limits,
-            ),
-        })
-        .collect()
-}
-
-pub(super) fn upload_kind(media_kind: MediaKind) -> ProtocolMediaKind {
+fn upload_kind(media_kind: MediaKind) -> ProtocolMediaKind {
     if media_kind.is_video() {
         ProtocolMediaKind::Video
     } else {

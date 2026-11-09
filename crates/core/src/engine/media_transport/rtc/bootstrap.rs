@@ -25,11 +25,9 @@ use super::{
     RtpProfile,
     consumer_egress::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS},
     egress::RtcEgress,
+    negotiation::SessionSdpNegotiationState,
     packet_loop::{IngressPacket, RtcIngress, RtcUdpSocket, UdpReceiveTask},
-    state::{
-        RtcSessionState, SessionSdpNegotiationState, SharedRtcSocket, bitrate::MediaBitrateCounter,
-        slots::SessionStore,
-    },
+    state::{RtcSessionState, SharedRtcSocket, bitrate::MediaBitrateCounter, slots::SessionStore},
 };
 use crate::{
     Bitrate, RtcPortRange, RtcTcpConfig, RtcUdpIoBackend,

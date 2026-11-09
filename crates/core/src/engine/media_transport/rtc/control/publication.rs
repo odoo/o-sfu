@@ -32,7 +32,7 @@ use crate::{
     engine::media_transport::{TransportAdapterError, TransportSessionKey},
 };
 
-pub(super) struct AnswerProducerProjection {
+pub(in crate::engine::media_transport::rtc) struct AnswerProducerProjection {
     mid: Mid,
     direction: Direction,
     payload_params: Vec<PayloadParams>,
@@ -40,7 +40,7 @@ pub(super) struct AnswerProducerProjection {
     signaled_ssrcs: Vec<(u32, Option<u32>)>,
 }
 
-pub(super) fn answer_producer_projection(
+pub(in crate::engine::media_transport::rtc) fn answer_producer_projection(
     answer: &SdpAnswer,
     producer_mids: &[Mid],
 ) -> Result<Vec<AnswerProducerProjection>, TransportAdapterError> {
@@ -78,7 +78,7 @@ pub(super) fn answer_producer_projection(
         .collect()
 }
 
-pub(super) fn refresh_negotiated_producer_parameters(
+pub(in crate::engine::media_transport::rtc) fn refresh_negotiated_producer_parameters(
     state: &mut PacketLoopState,
     session_key: &TransportSessionKey,
     producer_mids: &[Mid],

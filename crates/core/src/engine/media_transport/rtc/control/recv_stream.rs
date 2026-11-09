@@ -10,7 +10,7 @@ use crate::Bitrate;
 
 /// Selects the authoritative SSRC when str0m already has a `(mid, rid)` binding.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum StaleSsrcPolicy {
+pub(in crate::engine::media_transport::rtc) enum StaleSsrcPolicy {
     /// Preserves str0m's primary SSRC while applying negotiated repair state.
     KeepExisting,
     /// Replaces a binding that disagrees with the pending receive identity after
@@ -19,7 +19,7 @@ pub(super) enum StaleSsrcPolicy {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct RecvStreamRepair {
+pub(in crate::engine::media_transport::rtc) struct RecvStreamRepair {
     pub ssrc: Option<Ssrc>,
     pub nack_enabled: bool,
 }
@@ -31,7 +31,7 @@ pub(super) struct RecvStreamRepair {
 /// repair SSRC recreates `StreamRx` because [`DirectApi`] cannot replace RTX
 /// identity in place. Generic NACK follows the negotiated repair mapping rather
 /// than repair SSRC discovery because the first NACK can discover dynamic RTX.
-pub(super) fn apply_recv_stream(
+pub(in crate::engine::media_transport::rtc) fn apply_recv_stream(
     api: &mut DirectApi<'_>,
     mid: Mid,
     rid: Option<Rid>,

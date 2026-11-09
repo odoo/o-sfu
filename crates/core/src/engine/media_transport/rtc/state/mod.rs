@@ -48,14 +48,11 @@ pub(super) mod ufrag_registry;
 pub(super) mod ufrag_worker_map;
 
 pub(super) use consumer_routes::ConsumerRouteRegistration;
-pub(super) use session::{
-    PendingRecvStream, PendingSessionOffer, RtcNackTotals, RtcSessionState, RtcpIngressBudget,
-    SessionSdpNegotiationState, muxed_rtp_ssrc,
-};
 #[cfg(test)]
 pub(super) use session::{
     RTCP_INGRESS_BUDGET_CAPACITY_BYTES, RTCP_INGRESS_BUDGET_REFILL_BYTES_PER_SECOND,
 };
+pub(super) use session::{RtcNackTotals, RtcSessionState, RtcpIngressBudget, muxed_rtp_ssrc};
 pub use snapshot::RtcSnapshotState;
 
 use self::{
