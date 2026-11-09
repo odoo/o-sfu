@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use o_sfu_rfc::{
     rtp as rfc_rtp,
-    webrtc::{self, sdp},
+    webrtc::{self, MediaKind as ProtocolMediaKind, sdp},
 };
 use o_sfu_router::{
     MediaKind as RouterMediaKind, rtp::RtcpFeedbackKind,
@@ -1069,13 +1069,12 @@ async fn rtc_session_renegotiation_projects_multiple_protocol_producers_from_one
         .create_session_renegotiation_offer(&session_key)
         .await
         .expect("staged renegotiation offer should be available");
-    let applied_answer = apply_offer_answer(
-        &adapter,
-        &session_key,
-        &mut remote,
-        renegotiation_offer.into_parts().0,
-    )
-    .await;
+    let (offer_sdp, upload_slots) = renegotiation_offer.into_parts();
+    assert_eq!(upload_slots.len(), 2);
+    assert_eq!(upload_slots[0].kind, ProtocolMediaKind::Audio);
+    assert_eq!(upload_slots[1].kind, ProtocolMediaKind::Video);
+    assert_ne!(upload_slots[0].mid, upload_slots[1].mid);
+    let applied_answer = apply_offer_answer(&adapter, &session_key, &mut remote, offer_sdp).await;
 
     assert!(
         applied_answer
