@@ -139,17 +139,21 @@ impl SessionSdpNegotiationState {
         change: impl FnOnce(&mut SdpApi<'_>) -> (T, Vec<SessionUploadSlot>),
     ) -> TransportResult<Option<T>> {
         let mut api = rtc.sdp_api();
-        match mem::take(&mut self.phase) {
+        let mut upload_slots = match mem::take(&mut self.phase) {
             OfferPhase::Staged { pending, .. } => {
                 api.merge(pending.token);
+                pending.upload_slots
             }
-            OfferPhase::Idle => {}
+            OfferPhase::Idle => Vec::new(),
             OfferPhase::Delivered(pending) => {
                 self.phase = OfferPhase::Delivered(pending);
                 return Err(TransportAdapterError::InvalidInput);
             }
         };
-        let (result, upload_slots) = change(&mut api);
+        let (result, slots) = change(&mut api);
+        // Merged offers still contain earlier producer additions, so their
+        // upload slots must survive later changes to the same draft.
+        upload_slots.extend(slots);
         let Some((offer, token)) = api.apply() else {
             return Ok(None);
         };
