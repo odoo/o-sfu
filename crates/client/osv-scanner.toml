@@ -1,0 +1,10 @@
+# Remove when every locked minimatch is >=11.0.1.
+# Reassess if callers enable optimizationLevel >= 2 or accept untrusted globs.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+reason = """
+minimatch is used only by development lint tooling with repository-defined
+globs. Locked ESLint, @eslint/config-array and typescript-estree callers use
+the default optimizationLevel 1. This advisory requires attacker-controlled
+globs with optimizationLevel >= 2.
+"""
