@@ -34,7 +34,7 @@ secrecy = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 str0m.workspace = true
-str0m-netem = "0.4"
+str0m-netem = "0.5"
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tokio-util.workspace = true
