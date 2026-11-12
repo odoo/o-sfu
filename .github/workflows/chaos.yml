@@ -58,6 +58,8 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
 
       - name: Install nightly formatter
         if: matrix.project == 'chromium'
