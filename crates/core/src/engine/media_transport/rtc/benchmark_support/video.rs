@@ -11,7 +11,7 @@ use super::super::{
     recovery::{PendingKeyframeRequest, apply_src_decoder_ready, flush_pending_kf_reqs_at},
     state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
     test_support::{MediaWorkerScenario, test_transport_session_key},
-    worker::PacketLoopBuffers,
+    worker::buffers::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,

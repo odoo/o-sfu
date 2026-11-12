@@ -1,3 +1,5 @@
+//! Test hooks for rooms and the room manager.
+
 use super::{Room, RoomManager};
 use crate::engine::UserId;
 
@@ -6,6 +8,7 @@ mod lifecycle;
 mod media;
 
 pub use self::media::NegotiatedPublish;
+pub use super::{media_graph::ConsumerRouteState, placement::test_support::JoinPlacementTestGate};
 
 #[derive(Clone, Copy)]
 pub struct RoomTestApi<'a> {

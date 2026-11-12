@@ -96,7 +96,7 @@ impl<'a> MediaWorkerScenario<'a> {
         self.install_destination(src_media, session_key, mid, packet_gate, None)
     }
 
-    #[cfg(any(test, feature = "internal-benchmarks"))]
+    #[cfg(feature = "internal-benchmarks")]
     pub fn destination_with_pending_gate(
         &mut self,
         src_media: TransportMediaId,

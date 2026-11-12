@@ -17,7 +17,7 @@ use super::*;
 use crate::{
     MediaWorkerId,
     engine::{
-        ConnectionId, RoomInstanceId, TestSourceKind, UserId, UserPermissions,
+        ConnectionId, RoomInstanceId, UserId, UserPermissions,
         media_transport::{
             ConsumerActivity, ProducerActivity, RelayRouteActivity, SourceActivityRevision,
             SourceActivityUpdate, TransportAdapterError, TransportMediaId,
@@ -36,7 +36,7 @@ use crate::{
         },
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceSyncPolicy,
-            UserStreamId,
+            UserStreamId, test_support::TestSourceKind,
         },
     },
 };

@@ -4,7 +4,7 @@ use o_sfu_router::{
 
 use super::{
     super::{
-        JoinUserRequest, RoomEffectContext, RoomJoinError, UserOutboundSender,
+        JoinUserRequest, RoomJoinError, UserOutboundSender, effects::batch::RoomEffectContext,
         placement::JoinAdmissionTurn,
     },
     RoomTestApi,

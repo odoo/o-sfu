@@ -24,11 +24,9 @@
 //! production transport API, such as seeding demux state or injecting an
 //! audio activity observation
 
-#[cfg(all(not(test), feature = "testing-transport"))]
-use std::time::Instant;
-use std::{error::Error, fmt};
 #[cfg(test)]
-use std::{net::SocketAddr, time::Instant};
+use std::net::SocketAddr;
+use std::{error::Error, fmt, time::Instant};
 
 use str0m::media::Mid;
 use tokio::sync::oneshot;
@@ -78,7 +76,6 @@ pub(in crate::engine::media_transport::rtc) trait DebugProbe:
     ) -> Self::Output;
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl<F, Output> DebugProbe for F
 where
     F: FnOnce(&PacketLoopState, &WorkerCommandContext<'_>) -> Output + Send + 'static,
@@ -225,13 +222,11 @@ impl DebugProbe for SessionStreamTxSsrcProbe {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct RouteEntryProbe {
     pub src_key: TransportSessionKey,
     pub source_mid: Mid,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for RouteEntryProbe {
     type Output = Option<DebugRouteEntry>;
 
@@ -265,12 +260,10 @@ impl DebugProbe for RouteEntryByConsumerMidProbe {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct RouteEntryByMediaIdProbe {
     pub src_media: TransportMediaId,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for RouteEntryByMediaIdProbe {
     type Output = Option<DebugRouteEntry>;
 
@@ -283,12 +276,10 @@ impl DebugProbe for RouteEntryByMediaIdProbe {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct ReceiverBweTargetProbe {
     pub session_key: TransportSessionKey,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for ReceiverBweTargetProbe {
     type Output = Option<Bitrate>;
 
@@ -304,14 +295,12 @@ impl DebugProbe for ReceiverBweTargetProbe {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct RecordIncomingMediaProbe {
     pub transport_media_id: TransportMediaId,
     pub payload_bytes: usize,
     pub now: Instant,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for RecordIncomingMediaProbe {
     type Output = bool;
 
@@ -327,7 +316,6 @@ impl DebugProbe for RecordIncomingMediaProbe {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct ObserveAudioActivityProbe {
     pub transport_media_id: TransportMediaId,
     pub voice_activity: Option<bool>,
@@ -335,7 +323,6 @@ pub struct ObserveAudioActivityProbe {
     pub now: Instant,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl DebugProbe for ObserveAudioActivityProbe {
     type Output = ();
 

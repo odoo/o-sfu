@@ -89,7 +89,10 @@ pub mod room {
     #[cfg(any(test, feature = "testing-transport"))]
     pub mod test_support {
         pub use crate::engine::{
-            room::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi},
+            room::test_support::{
+                ConsumerRouteState, JoinPlacementTestGate, NegotiatedPublish, RoomManagerTestApi,
+                RoomTestApi,
+            },
             source_model::test_support::{
                 TestSourceKind, TestSubscriptionStates, source_kind_for_stream_id,
                 source_publish_intent_for_source, stream_id_for_source,
@@ -103,8 +106,6 @@ pub mod room {
         pub use crate::engine::room::run_source_policy_turn_for_benchmark;
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub use crate::engine::room::{ConsumerRouteState, JoinPlacementTestGate};
     pub use crate::{
         MediaWorkerId,
         engine::room::{
@@ -156,28 +157,12 @@ pub mod source_model {
 ///
 /// code above this module should not branch on RTC worker internals
 pub mod transport {
-
-    #[cfg(any(test, feature = "testing-transport"))]
-    pub mod test_support {
-        //! non-production media transport route inspectors
-
-        pub use crate::engine::media_transport::test_support::*;
-    }
-
     #[cfg(feature = "internal-benchmarks")]
-    pub mod benchmark_support {
-        //! feature-gated packet-loop benchmark fixtures
-
-        pub use crate::engine::media_transport::benchmark_support::*;
-    }
-
+    pub use crate::engine::media_transport::benchmark_support;
     #[cfg(any(test, fuzzing))]
-    pub mod fuzz_support {
-        pub use crate::engine::media_transport::fuzz_support::{
-            client_rtp_capabilities_from_answer, route_packet_loop_ingress_demux,
-        };
-    }
-
+    pub use crate::engine::media_transport::fuzz_support;
+    #[cfg(any(test, feature = "testing-transport"))]
+    pub use crate::engine::media_transport::test_support;
     pub use crate::{
         MediaWorkerId,
         engine::media_transport::{

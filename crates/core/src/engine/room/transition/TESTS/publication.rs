@@ -15,14 +15,16 @@ use o_sfu_router::{
 
 use super::{PublishStageOutcome, StagedPublish};
 use crate::engine::{
-    ConnectionId, TestSourceKind, UserId, UserPermissions,
+    ConnectionId, UserId, UserPermissions,
     media_transport::{
         AppliedSessionAnswer, MediaTransport, TransportMediaId,
         test_support::{test_media_transport, test_rtc_port_range},
     },
     metrics::RuntimeMetrics,
     room::{Room, RoomConfig, RoomManager, UserOutboundSender},
-    source_model::test_support::{source_publish_intent_for_source, stream_id_for_source},
+    source_model::test_support::{
+        TestSourceKind, source_publish_intent_for_source, stream_id_for_source,
+    },
 };
 
 fn media_transport() -> MediaTransport {

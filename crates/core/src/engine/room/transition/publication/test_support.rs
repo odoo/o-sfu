@@ -5,9 +5,11 @@ use super::PublishStageOutcome;
 use super::{RoomUserOperation, StagedPublish};
 use crate::engine::{ConnectionId, UserId, room::Room, source_model::UserStreamId};
 #[cfg(test)]
-use crate::engine::{TestSourceKind, media_transport::TransportMediaId};
-#[cfg(test)]
 use crate::engine::{media_transport::TransportAdapterError, source_model::SourcePublishIntent};
+#[cfg(test)]
+use crate::engine::{
+    media_transport::TransportMediaId, source_model::test_support::TestSourceKind,
+};
 
 impl StagedPublish {
     pub(crate) async fn commit_with_parameters(

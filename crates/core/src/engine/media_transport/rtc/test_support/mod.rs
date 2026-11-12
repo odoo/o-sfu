@@ -3,7 +3,6 @@
 mod media_routes;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 mod packets;
-#[cfg(any(test, feature = "testing-transport"))]
 mod probe;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 mod remote_control;
@@ -22,9 +21,7 @@ pub(super) use media_routes::{
     assert_remote_packet_gate_command, drain_ready_sessions, install_video_route_with_gate,
     test_consumer_session_key, test_consumer_session_key_on_worker, test_source_session_key,
 };
-#[cfg(any(test, feature = "testing-transport"))]
 pub use probe::{DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry};
-#[cfg(any(test, feature = "testing-transport"))]
 pub(super) use probe::{
     DebugProbe, DebugProbeRequest, ObserveAudioActivityProbe, ReceiverBweTargetProbe,
     RecordIncomingMediaProbe, RouteEntryByConsumerMidProbe, RouteEntryByMediaIdProbe,
@@ -65,6 +62,7 @@ pub(super) use self::{
     packets::serialize_stun_message,
     route_graph::{MediaWorkerScenario, prepare_source_session, prepare_source_session_with_rid},
 };
+pub use super::packet_loop::forwarded_packet::ForwardedPacket;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet;
 #[cfg(test)]

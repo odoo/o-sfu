@@ -27,14 +27,13 @@ use crate::{
         TransportTeardown,
         rtc::{
             tcp_acceptor::{TCP_RESOLVE_UFRAG_MAX, TcpFailure, take_closure_reason},
-            test_support::{Peer, serialize_stun_message},
+            test_support::{Peer, serialize_stun_message, test_transport_session_key},
         },
     },
     server::transport::{
         MediaTransport, TransportSessionKey,
         test_support::{
             test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
-            test_transport_session_key,
         },
     },
 };

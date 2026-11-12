@@ -23,7 +23,7 @@ mod policy_invalidation;
 mod route_control;
 mod rtc;
 mod teardown;
-#[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
+#[cfg(any(test, feature = "testing-transport"))]
 pub mod test_support;
 mod types;
 mod workers;
@@ -46,21 +46,15 @@ pub(crate) use route_control::{
 pub(in crate::engine::media_transport) use route_control::{
     ConsumerRouteControlFailure, ProducerRouteControl,
 };
-pub(crate) use teardown::{TransportTeardown, TransportTeardownAction};
 #[cfg(feature = "internal-benchmarks")]
-pub mod benchmark_support {
-    pub use super::rtc::benchmark_support::*;
-}
+pub use rtc::benchmark_support;
 #[cfg(any(test, fuzzing))]
-pub mod fuzz_support {
-    pub use super::rtc::{
-        client_rtp_capabilities_from_answer, fuzz_support::route_packet_loop_ingress_demux,
-    };
-}
+pub use rtc::fuzz_support;
 use rtc::{
     ParsedSessionAnswer, RtcSessionOffer, RtcWorker, RtcWorkerCommand, RtcWorkerResponse,
     RtpProfile,
 };
+pub(crate) use teardown::{TransportTeardown, TransportTeardownAction};
 use tracing::warn;
 pub use types::{
     ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,

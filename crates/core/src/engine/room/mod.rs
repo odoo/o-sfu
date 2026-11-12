@@ -28,7 +28,7 @@ mod recording;
 mod source_policy;
 mod state;
 #[cfg(any(test, feature = "testing-transport"))]
-mod test_support;
+pub mod test_support;
 mod transition;
 
 pub use factory::{RoomAdmissionPolicy, RoomConfig, RoomRuntimePolicy};
@@ -37,13 +37,9 @@ use instance::SourcePolicyGuard;
 pub use instance::{
     Room, RoomJoinError, RoomManagerJoinError, RoomManagerServeError, RoomMediaCounts,
 };
-#[cfg(any(test, feature = "testing-transport"))]
-pub use manager::JoinPlacementTestGate;
 pub use manager::{
     RoomManager, RoomUserAdmission, RuntimeRoomDirectorySnapshot, RuntimeRoomStatsSnapshot,
 };
-#[cfg(any(test, feature = "testing-transport"))]
-pub use media_graph::ConsumerRouteState;
 pub use membership::{JoinUserRequest, RoomUserPermissions, UserCloseReason};
 pub use outbound::{
     BroadcastPayload, BroadcastPayloadError, DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
@@ -59,9 +55,4 @@ pub use read_model::{
 };
 #[cfg(feature = "internal-benchmarks")]
 pub use source_policy::run_source_policy_turn_for_benchmark;
-#[cfg(any(test, feature = "testing-transport"))]
-pub use test_support::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi};
 pub(crate) use transition::{DeactivateIntentOutcome, PublishIntentOutcome};
-
-#[cfg(any(test, feature = "testing-transport"))]
-pub use self::effects::batch::RoomEffectContext;

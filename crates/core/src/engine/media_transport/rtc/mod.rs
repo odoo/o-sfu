@@ -41,19 +41,17 @@ mod consumer_egress;
 mod control;
 mod egress;
 #[cfg(any(test, fuzzing))]
-pub(crate) mod fuzz_support;
+pub mod fuzz_support;
 mod negotiation;
 mod packet_loop;
 mod recovery;
 mod state;
 mod tcp_acceptor;
-#[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
+#[cfg(any(test, feature = "testing-transport"))]
 pub mod test_support;
 mod worker;
 
 pub(super) use codec::RtpProfile;
-#[cfg(any(test, fuzzing))]
-pub use codec::client_rtp_capabilities_from_answer;
 pub(super) use commands::{ParsedSessionAnswer, RtcSessionOffer};
 pub use commands::{
     RtcWorkerCommand, RtcWorkerResponse, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
@@ -61,8 +59,6 @@ pub use commands::{
 pub(super) use tcp_acceptor::TcpAcceptor;
 pub use worker::{RtcWorker, WorkerAssignment};
 
-#[cfg(any(test, feature = "testing-transport"))]
-pub use self::packet_loop::forwarded_packet::ForwardedPacket;
 pub(super) use self::state::{route_control::PacketLayerGate, ufrag_worker_map::UfragWorkerMap};
 
 #[derive(Clone, Debug)]

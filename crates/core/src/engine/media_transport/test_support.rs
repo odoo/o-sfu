@@ -1,16 +1,12 @@
-#[cfg(any(test, feature = "testing-transport"))]
-use {
-    super::{
-        MediaTransport, TransportMediaId, TransportQualitySample, TransportSessionHealth,
-        TransportSessionKey, TransportSourceKey,
-    },
-    o_sfu_rfc::port as rfc_port,
-    std::{
-        sync::{atomic::Ordering, mpsc},
-        time::Instant,
-    },
-    str0m::media::Mid,
+//! Test hooks and fixtures for the media transport facade.
+
+use std::{
+    sync::{atomic::Ordering, mpsc},
+    time::Instant,
 };
+
+use o_sfu_rfc::port as rfc_port;
+use str0m::media::Mid;
 #[cfg(test)]
 use {
     super::{MediaTransportBuildError, rtc::WorkerMediaControlBatch},
@@ -31,21 +27,23 @@ use {
     },
 };
 
-#[cfg(any(test, feature = "testing-transport"))]
-pub use super::rtc::{ForwardedPacket, test_support::*};
-#[cfg(any(test, feature = "internal-benchmarks", feature = "testing-transport"))]
+pub use super::rtc::test_support::{
+    DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry, ForwardedPacket,
+};
+use super::{
+    MediaTransport, TransportMediaId, TransportQualitySample, TransportSessionHealth,
+    TransportSessionKey, TransportSourceKey,
+};
 use crate::RtcPortRange;
 
 #[cfg(test)]
 pub(super) type MediaControlBatchLog = Arc<Mutex<Vec<(usize, &'static str, Vec<usize>)>>>;
 
 #[derive(Debug, Clone, Copy)]
-#[cfg(any(test, feature = "testing-transport"))]
 pub struct MediaTransportTestApi<'a> {
     transport: &'a MediaTransport,
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl MediaTransport {
     #[must_use]
     pub fn test_api(&self) -> MediaTransportTestApi<'_> {
@@ -70,7 +68,6 @@ impl MediaTransport {
     }
 }
 
-#[cfg(any(test, feature = "testing-transport"))]
 impl MediaTransportTestApi<'_> {
     /// Pauses the first RTC worker until the returned sender receives a value.
     pub async fn pause_first_worker(self) -> Option<mpsc::Sender<()>> {
@@ -338,7 +335,6 @@ impl MediaTransportTestApi<'_> {
 /// # Panics
 ///
 /// Panics if the RFC dynamic range constants stop forming a valid range.
-#[cfg(any(test, feature = "testing-transport"))]
 #[allow(
     clippy::expect_used,
     reason = "the RFC dynamic range constants are a valid RTC port range"
@@ -388,18 +384,5 @@ pub(crate) fn test_media_transport_deps() -> MediaTransportDeps {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::UserId;
-
-    #[test]
-    #[should_panic(expected = "test session worker must exist")]
-    fn required_session_health_fixture_rejects_missing_worker() {
-        let transport = test_media_transport(1, test_rtc_port_range())
-            .expect("test media transport should start");
-        let missing_session = test_transport_session_key(1, 2, 1, UserId::Integer(1));
-        transport
-            .test_api()
-            .set_session_transport_health(&missing_session, TransportSessionHealth::Connected);
-    }
-}
+#[path = "TESTS/test_support.rs"]
+mod tests;

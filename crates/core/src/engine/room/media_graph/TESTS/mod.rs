@@ -25,7 +25,7 @@ use super::{
 use crate::{
     Bitrate, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind, UserId, VideoLayoutIntent,
+        ConnectionId, MediaWorkerId, RoomInstanceId, UserId, VideoLayoutIntent,
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
             TransportConsumerRoute, TransportMediaId, TransportSessionKey,
@@ -40,7 +40,7 @@ use crate::{
             SourceEncodingDescriptor, SourceSubscriptionIntent, UploadLayerPolicyRole,
             UserStreamId,
             test_support::{
-                TestSubscriptionStates, source_kind_for_stream_id,
+                TestSourceKind, TestSubscriptionStates, source_kind_for_stream_id,
                 source_publish_intent_for_source, stream_id_for_source,
                 subscription_intents_from_test_states,
             },

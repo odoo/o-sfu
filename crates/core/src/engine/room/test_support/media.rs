@@ -10,11 +10,11 @@ use super::{
     RoomTestApi,
 };
 use crate::engine::{
-    ConnectionId, TestSourceKind, UserId,
+    ConnectionId, UserId,
     media_transport::{MediaTransport, TransportMediaId},
     source_model::{
         SourceDeactivateIntent, SourcePublishIntent, SourceSubscriptionIntent, UserStreamId,
-        test_support::source_publish_intent_for_source,
+        test_support::{TestSourceKind, source_publish_intent_for_source},
     },
 };
 

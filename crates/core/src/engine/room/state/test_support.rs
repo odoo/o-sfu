@@ -2,8 +2,9 @@ use super::shared::RoomState;
 #[cfg(test)]
 use crate::engine::source_model::{PublishedSourceId, SourceEncodingDescriptor, SourceEncodingId};
 use crate::engine::{
-    ConnectionId, TestSourceKind, UserId, media_transport::TransportMediaId,
-    source_model::test_support::stream_id_for_source,
+    ConnectionId, UserId,
+    media_transport::TransportMediaId,
+    source_model::test_support::{TestSourceKind, stream_id_for_source},
 };
 
 impl RoomState {

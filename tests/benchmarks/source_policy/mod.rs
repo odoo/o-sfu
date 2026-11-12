@@ -62,11 +62,11 @@ use o_sfu_core::{
         metrics::RuntimeMetrics,
         packet_sinks::RoomPacketSinkRegistry,
         room::{
-            ConsumerRouteState, JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig,
-            RoomManager, RoomRuntimePolicy, UserOutboundReceiver, UserOutboundSender,
+            JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomManager, RoomRuntimePolicy,
+            UserOutboundReceiver, UserOutboundSender,
             benchmark_support::run_source_policy_turn_for_benchmark,
             test_support::{
-                TestSourceKind, TestSubscriptionStates, stream_id_for_source,
+                ConsumerRouteState, TestSourceKind, TestSubscriptionStates, stream_id_for_source,
                 subscription_intents_from_test_states,
             },
         },
