@@ -24,7 +24,6 @@ mod route_control;
 mod rtc;
 mod teardown;
 #[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
-#[path = "TESTS/test_support/mod.rs"]
 pub mod test_support;
 mod types;
 mod workers;

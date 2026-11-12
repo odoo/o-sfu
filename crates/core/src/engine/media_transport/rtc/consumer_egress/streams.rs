@@ -700,7 +700,6 @@ mod proofs;
 mod tests;
 
 #[cfg(feature = "internal-benchmarks")]
-#[path = "TESTS/benchmark_support.rs"]
 mod benchmark_support;
 #[cfg(feature = "internal-benchmarks")]
 pub use self::benchmark_support::LocalRewriteBenchFixture;

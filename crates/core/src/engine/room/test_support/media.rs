@@ -6,7 +6,7 @@ use o_sfu_router::{
 use tracing::warn;
 
 use super::{
-    super::super::{DeactivateIntentOutcome, transition::StagedPublish},
+    super::{DeactivateIntentOutcome, transition::StagedPublish},
     RoomTestApi,
 };
 use crate::engine::{

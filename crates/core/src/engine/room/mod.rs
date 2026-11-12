@@ -10,7 +10,7 @@
 //! captures room facts for diagnostics before they are combined with transport
 //! snapshots.
 
-#[cfg(any(test, feature = "testing-transport"))]
+#[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
 pub(crate) mod TESTS;
 mod definition;
@@ -27,10 +27,10 @@ mod read_model;
 mod recording;
 mod source_policy;
 mod state;
+#[cfg(any(test, feature = "testing-transport"))]
+mod test_support;
 mod transition;
 
-#[cfg(any(test, feature = "testing-transport"))]
-pub use TESTS::api::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi};
 pub use factory::{RoomAdmissionPolicy, RoomConfig, RoomRuntimePolicy};
 pub(crate) use instance::RoomUserOperation;
 use instance::SourcePolicyGuard;
@@ -59,6 +59,8 @@ pub use read_model::{
 };
 #[cfg(feature = "internal-benchmarks")]
 pub use source_policy::run_source_policy_turn_for_benchmark;
+#[cfg(any(test, feature = "testing-transport"))]
+pub use test_support::{NegotiatedPublish, RoomManagerTestApi, RoomTestApi};
 pub(crate) use transition::{DeactivateIntentOutcome, PublishIntentOutcome};
 
 #[cfg(any(test, feature = "testing-transport"))]

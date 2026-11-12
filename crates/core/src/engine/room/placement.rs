@@ -25,7 +25,6 @@ use crate::{
 };
 
 #[cfg(any(test, feature = "testing-transport"))]
-#[path = "TESTS/placement_support.rs"]
 mod test_support;
 
 #[cfg(any(test, feature = "testing-transport"))]

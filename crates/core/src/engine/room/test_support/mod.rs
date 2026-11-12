@@ -1,4 +1,4 @@
-use super::super::{Room, RoomManager};
+use super::{Room, RoomManager};
 use crate::engine::UserId;
 
 mod inspect;

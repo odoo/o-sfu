@@ -42,7 +42,6 @@ use crate::engine::{
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-#[path = "forward_flush/TESTS/support.rs"]
 pub(super) mod test_support;
 
 /// Effects produced while forwarding a batch on one RTC worker.

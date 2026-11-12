@@ -12,8 +12,10 @@ use serde_json::Value;
 use tokio::{sync::Notify, task::yield_now, time::timeout};
 
 use super::{
-    super::{RoomManagerJoinError, RoomManagerServeError, manager::JoinPlacementTestGate},
-    api::NegotiatedPublish,
+    super::{
+        RoomManagerJoinError, RoomManagerServeError, manager::JoinPlacementTestGate,
+        test_support::NegotiatedPublish,
+    },
     fixtures::*,
     tracing::{assert_exact, assert_no_event, assert_user_exact, capture},
 };

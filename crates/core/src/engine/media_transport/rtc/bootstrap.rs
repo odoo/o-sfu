@@ -37,7 +37,6 @@ use crate::{
     },
 };
 #[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
-#[path = "TESTS/bootstrap.rs"]
 pub(super) mod test_support;
 
 /// bind the shared worker UDP socket and return the advertised candidate tuple

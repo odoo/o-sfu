@@ -35,7 +35,6 @@ use crate::engine::{
 
 mod staging;
 #[cfg(any(test, feature = "testing-transport"))]
-#[path = "TESTS/publication_support.rs"]
 mod test_support;
 
 pub use staging::{StagedPublish, StagedPublishes};

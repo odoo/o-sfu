@@ -1,5 +1,3 @@
-#[path = "api/mod.rs"]
-pub(super) mod api;
 #[cfg(test)]
 #[path = "fixtures.rs"]
 mod fixtures;
