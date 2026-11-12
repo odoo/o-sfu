@@ -80,7 +80,9 @@ use crate::{
 };
 
 const MISSING_PACKETS_PER_STREAM: u16 = 100;
-const NACK_INTERVAL: Duration = Duration::from_millis(33);
+/// The peer repeats a NACK for one packet only after its receive RTT plus 5 ms,
+/// or 105 ms before it has an RTT sample (str0m 0.25 `NackRegister`).
+const NACK_INTERVAL: Duration = Duration::from_millis(105);
 
 fn forces_failure(
     context: &SessionDrainContext<'_>,
@@ -654,8 +656,8 @@ fn expired_local_rtx_cache_drops_nack_without_blocking_pli() -> Result<(), &'sta
 fn rtx_ratio_cap_suppresses_repeated_nack_before_cache_expiry() -> Result<(), &'static str> {
     let mut fixture = LocalWriteDrainFixture::new(MediaKind::Video, true)?;
     fixture.queue_gap()?;
-    // The gap drain samples the ratio before any resend. The first NACK at
-    // 33 ms reuses that sample, then the second observes the resend debt.
+    // str0m resamples the RTX ratio every 50 ms. The first NACK samples it
+    // before any resend, then the second observes the resend debt.
     let first = fixture.nack_gap()?;
     assert!(fixture.has_repair(&first));
     let capped = fixture.nack_gap()?;

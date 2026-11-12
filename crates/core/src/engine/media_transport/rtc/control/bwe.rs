@@ -13,6 +13,10 @@ use crate::{
     engine::media_transport::{ReceiverBweTargetUpdate, TransportAdapterError, TransportResult},
 };
 
+/// Room demand is a probing goal, with no next-layer rate to sustain.
+/// Zero leaves padding at str0m's automatic target, capped by its estimate.
+const SUSTAINED_SEND_MINIMUM: Str0mBitrate = Str0mBitrate::ZERO;
+
 pub(super) fn apply_receiver_bwe_target(
     sessions: &mut SessionStore,
     max_bitrate_out: Bitrate,
@@ -39,6 +43,6 @@ pub(super) fn apply_receiver_bwe_target(
     session_state
         .rtc
         .bwe()
-        .set_desired_bitrate(Str0mBitrate::bps(target.as_bps()));
+        .set_bitrate(SUSTAINED_SEND_MINIMUM, Str0mBitrate::bps(target.as_bps()));
     Ok(())
 }
