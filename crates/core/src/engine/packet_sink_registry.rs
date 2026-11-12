@@ -153,7 +153,7 @@ impl RoomPacketSinkRegistry {
 
     /// Registers `sink` for `room_instance_id`, replacing the current entry.
     ///
-    /// Previously cloned [`RegisteredPacketSink`] handles are not revoked.
+    /// Sink handles that workers cloned earlier are not revoked.
     pub fn register_room(
         &self,
         room_instance_id: RoomInstanceId,

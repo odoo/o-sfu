@@ -1,13 +1,12 @@
 //! Server-runtime integration surface.
 //!
-//! The top-level runtime uses these facades for diagnostics, metrics, room
-//! management, transport construction and packet sinks. The caller-facing
-//! session API remains under [`crate::prelude`].
-
-/// diagnostics response types used by runtime inspection endpoints
-pub mod diagnostics {
-    pub use o_sfu_telemetry::diagnostics::*;
-}
+//! The top-level runtime uses these facades for metrics, room management,
+//! transport construction and packet sinks. The caller-facing session API
+//! remains under [`crate::prelude`].
+//!
+//! Each name is exported once and only when the runtime, a test crate or a
+//! public signature uses it. Diagnostics response types come from
+//! `o_sfu_telemetry::diagnostics`.
 
 /// process-local metric catalog and typed recorders
 ///
@@ -15,15 +14,9 @@ pub mod diagnostics {
 /// or label sets manually
 /// the Prometheus renderer reads the catalog declared by these types
 pub mod metrics {
-    pub use o_sfu_telemetry::metrics::*;
-}
-
-/// recording sink trait used by media routing code
-///
-/// recording integrations register packet sinks through the packet-sink
-/// registry while transport code only depends on this narrow sink contract
-pub mod recording {
-    pub use crate::engine::packet_sink_registry::PacketSink as MediaPacketSink;
+    pub use o_sfu_telemetry::metrics::{
+        HttpRoute, MetricName, RoomGaugeValues, RuntimeMetrics, WsSessionLoopExitReason,
+    };
 }
 
 /// room packet-sink registry shared by transport workers
@@ -33,7 +26,7 @@ pub mod recording {
 /// the registry keeps that routing concern out of packet-loop callers
 pub mod packet_sinks {
     pub use crate::engine::packet_sink_registry::{
-        PacketSink, PacketSinkKind, RegisteredPacketSink, RoomPacketSinkRegistry,
+        PacketSink, PacketSinkKind, RoomPacketSinkRegistry,
     };
 }
 
@@ -94,8 +87,7 @@ pub mod room {
                 RoomTestApi,
             },
             source_model::test_support::{
-                TestSourceKind, TestSubscriptionStates, source_kind_for_stream_id,
-                source_publish_intent_for_source, stream_id_for_source,
+                TestSourceKind, TestSubscriptionStates, stream_id_for_source,
                 subscription_intents_from_test_states,
             },
         };
@@ -106,48 +98,22 @@ pub mod room {
         pub use crate::engine::room::run_source_policy_turn_for_benchmark;
     }
 
-    pub use crate::{
-        MediaWorkerId,
-        engine::room::{
-            BroadcastPayload, BroadcastPayloadError, DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
-            DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY, IncomingBitrateSnapshot, JoinUserRequest,
-            MAX_BROADCAST_PAYLOAD_BYTES, RemoteTrackProjection, RemoteTrackSnapshot, Room,
-            RoomAdmissionPolicy, RoomConfig, RoomDetailCapture, RoomEventMessage, RoomJoinError,
-            RoomManager, RoomManagerJoinError, RoomManagerServeError, RoomMediaCounts,
-            RoomOverviewCapture, RoomRuntimeContext, RoomRuntimePolicy, RoomUserAdmission,
-            RoomUserCapture, RoomUserPermissions, RoomUserStatsSnapshot, RoomUsersCapture,
-            RouterPlacement, RouterPlacements, RuntimeRoomDirectorySnapshot,
-            RuntimeRoomStatsSnapshot, UserCloseReason, UserOutbound, UserOutboundEvent,
-            UserOutboundOverflow, UserOutboundOverflowKind, UserOutboundQueueLimits,
-            UserOutboundReceiver, UserOutboundSendError, UserOutboundSender,
-        },
+    pub use crate::engine::room::{
+        BroadcastPayload, BroadcastPayloadError, DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
+        DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY, IncomingBitrateSnapshot, JoinUserRequest,
+        RemoteTrackProjection, RemoteTrackSnapshot, Room, RoomAdmissionPolicy, RoomConfig,
+        RoomDetailCapture, RoomEventMessage, RoomJoinError, RoomManager, RoomManagerJoinError,
+        RoomManagerServeError, RoomMediaCounts, RoomOverviewCapture, RoomRuntimePolicy,
+        RoomUserAdmission, RoomUserCapture, RoomUserStatsSnapshot, RoomUsersCapture,
+        RuntimeRoomDirectorySnapshot, RuntimeRoomStatsSnapshot, UserCloseReason, UserOutbound,
+        UserOutboundEvent, UserOutboundOverflow, UserOutboundOverflowKind, UserOutboundQueueLimits,
+        UserOutboundReceiver, UserOutboundSendError, UserOutboundSender,
     };
 }
 
-/// signaling-domain payloads shared by rooms and WebSocket sessions
-///
-/// these types describe users, features, permissionsm recording state and
-/// host-visible close codes
-/// they are re-exported here so the runtime does not import private room or
-/// engine modules for protocol payload construction
+/// `o-sfu-model` user types that room and session signatures take
 pub mod session {
-    pub use o_sfu_model::{
-        AvailableFeatures, JsonPayload, PeerSnapshot, RecordingOptions, RecordingState,
-        RecordingStateUpdate, StopCode, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
-        WebSocketCloseCode,
-    };
-}
-
-/// source descriptor model accepted by publication and subscription flows
-///
-/// source-model types make published media identity explicit before it reaches
-/// room routing or transport negotiation
-pub mod source_model {
-    pub use crate::engine::source_model::{
-        PublishedSourceDescriptor, PublishedSourceDescriptorParts, PublishedSourceId,
-        PublishedSourceOwner, SourceEncodingDescriptor, SourceEncodingDescriptorParts,
-        SourceEncodingId, SourceModelError,
-    };
+    pub use o_sfu_model::{UserId, UserInfo, UserPermissions, VideoLayoutIntent};
 }
 
 /// media transport construction and extension boundary
@@ -163,21 +129,13 @@ pub mod transport {
     pub use crate::engine::media_transport::fuzz_support;
     #[cfg(any(test, feature = "testing-transport"))]
     pub use crate::engine::media_transport::test_support;
-    pub use crate::{
-        MediaWorkerId,
-        engine::media_transport::{
-            ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,
-            ActiveSpeakerSourceDiagnostic, AppliedProducer, AppliedSessionAnswer, ConsumerActivity,
-            MediaTransport, MediaTransportBuildError, MediaTransportConfig, MediaTransportDeps,
-            ProducerActivity, ReceiverBandwidthSnapshot, RelayRouteActivity, SessionOffer,
-            SessionUploadEncoding, SessionUploadSlot, SourcePacketGate, SourcePolicySignal,
-            SourcePolicyUpdateSubscription, TransportAdapterError, TransportBitrateSnapshot,
-            TransportConsumerRoute, TransportHealthSnapshot, TransportMediaId,
-            TransportQualitySample, TransportQualitySnapshot, TransportRelayRouteAction,
-            TransportRelayRouteEffect, TransportResult, TransportSessionHealth,
-            TransportSessionKey, TransportSourceDiagnosticsSnapshot, TransportSourceKey,
-            TransportWorkerPressureSnapshot,
-        },
-        prelude::SessionBitrateLimits,
+    pub use crate::engine::media_transport::{
+        ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,
+        ActiveSpeakerSourceDiagnostic, AppliedProducer, AppliedSessionAnswer, MediaTransport,
+        MediaTransportBuildError, MediaTransportConfig, MediaTransportDeps,
+        ReceiverBandwidthSnapshot, SourcePolicyUpdateSubscription, TransportAdapterError,
+        TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
+        TransportQualitySample, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
+        TransportSourceKey, TransportWorkerPressureSnapshot,
     };
 }

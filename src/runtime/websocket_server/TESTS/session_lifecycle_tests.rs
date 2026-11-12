@@ -2,9 +2,9 @@ use futures_util::FutureExt;
 use tokio::task::unconstrained;
 
 use super::fixtures::*;
-use crate::runtime::{
-    media_transport::TransportSessionHealth,
-    metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+use crate::{
+    core::prelude::TransportSessionHealth,
+    runtime::telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
 };
 
 #[tokio::test]

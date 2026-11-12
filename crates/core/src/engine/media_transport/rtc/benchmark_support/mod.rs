@@ -31,27 +31,17 @@ pub use active_speaker::ActiveSpeakerBenchFixture;
 pub use consumer_gates::ConsumerGateBatchBenchFixture;
 pub use drain::{RelayDrainBenchFixture, SessionDrainBenchFixture};
 pub use fanout::{FanoutBenchTopology, ROUTE_PLANNING_TURNS, RelayFanoutBenchFixture};
-pub use ingress::{
-    INGRESS_COMPLETED_BURST_DATAGRAMS, INGRESS_DEMUX_ATTEMPTS, IngressBurstBenchFixture,
-    IngressRoutingBenchFixture,
-};
-pub use interleaved::{INTERLEAVED_RELAY_PACKETS, InterleavedRelayActivityBenchFixture};
+pub use ingress::{IngressBurstBenchFixture, IngressRoutingBenchFixture};
+pub use interleaved::InterleavedRelayActivityBenchFixture;
 pub use local_send::LocalSendBenchFixture;
-pub use meeting::{
-    MEETING_ADMITTED_AUDIO_SOURCES, MEETING_LONG_SECONDS, MEETING_PARTICIPANTS,
-    MEETING_SHORT_SECONDS, MEETING_TICK_MS, MEETING_VIDEO_PUBLISHERS, MEETING_VIDEO_SUBSCRIPTIONS,
-    MeetingFlowBenchFixture, MeetingWorkProfile,
-};
+pub use meeting::{MeetingFlowBenchFixture, MeetingWorkProfile};
 pub use observation::IncomingObservationBenchFixture;
 pub use relay::{RELAY_MAILBOX_ATTEMPTS, RelayPressureBenchFixture};
-pub use remote_gates::{REMOTE_GATE_RETRY_TURNS, RemoteGateRetryBenchFixture};
+pub use remote_gates::RemoteGateRetryBenchFixture;
 pub use scheduler::SchedulerBenchFixture;
-pub use sinks::{PACKET_SINK_FANOUT_TURNS, PacketSinkFanoutBenchFixture};
-pub use video::{
-    KEYFRAME_COALESCING_REQUESTS, KeyframeCoalescingBenchFixture, RidReadinessBenchFixture,
-    SELECTED_RID_DESTINATIONS,
-};
-pub use worker::{WORKER_COMMAND_ROUNDTRIPS, WorkerLoopBenchFixture};
+pub use sinks::PacketSinkFanoutBenchFixture;
+pub use video::{KeyframeCoalescingBenchFixture, RidReadinessBenchFixture};
+pub use worker::WorkerLoopBenchFixture;
 
 pub use super::{
     consumer_egress::LocalRewriteBenchFixture,

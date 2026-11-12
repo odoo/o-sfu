@@ -39,19 +39,6 @@ pub struct RoomRuntimeContext {
 
 impl RoomRuntimeContext {
     #[must_use]
-    pub fn new(
-        instance: RoomInstanceId,
-        primary: RouterPlacement,
-        spillover: Vec<RouterPlacement>,
-    ) -> Self {
-        Self {
-            instance,
-            primary_router: primary.router,
-            initial_router_placements: Some(RouterPlacements::new(primary, spillover)),
-        }
-    }
-
-    #[must_use]
     pub const fn new_unassigned(instance: RoomInstanceId, primary_router: RouterId) -> Self {
         Self {
             instance,

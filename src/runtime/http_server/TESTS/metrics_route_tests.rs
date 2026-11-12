@@ -5,9 +5,9 @@ use tokio::{sync::Barrier, task::yield_now, time::timeout};
 use super::fixtures::*;
 use crate::{
     core::server::session::UserPermissions,
-    runtime::metrics::{
-        MetricName, RoomGaugeValues, RuntimeMetricsSnapshot,
-        test_support::RuntimeMetricsSnapshotLookup,
+    runtime::{
+        metrics::{MetricName, RoomGaugeValues},
+        telemetry::metrics::{RuntimeMetricsSnapshot, test_support::RuntimeMetricsSnapshotLookup},
     },
 };
 

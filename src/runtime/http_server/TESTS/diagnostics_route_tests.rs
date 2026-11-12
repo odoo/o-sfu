@@ -20,11 +20,11 @@ use super::fixtures::*;
 use crate::{
     application::stream_catalog::source_publish_intent_for_stream_type,
     core::{
-        prelude::MediaSession,
+        prelude::{MediaSession, TransportSessionHealth},
         server::{
             room::JoinUserRequest,
             session::{UserId, UserInfo, UserPermissions},
-            transport::{TransportQualitySample, TransportSessionHealth},
+            transport::TransportQualitySample,
         },
     },
     runtime::room::Room,

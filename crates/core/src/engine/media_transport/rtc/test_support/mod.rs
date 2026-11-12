@@ -64,7 +64,6 @@ pub(super) use self::{
     packets::serialize_stun_message,
     route_graph::{MediaWorkerScenario, prepare_source_session, prepare_source_session_with_rid},
 };
-pub use super::packet_loop::forwarded_packet::ForwardedPacket;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet;
 #[cfg(test)]

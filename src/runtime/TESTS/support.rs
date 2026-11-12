@@ -8,7 +8,7 @@ use secrecy::SecretString;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 pub use crate::runtime::auth::test_support::TestHttpRoomClaims;
-pub(super) use crate::runtime::metrics::test_support::RuntimeMetricsSnapshotTestExt;
+pub(super) use crate::runtime::telemetry::metrics::test_support::RuntimeMetricsSnapshotTestExt;
 use crate::{
     config::{
         AuthConfig, Bitrate, CodecConfig, CodecPreferences, Config,

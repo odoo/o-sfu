@@ -4,7 +4,6 @@
 //! [`MediaSession`]. Process integration types remain under [`crate::server`].
 
 pub use crate::{
-    Bitrate, ConnectionId, RoomInstanceId,
     engine::{
         media_transport::TransportSessionHealth,
         source_model::{

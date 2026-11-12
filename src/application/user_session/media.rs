@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use o_sfu_core::Bitrate;
 use o_sfu_protocol::{
     host::NegotiationKind,
     wire::{
@@ -13,8 +14,8 @@ use super::{User, UserError, UserOutput};
 use crate::{
     application::stream_catalog::{DiscussStream, source_publish_intent_for_stream_type},
     core::prelude::{
-        Bitrate, MediaSession, NegotiationOffer, SessionError, SfuCoreError,
-        SourceDeactivateIntent, SourcePublishIntent,
+        MediaSession, NegotiationOffer, SessionError, SfuCoreError, SourceDeactivateIntent,
+        SourcePublishIntent,
     },
     runtime::telemetry::schema::event as telemetry_event,
 };

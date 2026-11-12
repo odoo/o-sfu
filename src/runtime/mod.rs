@@ -37,7 +37,8 @@ pub(crate) mod websocket_server;
 
 use http_server::{serve_http, serve_http_on};
 pub(crate) use o_sfu_core::{
-    prelude::{ConnectionId, SessionBitrateLimits},
+    ConnectionId,
+    prelude::SessionBitrateLimits,
     server::{metrics, packet_sinks, room, transport as media_transport},
 };
 pub(crate) use o_sfu_telemetry::{self as telemetry, prometheus};

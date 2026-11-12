@@ -12,10 +12,13 @@ mod telemetry;
 mod transport;
 mod user;
 
-pub use o_sfu_core::prelude::{
-    Bitrate, CodecPreferences, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange,
-    RtcTcpConfig, RtcUdpIoBackend, VideoAdaptationTuning, VideoAdaptationTuningError,
-    VideoBitrateLimits,
+pub use o_sfu_core::{
+    Bitrate,
+    prelude::{
+        CodecPreferences, MediaCodecFlags, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange,
+        RtcTcpConfig, RtcUdpIoBackend, VideoAdaptationTuning, VideoAdaptationTuningError,
+        VideoBitrateLimits,
+    },
 };
 
 pub use self::{
