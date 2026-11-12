@@ -45,8 +45,6 @@ pub(super) use forward_flush::{
     finish_incoming_stats, record_incoming_packet, test_support::record_incoming_stats,
 };
 pub(super) use ingress::{IngressPacket, RtcIngress};
-#[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
-pub use ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at};
 pub use udp::{RtcUdpSocket, UdpReceiveTask};
 #[cfg(any(test, feature = "internal-benchmarks"))]
 pub(super) use {
@@ -54,6 +52,3 @@ pub(super) use {
     forwarding_destination::{ForwardingDestination, LocalRtcPacketDestination},
     forwarding_planner::{PacketGateDecision, plan_forwards},
 };
-
-#[cfg(feature = "internal-benchmarks")]
-pub use self::{event_observation::observe_rtc_event_for_benchmark, udp::UdpIngressBenchHarness};

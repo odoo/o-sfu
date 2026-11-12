@@ -18,7 +18,7 @@ use super::*;
 use crate::{
     RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, TestSourceKind,
+        ConnectionId, MediaWorkerId, RoomInstanceId,
         media_transport::{
             TransportConsumerRoute, TransportMediaId, TransportTeardown, TransportTeardownAction,
         },
@@ -27,7 +27,10 @@ use crate::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
             media_graph::{ConsumerSetupOrigin, ConsumerSetupOutcome, ValidatedPublish},
         },
-        source_model::{PublishedSourceId, test_support::source_publish_intent_for_source},
+        source_model::{
+            PublishedSourceId,
+            test_support::{TestSourceKind, source_publish_intent_for_source},
+        },
     },
 };
 

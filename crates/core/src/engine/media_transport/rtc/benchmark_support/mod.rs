@@ -25,7 +25,6 @@ mod remote_gates;
 mod scheduler;
 mod sinks;
 mod video;
-#[cfg(feature = "internal-benchmarks")]
 mod worker;
 
 pub use active_speaker::ActiveSpeakerBenchFixture;
@@ -52,7 +51,6 @@ pub use video::{
     KEYFRAME_COALESCING_REQUESTS, KeyframeCoalescingBenchFixture, RidReadinessBenchFixture,
     SELECTED_RID_DESTINATIONS,
 };
-#[cfg(feature = "internal-benchmarks")]
 pub use worker::{WORKER_COMMAND_ROUNDTRIPS, WorkerLoopBenchFixture};
 
 pub use super::{

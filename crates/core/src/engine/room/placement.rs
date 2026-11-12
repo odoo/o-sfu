@@ -25,10 +25,10 @@ use crate::{
 };
 
 #[cfg(any(test, feature = "testing-transport"))]
-mod test_support;
+pub(super) mod test_support;
 
 #[cfg(any(test, feature = "testing-transport"))]
-pub use test_support::JoinPlacementTestGate;
+use test_support::JoinPlacementTestGate;
 
 /// Initial router placement context for one room instance.
 ///

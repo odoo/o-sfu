@@ -1,8 +1,10 @@
 use o_sfu_model::UserId;
 
 use crate::{
-    engine::media_transport::rtc::state::ufrag_registry::UfragRegistry,
-    server::transport::{TransportSessionKey, test_support::test_transport_session_key},
+    engine::media_transport::rtc::{
+        state::ufrag_registry::UfragRegistry, test_support::test_transport_session_key,
+    },
+    server::transport::TransportSessionKey,
 };
 
 impl UfragRegistry {

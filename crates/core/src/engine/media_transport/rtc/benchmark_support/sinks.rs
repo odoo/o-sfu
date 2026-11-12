@@ -14,7 +14,7 @@ use super::super::{
     },
     state::{PacketLoopState, media_registry::RegisteredMediaHandle},
     test_support::{sample_forwarded_packet, test_transport_session_key},
-    worker::PacketLoopBuffers,
+    worker::buffers::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,

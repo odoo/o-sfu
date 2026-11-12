@@ -10,9 +10,10 @@ rust-version.workspace = true
 version.workspace = true
 
 [features]
-internal-benchmarks = []
+# Support for the test crates and benchmarks of this workspace. Release builds
+# enable neither. Benchmark fixtures build on the test support.
+internal-benchmarks = ["testing-transport"]
 testing-transport = ["o-sfu-router/test-support"]
-worker-benchmarks = ["internal-benchmarks"]
 
 [dependencies]
 bitflags = "2.6"

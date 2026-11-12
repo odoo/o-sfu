@@ -23,7 +23,7 @@ use super::super::{
         sample_local_forwarded_packet_for_benchmark,
         sample_local_forwarded_packet_without_mid_for_benchmark, test_transport_session_key,
     },
-    worker::PacketLoopBuffers,
+    worker::buffers::PacketLoopBuffers,
 };
 use crate::engine::{
     UserId,

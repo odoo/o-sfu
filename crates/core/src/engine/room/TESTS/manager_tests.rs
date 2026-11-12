@@ -13,8 +13,8 @@ use tokio::{sync::Notify, task::yield_now, time::timeout};
 
 use super::{
     super::{
-        RoomManagerJoinError, RoomManagerServeError, manager::JoinPlacementTestGate,
-        test_support::NegotiatedPublish,
+        RoomManagerJoinError, RoomManagerServeError,
+        test_support::{JoinPlacementTestGate, NegotiatedPublish},
     },
     fixtures::*,
     tracing::{assert_exact, assert_no_event, assert_user_exact, capture},

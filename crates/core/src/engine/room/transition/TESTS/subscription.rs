@@ -25,7 +25,7 @@ use super::super::super::{
 use crate::{
     RoomWorkerPolicy, RuntimeFeatureFlags,
     engine::{
-        ConnectionId, TestSourceKind, UserId, UserPermissions,
+        ConnectionId, UserId, UserPermissions,
         media_transport::{
             AppliedSessionAnswer, MediaTransport, TransportMediaId, TransportRelayRouteAction,
             TransportTeardown,
@@ -34,7 +34,9 @@ use crate::{
         metrics::RuntimeMetrics,
         source_model::{
             SourceSubscriptionIntent, UserStreamId,
-            test_support::{source_publish_intent_for_source, stream_id_for_source},
+            test_support::{
+                TestSourceKind, source_publish_intent_for_source, stream_id_for_source,
+            },
         },
     },
 };

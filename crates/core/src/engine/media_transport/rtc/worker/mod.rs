@@ -22,15 +22,6 @@
 //! Read-side snapshots may race processing or teardown and cannot authorize
 //! room state.
 
-#[cfg(feature = "internal-benchmarks")]
-pub(crate) use loop_driver::{BenchmarkTurnInput, PacketLoopTurn};
-
-#[cfg(feature = "internal-benchmarks")]
-pub use self::{
-    buffers::PacketLoopBuffers,
-    loop_driver::route_queued_ingress_datagrams_for_benchmark,
-    session_drain::{SessionDrainContext, drain_ready_sessions},
-};
 pub use self::{
     delay::PacketLoopDelaySnapshot,
     input::PacketLoopInputReceivers,

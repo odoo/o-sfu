@@ -43,8 +43,8 @@ pub(super) use crate::{
         http_server::app,
         media_transport::MediaTransport,
         room::{
-            JoinPlacementTestGate, JoinUserRequest, Room, RoomConfig, RoomManager,
-            UserOutboundQueueLimits, UserOutboundReceiver, UserOutboundSender,
+            JoinUserRequest, Room, RoomConfig, RoomManager, UserOutboundQueueLimits,
+            UserOutboundReceiver, UserOutboundSender, test_support::JoinPlacementTestGate,
         },
         test_support::{RuntimeMetricsSnapshotTestExt, RuntimeTestBuilder},
     },

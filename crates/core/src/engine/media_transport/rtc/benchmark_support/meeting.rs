@@ -108,7 +108,9 @@ use super::super::{
     RtcWorkerConfig, RtpProfile, bootstrap, codec,
     commands::WorkerMediaControlBatch,
     control::apply_media_control_batch,
-    packet_loop::{forwarded_packet::ForwardedPacket, observe_rtc_event_for_benchmark},
+    packet_loop::{
+        event_observation::observe_rtc_event_for_benchmark, forwarded_packet::ForwardedPacket,
+    },
     recovery::PendingKeyframeRequest,
     state::{
         PacketLoopState, RtcSnapshotState,
@@ -123,7 +125,10 @@ use super::super::{
         BenchmarkPacketStaging, BenchmarkStreamIdentity, restage_packet_for_benchmark,
         sample_local_forwarded_packet_for_benchmark, test_transport_session_key,
     },
-    worker::{BenchmarkTurnInput, PacketLoopConfig, PacketLoopDelaySnapshot, PacketLoopTurn},
+    worker::{
+        PacketLoopConfig, PacketLoopDelaySnapshot,
+        loop_driver::{BenchmarkTurnInput, PacketLoopTurn},
+    },
 };
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,

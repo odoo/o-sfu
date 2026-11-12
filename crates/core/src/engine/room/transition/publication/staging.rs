@@ -4,6 +4,8 @@ use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use o_sfu_telemetry::schema::event as telemetry_event;
 use tracing::{info, warn};
 
+#[cfg(test)]
+use crate::engine::source_model::test_support::{TestSourceKind, stream_id_for_source};
 use crate::engine::{
     ConnectionId, UserId,
     media_transport::{
@@ -19,8 +21,6 @@ use crate::engine::{
     },
     source_model::UserStreamId,
 };
-#[cfg(test)]
-use crate::engine::{TestSourceKind, source_model::test_support::stream_id_for_source};
 
 #[derive(Debug, Default)]
 pub struct StagedPublishes {

@@ -12,14 +12,15 @@ use str0m::{
 use super::super::{
     bootstrap,
     packet_loop::{
-        PacketRouteDatagram, UdpIngressBenchHarness, route_pkt_to_session_at,
+        ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
         routing_miss::DemuxRecoveryState,
+        udp::UdpIngressBenchHarness,
     },
     state::{PacketLoopState, demux::RemoteTransportAddr},
     test_support::{
         sample_rtp_packet_with_len, serialize_stun_message, test_transport_session_key,
     },
-    worker::route_queued_ingress_datagrams_for_benchmark,
+    worker::loop_driver::route_queued_ingress_datagrams_for_benchmark,
 };
 use crate::{
     Bitrate,

@@ -34,7 +34,7 @@ mod streams;
 #[path = "TESTS/support.rs"]
 pub(super) mod test_support;
 #[cfg(feature = "internal-benchmarks")]
-pub use self::streams::LocalRewriteBenchFixture;
+pub use self::streams::benchmark_support::LocalRewriteBenchFixture;
 pub(super) use self::streams::{ConsumerStreamStore, RTX_CACHE_MAX_PACKETS, rotate_rtx_cache};
 use self::streams::{ProjectedIdentity, SourceRtpIdentity, SourceTransition};
 use super::{codec, state::slots::ConsumerStreamHandle};

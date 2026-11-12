@@ -9,14 +9,15 @@ use o_sfu_router::test_support::rtp_samples::{
 };
 
 pub(super) use super::super::{
-    JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomEffectContext, RoomEventMessage,
-    RoomJoinError, RoomManager, UserCloseReason, UserOutbound, UserOutboundReceiver,
-    UserOutboundSender, source_policy::SourcePolicyTurn, transition::PublishStageOutcome,
+    JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomEventMessage, RoomJoinError,
+    RoomManager, UserCloseReason, UserOutbound, UserOutboundReceiver, UserOutboundSender,
+    effects::batch::RoomEffectContext, source_policy::SourcePolicyTurn,
+    transition::PublishStageOutcome,
 };
 pub(super) use crate::{
     RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, TestSourceKind, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
+        ConnectionId, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
         media_transport::{
             AppliedSessionAnswer, MediaTransport, ReceiverBandwidthSnapshot,
             TransportBitrateSnapshot, TransportMediaId, TransportSessionHealth,
@@ -28,8 +29,8 @@ pub(super) use crate::{
         source_model::{
             UserStreamId,
             test_support::{
-                TestSubscriptionStates, source_publish_intent_for_source, stream_id_for_source,
-                subscription_intents_from_test_states,
+                TestSourceKind, TestSubscriptionStates, source_publish_intent_for_source,
+                stream_id_for_source, subscription_intents_from_test_states,
             },
         },
     },

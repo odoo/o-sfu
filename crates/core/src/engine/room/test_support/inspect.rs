@@ -2,11 +2,11 @@ use super::{super::media_graph::ConsumerRouteState, RoomTestApi};
 #[cfg(test)]
 use crate::engine::source_model::PublishedSourceId;
 use crate::engine::{
-    ConnectionId, TestSourceKind, UserId, UserInfo,
+    ConnectionId, UserId, UserInfo,
     media_transport::TransportMediaId,
     source_model::{
         UserStreamId,
-        test_support::{source_kind_for_stream_id, stream_id_for_source},
+        test_support::{TestSourceKind, source_kind_for_stream_id, stream_id_for_source},
     },
 };
 

@@ -26,7 +26,7 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
 
 #[cfg(any(test, feature = "testing-transport"))]
-pub use super::placement::JoinPlacementTestGate;
+use super::placement::test_support::JoinPlacementTestGate;
 use super::{
     Room, RoomConfig, RoomJoinError, RoomManagerJoinError, RoomRuntimePolicy,
     RoomUserStatsSnapshot,

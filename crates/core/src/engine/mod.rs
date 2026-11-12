@@ -29,7 +29,5 @@ pub use o_sfu_model::{
     RecordingStateUpdate, StopCode, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
     WebSocketCloseCode,
 };
-#[cfg(any(test, feature = "testing-transport"))]
-pub use source_model::test_support::TestSourceKind;
 
 pub use crate::{ConnectionId, MediaWorkerId, RoomInstanceId};

@@ -6,9 +6,13 @@ use std::{
 
 use str0m::net::Protocol;
 
+pub use super::codec::client_rtp_capabilities_from_answer;
 use super::{
     bootstrap,
-    packet_loop::{PacketRouteDatagram, route_pkt_to_session_at, routing_miss::DemuxRecoveryState},
+    packet_loop::{
+        ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+        routing_miss::DemuxRecoveryState,
+    },
     state::{PacketLoopState, demux::RemoteTransportAddr},
 };
 use crate::{

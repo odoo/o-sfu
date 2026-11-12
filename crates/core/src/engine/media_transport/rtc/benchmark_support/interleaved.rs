@@ -33,7 +33,10 @@ use super::super::{
         restage_packet_for_benchmark, sample_local_forwarded_packet_for_benchmark,
         test_transport_session_key,
     },
-    worker::{BenchmarkTurnInput, PacketLoopConfig, PacketLoopDelaySnapshot, PacketLoopTurn},
+    worker::{
+        PacketLoopConfig, PacketLoopDelaySnapshot,
+        loop_driver::{BenchmarkTurnInput, PacketLoopTurn},
+    },
 };
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,

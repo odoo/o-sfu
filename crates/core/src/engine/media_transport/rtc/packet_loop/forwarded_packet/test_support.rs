@@ -8,9 +8,7 @@ use str0m::{
 use super::{ForwardedPacket, ForwardedPacketSource};
 #[cfg(test)]
 use crate::engine::media_transport::TransportMediaId;
-use crate::engine::media_transport::TransportSessionKey;
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use crate::engine::media_transport::rtc::state::slots::SessionHandle;
+use crate::engine::media_transport::{TransportSessionKey, rtc::state::slots::SessionHandle};
 
 #[must_use]
 pub fn sample_forwarded_packet(

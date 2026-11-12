@@ -12,7 +12,7 @@ version.workspace = true
 [features]
 default = ["otel-tracing"]
 otel-tracing = ["o-sfu/otel-tracing"]
-worker-benchmarks = ["o-sfu-core/worker-benchmarks"]
+worker-benchmarks = ["o-sfu-core/internal-benchmarks"]
 # DHAT runs separately with system allocation hooks.
 dhat = []
 
