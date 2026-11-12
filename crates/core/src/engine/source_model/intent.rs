@@ -1,7 +1,7 @@
+use o_sfu_model::{UserInfo, VideoLayoutIntent};
 use o_sfu_router::MediaKind;
 
 use super::{SourcePolicy, UserStreamId};
-use crate::engine::{UserInfo, VideoLayoutIntent};
 
 /// Publish intent for one user stream.
 ///

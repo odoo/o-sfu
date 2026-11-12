@@ -1,8 +1,7 @@
+use o_sfu_model::UserId;
+
 use super::{super::SubscriptionKey, RoomTopology};
-use crate::engine::{
-    UserId,
-    source_model::{ConsumerSourceSelection, PublishedSourceId},
-};
+use crate::engine::source_model::{ConsumerSourceSelection, PublishedSourceId};
 
 impl RoomTopology {
     pub(in crate::engine::room) fn source_selection_for_test(

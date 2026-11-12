@@ -7,6 +7,7 @@
 use std::{cmp::Ordering, time::Instant};
 
 use itertools::Itertools;
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::media::{KeyframeRequest as RtcKeyframeRequest, KeyframeRequestKind, Mid, Rid};
 
 use super::{
@@ -16,7 +17,7 @@ use super::{
     },
     request_consumer_feedback_kf, retry_source_kf,
 };
-use crate::engine::{media_transport::TransportSessionKey, metrics::RtcMetricsRecorder};
+use crate::engine::media_transport::TransportSessionKey;
 
 /// keyframe feedback emitted by one consumer session before producer lookup
 #[derive(Debug, Clone, Copy)]

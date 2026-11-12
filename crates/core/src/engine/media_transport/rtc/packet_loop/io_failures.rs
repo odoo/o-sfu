@@ -2,13 +2,11 @@
 
 use std::{io, net::SocketAddr};
 
+use o_sfu_telemetry::metrics::{RtcInputFailure, RtcMetricsRecorder, RtcTransportIoFailure};
 use str0m::RtcError;
 use tracing::warn;
 
-use crate::engine::{
-    media_transport::TransportSessionKey,
-    metrics::{RtcInputFailure, RtcMetricsRecorder, RtcTransportIoFailure},
-};
+use crate::engine::media_transport::TransportSessionKey;
 
 fn io_category(error: &io::Error, receive: bool) -> RtcTransportIoFailure {
     use RtcTransportIoFailure as Failure;

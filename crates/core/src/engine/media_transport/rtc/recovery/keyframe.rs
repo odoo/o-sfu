@@ -5,6 +5,9 @@
 
 use std::time::Instant;
 
+use o_sfu_telemetry::metrics::{
+    RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcRouteControlOutcome,
+};
 use str0m::media::{KeyframeRequestKind, MediaKind, Mid, Rid};
 use tracing::debug;
 
@@ -22,12 +25,9 @@ use super::super::{
         source_route::MediaRouteDestination,
     },
 };
-use crate::engine::{
-    media_transport::{
-        TransportAdapterError, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
-        TransportSourceKey,
-    },
-    metrics::{RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcRouteControlOutcome},
+use crate::engine::media_transport::{
+    TransportAdapterError, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
+    TransportSourceKey,
 };
 
 /// Forwards relay feedback to its producer without arming another retry loop.

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::MediaCapabilities;
 
 use super::super::{
@@ -13,7 +14,6 @@ use super::super::{
     effects::batch::{RoomEffectContext, RoomEffects},
 };
 use crate::engine::{
-    UserId,
     media_transport::TransportMediaId,
     source_model::{SourceSubscriptionIntent, UserStreamId},
 };

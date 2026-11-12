@@ -1,11 +1,11 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use o_sfu_model::UserId;
 use str0m::net::Protocol;
 
 use super::{RemoteAddrDemux, RemoteTransportAddr};
-use crate::engine::{
-    UserId,
-    media_transport::{TransportSessionKey, rtc::test_support::test_transport_session_key},
+use crate::engine::media_transport::{
+    TransportSessionKey, rtc::test_support::test_transport_session_key,
 };
 
 impl RemoteTransportAddr {

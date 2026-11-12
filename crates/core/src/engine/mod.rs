@@ -18,16 +18,3 @@ pub mod packet_sink_registry;
 pub mod room;
 pub mod source_model;
 pub mod sync;
-
-pub mod metrics {
-    pub use super::observability::metrics::*;
-    pub(crate) use super::observability::{source_selection_kind, transport_health_state};
-}
-
-pub use o_sfu_model::{
-    AvailableFeatures, JsonPayload, PeerSnapshot, RecordingOptions, RecordingState,
-    RecordingStateUpdate, StopCode, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
-    WebSocketCloseCode,
-};
-
-pub use crate::{ConnectionId, MediaWorkerId, RoomInstanceId};

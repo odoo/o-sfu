@@ -5,13 +5,14 @@
     reason = "test assertions use expect, unwrap and direct indexing for direct fixture failures"
 )]
 
+use o_sfu_model::UserId;
 use o_sfu_router::{
     MediaKind,
     rtp::{MediaCodec, MediaFormat, PayloadType, Rid, Ssrc},
 };
 
 use super::*;
-use crate::{Bitrate, engine::UserId};
+use crate::Bitrate;
 
 fn video_format(payload_type: u8) -> MediaFormat {
     MediaFormat::new(

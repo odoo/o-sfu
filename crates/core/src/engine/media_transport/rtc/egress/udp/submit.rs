@@ -14,6 +14,7 @@
 use std::sync::Arc;
 use std::{io, vec::Drain};
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::net::Transmit;
 #[cfg(target_os = "linux")]
 use tracing::field;
@@ -22,10 +23,7 @@ use tracing::warn;
 use super::{RtcUdpSocket, plan::UdpMessage};
 #[cfg(target_os = "linux")]
 use crate::RtcUdpIoBackend;
-use crate::engine::{
-    media_transport::rtc::packet_loop::io_failures::report_udp_send_failure,
-    metrics::RtcMetricsRecorder,
-};
+use crate::engine::media_transport::rtc::packet_loop::io_failures::report_udp_send_failure;
 
 #[cfg(target_os = "linux")]
 mod batch;

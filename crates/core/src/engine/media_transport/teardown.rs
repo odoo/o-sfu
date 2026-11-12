@@ -8,9 +8,9 @@ use super::{
 };
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::obligation::Simulate;
-use crate::engine::{
+use crate::{
     MediaWorkerId,
-    obligation::{Execute, Obligation, Work},
+    engine::obligation::{Execute, Obligation, Work},
 };
 
 #[derive(Debug)]

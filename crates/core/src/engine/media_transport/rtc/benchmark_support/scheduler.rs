@@ -5,15 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
+
 use super::super::{
     bootstrap::test_support::ensure_session_rtc_state,
     state::{PacketLoopState, slots::SessionHandle},
     test_support::test_transport_session_key,
 };
-use crate::{
-    Bitrate,
-    engine::{UserId, media_transport::TransportSessionKey},
-};
+use crate::{Bitrate, engine::media_transport::TransportSessionKey};
 
 const SCHEDULER_SESSION_COUNT: usize = 128;
 

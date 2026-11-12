@@ -1,5 +1,7 @@
+use o_sfu_model::{RecordingOptions, UserId};
+
 use super::Room;
-use crate::engine::{ConnectionId, RecordingOptions, UserId};
+use crate::ConnectionId;
 
 impl Room {
     pub(crate) fn apply_recording_start(

@@ -91,11 +91,13 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::{CodecName, vp8};
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
     rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType, StreamBinding},
 };
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::{
     Event,
     bwe::{Bitrate as Str0mBitrate, BweKind},
@@ -133,7 +135,6 @@ use super::super::{
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
     engine::{
-        UserId,
         media_transport::{
             ActiveSpeakerActivityReason, ActiveSpeakerSourceDiagnostic, ProducerActivity,
             ReceiverBweTargetUpdate, SourceActivityRevision, SourceActivityUpdate,
@@ -141,7 +142,6 @@ use crate::{
             TransportMediaId, TransportSessionKey, TransportSourceKey,
             route_control::ProducerRouteControl,
         },
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
         packet_sink_registry::RoomPacketSinkRegistry,
     },
 };

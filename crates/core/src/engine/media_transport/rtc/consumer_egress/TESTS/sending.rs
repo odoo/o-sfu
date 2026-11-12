@@ -1,9 +1,9 @@
+use o_sfu_model::UserId;
 use str0m::media::Rid;
 
 use super::*;
-use crate::engine::{
-    UserId,
-    media_transport::rtc::test_support::{sample_forwarded_packet, test_transport_session_key},
+use crate::engine::media_transport::rtc::test_support::{
+    sample_forwarded_packet, test_transport_session_key,
 };
 
 #[test]

@@ -8,6 +8,8 @@
 
 use std::fmt;
 
+use o_sfu_telemetry::metrics::{RtcRelayEnqueueResult, RtpForwardDestinationKind};
+
 use super::{
     super::{
         consumer_egress::LocalPacketDestination,
@@ -19,9 +21,7 @@ use super::{
     forwarded_packet::ForwardedPacket,
 };
 use crate::engine::{
-    media_transport::TransportMediaId,
-    metrics::{RtcRelayEnqueueResult, RtpForwardDestinationKind},
-    packet_sink_registry::RegisteredPacketSink,
+    media_transport::TransportMediaId, packet_sink_registry::RegisteredPacketSink,
 };
 
 /// concrete side effect performed for one planned packet

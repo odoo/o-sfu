@@ -9,10 +9,11 @@
 
 use std::{net::IpAddr, sync::Arc, time::Duration};
 
+use o_sfu_telemetry::metrics::RuntimeMetrics;
+
 use crate::{
     CodecPreferences, MediaCodecFlags, RtcPortRange, RtcTcpConfig, RtcUdpIoBackend,
-    SessionBitrateLimits, VideoBitrateLimits,
-    engine::{metrics::RuntimeMetrics, packet_sink_registry::RoomPacketSinkRegistry},
+    SessionBitrateLimits, VideoBitrateLimits, engine::packet_sink_registry::RoomPacketSinkRegistry,
 };
 
 /// operator-facing RTC transport policy used to build each RTC worker

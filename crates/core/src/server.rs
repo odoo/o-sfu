@@ -15,7 +15,7 @@ pub mod diagnostics {
 /// or label sets manually
 /// the Prometheus renderer reads the catalog declared by these types
 pub mod metrics {
-    pub use crate::engine::metrics::*;
+    pub use o_sfu_telemetry::metrics::*;
 }
 
 /// recording sink trait used by media routing code
@@ -131,7 +131,7 @@ pub mod room {
 /// they are re-exported here so the runtime does not import private room or
 /// engine modules for protocol payload construction
 pub mod session {
-    pub use crate::engine::{
+    pub use o_sfu_model::{
         AvailableFeatures, JsonPayload, PeerSnapshot, RecordingOptions, RecordingState,
         RecordingStateUpdate, StopCode, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
         WebSocketCloseCode,

@@ -15,16 +15,15 @@ use std::{
     },
 };
 
+use o_sfu_model::{JsonPayload, RecordingStateUpdate, UserId, UserInfo};
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
     watch,
 };
 
 use super::UserCloseReason;
-use crate::engine::{
-    JsonPayload, RecordingStateUpdate, UserId, UserInfo, metrics::RuntimeMetrics,
-    source_model::UserStreamId, sync::lock_unpoisoned,
-};
+use crate::engine::{source_model::UserStreamId, sync::lock_unpoisoned};
 
 pub const MAX_BROADCAST_PAYLOAD_BYTES: usize = 16 * 1024;
 

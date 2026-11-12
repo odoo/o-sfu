@@ -15,10 +15,12 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::time::Instant;
 
 use super::Room;
-use crate::engine::{
+use crate::{
     RoomInstanceId,
-    obligation::{Obligation, TryComplete, Work},
-    sync::lock_unpoisoned,
+    engine::{
+        obligation::{Obligation, TryComplete, Work},
+        sync::lock_unpoisoned,
+    },
 };
 
 #[cfg(any(test, feature = "testing-transport"))]

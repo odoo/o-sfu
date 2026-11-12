@@ -1,3 +1,5 @@
+use o_sfu_model::UserId;
+
 use super::super::{
     state::{
         PacketLoopState,
@@ -5,7 +7,7 @@ use super::super::{
     },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
-use crate::engine::{UserId, media_transport::TransportMediaId};
+use crate::engine::media_transport::TransportMediaId;
 
 #[test]
 fn worker_local_relay_targets_track_active_sources() {

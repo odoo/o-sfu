@@ -5,19 +5,22 @@ use std::{
     sync::Arc,
 };
 
+use o_sfu_model::{UserId, UserPermissions};
 use o_sfu_router::{
     MediaKind,
     rtp::{MediaStream, StreamBinding},
     test_support::rtp_samples::{sample_client_rtp_capabilities, sample_video_rtp_parameters},
 };
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_telemetry::{
+    metrics::{RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt},
+    schema::event as telemetry_event,
+};
 use serde_json::Value;
 
 use super::*;
 use crate::{
-    MediaWorkerId,
+    ConnectionId, MediaWorkerId, RoomInstanceId,
     engine::{
-        ConnectionId, RoomInstanceId, UserId, UserPermissions,
         media_transport::{
             ConsumerActivity, ProducerActivity, RelayRouteActivity, SourceActivityRevision,
             SourceActivityUpdate, TransportAdapterError, TransportMediaId,
@@ -27,7 +30,6 @@ use crate::{
                 test_media_transport_deps, test_rtc_port_range,
             },
         },
-        metrics::{RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt},
         room::{
             RoomConfig, RoomManager,
             TESTS::tracing::{assert_user_exact, capture},

@@ -14,6 +14,9 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_telemetry::metrics::{
+    RtcDrainFailureStage, RtcMetricsRecorder, RtcOutputBudgetLimit, RuntimeMetrics,
+};
 use str0m::{Event, Input, Output, RtcError};
 use tracing::{trace, warn};
 
@@ -32,11 +35,8 @@ use super::{
     },
     buffers::PacketLoopBuffers,
 };
-use crate::engine::{
-    media_transport::{
-        SourcePolicySignal, TransportSessionKey, rtc::state::demux::RemoteTransportAddr,
-    },
-    metrics::{RtcDrainFailureStage, RtcMetricsRecorder, RtcOutputBudgetLimit, RuntimeMetrics},
+use crate::engine::media_transport::{
+    SourcePolicySignal, TransportSessionKey, rtc::state::demux::RemoteTransportAddr,
 };
 
 // The limits admit hundreds of MTU-sized fragments from one large video

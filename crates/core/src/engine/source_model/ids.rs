@@ -1,8 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
+use o_sfu_model::UserId;
 use serde::{Deserialize, Serialize};
-
-use crate::engine::UserId;
 
 /// User-scoped stream identity supplied with a publish intent.
 ///

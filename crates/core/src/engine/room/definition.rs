@@ -12,15 +12,13 @@
 //! room topology. Mutable committed routing directories live in `RoomState`
 //! rather than in this immutable definition.
 
+use o_sfu_model::AvailableFeatures;
 use secrecy::{ExposeSecret, SecretSlice};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use super::{RoomConfig, RoomRuntimeContext, RoomRuntimePolicy};
-use crate::{
-    RoomWorkerPolicy, RuntimeFeatureFlags,
-    engine::{AvailableFeatures, RoomInstanceId},
-};
+use crate::{RoomInstanceId, RoomWorkerPolicy, RuntimeFeatureFlags};
 
 /// Central gate for exposing recording as a production room capability.
 ///

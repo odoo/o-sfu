@@ -6,11 +6,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::webrtc::MediaKind;
 use o_sfu_router::rtp::{MediaCapabilities, MediaStream as RouterRtpParameters};
 use thiserror::Error;
 
-use crate::{Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId, engine::UserId};
+use crate::{Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId};
 
 /// Exact identity of one committed transport session.
 ///

@@ -1,25 +1,28 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use o_sfu_telemetry::schema::event as telemetry_event;
 use tracing::{info, warn};
 
 #[cfg(test)]
 use crate::engine::source_model::test_support::{TestSourceKind, stream_id_for_source};
-use crate::engine::{
-    ConnectionId, UserId,
-    media_transport::{
-        AppliedSessionAnswer, MediaTransport, SessionUploadEncoding, TransportMediaId,
-        TransportTeardown, TransportTeardownAction,
+use crate::{
+    ConnectionId,
+    engine::{
+        media_transport::{
+            AppliedSessionAnswer, MediaTransport, SessionUploadEncoding, TransportMediaId,
+            TransportTeardown, TransportTeardownAction,
+        },
+        obligation::{Obligation, Transfer, TryComplete, Work},
+        room::{
+            SourcePolicyGuard,
+            effects::batch::{RoomEffectContext, RoomEffects},
+            media_graph::{PublishCommit, ValidatedPublish},
+            state::RoomState,
+        },
+        source_model::UserStreamId,
     },
-    obligation::{Obligation, Transfer, TryComplete, Work},
-    room::{
-        SourcePolicyGuard,
-        effects::batch::{RoomEffectContext, RoomEffects},
-        media_graph::{PublishCommit, ValidatedPublish},
-        state::RoomState,
-    },
-    source_model::UserStreamId,
 };
 
 #[derive(Debug, Default)]

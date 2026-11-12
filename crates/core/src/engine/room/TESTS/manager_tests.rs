@@ -7,7 +7,7 @@ use std::{
 };
 
 use futures_util::StreamExt;
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_telemetry::{metrics::RoomGaugeValues, schema::event as telemetry_event};
 use serde_json::Value;
 use tokio::{sync::Notify, task::yield_now, time::timeout};
 
@@ -19,7 +19,7 @@ use super::{
     fixtures::*,
     tracing::{assert_exact, assert_no_event, assert_user_exact, capture},
 };
-use crate::{RoomWorkerPolicy, RuntimeFeatureFlags, engine::metrics::RoomGaugeValues};
+use crate::{RoomWorkerPolicy, RuntimeFeatureFlags};
 
 type TestRoom = super::super::Room;
 

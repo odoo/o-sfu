@@ -1,3 +1,4 @@
+use o_sfu_model::{UserId, UserPermissions};
 use o_sfu_router::{
     rtp::MediaCapabilities, test_support::rtp_samples::sample_client_rtp_capabilities,
 };
@@ -9,9 +10,9 @@ use super::{
     },
     RoomTestApi,
 };
-use crate::engine::{
-    ConnectionId, UserId, UserPermissions,
-    media_transport::{MediaTransport, TransportAdapterError, TransportSessionKey},
+use crate::{
+    ConnectionId,
+    engine::media_transport::{MediaTransport, TransportAdapterError, TransportSessionKey},
 };
 
 impl RoomTestApi<'_> {

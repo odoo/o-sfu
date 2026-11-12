@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use str0m::{
     media::{MediaKind, Mid},
     rtp::Ssrc,
@@ -24,10 +25,7 @@ use super::super::{
 };
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::{TransportMediaId, TransportSessionKey},
-    },
+    engine::media_transport::{TransportMediaId, TransportSessionKey},
 };
 
 const LOCAL_SEND_PACKETS: usize = 512;

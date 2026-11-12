@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::media::Mid;
 use tokio::sync::mpsc;
 
@@ -13,7 +15,7 @@ use super::super::{
         MediaWorkerScenario, register_saturated_remote_source, test_transport_session_key,
     },
 };
-use crate::engine::{UserId, media_transport::TransportMediaId, metrics::RuntimeMetrics};
+use crate::engine::media_transport::TransportMediaId;
 
 pub const REMOTE_GATE_RETRY_TURNS: usize = 8;
 

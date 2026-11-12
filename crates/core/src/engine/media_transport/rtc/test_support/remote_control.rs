@@ -2,16 +2,14 @@
 
 use std::sync::Arc;
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use tokio::sync::mpsc;
 
 use super::super::{
     commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
     state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
 };
-use crate::engine::{
-    media_transport::{TransportMediaId, TransportSessionKey, TransportSourceKey},
-    metrics::RtcMetricsRecorder,
-};
+use crate::engine::media_transport::{TransportMediaId, TransportSessionKey, TransportSourceKey};
 
 pub fn saturated_remote_control(
     source: &TransportSourceKey,

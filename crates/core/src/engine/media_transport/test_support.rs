@@ -1,30 +1,24 @@
 //! Test hooks and fixtures for the media transport facade.
 
+#[cfg(any(test, feature = "internal-benchmarks"))]
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::Arc,
+};
 use std::{
     sync::{atomic::Ordering, mpsc},
     time::Instant,
 };
 
 use o_sfu_rfc::port as rfc_port;
+#[cfg(any(test, feature = "internal-benchmarks"))]
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::media::Mid;
 #[cfg(test)]
 use {
     super::{MediaTransportBuildError, rtc::WorkerMediaControlBatch},
     crate::engine::sync::lock_unpoisoned,
     std::sync::Mutex,
-};
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use {
-    super::{MediaTransportConfig, MediaTransportDeps},
-    crate::{
-        Bitrate, CodecPreferences, MediaCodecFlags, RtcUdpIoBackend, SessionBitrateLimits,
-        VideoBitrateLimits,
-        engine::{metrics::RuntimeMetrics, packet_sink_registry::RoomPacketSinkRegistry},
-    },
-    std::{
-        net::{IpAddr, Ipv4Addr},
-        sync::Arc,
-    },
 };
 
 pub use super::rtc::test_support::{
@@ -34,7 +28,14 @@ use super::{
     MediaTransport, TransportMediaId, TransportQualitySample, TransportSessionHealth,
     TransportSessionKey, TransportSourceKey,
 };
+#[cfg(any(test, feature = "internal-benchmarks"))]
+use super::{MediaTransportConfig, MediaTransportDeps};
 use crate::RtcPortRange;
+#[cfg(any(test, feature = "internal-benchmarks"))]
+use crate::{
+    Bitrate, CodecPreferences, MediaCodecFlags, RtcUdpIoBackend, SessionBitrateLimits,
+    VideoBitrateLimits, engine::packet_sink_registry::RoomPacketSinkRegistry,
+};
 
 #[cfg(test)]
 pub(super) type MediaControlBatchLog = Arc<Mutex<Vec<(usize, &'static str, Vec<usize>)>>>;

@@ -1,10 +1,14 @@
+use o_sfu_model::UserId;
+
 use super::shared::RoomState;
 #[cfg(test)]
 use crate::engine::source_model::{PublishedSourceId, SourceEncodingDescriptor, SourceEncodingId};
-use crate::engine::{
-    ConnectionId, UserId,
-    media_transport::TransportMediaId,
-    source_model::test_support::{TestSourceKind, stream_id_for_source},
+use crate::{
+    ConnectionId,
+    engine::{
+        media_transport::TransportMediaId,
+        source_model::test_support::{TestSourceKind, stream_id_for_source},
+    },
 };
 
 impl RoomState {

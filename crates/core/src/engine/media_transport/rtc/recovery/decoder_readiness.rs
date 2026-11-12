@@ -12,6 +12,7 @@
 
 use std::{mem::take, time::Instant};
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::media::Rid;
 use tracing::debug;
 
@@ -19,10 +20,7 @@ use super::{
     super::state::{PacketLoopState, route_table::RidReadinessSelectedGateUpdate},
     keyframe::request_decoder_readiness_kf,
 };
-use crate::engine::{
-    media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::RtcMetricsRecorder,
-};
+use crate::engine::media_transport::{TransportMediaId, TransportSessionKey};
 
 /// Applies one producer packet's decoder readiness to its consumer routes.
 ///

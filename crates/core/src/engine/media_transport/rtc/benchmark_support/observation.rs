@@ -3,11 +3,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::CodecName;
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
     rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType, StreamBinding},
 };
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics};
 use str0m::{
     media::{Frequency, Mid, Pt, Rid},
     rtp::{Ssrc, Vp8Descriptor},
@@ -25,11 +27,7 @@ use super::super::{
     },
     worker::buffers::PacketLoopBuffers,
 };
-use crate::engine::{
-    UserId,
-    media_transport::{SourcePolicySignal, SourcePolicyUpdateSubscription},
-    metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
-};
+use crate::engine::media_transport::{SourcePolicySignal, SourcePolicyUpdateSubscription};
 
 const INCOMING_OBSERVATION_TURNS: usize = 512;
 const VP8_DESCRIPTOR_BYTES: usize = 6;

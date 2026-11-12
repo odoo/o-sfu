@@ -5,6 +5,7 @@ pub(super) use std::{
     time::{Duration, Instant},
 };
 
+pub(super) use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::CodecName;
 pub(super) use o_sfu_router::rtp::{
     MediaStream as RouterRtpParameters, StreamBinding as RouterRtpEncoding,
@@ -13,27 +14,22 @@ use o_sfu_router::{
     MediaKind as RouterMediaKind,
     rtp::{MediaFormat, PayloadType},
 };
+pub(super) use o_sfu_telemetry::metrics::test_support::RuntimeMetricsSnapshotTestExt;
 pub(super) use str0m::media::{MediaKind as Str0mMediaKind, Mid};
 
 use crate::RtcTcpConfig;
 pub(super) use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits,
-    engine::{
-        UserId,
-        media_transport::{
-            ActiveSpeakerSource, ReceiverBweTargetUpdate, SessionOffer, TransportAdapterError,
-            TransportConsumerRoute, TransportMediaId, TransportResult, TransportSessionKey,
-            TransportSourceKey,
-            rtc::{
-                commands::{
-                    RtcWorkerCommand, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
-                },
-                test_support::{DebugPacketGate, test_transport_session_key},
-                worker::RtcWorker,
-            },
-            test_support::{test_media_transport_config, test_rtc_port_range},
+    engine::media_transport::{
+        ActiveSpeakerSource, ReceiverBweTargetUpdate, SessionOffer, TransportAdapterError,
+        TransportConsumerRoute, TransportMediaId, TransportResult, TransportSessionKey,
+        TransportSourceKey,
+        rtc::{
+            commands::{RtcWorkerCommand, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome},
+            test_support::{DebugPacketGate, test_transport_session_key},
+            worker::RtcWorker,
         },
-        metrics::test_support::RuntimeMetricsSnapshotTestExt,
+        test_support::{test_media_transport_config, test_rtc_port_range},
     },
 };
 

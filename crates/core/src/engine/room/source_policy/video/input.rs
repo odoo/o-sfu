@@ -1,12 +1,12 @@
 use std::collections::BTreeSet;
 
+use o_sfu_model::{UserId, VideoLayoutIntent};
 use o_sfu_router::MediaKind;
 
 use super::super::input::SourcePolicySnapshot;
 use crate::{
     Bitrate,
     engine::{
-        UserId, VideoLayoutIntent,
         media_transport::TransportConsumerRoute,
         room::{
             media_graph::{PendingUpgrade, SubscriptionKey},

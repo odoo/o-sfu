@@ -5,34 +5,32 @@
 
 use std::{sync::Arc, time::Instant};
 
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::media::{Mid, Rid};
 use tokio::sync::mpsc;
 
 use super::super::apply_media_control_batch;
 use crate::{
     Bitrate,
-    engine::{
-        media_transport::{
-            ConsumerRouteControl, ProducerActivity, SourceActivityRevision, SourceActivityUpdate,
-            TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
-            rtc::{
-                commands::{
-                    RemoteSourceControl, RtcWorkerCommand, WorkerMediaControlBatch,
-                    WorkerMediaControlBatchOutcome,
-                },
-                recovery::observe_src_rid_ready,
-                state::{
-                    PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
-                },
-                test_support::{
-                    add_source_rid_stream, assert_consumer_packet_gate, drain_ready_sessions,
-                    install_video_route_with_gate, prepare_source_session_with_rid,
-                    test_consumer_session_key, test_consumer_session_key_on_worker,
-                    test_source_session_key,
-                },
+    engine::media_transport::{
+        ConsumerRouteControl, ProducerActivity, SourceActivityRevision, SourceActivityUpdate,
+        TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
+        rtc::{
+            commands::{
+                RemoteSourceControl, RtcWorkerCommand, WorkerMediaControlBatch,
+                WorkerMediaControlBatchOutcome,
+            },
+            recovery::observe_src_rid_ready,
+            state::{
+                PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
+            },
+            test_support::{
+                add_source_rid_stream, assert_consumer_packet_gate, drain_ready_sessions,
+                install_video_route_with_gate, prepare_source_session_with_rid,
+                test_consumer_session_key, test_consumer_session_key_on_worker,
+                test_source_session_key,
             },
         },
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
     },
 };
 

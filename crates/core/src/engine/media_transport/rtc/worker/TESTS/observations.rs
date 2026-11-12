@@ -1,16 +1,14 @@
 use std::{task::Poll, time::Duration};
 
 use futures_util::poll;
+use o_sfu_telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup};
 use tokio::{
     sync::oneshot,
     time::{advance, pause, resume},
 };
 
 use super::super::{super::commands::RtcWorkerCommand, test_support::TestRtcWorker};
-use crate::engine::{
-    media_transport::TransportAdapterError,
-    metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
-};
+use crate::engine::media_transport::TransportAdapterError;
 
 fn active_speaker_timeout_count(worker: &TestRtcWorker) -> u64 {
     worker.metrics.snapshot().counter_value(
@@ -130,7 +128,9 @@ async fn closed_worker_rejects_observation_without_timeout() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn mutation_reply_remains_pending_past_observation_deadline() {
-    use crate::engine::{UserId, media_transport::rtc::test_support::test_transport_session_key};
+    use o_sfu_model::UserId;
+
+    use crate::engine::media_transport::rtc::test_support::test_transport_session_key;
 
     let worker = TestRtcWorker::default();
     let (release, paused) = worker.pause_for_test().await.expect("worker should pause");

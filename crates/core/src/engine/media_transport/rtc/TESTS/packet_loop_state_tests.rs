@@ -186,11 +186,12 @@ fn packet_loop_state_clears_dirty_and_timeout_schedule_for_removed_session() {
 fn closing_session_keeps_surviving_consumer_feedback_targets() {
     use std::sync::Mutex;
 
+    use o_sfu_telemetry::metrics::RuntimeMetrics;
+
     use super::super::{
         control::{SessionCloseDisposition, worker_close_session},
         state::RtcSnapshotState,
     };
-    use crate::engine::metrics::RuntimeMetrics;
 
     let mut state = PacketLoopState::default();
     let source = TransportMediaId::new(80);

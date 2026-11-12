@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, sync::Mutex};
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::{CodecName, RTP_SEQUENCE_NUMBER_MODULUS};
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
@@ -16,13 +17,10 @@ use super::{
 };
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::rtc::{
-            bootstrap::test_support::ensure_session_rtc_state,
-            state::{bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle},
-            test_support::test_transport_session_key,
-        },
+    engine::media_transport::rtc::{
+        bootstrap::test_support::ensure_session_rtc_state,
+        state::{bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle},
+        test_support::test_transport_session_key,
     },
 };
 

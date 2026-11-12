@@ -14,14 +14,16 @@ use super::{
     ConsumerId, ConsumerRouteTarget, PublishedSource, SubscriptionKey,
     route_graph::{ConsumerRouteReservation, RelayRouteKey},
 };
-use crate::engine::{
+use crate::{
     MediaWorkerId,
-    media_transport::{
-        MediaTransport, ProducerActivity, SourceActivityUpdate, TransportConsumerRoute,
-        TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
-        TransportSourceActivityEffect, TransportSourceKey,
+    engine::{
+        media_transport::{
+            MediaTransport, ProducerActivity, SourceActivityUpdate, TransportConsumerRoute,
+            TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
+            TransportSourceActivityEffect, TransportSourceKey,
+        },
+        source_model::{PublishedSourceId, SourceSyncPolicy, UserStreamId},
     },
-    source_model::{PublishedSourceId, SourceSyncPolicy, UserStreamId},
 };
 
 #[derive(Debug)]

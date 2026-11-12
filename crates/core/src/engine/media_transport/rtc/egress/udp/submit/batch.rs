@@ -5,6 +5,7 @@ use std::{
     io::{self, IoSlice},
 };
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use rustix::{
     io::Errno,
     net::{MMsgHdr, SendAncillaryBuffer, SendFlags, addr::SocketAddrArg, sendmmsg},
@@ -13,7 +14,6 @@ use str0m::net::Transmit;
 use tokio::{io::Interest, net::UdpSocket, task::coop::consume_budget};
 
 use super::{report_udp_send_failure, validate_length};
-use crate::engine::metrics::RtcMetricsRecorder;
 
 const BATCH_SIZE: usize = 32;
 

@@ -11,6 +11,10 @@ use std::{fmt::Write as _, net::SocketAddr, sync::Arc};
 
 use o_sfu_rfc::{tcp_framing::TcpFrame, webrtc::sdp};
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
+use o_sfu_telemetry::metrics::{
+    RtcMetricsRecorder, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
+    RtcWorkerObservationKind,
+};
 use str0m::{
     change::{SdpAnswer, SdpOffer},
     media::{KeyframeRequestKind, MediaKind, Rid},
@@ -33,10 +37,6 @@ use crate::engine::{
         SessionUploadSlot, SourceActivityUpdate, TransportAdapterError, TransportConsumerRoute,
         TransportMediaId, TransportResult, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
         TransportSourceKey,
-    },
-    metrics::{
-        RtcMetricsRecorder, RtcRemoteControlDropKind, RtcRemotePacketGateConvergence,
-        RtcWorkerObservationKind,
     },
     source_model::SourceSyncPolicy,
 };

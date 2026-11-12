@@ -5,6 +5,7 @@
 
 use std::{net::SocketAddr, num::NonZeroU32, sync::LazyLock};
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::{CodecName, RTP_SEQUENCE_NUMBER_MODULUS};
 use o_sfu_router::{
     MediaKind,
@@ -18,16 +19,13 @@ use str0m::{
 use super::*;
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::{
-            TransportMediaId,
-            rtc::{
-                bootstrap,
-                consumer_egress::LocalPacketDestination,
-                state::PacketLoopState,
-                test_support::{sample_forwarded_packet, test_transport_session_key},
-            },
+    engine::media_transport::{
+        TransportMediaId,
+        rtc::{
+            bootstrap,
+            consumer_egress::LocalPacketDestination,
+            state::PacketLoopState,
+            test_support::{sample_forwarded_packet, test_transport_session_key},
         },
     },
 };

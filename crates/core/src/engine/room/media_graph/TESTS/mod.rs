@@ -8,6 +8,7 @@
 
 use std::{collections::BTreeMap, mem, sync::Arc};
 
+use o_sfu_model::{UserId, VideoLayoutIntent};
 use o_sfu_router::{
     MediaKind as RouterMediaKind, RouterId,
     negotiation::derive_consumable_rtp_parameters,
@@ -17,20 +18,19 @@ use o_sfu_router::{
         sample_three_layer_simulcast_video_rtp_parameters, sample_video_rtp_parameters,
     },
 };
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 
 use super::{
     ConsumerRouteState, ConsumerRouteTarget, ConsumerSetupOrigin, ConsumerSetupOutcome,
     DeclaredConsumerSetup, PendingConsumerSetup, SubscriptionKey, ValidatedPublish,
 };
 use crate::{
-    Bitrate, RoomMediaLimits, VideoAdaptationTuning,
+    Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, UserId, VideoLayoutIntent,
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
             TransportConsumerRoute, TransportMediaId, TransportSessionKey,
         },
-        metrics::RuntimeMetrics,
         room::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
             state::{ConnectionCloseCommit, RoomState},

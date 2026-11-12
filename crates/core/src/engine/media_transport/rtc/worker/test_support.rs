@@ -1,5 +1,6 @@
 use std::{sync::mpsc as std_mpsc, time::Instant};
 
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::media::Mid;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -30,7 +31,7 @@ use super::{
     super::{
         commands::RtcWorkerCommand,
         control::WorkerCommandContext,
-        state::{PacketLoopState, TransportSessionHealth},
+        state::PacketLoopState,
         test_support::{
             DebugProbe, DebugProbeRequest, DebugProbeUnavailable, DebugRouteEntry,
             ObserveAudioActivityProbe, ReceiverBweTargetProbe, RecordIncomingMediaProbe,
@@ -44,8 +45,10 @@ use crate::engine::media_transport::rtc::UfragWorkerMap;
 use crate::{
     Bitrate,
     engine::{
-        media_transport::{TransportMediaId, TransportQualitySample, TransportSessionKey},
-        metrics::{self, RuntimeMetrics},
+        media_transport::{
+            TransportMediaId, TransportQualitySample, TransportSessionHealth, TransportSessionKey,
+        },
+        observability,
     },
 };
 
@@ -123,8 +126,8 @@ impl RtcWorker {
             .expect("test snapshot state must be available")
             .set_transport_health(session_key, health);
         metrics.record_transport_health_transition(
-            previous.map(metrics::transport_health_state),
-            Some(metrics::transport_health_state(health)),
+            previous.map(observability::transport_health_state),
+            Some(observability::transport_health_state(health)),
         );
     }
 

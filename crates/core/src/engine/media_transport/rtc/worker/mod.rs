@@ -59,6 +59,7 @@ use std::{
     thread,
 };
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 
@@ -70,12 +71,9 @@ use super::{
         relay_registry::{RelayPacketMailbox, RelayTargetId},
     },
 };
-use crate::engine::{
-    media_transport::{
-        SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey,
-        rtc::packet_loop::IngressPacket,
-    },
-    metrics::RtcMetricsRecorder,
+use crate::engine::media_transport::{
+    SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey,
+    rtc::packet_loop::IngressPacket,
 };
 
 static NEXT_RELAY_TARGET_ID: AtomicU64 = AtomicU64::new(1);

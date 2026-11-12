@@ -3,11 +3,13 @@ use str0m::{Event, IceConnectionState};
 use tokio::{sync::oneshot, task::spawn_blocking, time::timeout};
 
 use super::fixtures::*;
-use crate::engine::media_transport::rtc::{
-    commands::{RtcWorkerCommand, WorkerMediaControlBatch},
-    packet_loop::{transport_health_from_event, transport_ice_state},
-    state::TransportSessionHealth,
-    worker::test_support::TestRtcWorker,
+use crate::engine::media_transport::{
+    TransportSessionHealth,
+    rtc::{
+        commands::{RtcWorkerCommand, WorkerMediaControlBatch},
+        packet_loop::{transport_health_from_event, transport_ice_state},
+        worker::test_support::TestRtcWorker,
+    },
 };
 
 fn expect_first_candidate_port(offer_sdp: &str) -> u16 {
@@ -64,7 +66,7 @@ fn rtc_transport_health_maps_connected_and_disconnected_events() {
 
 #[test]
 fn rtc_transport_ice_state_metric_maps_all_supported_states() {
-    use crate::engine::metrics::TransportIceState;
+    use o_sfu_telemetry::metrics::TransportIceState;
 
     assert_eq!(
         transport_ice_state(IceConnectionState::New),

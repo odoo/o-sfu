@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use o_sfu_model::UserId;
+
 use super::{PublishedSource, SourceKey, remove_from_index_set};
 #[cfg(any(test, feature = "testing-transport"))]
-use crate::engine::ConnectionId;
+use crate::ConnectionId;
 use crate::engine::{
-    UserId,
     media_transport::TransportMediaId,
     source_model::{
         ActiveSpeakerGroup, ActiveSpeakerSourceRole, PublishedSourceId, SourceEncodingId,

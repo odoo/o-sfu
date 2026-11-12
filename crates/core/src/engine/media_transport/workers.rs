@@ -13,9 +13,9 @@ use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use str0m::media::MediaKind as Str0mMediaKind;
 
 use super::rtc::{RtcWorker, RtcWorkerCommand};
-use crate::engine::{
+use crate::{
     MediaWorkerId,
-    media_transport::{
+    engine::media_transport::{
         ActiveSpeakerSource, MediaTransport, ReceiverBandwidthSnapshot, TransportAdapterError,
         TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
         TransportQualitySnapshot, TransportRelayRouteAction, TransportRelayRouteEffect,

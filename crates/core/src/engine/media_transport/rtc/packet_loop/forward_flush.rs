@@ -13,6 +13,11 @@ use core::hint::cold_path;
 use std::mem::take;
 use std::time::Instant;
 
+use o_sfu_telemetry::metrics::{
+    RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcProducerSsrcBindingOutcome,
+    RtcRouteControlOutcome, RtpDecoderRefreshScope, RtpForwardDestinationKind, RtpMetricsRecorder,
+    RtpRelayDropKind, RuntimeMetrics,
+};
 use str0m::media::{MediaKind, Rid};
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -30,15 +35,12 @@ use super::{
     forwarding_destination::{ForwardingDestination, relay_enqueue_result},
     forwarding_planner::{PacketGateDecision, plan_forwards},
 };
-use crate::engine::{
+use crate::{
     RoomInstanceId,
-    media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
-    metrics::{
-        RtcKeyframeRequestOutcome, RtcMetricsRecorder, RtcProducerSsrcBindingOutcome,
-        RtcRouteControlOutcome, RtpDecoderRefreshScope, RtpForwardDestinationKind,
-        RtpMetricsRecorder, RtpRelayDropKind, RuntimeMetrics,
+    engine::{
+        media_transport::{SourcePolicySignal, TransportMediaId, TransportSessionKey},
+        packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
     },
-    packet_sink_registry::{PacketSinkRouteCache, RoomPacketSinkRegistry},
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]

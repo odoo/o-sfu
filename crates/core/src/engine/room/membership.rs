@@ -5,6 +5,7 @@
 //! authoritative membership changes and the work consumed by [`RoomEffects`].
 //! Effects execute after the room-state write guard is released.
 
+use o_sfu_model::{UserId, UserInfo, UserPermissions};
 #[cfg(any(test, feature = "testing-transport"))]
 use o_sfu_router::rtp::MediaCapabilities;
 use o_sfu_telemetry::schema::event as telemetry_event;
@@ -16,10 +17,12 @@ use super::{
     placement::JoinAdmissionTurn,
     state::ConnectionCloseCommit,
 };
-use crate::engine::{
-    ConnectionId, MediaWorkerId, UserId, UserInfo, UserPermissions,
-    media_transport::{MediaTransport, TransportSessionKey},
-    room::state::JoinCommit,
+use crate::{
+    ConnectionId, MediaWorkerId,
+    engine::{
+        media_transport::{MediaTransport, TransportSessionKey},
+        room::state::JoinCommit,
+    },
 };
 
 /// Compatibility marker that collapses every authenticated [`UserPermissions`] value.

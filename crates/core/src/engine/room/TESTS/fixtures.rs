@@ -1,11 +1,15 @@
 use std::{cell::Cell, time::Duration};
 pub(super) use std::{sync::Arc, time::Instant};
 
+pub(super) use o_sfu_model::{UserId, UserInfo, UserPermissions, VideoLayoutIntent};
 pub(super) use o_sfu_router::rtp::{MediaCapabilities, MediaStream};
 use o_sfu_router::test_support::rtp_samples::{
     sample_audio_rtp_parameters, sample_client_rtp_capabilities,
     sample_simulcast_video_rtp_parameters, sample_three_layer_simulcast_video_rtp_parameters,
     sample_video_rtp_parameters,
+};
+pub(super) use o_sfu_telemetry::metrics::{
+    RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
 };
 
 pub(super) use super::super::{
@@ -15,9 +19,8 @@ pub(super) use super::super::{
     transition::PublishStageOutcome,
 };
 pub(super) use crate::{
-    RoomMediaLimits, VideoAdaptationTuning,
+    ConnectionId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, UserId, UserInfo, UserPermissions, VideoLayoutIntent,
         media_transport::{
             AppliedSessionAnswer, MediaTransport, ReceiverBandwidthSnapshot,
             TransportBitrateSnapshot, TransportMediaId, TransportSessionHealth,
@@ -25,7 +28,6 @@ pub(super) use crate::{
                 test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
             },
         },
-        metrics::{RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt},
         source_model::{
             UserStreamId,
             test_support::{

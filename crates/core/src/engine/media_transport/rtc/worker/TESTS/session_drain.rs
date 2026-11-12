@@ -18,12 +18,24 @@ use tokio::sync::{
     oneshot,
 };
 
-use crate::engine::media_transport::rtc::{egress::TcpEgress, state::demux::RemoteTransportAddr};
+use crate::engine::{
+    media_transport::{
+        TransportSessionHealth,
+        rtc::{egress::TcpEgress, state::demux::RemoteTransportAddr},
+    },
+    observability,
+};
 
 #[path = "session_clock_mapping.rs"]
 mod clock_mapping;
 #[path = "session_drain_ingress.rs"]
 mod ingress;
+
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{
+    self, RuntimeMetrics,
+    test_support::{RuntimeMetricsSnapshotLookup, RuntimeMetricsSnapshotTestExt},
+};
 
 use super::{
     super::{
@@ -37,39 +49,32 @@ use super::{
 };
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
-    engine::{
-        UserId,
-        media_transport::{
-            ReceiverBweTargetUpdate, SourcePolicySignal, TransportAdapterError, TransportMediaId,
-            TransportResult,
-            rtc::{
-                RtcWorkerConfig,
-                bootstrap::test_support::ensure_session_rtc_state,
-                codec::RtpProfile,
-                commands::{RtcWorkerCommand, WorkerMediaControlBatch},
-                consumer_egress::test_support::RTX_CACHE_LIFETIME,
-                control::{WorkerCommandContext, handle_worker_command},
-                packet_loop::{
-                    ForwardingDestination, LocalRtcPacketDestination,
-                    forwarded_packet::ForwardedPacket,
-                    ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
-                    routing_miss::DemuxRecoveryState,
-                },
-                state::{
-                    PacketLoopState, RtcSnapshotState, TransportSessionHealth, muxed_rtp_ssrc,
-                    route_control::PacketLayerGate,
-                    slots::ConsumerStreamHandle,
-                    source_route::{DecoderDelivery, MediaRouteDestination},
-                },
-                test_support::{
-                    sample_forwarded_packet, sample_forwarded_packet_without_mid,
-                    test_transport_session_key,
-                },
+    engine::media_transport::{
+        ReceiverBweTargetUpdate, SourcePolicySignal, TransportAdapterError, TransportMediaId,
+        TransportResult,
+        rtc::{
+            RtcWorkerConfig,
+            bootstrap::test_support::ensure_session_rtc_state,
+            codec::RtpProfile,
+            commands::{RtcWorkerCommand, WorkerMediaControlBatch},
+            consumer_egress::test_support::RTX_CACHE_LIFETIME,
+            control::{WorkerCommandContext, handle_worker_command},
+            packet_loop::{
+                ForwardingDestination, LocalRtcPacketDestination,
+                forwarded_packet::ForwardedPacket,
+                ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+                routing_miss::DemuxRecoveryState,
             },
-        },
-        metrics::{
-            self, RuntimeMetrics,
-            test_support::{RuntimeMetricsSnapshotLookup, RuntimeMetricsSnapshotTestExt},
+            state::{
+                PacketLoopState, RtcSnapshotState, muxed_rtp_ssrc,
+                route_control::PacketLayerGate,
+                slots::ConsumerStreamHandle,
+                source_route::{DecoderDelivery, MediaRouteDestination},
+            },
+            test_support::{
+                sample_forwarded_packet, sample_forwarded_packet_without_mid,
+                test_transport_session_key,
+            },
         },
     },
 };
@@ -757,8 +762,8 @@ impl NackDrainFixture {
                 .map_err(|_error| "snapshot state should lock")?
                 .set_transport_health(session_key, TransportSessionHealth::Connected);
             metrics.record_transport_health_transition(
-                previous.map(metrics::transport_health_state),
-                Some(metrics::transport_health_state(
+                previous.map(observability::transport_health_state),
+                Some(observability::transport_health_state(
                     TransportSessionHealth::Connected,
                 )),
             );

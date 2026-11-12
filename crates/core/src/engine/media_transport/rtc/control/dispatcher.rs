@@ -10,6 +10,7 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use tokio::sync::oneshot;
 
 use super::{
@@ -21,12 +22,8 @@ use super::{
     },
     media, session,
 };
-use crate::engine::{
-    media_transport::{
-        TransportMediaId, TransportResult, TransportSourceDiagnosticsSnapshot,
-        rtc::egress::TcpEgress,
-    },
-    metrics::{RtcMetricsRecorder, RuntimeMetrics},
+use crate::engine::media_transport::{
+    TransportMediaId, TransportResult, TransportSourceDiagnosticsSnapshot, rtc::egress::TcpEgress,
 };
 
 pub struct WorkerCommandContext<'a> {

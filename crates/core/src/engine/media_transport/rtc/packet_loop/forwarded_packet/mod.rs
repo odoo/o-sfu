@@ -28,9 +28,9 @@ use super::super::{
         slots::SessionHandle,
     },
 };
-use crate::engine::{
+use crate::{
     RoomInstanceId,
-    media_transport::{TransportMediaId, TransportSessionKey},
+    engine::media_transport::{TransportMediaId, TransportSessionKey},
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]

@@ -44,7 +44,7 @@ fn assert_active_receive_backoff_cancels() {
         task::{Context, Poll, Waker},
     };
 
-    use crate::engine::metrics::{
+    use o_sfu_telemetry::metrics::{
         MetricName, RuntimeMetrics, test_support::RuntimeMetricsSnapshotLookup,
     };
 

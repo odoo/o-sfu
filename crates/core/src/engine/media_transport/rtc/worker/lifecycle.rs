@@ -19,6 +19,7 @@ use std::{
 };
 
 use o_sfu_rfc::tcp_framing::TcpFrame;
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use tokio::{
     runtime::Builder as TokioRuntimeBuilder,
     sync::{Semaphore, mpsc, oneshot},
@@ -33,7 +34,7 @@ use super::{
         RtcWorkerConfig, RtpProfile, bootstrap,
         commands::{RtcWorkerCommand, RtcWorkerResponse},
         state::{
-            RtcSnapshotState, TransportSessionHealth,
+            RtcSnapshotState,
             bitrate::BitrateRegistry,
             relay_registry::{RELAY_MAILBOX_CAPACITY, RelayPacketMailbox, sender_backlog_depth},
         },
@@ -42,19 +43,16 @@ use super::{
 };
 use crate::{
     Bitrate, MediaWorkerId, RtcPortRange, RtcUdpIoBackend,
-    engine::{
-        media_transport::{
-            ActiveSpeakerSource, MediaTransportConfig, MediaTransportDeps,
-            ReceiverBandwidthSnapshot, SourcePolicySignal, TransportAdapterError,
-            TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
-            TransportQualitySnapshot, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
-            TransportWorkerPressureSnapshot,
-            rtc::{
-                UfragWorkerMap,
-                packet_loop::{IngressPacket, RtcIngress},
-            },
+    engine::media_transport::{
+        ActiveSpeakerSource, MediaTransportConfig, MediaTransportDeps, ReceiverBandwidthSnapshot,
+        SourcePolicySignal, TransportAdapterError, TransportBitrateSnapshot,
+        TransportHealthSnapshot, TransportMediaId, TransportQualitySnapshot,
+        TransportSessionHealth, TransportSessionKey, TransportSourceDiagnosticsSnapshot,
+        TransportWorkerPressureSnapshot,
+        rtc::{
+            UfragWorkerMap,
+            packet_loop::{IngressPacket, RtcIngress},
         },
-        metrics::RtcMetricsRecorder,
     },
 };
 

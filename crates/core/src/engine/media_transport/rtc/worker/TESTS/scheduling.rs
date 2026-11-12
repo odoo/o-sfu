@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_model::UserId;
 use str0m::net::Protocol;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -13,26 +14,22 @@ use super::{
 };
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::{
-            TransportMediaId,
-            rtc::{
-                bootstrap::test_support::ensure_session_rtc_state,
-                commands::RtcWorkerCommand,
-                egress::TcpEgress,
-                packet_loop::{
-                    IngressPacket, RtcIngress, forwarded_packet::ForwardedPacket,
-                    routing_miss::DemuxRecoveryState,
-                    udp::test_support::completed_datagram_channel,
-                },
-                state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
-                worker::{
-                    input::PacketLoopInputReceivers,
-                    loop_driver::{
-                        PacketLoopApplyContext, PacketLoopConfig, PacketLoopTurn,
-                        PacketLoopTurnInput, WaitPhaseSnapshot,
-                    },
+    engine::media_transport::{
+        TransportMediaId,
+        rtc::{
+            bootstrap::test_support::ensure_session_rtc_state,
+            commands::RtcWorkerCommand,
+            egress::TcpEgress,
+            packet_loop::{
+                IngressPacket, RtcIngress, forwarded_packet::ForwardedPacket,
+                routing_miss::DemuxRecoveryState, udp::test_support::completed_datagram_channel,
+            },
+            state::{PacketLoopState, RtcSnapshotState, bitrate::BitrateRegistry},
+            worker::{
+                input::PacketLoopInputReceivers,
+                loop_driver::{
+                    PacketLoopApplyContext, PacketLoopConfig, PacketLoopTurn, PacketLoopTurnInput,
+                    WaitPhaseSnapshot,
                 },
             },
         },
