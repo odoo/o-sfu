@@ -14,9 +14,9 @@ and why following the lint would make it worse. The reason should justify the
 decision without merely restating the lint's name.
 
 > [!NOTE]
-> Further reading: **[lint attributes in the Rust Reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#lint-check-attributes)** and **[`allow_attributes` in Clippy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes)**.
+> Further reading: **[lint attributes in the Rust Reference](https://doc.rust-lang.org/reference/attributes/diagnostics.html#lint-check-attributes)** and **[`allow_attributes` in Clippy](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#allow_attributes)**.
 >
-> Related lints: [allow_attributes_without_reason](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#allow_attributes_without_reason).
+> Related lints: [allow_attributes_without_reason](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#allow_attributes_without_reason).
 
 **Example:** `AvpStaticPayloadType` uses `#[repr(u8)]`, which makes its
 conversion to `u8` lossless. The lint exception is local to `as_u8`:

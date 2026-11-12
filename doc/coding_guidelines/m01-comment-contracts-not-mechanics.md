@@ -14,9 +14,9 @@ Omit empty sections and prose that merely repeats the return type.
 > [!NOTE]
 > Further reading: **[failure documentation in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/documentation.html#function-docs-include-error-panic-and-safety-considerations-c-failure)**, **[the rustdoc writing guide](https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html)**, **[TypeDoc's `@throws` tag](https://typedoc.org/documents/Tags._throws.html)** and **[Google's code review guidance on comments](https://google.github.io/eng-practices/review/reviewer/looking-for.html#comments)**.
 >
-> Related lints: [pedantic::missing_errors_doc](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#missing_errors_doc),
-> [pedantic::missing_panics_doc](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#missing_panics_doc)
-> and [style::missing_safety_doc](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#missing_safety_doc).
+> Related lints: [pedantic::missing_errors_doc](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#missing_errors_doc),
+> [pedantic::missing_panics_doc](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#missing_panics_doc)
+> and [style::missing_safety_doc](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#missing_safety_doc).
 
 **Example:** The comment on `next_generation` explains the reserved value that
 requires `.max(1)` after wraparound.

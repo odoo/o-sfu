@@ -14,15 +14,15 @@ small synchronous operations.
 > [!NOTE]
 > Further reading: **[heap allocation costs](https://nnethercote.github.io/perf-book/heap-allocations.html)** and **[benchmark design](https://nnethercote.github.io/perf-book/benchmarking.html)**.
 >
-> Related lints: [assigning_clones](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assigning_clones),
-> [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#redundant_clone),
-> [pedantic::format_collect](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#format_collect),
-> [pedantic::inefficient_to_string](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#inefficient_to_string),
-> [pedantic::large_types_passed_by_value](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#large_types_passed_by_value),
-> [perf::iter_overeager_cloned](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#iter_overeager_cloned),
-> [perf::manual_memcpy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_memcpy),
-> [perf::regex_creation_in_loops](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#regex_creation_in_loops)
-> and [perf::unnecessary_to_owned](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_to_owned).
+> Related lints: [assigning_clones](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#assigning_clones),
+> [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#redundant_clone),
+> [pedantic::format_collect](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#format_collect),
+> [pedantic::inefficient_to_string](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#inefficient_to_string),
+> [pedantic::large_types_passed_by_value](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#large_types_passed_by_value),
+> [perf::iter_overeager_cloned](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#iter_overeager_cloned),
+> [perf::manual_memcpy](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_memcpy),
+> [perf::regex_creation_in_loops](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#regex_creation_in_loops)
+> and [perf::unnecessary_to_owned](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_to_owned).
 
 **Example:** `PacketLoopRoutingMissRecord::overwrite` reuses the retained packet
 buffer when replacing an evicted cache entry. No allocation is needed when the

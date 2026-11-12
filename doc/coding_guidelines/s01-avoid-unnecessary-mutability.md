@@ -13,10 +13,10 @@ ownership is required. To move a value out of a mutable location, use
 > [!NOTE]
 > Further reading: **[aliasing in the Rustonomicon](https://doc.rust-lang.org/nomicon/aliasing.html)** and **[ownership and borrowing in The Rust Book](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html)**.
 >
-> Related lints: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_pass_by_ref_mut),
-> [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#redundant_clone),
-> [complexity::clone_on_copy](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#clone_on_copy)
-> and [style::unnecessary_mut_passed](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_mut_passed).
+> Related lints: [needless_pass_by_ref_mut](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_pass_by_ref_mut),
+> [redundant_clone](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#redundant_clone),
+> [complexity::clone_on_copy](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#clone_on_copy)
+> and [style::unnecessary_mut_passed](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_mut_passed).
 
 **Example:** Return computed values from helper functions instead of passing a
 mutable struct through multiple modification steps.

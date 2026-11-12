@@ -13,7 +13,7 @@ abstraction replaces when refactoring.
 > [!NOTE]
 > Further reading: **[avoiding unnecessary interfaces in Google's Go Style Guide](https://google.github.io/styleguide/go/best-practices.html#avoid-unnecessary-interfaces)**.
 >
-> Related lints: [complexity::extra_unused_type_parameters](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#extra_unused_type_parameters).
+> Related lints: [complexity::extra_unused_type_parameters](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#extra_unused_type_parameters).
 
 **Example:** `MediaTransport::publish_media` hides worker selection, command
 construction and channel dispatch behind one domain call.

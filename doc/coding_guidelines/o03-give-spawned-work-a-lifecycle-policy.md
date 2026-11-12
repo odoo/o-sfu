@@ -20,7 +20,7 @@ contract](https://docs.rs/tokio-util/latest/tokio_util/task/struct.TaskTracker.h
 > [!NOTE]
 > Further reading: **[graceful shutdown in Tokio](https://tokio.rs/tokio/topics/shutdown)** and **[the `JoinHandle` lifecycle](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)**.
 >
-> Related lints: [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_future).
+> Related lints: [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#let_underscore_future).
 
 **Example:** Track background tasks with a `TaskTracker`. Once the owner stops
 admitting work, close the tracker, signal cancellation and wait for completion.

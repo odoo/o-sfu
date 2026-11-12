@@ -14,10 +14,10 @@ combinations of values.
 > [!NOTE]
 > Further reading: **[linearizability](https://en.wikipedia.org/wiki/Linearizability)**, **[atomicity and concurrency in Rust](https://doc.rust-lang.org/nomicon/concurrency.html)** and **[atomic memory orderings in Rust](https://doc.rust-lang.org/std/sync/atomic/enum.Ordering.html)**.
 >
-> Related lints: [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_lock),
-> [perf::readonly_write_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#readonly_write_lock),
-> [style::mut_mutex_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#mut_mutex_lock)
-> and [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_lock).
+> Related lints: [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#let_underscore_lock),
+> [perf::readonly_write_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#readonly_write_lock),
+> [style::mut_mutex_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#mut_mutex_lock)
+> and [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#await_holding_lock).
 
 **Example:** `PacketLoopDelaySnapshot` stores `delay_ms` before a `Release` store
 to `next_deadline_elapsed_ms`. Readers load the deadline with `Acquire` before

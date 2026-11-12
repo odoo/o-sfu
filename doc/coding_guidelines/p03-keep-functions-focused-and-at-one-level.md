@@ -9,11 +9,11 @@ keep the main flow clear without deep nesting.
 > [!NOTE]
 > Further reading: **[Google's guidance on short functions](https://google.github.io/styleguide/cppguide.html#Write_Short_Functions)**.
 >
-> Related lints: [cognitive_complexity](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#cognitive_complexity),
-> [complexity::excessive_nesting](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#excessive_nesting),
-> [pedantic::manual_let_else](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_let_else),
-> [pedantic::too_many_lines](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#too_many_lines)
-> and [style::question_mark](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#question_mark).
+> Related lints: [cognitive_complexity](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#cognitive_complexity),
+> [complexity::excessive_nesting](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#excessive_nesting),
+> [pedantic::manual_let_else](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_let_else),
+> [pedantic::too_many_lines](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#too_many_lines)
+> and [style::question_mark](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#question_mark).
 
 **Example:** `verify_auth_payload` coordinates room resolution and
 authentication while `resolve_handshake_room` and

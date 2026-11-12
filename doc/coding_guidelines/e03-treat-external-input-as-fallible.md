@@ -14,10 +14,10 @@ invariant documented in `reason`.
 > [!NOTE]
 > Further reading: **[argument validation in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/dependability.html#functions-validate-their-arguments-c-validate)** and **[fallible conversion with `TryFrom`](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)**.
 >
-> Related lints: [expect_used](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#expect_used),
-> [indexing_slicing](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#indexing_slicing),
-> [panic](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#panic)
-> and [unwrap_used](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unwrap_used).
+> Related lints: [expect_used](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#expect_used),
+> [indexing_slicing](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#indexing_slicing),
+> [panic](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#panic)
+> and [unwrap_used](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unwrap_used).
 
 **Example:** `decode_envelope_batch` validates JSON and batch size before
 constructing an `EnvelopeBatch`.
