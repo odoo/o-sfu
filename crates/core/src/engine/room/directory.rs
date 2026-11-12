@@ -22,7 +22,6 @@ use crate::engine::{
 };
 
 #[cfg(any(test, feature = "testing-transport"))]
-#[path = "TESTS/directory_support.rs"]
 mod test_support;
 
 const UNKNOWN_REMOTE_ADDRESS: &str = "unknown";

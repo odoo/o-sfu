@@ -46,7 +46,6 @@ pub use policy::{
 pub use selection::{ConsumerSourceSelection, SourceSelector};
 
 #[cfg(any(test, feature = "testing-transport"))]
-#[path = "TESTS/support.rs"]
 pub mod test_support;
 
 #[cfg(test)]

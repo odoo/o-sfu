@@ -3,7 +3,7 @@ use o_sfu_router::{
 };
 
 use super::{
-    super::super::{
+    super::{
         JoinUserRequest, RoomEffectContext, RoomJoinError, UserOutboundSender,
         placement::JoinAdmissionTurn,
     },

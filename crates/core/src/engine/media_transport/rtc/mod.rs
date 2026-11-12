@@ -33,7 +33,6 @@ use crate::{RtcTcpConfig, SessionBitrateLimits, VideoBitrateLimits};
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]
 mod TESTS;
 #[cfg(feature = "internal-benchmarks")]
-#[path = "TESTS/benchmark_support/mod.rs"]
 pub mod benchmark_support;
 mod bootstrap;
 mod codec;
@@ -42,7 +41,6 @@ mod consumer_egress;
 mod control;
 mod egress;
 #[cfg(any(test, fuzzing))]
-#[path = "TESTS/fuzz_support/mod.rs"]
 pub(crate) mod fuzz_support;
 mod negotiation;
 mod packet_loop;
@@ -50,7 +48,6 @@ mod recovery;
 mod state;
 mod tcp_acceptor;
 #[cfg(any(test, feature = "testing-transport", feature = "internal-benchmarks"))]
-#[path = "TESTS/test_support/mod.rs"]
 pub mod test_support;
 mod worker;
 

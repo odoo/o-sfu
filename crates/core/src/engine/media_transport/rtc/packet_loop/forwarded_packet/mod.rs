@@ -34,7 +34,6 @@ use crate::engine::{
 };
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-#[path = "TESTS/support.rs"]
 pub mod test_support;
 
 /// one RTP packet staged for packet-loop observation and forwarding

@@ -11,7 +11,7 @@ pub(super) use o_sfu_telemetry::diagnostics::{
 };
 pub(super) use str0m::{Candidate, Rtc, change::SdpOffer, media::Mid};
 
-pub(super) use super::super::{api::NegotiatedPublish, fixtures::*};
+pub(super) use super::super::{super::test_support::NegotiatedPublish, fixtures::*};
 pub(super) use crate::{
     Bitrate, RoomMediaLimits,
     engine::{

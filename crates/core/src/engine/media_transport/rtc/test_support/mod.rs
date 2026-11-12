@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[path = "../TESTS/test_support/media_routes.rs"]
 mod media_routes;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 mod packets;
@@ -9,6 +10,7 @@ mod remote_control;
 #[cfg(any(test, feature = "internal-benchmarks"))]
 mod route_graph;
 #[cfg(test)]
+#[path = "../TESTS/test_support/rtc_peer.rs"]
 mod rtc_peer;
 
 #[cfg(test)]

@@ -50,7 +50,6 @@ use crate::engine::{
 };
 
 #[cfg(any(test, feature = "testing-transport"))]
-#[path = "TESTS/support.rs"]
 mod test_support;
 
 const SOURCE_POLICY_CONCURRENCY: usize = 8;

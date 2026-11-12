@@ -5,7 +5,6 @@ use str0m::media::Rid;
 use super::PacketLayerGate;
 
 #[cfg(any(test, feature = "internal-benchmarks"))]
-#[path = "TESTS/decoder_delivery.rs"]
 mod test_support;
 
 /// Decoder readiness and receiver reanchoring generation for one destination.
