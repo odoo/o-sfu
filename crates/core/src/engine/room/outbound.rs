@@ -43,7 +43,7 @@ impl BroadcastPayload {
     /// # Errors
     ///
     /// Returns [`BroadcastPayloadError::TooLarge`] when the serialized JSON
-    /// exceeds [`MAX_BROADCAST_PAYLOAD_BYTES`]. Returns
+    /// exceeds the limit that the error carries. Returns
     /// [`BroadcastPayloadError::JsonSerialization`] when JSON serialization
     /// fails.
     pub fn try_new(message: JsonPayload) -> Result<Self, BroadcastPayloadError> {

@@ -13,11 +13,10 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use o_sfu_core::{
-    ConnectionId,
+    Bitrate, ConnectionId,
     prelude::{
-        Bitrate, CodecPreferences, MediaCodecFlags, MediaSession, RoomWorkerPolicy,
-        RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits, SfuCore, UserStreamId,
-        VideoBitrateLimits,
+        CodecPreferences, MediaCodecFlags, MediaSession, RoomWorkerPolicy, RtcUdpIoBackend,
+        RuntimeFeatureFlags, SessionBitrateLimits, SfuCore, UserStreamId, VideoBitrateLimits,
     },
     server::{
         metrics::RuntimeMetrics,

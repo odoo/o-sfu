@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use o_sfu_core::prelude::Bitrate;
+use o_sfu_core::Bitrate;
 
 use super::{Env, non_empty, positive};
 

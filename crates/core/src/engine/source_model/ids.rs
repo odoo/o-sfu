@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// `UserStreamId` is not globally unique. It is unique only together with the
 /// publishing user id. Room indexes that need publication identity must pair it
-/// with the publishing user or use [`PublishedSourceId`] after a publish
+/// with the publishing user or use `PublishedSourceId` after a publish
 /// commits.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -66,7 +66,7 @@ impl PublishedSourceId {
         source_id
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
+    #[cfg(test)]
     #[must_use]
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
@@ -101,7 +101,7 @@ impl SourceEncodingId {
         encoding_id
     }
 
-    #[cfg(any(test, feature = "testing-transport"))]
+    #[cfg(test)]
     #[must_use]
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)

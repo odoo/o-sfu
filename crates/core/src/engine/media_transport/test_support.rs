@@ -22,7 +22,7 @@ use {
 };
 
 pub use super::rtc::test_support::{
-    DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry, ForwardedPacket,
+    DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry,
 };
 use super::{
     MediaTransport, TransportMediaId, TransportQualitySample, TransportSessionHealth,

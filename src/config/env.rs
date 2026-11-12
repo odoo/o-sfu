@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, ensure};
-use o_sfu_core::prelude::Bitrate;
+use o_sfu_core::Bitrate;
 use secrecy::SecretString;
 use zeroize::Zeroize;
 

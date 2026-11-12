@@ -9,9 +9,11 @@
 //!
 //! - [`prelude`] contains caller-facing configuration, media intent,
 //!   [`SfuCore`](prelude::SfuCore) and [`MediaSession`](prelude::MediaSession).
-//! - [`server`] contains runtime construction, room integration, transport,
-//!   diagnostics and metrics.
+//! - [`server`] contains runtime construction, room integration, transport
+//!   and metrics.
 //! - Fundamental identifiers and [`Bitrate`] remain at the crate root.
+//!
+//! Each public type has one path.
 //!
 //! # Architecture
 //!
@@ -44,9 +46,10 @@
 //! };
 //!
 //! use o_sfu_core::{
+//!     Bitrate,
 //!     prelude::{
-//!         Bitrate, CodecPreferences, MediaCodecFlags, RtcPortRange, RtcUdpIoBackend,
-//!         SessionBitrateLimits, VideoBitrateLimits,
+//!         CodecPreferences, MediaCodecFlags, RtcPortRange, RtcUdpIoBackend, SessionBitrateLimits,
+//!         VideoBitrateLimits,
 //!     },
 //!     server::{
 //!         metrics::RuntimeMetrics,

@@ -4,7 +4,7 @@ use std::{
 };
 
 use ipnet::IpNet;
-use o_sfu_core::prelude::{Bitrate, RtcTcpConfig};
+use o_sfu_core::{Bitrate, prelude::RtcTcpConfig};
 use secrecy::SecretString;
 
 use super::{

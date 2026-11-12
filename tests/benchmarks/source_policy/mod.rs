@@ -53,9 +53,10 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use o_sfu_core::{
+    Bitrate,
     prelude::{
-        Bitrate, CodecPreferences, MediaCodecFlags, MediaSession, RoomMediaLimits,
-        RoomWorkerPolicy, RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits, SfuCore,
+        CodecPreferences, MediaCodecFlags, MediaSession, RoomMediaLimits, RoomWorkerPolicy,
+        RtcUdpIoBackend, RuntimeFeatureFlags, SessionBitrateLimits, SfuCore,
         SourceSubscriptionIntent, UserStreamId, VideoBitrateLimits,
     },
     server::{

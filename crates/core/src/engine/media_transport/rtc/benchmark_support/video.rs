@@ -21,7 +21,6 @@ use crate::engine::media_transport::{
 };
 
 pub const SELECTED_RID_DESTINATIONS: usize = 256;
-pub const KEYFRAME_COALESCING_REQUESTS: usize = 512;
 const KEYFRAME_COALESCING_REQUESTS_I64: i64 = 512;
 
 /// fixed selected-RID route-control fixture for readiness benchmarks

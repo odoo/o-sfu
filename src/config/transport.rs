@@ -6,9 +6,12 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, ensure};
-use o_sfu_core::prelude::{
-    Bitrate, RoomMediaLimits, RoomWorkerPolicy, RtcPortRange, RtcUdpIoBackend,
-    VideoAdaptationTuning, VideoAdaptationTuningError, VideoBitrateLimits,
+use o_sfu_core::{
+    Bitrate,
+    prelude::{
+        RoomMediaLimits, RoomWorkerPolicy, RtcPortRange, RtcUdpIoBackend, VideoAdaptationTuning,
+        VideoAdaptationTuningError, VideoBitrateLimits,
+    },
 };
 use tokio::sync::Semaphore;
 

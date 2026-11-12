@@ -7,6 +7,21 @@ use o_sfu_router::{Router, RouterId, rtp::MediaCapabilities};
 
 use super::*;
 
+impl RoomRuntimeContext {
+    /// Seeds a room with assigned placements. Production rooms start unassigned.
+    pub(in crate::engine::room) fn new(
+        instance: RoomInstanceId,
+        primary: RouterPlacement,
+        spillover: Vec<RouterPlacement>,
+    ) -> Self {
+        Self {
+            instance,
+            primary_router: primary.router,
+            initial_router_placements: Some(RouterPlacements::new(primary, spillover)),
+        }
+    }
+}
+
 fn worker(raw: usize) -> MediaWorkerId {
     MediaWorkerId::from_raw(raw)
 }
