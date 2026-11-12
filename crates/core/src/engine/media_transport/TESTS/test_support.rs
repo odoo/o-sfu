@@ -1,7 +1,8 @@
+use o_sfu_model::UserId;
+
 use super::{test_media_transport, test_rtc_port_range};
-use crate::engine::{
-    UserId,
-    media_transport::{TransportSessionHealth, rtc::test_support::test_transport_session_key},
+use crate::engine::media_transport::{
+    TransportSessionHealth, rtc::test_support::test_transport_session_key,
 };
 
 #[test]

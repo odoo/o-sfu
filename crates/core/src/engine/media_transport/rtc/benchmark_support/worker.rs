@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use o_sfu_model::UserId;
 use tokio::runtime::{Builder, Runtime};
 
 use super::super::{
@@ -16,13 +17,10 @@ use super::super::{
 };
 use crate::{
     MediaWorkerId, RtcPortRange,
-    engine::{
-        UserId,
-        media_transport::{
-            SourcePolicySignal, TransportSessionKey,
-            rtc::UfragWorkerMap,
-            test_support::{test_media_transport_config, test_media_transport_deps},
-        },
+    engine::media_transport::{
+        SourcePolicySignal, TransportSessionKey,
+        rtc::UfragWorkerMap,
+        test_support::{test_media_transport_config, test_media_transport_deps},
     },
 };
 

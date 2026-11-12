@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use o_sfu_model::UserId;
 use o_sfu_router::{ConsumerId, MediaKind, rtp, topology::RoutedProducerId};
 
 use crate::engine::{
-    UserId,
     media_transport::{
         SourceActivityRevision, TransportConsumerRoute, TransportMediaId, TransportSourceKey,
     },

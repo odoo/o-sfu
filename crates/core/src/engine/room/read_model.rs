@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::{RecordingState, UserId, UserInfo};
 use o_sfu_rfc::rtp::Ssrc;
 use o_sfu_router::{MediaKind, rtp::MediaFormat};
 use o_sfu_telemetry::diagnostics::{
@@ -25,9 +26,8 @@ use o_sfu_telemetry::diagnostics::{
 
 use super::{Room, RoomMediaCounts, media_graph::PendingUpgrade, state::RoomState};
 use crate::{
-    Bitrate,
+    Bitrate, ConnectionId, MediaWorkerId,
     engine::{
-        ConnectionId, MediaWorkerId, RecordingState, UserId, UserInfo,
         media_transport::{
             ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSourceDiagnostic,
             MediaTransport, TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,

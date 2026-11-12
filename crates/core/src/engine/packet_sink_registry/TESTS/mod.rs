@@ -1,11 +1,14 @@
 use std::{sync::Arc, time::Instant};
 
-use crate::engine::{
+use o_sfu_telemetry::metrics::RtpForwardDestinationKind;
+
+use crate::{
     RoomInstanceId,
-    media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::RtpForwardDestinationKind,
-    packet_sink_registry::{
-        PacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
+    engine::{
+        media_transport::{TransportMediaId, TransportSessionKey},
+        packet_sink_registry::{
+            PacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
+        },
     },
 };
 

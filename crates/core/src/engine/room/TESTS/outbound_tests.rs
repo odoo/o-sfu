@@ -1,6 +1,7 @@
+use o_sfu_telemetry::metrics::RuntimeMetrics;
+
 use super::{super::outbound::VersionedRemoteTrackSnapshot, fixtures::*};
 use crate::engine::{
-    metrics::RuntimeMetrics,
     room::{
         RemoteTrackProjection, RemoteTrackSnapshot, UserOutboundOverflowKind,
         UserOutboundQueueLimits, UserOutboundSendError,

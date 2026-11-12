@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::{
     ice::{StunMessage, TransId},
     net::Protocol,
@@ -22,13 +24,7 @@ use super::super::{
     },
     worker::loop_driver::route_queued_ingress_datagrams_for_benchmark,
 };
-use crate::{
-    Bitrate,
-    engine::{
-        UserId,
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
-    },
-};
+use crate::Bitrate;
 
 pub const INGRESS_DEMUX_ATTEMPTS: usize = 256;
 pub const INGRESS_COMPLETED_BURST_DATAGRAMS: usize = 256;

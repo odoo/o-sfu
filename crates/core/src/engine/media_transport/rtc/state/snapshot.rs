@@ -2,12 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use super::TransportSessionHealth;
 use crate::{
     Bitrate,
     engine::media_transport::{
         ReceiverBandwidthSnapshot, TransportHealthSnapshot, TransportQualitySample,
-        TransportQualitySnapshot, TransportSessionKey,
+        TransportQualitySnapshot, TransportSessionHealth, TransportSessionKey,
     },
 };
 

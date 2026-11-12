@@ -1,7 +1,8 @@
 //! Test hooks for rooms and the room manager.
 
+use o_sfu_model::UserId;
+
 use super::{Room, RoomManager};
-use crate::engine::UserId;
 
 mod inspect;
 mod lifecycle;

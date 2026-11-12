@@ -1,5 +1,7 @@
 use std::{mem::take, sync::Arc, time::Instant};
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::media::Mid;
 
 use super::super::{
@@ -10,13 +12,9 @@ use super::super::{
 };
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::{
-            TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
-            rtc::state::PacketLoopState,
-        },
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
+    engine::media_transport::{
+        TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
+        rtc::state::PacketLoopState,
     },
 };
 

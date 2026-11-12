@@ -1,14 +1,18 @@
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 
 #[cfg(test)]
 use super::PublishStageOutcome;
 use super::{RoomUserOperation, StagedPublish};
-use crate::engine::{ConnectionId, UserId, room::Room, source_model::UserStreamId};
 #[cfg(test)]
 use crate::engine::{media_transport::TransportAdapterError, source_model::SourcePublishIntent};
 #[cfg(test)]
 use crate::engine::{
     media_transport::TransportMediaId, source_model::test_support::TestSourceKind,
+};
+use crate::{
+    ConnectionId,
+    engine::{room::Room, source_model::UserStreamId},
 };
 
 impl StagedPublish {

@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use o_sfu_model::{UserId, UserInfo};
 use o_sfu_router::rtp::MediaCapabilities;
 use tracing::{debug, error, warn};
 
@@ -19,10 +20,10 @@ use super::{
     shared::{ActiveUser, RoomState},
 };
 #[cfg(test)]
-use crate::engine::MediaWorkerId;
-use crate::engine::{
-    ConnectionId, UserId, UserInfo,
-    media_transport::{TransportSessionKey, TransportTeardown},
+use crate::MediaWorkerId;
+use crate::{
+    ConnectionId,
+    engine::media_transport::{TransportSessionKey, TransportTeardown},
 };
 
 #[cfg(test)]

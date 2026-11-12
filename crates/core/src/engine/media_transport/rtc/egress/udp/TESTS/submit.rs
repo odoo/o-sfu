@@ -5,10 +5,11 @@ use std::{
     time::Duration,
 };
 
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::net::{Protocol, Transmit};
 
 use super::{RtcUdpSocket, UdpMessage, submit, validate_length};
-use crate::{RtcUdpIoBackend, engine::metrics::RuntimeMetrics};
+use crate::RtcUdpIoBackend;
 
 #[test]
 fn udp_completion_requires_the_entire_datagram() {

@@ -1,6 +1,7 @@
-use metrics::{SourceSelectionKind, TransportHealthState};
-use o_sfu_telemetry::diagnostics::DiagnosticsTransportHealth;
-pub use o_sfu_telemetry::metrics;
+use o_sfu_telemetry::{
+    diagnostics::DiagnosticsTransportHealth,
+    metrics::{SourceSelectionKind, TransportHealthState},
+};
 
 use crate::engine::{media_transport::TransportSessionHealth, source_model::SourceSelector};
 

@@ -7,11 +7,11 @@
 
 use std::{net::SocketAddr, sync::Arc, vec::Drain};
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::net::Transmit;
 
 use self::plan::{UdpMessage, plan_messages};
 use super::{RtcUdpSocket, TransmitRejection, report_rejection};
-use crate::engine::metrics::RtcMetricsRecorder;
 
 mod plan;
 mod submit;

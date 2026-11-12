@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use o_sfu_model::{UserId, UserInfo};
 use o_sfu_rfc::rtp::{Mid, Rid, Ssrc};
 use o_sfu_router::{
     RouterError,
@@ -16,9 +17,8 @@ use super::{
     subscription::ReceiverRouteScope,
 };
 use crate::{
-    Bitrate,
+    Bitrate, ConnectionId,
     engine::{
-        ConnectionId, UserId, UserInfo,
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityUpdate, TransportMediaId,
             TransportSessionKey, TransportSourceActivityEffect, TransportSourceKey,

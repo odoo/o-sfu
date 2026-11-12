@@ -9,13 +9,13 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::net::{Protocol, Transmit};
 use tracing::warn;
 
 pub(crate) use self::tcp::TcpEgress;
 use self::udp::UdpEgress;
 use super::packet_loop::RtcUdpSocket;
-use crate::engine::metrics::RtcMetricsRecorder;
 
 mod tcp;
 mod udp;

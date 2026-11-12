@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use o_sfu_model::VideoLayoutIntent;
 use o_sfu_router::MediaKind;
 
 use super::{
@@ -7,7 +8,6 @@ use super::{
     SourceLayoutPolicy, SourcePolicy, SourcePublishIntent, SourceRoomPolicySelector,
     SourceSubscriptionIntent, UserStreamId,
 };
-use crate::engine::VideoLayoutIntent;
 
 const AUDIO_DETECTOR_SOURCE_ID: &str = "test-audio-detector";
 const SCALABLE_VIDEO_SOURCE_ID: &str = "test-scalable-video";

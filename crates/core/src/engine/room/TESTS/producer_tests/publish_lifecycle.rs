@@ -1,10 +1,10 @@
 use std::time::Duration;
 
+use o_sfu_model::UserInfo;
 use tokio::time::timeout;
 
 use super::support::*;
 use crate::engine::{
-    UserInfo,
     room::DeactivateIntentOutcome,
     source_model::{SourceDeactivateIntent, SourcePolicy, SourcePublishIntent, UserStreamId},
 };

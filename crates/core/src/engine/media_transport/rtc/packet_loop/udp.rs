@@ -18,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::net::Protocol;
 use tokio::{net::UdpSocket as TokioUdpSocket, sync::mpsc, time::sleep};
 #[cfg(target_os = "linux")]
@@ -30,7 +31,7 @@ use super::{
     super::worker::buffers::RECEIVE_BUFFER_LEN, ingress::IngressPacket,
     io_failures::report_udp_receive_failure,
 };
-use crate::{RtcUdpIoBackend, engine::metrics::RtcMetricsRecorder};
+use crate::RtcUdpIoBackend;
 
 #[cfg(test)]
 #[path = "udp/TESTS/support.rs"]

@@ -15,6 +15,7 @@ use std::{
 };
 
 use o_sfu_rfc::webrtc::MediaKind as ProtocolMediaKind;
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::{
     change::SdpAnswer,
     media::{Direction, Media, MediaKind, Mid},
@@ -32,13 +33,10 @@ use super::{
 };
 use crate::{
     Bitrate, RtcTcpConfig, VideoBitrateLimits,
-    engine::{
-        media_transport::{
-            AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, SessionUploadSlot,
-            TransportAdapterError, TransportMediaId, TransportSessionKey,
-            rtc::state::demux::RemoteTransportAddr,
-        },
-        metrics::RuntimeMetrics,
+    engine::media_transport::{
+        AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, SessionUploadSlot,
+        TransportAdapterError, TransportMediaId, TransportSessionKey,
+        rtc::state::demux::RemoteTransportAddr,
     },
 };
 

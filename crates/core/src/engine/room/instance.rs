@@ -1,16 +1,13 @@
 use std::{fmt, sync::Arc};
 
+use o_sfu_model::{AvailableFeatures, PeerSnapshot, RecordingState, UserId};
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard, RwLock};
 
 use super::{definition::RoomDefinition, factory::RoomInit, state::RoomState};
 use crate::{
-    RoomWorkerPolicy,
-    engine::{
-        AvailableFeatures, ConnectionId, MediaWorkerId, PeerSnapshot, RecordingState,
-        RoomInstanceId, UserId,
-        media_transport::{MediaTransport, TransportSessionKey},
-        metrics::RuntimeMetrics,
-    },
+    ConnectionId, MediaWorkerId, RoomInstanceId, RoomWorkerPolicy,
+    engine::media_transport::{MediaTransport, TransportSessionKey},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

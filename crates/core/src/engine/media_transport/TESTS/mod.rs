@@ -4,19 +4,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::{
     MediaKind,
     rtp::{MediaStream, StreamBinding},
 };
+use o_sfu_telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup};
 use str0m::media::Mid;
 
 use super::{
     MediaTransport, MediaTransportBuildError, TransportTeardown, route_control::reconcile_applied,
 };
 use crate::{
-    Bitrate, MediaWorkerId, RtcPortRange, RtcUdpIoBackend,
+    Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId, RtcPortRange, RtcUdpIoBackend,
     engine::{
-        ConnectionId, RoomInstanceId, UserId,
         media_transport::{
             ActiveSpeakerSource, ConsumerActivity, ConsumerRouteControl, MediaControlPlan,
             ProducerActivity, ReceiverBweTargetUpdate, RelayRouteActivity, SessionOffer,
@@ -30,7 +31,6 @@ use crate::{
                 test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
             },
         },
-        metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
         source_model::SourceSyncPolicy,
         sync::lock_unpoisoned,
     },

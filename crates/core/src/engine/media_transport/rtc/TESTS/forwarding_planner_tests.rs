@@ -1,5 +1,7 @@
 use std::{slice, sync::Arc, time::Instant};
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcRouteControlOutcome, RtpForwardDestinationKind, RuntimeMetrics};
 use str0m::media::Mid;
 
 use super::{
@@ -21,9 +23,7 @@ use super::{
     fixtures::RuntimeMetricsSnapshotTestExt,
 };
 use crate::engine::{
-    UserId,
     media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::{RtcRouteControlOutcome, RtpForwardDestinationKind, RuntimeMetrics},
     packet_sink_registry::{
         PacketSink as MediaPacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
     },

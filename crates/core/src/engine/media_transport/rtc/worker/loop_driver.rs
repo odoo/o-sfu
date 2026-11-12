@@ -36,6 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics};
 use tokio::{
     sync::mpsc,
     task::yield_now,
@@ -68,7 +69,6 @@ use super::{
 use crate::engine::media_transport::TransportSessionKey;
 use crate::engine::{
     media_transport::{SourcePolicySignal, rtc::UfragWorkerMap},
-    metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
     packet_sink_registry::RoomPacketSinkRegistry,
 };
 

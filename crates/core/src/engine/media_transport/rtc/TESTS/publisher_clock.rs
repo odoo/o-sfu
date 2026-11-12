@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, num::NonZeroU32, time::Duration};
 
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::StreamBinding;
 use str0m::{
     media::{Frequency, MediaTime},
@@ -9,12 +10,8 @@ use str0m::{
 use super::*;
 use crate::{
     Bitrate,
-    engine::{
-        UserId,
-        media_transport::rtc::{
-            bootstrap::test_support::ensure_session_rtc_state,
-            test_support::test_transport_session_key,
-        },
+    engine::media_transport::rtc::{
+        bootstrap::test_support::ensure_session_rtc_state, test_support::test_transport_session_key,
     },
 };
 

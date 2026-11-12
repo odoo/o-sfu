@@ -1,12 +1,13 @@
 use std::{panic::catch_unwind, slice, time::Duration};
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup};
 use tokio::{task::yield_now, time::timeout};
 
 use super::*;
 use crate::{
     RtcUdpIoBackend,
     engine::{
-        UserId,
         media_transport::{
             TransportAdapterError,
             rtc::{
@@ -14,7 +15,6 @@ use crate::{
                 test_support::{sample_already_relayed_packet, test_transport_session_key},
             },
         },
-        metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
         packet_sink_registry::{PacketSink, PacketSinkKind, RegisteredPacketSink},
     },
 };

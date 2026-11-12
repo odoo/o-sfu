@@ -1,12 +1,16 @@
+use o_sfu_model::{UserId, UserInfo};
+
 use super::{super::media_graph::ConsumerRouteState, RoomTestApi};
 #[cfg(test)]
 use crate::engine::source_model::PublishedSourceId;
-use crate::engine::{
-    ConnectionId, UserId, UserInfo,
-    media_transport::TransportMediaId,
-    source_model::{
-        UserStreamId,
-        test_support::{TestSourceKind, source_kind_for_stream_id, stream_id_for_source},
+use crate::{
+    ConnectionId,
+    engine::{
+        media_transport::TransportMediaId,
+        source_model::{
+            UserStreamId,
+            test_support::{TestSourceKind, source_kind_for_stream_id, stream_id_for_source},
+        },
     },
 };
 

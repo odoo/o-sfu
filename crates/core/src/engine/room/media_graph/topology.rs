@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::{
     MediaKind, ProducerId, Router, RouterError,
     rtp::{MediaCapabilities, MediaStream as RouterRtpParameters},
@@ -19,20 +20,23 @@ use super::{
     route_graph::{CurrentPublication, PendingUpgrade, RemovedRoutes, RouteGraph},
     source_index::PublishedSources,
 };
-use crate::engine::{
-    ConnectionId, MediaWorkerId, RoomInstanceId, UserId,
-    media_transport::{
-        SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
-        TransportConsumerRoute, TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
-        TransportSourceActivityEffect, TransportSourceKey, TransportTeardown,
-    },
-    room::{
-        RoomMediaCounts, RoomRuntimeContext, RouterPlacement,
-        effects::transport::RoomTransportPlan, outbound::OutboundSender,
-    },
-    source_model::{
-        ActiveSpeakerSourceRole, ConsumerSourceSelection, PolicyPauseReason,
-        PublishedSourceDescriptor, PublishedSourceId, SourceSubscriptionIntent, UserStreamId,
+use crate::{
+    ConnectionId, MediaWorkerId, RoomInstanceId,
+    engine::{
+        media_transport::{
+            SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
+            TransportConsumerRoute, TransportMediaId, TransportRelayRouteEffect,
+            TransportSessionKey, TransportSourceActivityEffect, TransportSourceKey,
+            TransportTeardown,
+        },
+        room::{
+            RoomMediaCounts, RoomRuntimeContext, RouterPlacement,
+            effects::transport::RoomTransportPlan, outbound::OutboundSender,
+        },
+        source_model::{
+            ActiveSpeakerSourceRole, ConsumerSourceSelection, PolicyPauseReason,
+            PublishedSourceDescriptor, PublishedSourceId, SourceSubscriptionIntent, UserStreamId,
+        },
     },
 };
 

@@ -8,12 +8,13 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_telemetry::metrics::RtpForwardDestinationKind;
+
 use super::{
-    RoomInstanceId,
     media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::RtpForwardDestinationKind,
     sync::{read_unpoisoned, write_unpoisoned},
 };
+use crate::RoomInstanceId;
 
 #[cfg(test)]
 #[expect(non_snake_case, reason = "test modules map to local TESTS directories")]

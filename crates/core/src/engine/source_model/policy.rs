@@ -1,4 +1,6 @@
-use crate::{Bitrate, engine::VideoLayoutIntent};
+use o_sfu_model::VideoLayoutIntent;
+
+use crate::Bitrate;
 
 /// room policy applied to one published source
 ///

@@ -17,6 +17,7 @@ use std::{
 };
 
 use o_sfu_rfc::webrtc;
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::{Candidate, bwe::Bitrate as Str0mBitrate, net::TcpType};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -31,10 +32,7 @@ use super::{
 };
 use crate::{
     Bitrate, RtcPortRange, RtcTcpConfig, RtcUdpIoBackend,
-    engine::{
-        media_transport::{TransportAdapterError, TransportSessionKey},
-        metrics::RtcMetricsRecorder,
-    },
+    engine::media_transport::{TransportAdapterError, TransportSessionKey},
 };
 #[cfg(any(test, feature = "internal-benchmarks", fuzzing))]
 pub(super) mod test_support;

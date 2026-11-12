@@ -1,3 +1,4 @@
+use o_sfu_model::UserId;
 use tokio::sync::mpsc;
 
 use super::super::{
@@ -8,7 +9,7 @@ use super::super::{
     },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
-use crate::engine::{UserId, media_transport::TransportMediaId};
+use crate::engine::media_transport::TransportMediaId;
 
 pub const RELAY_MAILBOX_ATTEMPTS: usize = 256;
 

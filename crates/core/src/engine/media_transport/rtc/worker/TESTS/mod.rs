@@ -21,6 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::{
     rtp::{self, CodecName},
     webrtc,
@@ -29,7 +30,13 @@ use o_sfu_router::{
     MediaKind as RouterMediaKind,
     rtp::{MediaFormat, MediaStream as RouterRtpParameters, PayloadType},
 };
-use o_sfu_telemetry::schema::event::TRANSPORT_HEALTH_CHANGED;
+use o_sfu_telemetry::{
+    metrics::{
+        RtcMetricsRecorder, RtcNackDirection, RtcRouteControlOutcome, RtpMetricsRecorder,
+        RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
+    },
+    schema::event::TRANSPORT_HEALTH_CHANGED,
+};
 use serde_json::Value;
 use str0m::{
     Event, IceConnectionState, IceCreds, Input, Output,
@@ -94,15 +101,10 @@ use super::{
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, RtcUdpIoBackend, VideoBitrateLimits,
     engine::{
-        UserId,
         media_transport::{
             ProducerActivity, SourceActivityRevision, SourceActivityUpdate, SourcePolicySignal,
             TransportMediaId, TransportSessionKey, TransportSourceKey,
             rtc::state::demux::RemoteTransportAddr,
-        },
-        metrics::{
-            RtcMetricsRecorder, RtcNackDirection, RtcRouteControlOutcome, RtpMetricsRecorder,
-            RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
         },
         packet_sink_registry::{
             PacketSink as MediaPacketSink, PacketSinkKind, PacketSinkRouteCache,

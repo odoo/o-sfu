@@ -12,6 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::Input;
 use tokio::sync::mpsc;
 
@@ -27,12 +29,7 @@ use super::super::{
     },
 };
 use crate::{
-    Bitrate, CodecPreferences, MediaCodecFlags,
-    engine::{
-        UserId,
-        media_transport::SourcePolicySignal,
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
-    },
+    Bitrate, CodecPreferences, MediaCodecFlags, engine::media_transport::SourcePolicySignal,
 };
 
 const SESSION_DRAIN_SESSION_COUNT: u32 = 128;

@@ -20,6 +20,7 @@ use o_sfu_rfc::{
     rtp::{self, RtpRtcpMuxPacketKind},
     webrtc,
 };
+use o_sfu_telemetry::metrics::{RtcDatagramDropReason, RtcDatagramRoutePath, RtcMetricsRecorder};
 use str0m::{
     Input,
     ice::StunMessage,
@@ -32,15 +33,12 @@ use super::{
     io_failures::report_rtc_input_failure,
     routing_miss::{DemuxRecoveryState, PacketLoopRoutingMissKey},
 };
-use crate::engine::{
-    media_transport::{
-        TransportSessionKey,
-        rtc::{
-            UfragWorkerMap,
-            state::{demux::RemoteTransportAddr, ufrag_registry::UfragRegistry},
-        },
+use crate::engine::media_transport::{
+    TransportSessionKey,
+    rtc::{
+        UfragWorkerMap,
+        state::{demux::RemoteTransportAddr, ufrag_registry::UfragRegistry},
     },
-    metrics::{RtcDatagramDropReason, RtcDatagramRoutePath, RtcMetricsRecorder},
 };
 
 enum CachedRouteOutcome {

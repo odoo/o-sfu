@@ -4,7 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::{MediaStream, StreamBinding};
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics};
 use str0m::{
     Input, Rtc,
     format::{Codec, PayloadParams},
@@ -16,7 +18,6 @@ use super::{PacketLoopBuffers, SessionDrainContext, drain_ready_sessions};
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags,
     engine::{
-        UserId,
         media_transport::{
             SourcePolicySignal, TransportMediaId, TransportSessionKey,
             rtc::{
@@ -40,7 +41,6 @@ use crate::{
                 },
             },
         },
-        metrics::{RtcMetricsRecorder, RtpMetricsRecorder, RuntimeMetrics},
         packet_sink_registry::{PacketSinkKind, RoomPacketSinkRegistry},
     },
 };

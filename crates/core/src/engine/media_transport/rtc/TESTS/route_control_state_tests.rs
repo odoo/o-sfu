@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use o_sfu_model::UserId;
 use str0m::media::{KeyframeRequestKind, Mid, Rid};
 
 use super::super::{
@@ -16,12 +17,8 @@ use super::super::{
     },
     test_support::test_transport_session_key,
 };
-use crate::engine::{
-    UserId,
-    media_transport::{
-        ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,
-        TransportMediaId,
-    },
+use crate::engine::media_transport::{
+    ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource, TransportMediaId,
 };
 
 fn assert_active_speaker_ids(state: &RouteTable, now: Instant, expected: &[TransportMediaId]) {

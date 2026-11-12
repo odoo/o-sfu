@@ -4,19 +4,21 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserInfo;
 use o_sfu_router::rtp::MediaStream;
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_telemetry::{
+    metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
+    schema::event as telemetry_event,
+};
 use serde_json::json;
 use tokio::time::{Instant as TokioInstant, advance, pause, resume, timeout};
 
 use super::{super::tracing as test_tracing, support::*};
 use crate::engine::{
-    UserInfo,
     media_transport::{
         ActiveSpeakerSource, ReceiverBandwidthSnapshot, SourcePolicyUpdateSubscription,
         TransportBitrateSnapshot, TransportMediaId, TransportTeardown,
     },
-    metrics::{MetricName, test_support::RuntimeMetricsSnapshotLookup},
     room::{
         DeactivateIntentOutcome,
         media_graph::{PendingUpgrade, ReceiverRouteActivity, SubscriptionKey},

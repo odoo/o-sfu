@@ -13,16 +13,15 @@ use o_sfu_router::{
     rtp::MediaStream,
     test_support::rtp_samples::{sample_client_rtp_capabilities, sample_video_rtp_parameters},
 };
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 
 use super::*;
 use crate::{
-    RoomMediaLimits, VideoAdaptationTuning,
+    ConnectionId, MediaWorkerId, RoomInstanceId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId,
         media_transport::{
             TransportConsumerRoute, TransportMediaId, TransportTeardown, TransportTeardownAction,
         },
-        metrics::RuntimeMetrics,
         room::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
             media_graph::{ConsumerSetupOrigin, ConsumerSetupOutcome, ValidatedPublish},

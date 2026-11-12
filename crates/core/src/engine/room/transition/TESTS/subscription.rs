@@ -9,10 +9,11 @@ use std::{
     sync::Arc,
 };
 
+use o_sfu_model::{UserId, UserPermissions};
 use o_sfu_router::test_support::rtp_samples::{
     sample_client_rtp_capabilities, sample_simulcast_video_rtp_parameters,
 };
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_telemetry::{metrics::RuntimeMetrics, schema::event as telemetry_event};
 use serde_json::Value;
 
 use super::super::super::{
@@ -23,15 +24,13 @@ use super::super::super::{
     transition::{PublishIntentOutcome, PublishStageOutcome},
 };
 use crate::{
-    RoomWorkerPolicy, RuntimeFeatureFlags,
+    ConnectionId, RoomWorkerPolicy, RuntimeFeatureFlags,
     engine::{
-        ConnectionId, UserId, UserPermissions,
         media_transport::{
             AppliedSessionAnswer, MediaTransport, TransportMediaId, TransportRelayRouteAction,
             TransportTeardown,
             test_support::{test_media_transport, test_rtc_port_range},
         },
-        metrics::RuntimeMetrics,
         source_model::{
             SourceSubscriptionIntent, UserStreamId,
             test_support::{

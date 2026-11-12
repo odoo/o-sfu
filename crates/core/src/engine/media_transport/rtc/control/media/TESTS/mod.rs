@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::rtp::{self, CodecName};
 use o_sfu_router::{
     MediaKind as RouterMediaKind,
@@ -22,6 +23,9 @@ use o_sfu_router::{
         CodecSetting, MediaFormat, MediaStream as RouterRtpParameters, PayloadType, RtcpFeedback,
         RtcpFeedbackKind, StreamBinding,
     },
+};
+use o_sfu_telemetry::metrics::{
+    RtcMetricsRecorder, RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
 };
 use str0m::{
     media::{Direction, Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
@@ -40,7 +44,6 @@ use super::{
 use crate::{
     Bitrate,
     engine::{
-        UserId,
         media_transport::{
             ConsumerActivity, ConsumerRouteControl, ConsumerRouteControlOutcome, ProducerActivity,
             ProducerRouteControl, SourceActivityRevision, SourceActivityUpdate,
@@ -82,9 +85,6 @@ use crate::{
                     test_source_session_key, test_transport_session_key,
                 },
             },
-        },
-        metrics::{
-            RtcMetricsRecorder, RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
         },
         source_model::SourceSyncPolicy,
     },

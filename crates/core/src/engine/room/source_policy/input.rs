@@ -3,13 +3,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::MediaKind;
 
 use super::action::FeaturedUserUpdate;
 use crate::{
-    Bitrate, RoomMediaLimits, VideoAdaptationTuning,
+    Bitrate, ConnectionId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, UserId,
         media_transport::{
             ActiveSpeakerSource, ReceiverBandwidthSnapshot, TransportBitrateSnapshot,
             TransportMediaId,

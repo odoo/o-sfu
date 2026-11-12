@@ -1,10 +1,11 @@
 use std::time::Instant;
 
+use o_sfu_model::UserId;
+
 use super::super::media_graph::{PendingUpgrade, SubscriptionKey};
 use crate::{
-    Bitrate,
+    Bitrate, ConnectionId,
     engine::{
-        ConnectionId, UserId,
         media_transport::{
             ConsumerActivity, ConsumerRouteControl, SourcePacketGate, TransportConsumerRoute,
         },

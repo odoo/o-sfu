@@ -6,6 +6,9 @@ use std::{
     time::Duration,
 };
 
+use o_sfu_telemetry::metrics::{
+    MetricName, RuntimeMetrics, test_support::RuntimeMetricsSnapshotLookup,
+};
 use serde_json::Value;
 use str0m::net::{Protocol, Transmit};
 #[cfg(target_os = "linux")]
@@ -18,13 +21,7 @@ use tracing::instrument::WithSubscriber;
 use super::RtcEgress;
 #[cfg(target_os = "linux")]
 use crate::engine::media_transport::rtc::packet_loop::{RtcIngress, UdpReceiveTask};
-use crate::{
-    RtcUdpIoBackend,
-    engine::{
-        media_transport::rtc::packet_loop::RtcUdpSocket,
-        metrics::{MetricName, RuntimeMetrics, test_support::RuntimeMetricsSnapshotLookup},
-    },
-};
+use crate::{RtcUdpIoBackend, engine::media_transport::rtc::packet_loop::RtcUdpSocket};
 
 const RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
 const UDP_BOUNDARY_COUNTS: [usize; 7] = [31, 32, 33, 63, 64, 65, 70];

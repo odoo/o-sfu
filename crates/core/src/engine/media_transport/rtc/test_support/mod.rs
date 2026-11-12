@@ -21,6 +21,8 @@ pub(super) use media_routes::{
     assert_remote_packet_gate_command, drain_ready_sessions, install_video_route_with_gate,
     test_consumer_session_key, test_consumer_session_key_on_worker, test_source_session_key,
 };
+#[cfg(any(test, feature = "internal-benchmarks"))]
+use o_sfu_model::UserId;
 pub use probe::{DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry};
 pub(super) use probe::{
     DebugProbe, DebugProbeRequest, ObserveAudioActivityProbe, ReceiverBweTargetProbe,
@@ -68,8 +70,8 @@ pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_pac
 #[cfg(test)]
 pub(super) use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet_without_mid;
 #[cfg(any(test, feature = "internal-benchmarks"))]
-use crate::engine::{
-    ConnectionId, MediaWorkerId, RoomInstanceId, UserId, media_transport::TransportSessionKey,
+use crate::{
+    ConnectionId, MediaWorkerId, RoomInstanceId, engine::media_transport::TransportSessionKey,
 };
 
 #[cfg(test)]

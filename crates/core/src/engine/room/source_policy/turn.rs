@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::BTreeMap, time::Instant};
 
 use o_sfu_router::MediaKind;
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_telemetry::{metrics::BudgetSolverOutcome, schema::event as telemetry_event};
 use tracing::info;
 
 use super::{
@@ -15,20 +15,22 @@ use super::{
     input::SourcePolicySnapshot,
     video,
 };
-use crate::engine::{
+use crate::{
     ConnectionId,
-    media_transport::{
-        ActiveSpeakerSource, MediaTransport, ReceiverBandwidthSnapshot, ReceiverBweTargetUpdate,
-        TransportBitrateSnapshot,
-    },
-    metrics::{self, BudgetSolverOutcome},
-    room::{
-        Room, RoomEventMessage, SourcePolicyGuard, effects::transport::RoomRouteEffects,
-        outbound::MessageFanout, state::RoomState,
-    },
-    source_model::{
-        PolicyPauseReason, ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy,
-        SourceEncodingId, SourceSelector,
+    engine::{
+        media_transport::{
+            ActiveSpeakerSource, MediaTransport, ReceiverBandwidthSnapshot,
+            ReceiverBweTargetUpdate, TransportBitrateSnapshot,
+        },
+        observability,
+        room::{
+            Room, RoomEventMessage, SourcePolicyGuard, effects::transport::RoomRouteEffects,
+            outbound::MessageFanout, state::RoomState,
+        },
+        source_model::{
+            PolicyPauseReason, ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy,
+            SourceEncodingId, SourceSelector,
+        },
     },
 };
 
@@ -340,7 +342,9 @@ fn record_committed_selection_updates(room: &Room, updates: &[ConsumerPacketSele
     for update in updates {
         if update.packet_gate.is_some() {
             room.metrics
-                .record_source_selection_update(metrics::source_selection_kind(update.selector));
+                .record_source_selection_update(observability::source_selection_kind(
+                    update.selector,
+                ));
         }
         let Some(transition) = update.transition else {
             continue;

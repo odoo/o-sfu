@@ -4,6 +4,7 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_model::{PeerSnapshot, RecordingState, UserId, UserInfo};
 use o_sfu_router::rtp::{MediaCapabilities, MediaCapabilities as RouterRtpCapabilities};
 
 use super::super::{
@@ -15,9 +16,8 @@ use super::super::{
     transition::StagedPublishes,
 };
 use crate::{
-    RoomMediaLimits, VideoAdaptationTuning,
+    ConnectionId, MediaWorkerId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
-        ConnectionId, MediaWorkerId, PeerSnapshot, RecordingState, UserId, UserInfo,
         media_transport::TransportSessionKey, room::placement::PlacementSnapshot,
         source_model::UserStreamId,
     },

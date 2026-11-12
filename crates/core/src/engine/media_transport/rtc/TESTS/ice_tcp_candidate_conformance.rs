@@ -18,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
 use o_sfu_rfc::webrtc::{
     IceTransport,
     ice::{candidate_attribute, candidate_type},
@@ -35,7 +36,7 @@ use super::super::{
     state::slots::SessionStore,
     test_support::{MAX_FIXTURE_STEPS, Peer, serialize_stun_message, test_transport_session_key},
 };
-use crate::{Bitrate, engine::UserId};
+use crate::Bitrate;
 
 const UDP_PORT: u16 = 5000;
 const TCP_PORT: u16 = 5001;

@@ -17,11 +17,8 @@ use super::{
     state::{JoinCommit, UserJoinedFanout},
 };
 use crate::{
-    RoomWorkerPolicy,
-    engine::{
-        MediaWorkerId, RoomInstanceId,
-        media_transport::{MediaTransport, WorkerPlacementState},
-    },
+    MediaWorkerId, RoomInstanceId, RoomWorkerPolicy,
+    engine::media_transport::{MediaTransport, WorkerPlacementState},
 };
 
 #[cfg(any(test, feature = "testing-transport"))]

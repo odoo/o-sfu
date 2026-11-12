@@ -1,12 +1,12 @@
 use std::time::Instant;
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::media::Rid;
 use tracing::debug;
 
 use super::apply_src_decoder_ready;
-use crate::engine::{
-    media_transport::{TransportMediaId, TransportSessionKey, rtc::state::PacketLoopState},
-    metrics::RtcMetricsRecorder,
+use crate::engine::media_transport::{
+    TransportMediaId, TransportSessionKey, rtc::state::PacketLoopState,
 };
 
 /// updates packet-path readiness for one incoming producer rid

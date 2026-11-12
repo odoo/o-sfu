@@ -6,6 +6,10 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{
+    RtcMetricsRecorder, RtcRouteControlOutcome, RtpMetricsRecorder, RuntimeMetrics,
+};
 use str0m::media::Mid;
 
 use super::super::{
@@ -17,9 +21,7 @@ use super::super::{
     worker::buffers::PacketLoopBuffers,
 };
 use crate::engine::{
-    UserId,
     media_transport::{TransportMediaId, TransportSessionKey},
-    metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RtpMetricsRecorder, RuntimeMetrics},
     packet_sink_registry::{
         PacketSink, PacketSinkKind, PacketSinkRouteCache, RoomPacketSinkRegistry,
     },

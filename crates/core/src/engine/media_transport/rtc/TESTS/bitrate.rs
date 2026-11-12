@@ -3,8 +3,10 @@ use std::{
     thread,
 };
 
+use o_sfu_model::UserId;
+
 use super::*;
-use crate::engine::{UserId, media_transport::rtc::test_support::test_transport_session_key};
+use crate::engine::media_transport::rtc::test_support::test_transport_session_key;
 
 #[test]
 fn incoming_media_bitrate_reports_consecutive_windows() {

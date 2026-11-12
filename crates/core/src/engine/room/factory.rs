@@ -17,12 +17,13 @@
 use std::sync::{Arc, Mutex};
 
 use o_sfu_router::{RouterId, rtp::MediaCapabilities};
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use secrecy::SecretSlice;
 
 use super::{Room, RoomRuntimeContext};
 use crate::{
-    RoomMediaLimits, RoomWorkerPolicy, RuntimeFeatureFlags, VideoAdaptationTuning,
-    engine::{RoomInstanceId, metrics::RuntimeMetrics, sync::lock_unpoisoned},
+    RoomInstanceId, RoomMediaLimits, RoomWorkerPolicy, RuntimeFeatureFlags, VideoAdaptationTuning,
+    engine::sync::lock_unpoisoned,
 };
 
 /// admission limits that stay fixed for one room lifetime

@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::media::{KeyframeRequestKind, Mid, Rid};
 use tokio::sync::mpsc;
 
@@ -13,13 +15,9 @@ use super::super::{
     test_support::{MediaWorkerScenario, test_transport_session_key},
     worker::buffers::PacketLoopBuffers,
 };
-use crate::engine::{
-    UserId,
-    media_transport::{
-        ProducerActivity, SourceActivityRevision, SourceActivityUpdate, TransportMediaId,
-        TransportSessionKey, TransportSourceKey,
-    },
-    metrics::{RtcMetricsRecorder, RuntimeMetrics},
+use crate::engine::media_transport::{
+    ProducerActivity, SourceActivityRevision, SourceActivityUpdate, TransportMediaId,
+    TransportSessionKey, TransportSourceKey,
 };
 
 pub const SELECTED_RID_DESTINATIONS: usize = 256;

@@ -38,6 +38,7 @@ use o_sfu_router::{
     MediaKind,
     rtp::{MediaCapabilities, MediaStream as RouterRtpParameters},
 };
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 pub use policy_invalidation::{SourcePolicySignal, SourcePolicyUpdateSubscription};
 pub(crate) use route_control::{
     ConsumerRouteControl, ConsumerRouteControlOutcome, MediaControlPlan,
@@ -71,9 +72,7 @@ pub(crate) use types::{SourceActivityRevision, SourceActivityUpdate};
 
 pub(crate) use self::workers::WorkerPlacementState;
 use self::workers::signaling_to_str0m_media_kind;
-use crate::engine::{
-    media_transport::rtc::TcpAcceptor, metrics::RuntimeMetrics, source_model::SourceSyncPolicy,
-};
+use crate::engine::{media_transport::rtc::TcpAcceptor, source_model::SourceSyncPolicy};
 
 /// Opaque runtime media transport handle.
 ///

@@ -1,12 +1,12 @@
 use std::{array, io, net::SocketAddr};
 
+use o_sfu_telemetry::metrics::{
+    MetricName, RuntimeMetrics, test_support::RuntimeMetricsSnapshotLookup,
+};
 use rustix::io::Errno;
 use str0m::net::{Protocol, Transmit};
 
 use super::{BATCH_SIZE, Completion, Progress, complete};
-use crate::engine::metrics::{
-    MetricName, RuntimeMetrics, test_support::RuntimeMetricsSnapshotLookup,
-};
 
 fn datagrams() -> [Transmit; 4] {
     array::from_fn(|index| Transmit {

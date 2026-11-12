@@ -10,7 +10,13 @@ use std::{
     time::Duration,
 };
 
-use o_sfu_telemetry::schema;
+use o_sfu_telemetry::{
+    metrics::{
+        MediaQualityLossDirection, MediaQualitySample, RtcMetricsRecorder, RtcNackDirection,
+        RuntimeMetrics, TransportIceState,
+    },
+    schema,
+};
 use str0m::{
     Event, IceConnectionState,
     bwe::BweKind,
@@ -18,15 +24,12 @@ use str0m::{
 };
 use tracing::{debug, info, trace};
 
-use super::super::state::{RtcNackTotals, RtcSnapshotState, TransportSessionHealth};
+use super::super::state::{RtcNackTotals, RtcSnapshotState};
 use crate::{
     Bitrate,
     engine::{
-        media_transport::{SourcePolicySignal, TransportSessionKey},
-        metrics::{
-            self, MediaQualityLossDirection, MediaQualitySample, RtcMetricsRecorder,
-            RtcNackDirection, RuntimeMetrics, TransportIceState,
-        },
+        media_transport::{SourcePolicySignal, TransportSessionHealth, TransportSessionKey},
+        observability,
     },
 };
 
@@ -131,8 +134,8 @@ pub(in super::super) fn observe_rtc_event(context: RtcEventContext<'_>) {
         snapshot_state.set_transport_health(session_key, health)
     };
     metrics.record_transport_health_transition(
-        previous.map(metrics::transport_health_state),
-        Some(metrics::transport_health_state(health)),
+        previous.map(observability::transport_health_state),
+        Some(observability::transport_health_state(health)),
     );
     if previous == Some(health) {
         return;

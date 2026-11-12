@@ -13,6 +13,7 @@ use std::{
 };
 
 use o_sfu_rfc::tcp_framing::TcpFrame;
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use tokio::sync::mpsc;
 
 use super::super::{
@@ -23,7 +24,7 @@ use crate::engine::{
     media_transport::{
         TransportAdapterError, TransportResult, TransportSessionHealth, TransportSessionKey,
     },
-    metrics::{self, RuntimeMetrics},
+    observability,
 };
 
 #[derive(Clone, Copy)]
@@ -56,8 +57,8 @@ pub(in crate::engine::media_transport::rtc) fn worker_close_session(
             }
         };
         metrics.record_transport_health_transition(
-            previous.map(metrics::transport_health_state),
-            next.map(metrics::transport_health_state),
+            previous.map(observability::transport_health_state),
+            next.map(observability::transport_health_state),
         );
     }
     if let Ok(mut bitrate) = bitrate_registry.lock() {

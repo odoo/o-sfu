@@ -3,6 +3,7 @@
     reason = "route graph tests fail loudly when fixed route reservations are invalid"
 )]
 
+use o_sfu_model::{UserId, VideoLayoutIntent};
 use o_sfu_router::{
     ConsumerId, MediaKind, ProducerId, RouterId,
     topology::{RoutedConsumerId, RoutedProducerId},
@@ -14,9 +15,8 @@ use super::{
     route_graph::{ConsumerRouteReservation, RouteGraph},
 };
 use crate::{
-    Bitrate,
+    Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId,
     engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, UserId, VideoLayoutIntent,
         media_transport::{
             RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
             TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,

@@ -3,6 +3,7 @@ use std::future::Future;
 use std::{sync::Arc, time::Duration};
 
 use o_sfu_router::test_support::rtp_samples::sample_client_rtp_capabilities;
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 
 use super::{
     super::{RoomAdmissionPolicy, RoomRuntimePolicy},
@@ -11,8 +12,7 @@ use super::{
 #[cfg(test)]
 use crate::engine::room::Room;
 use crate::{
-    RoomMediaLimits, RuntimeFeatureFlags, VideoAdaptationTuning,
-    engine::{metrics::RuntimeMetrics, sync::lock_unpoisoned},
+    RoomMediaLimits, RuntimeFeatureFlags, VideoAdaptationTuning, engine::sync::lock_unpoisoned,
 };
 
 const DEFAULT_TEST_MAX_SESSIONS: usize = 100;

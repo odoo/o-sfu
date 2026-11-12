@@ -18,6 +18,11 @@
 //! [`MediaSession::answer`] may return the follow-up offer.
 use std::{collections::BTreeMap, mem::replace, sync::Arc};
 
+use o_sfu_model::{
+    AvailableFeatures, JsonPayload, PeerSnapshot, RecordingOptions, RecordingState, UserId,
+    UserInfo,
+};
+
 pub use crate::engine::media_transport::{
     SessionOffer as NegotiationOffer, SessionUploadEncoding as UploadEncoding,
     SessionUploadSlot as UploadSlot,
@@ -25,8 +30,6 @@ pub use crate::engine::media_transport::{
 use crate::{
     ConnectionId,
     engine::{
-        AvailableFeatures, JsonPayload, PeerSnapshot, RecordingOptions, RecordingState, UserId,
-        UserInfo,
         media_transport::{
             MediaTransport, TransportAdapterError, TransportSessionHealth, TransportSessionKey,
         },

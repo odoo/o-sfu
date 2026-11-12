@@ -13,7 +13,9 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::rtp::{MediaStream as RouterRtpParameters, StreamBinding};
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::media::{Frequency, Mid};
 use tokio::sync::{mpsc, oneshot};
 
@@ -41,13 +43,11 @@ use super::super::{
 use crate::{
     Bitrate, CodecPreferences, MediaCodecFlags, SessionBitrateLimits, VideoBitrateLimits,
     engine::{
-        UserId,
         media_transport::{
             ProducerActivity, SourceActivityRevision, SourceActivityUpdate, SourcePolicySignal,
             TransportMediaId, TransportResult, TransportSourceKey,
             route_control::ProducerRouteControl, rtc::egress::TcpEgress,
         },
-        metrics::RuntimeMetrics,
         packet_sink_registry::RoomPacketSinkRegistry,
     },
 };

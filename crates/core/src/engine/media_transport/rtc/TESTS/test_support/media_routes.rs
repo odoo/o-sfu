@@ -5,6 +5,7 @@
 
 use std::time::Instant;
 
+use o_sfu_model::UserId;
 use str0m::{
     media::{KeyframeRequestKind, Mid, Rid},
     rtp::Ssrc,
@@ -20,10 +21,7 @@ use super::{
     route_graph::MediaWorkerScenario,
     test_transport_session_key,
 };
-use crate::engine::{
-    UserId,
-    media_transport::{TransportMediaId, TransportSessionKey},
-};
+use crate::engine::media_transport::{TransportMediaId, TransportSessionKey};
 
 pub fn drain_ready_sessions(state: &mut PacketLoopState) -> Vec<TransportSessionKey> {
     collect_ready_session_keys(state, Instant::now())

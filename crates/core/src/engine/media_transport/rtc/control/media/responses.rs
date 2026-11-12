@@ -2,26 +2,25 @@
 
 use std::time::Instant;
 
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
+
 use super::routes;
 use crate::{
     Bitrate,
-    engine::{
-        media_transport::{
-            ConsumerRouteControlFailure, ConsumerRouteControlOutcome,
-            rtc::{
-                commands::{
-                    RouteControlRequest, RtcWorkerResponse, WorkerMediaControlBatch,
-                    WorkerMediaControlBatchOutcome,
-                },
-                control::bwe,
-                recovery::{
-                    worker_request_consumer_kf, worker_request_remote_kf,
-                    worker_request_resumed_video_kf,
-                },
-                state::PacketLoopState,
+    engine::media_transport::{
+        ConsumerRouteControlFailure, ConsumerRouteControlOutcome,
+        rtc::{
+            commands::{
+                RouteControlRequest, RtcWorkerResponse, WorkerMediaControlBatch,
+                WorkerMediaControlBatchOutcome,
             },
+            control::bwe,
+            recovery::{
+                worker_request_consumer_kf, worker_request_remote_kf,
+                worker_request_resumed_video_kf,
+            },
+            state::PacketLoopState,
         },
-        metrics::RtcMetricsRecorder,
     },
 };
 

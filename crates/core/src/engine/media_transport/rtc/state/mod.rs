@@ -66,7 +66,6 @@ use super::{
     egress::RtcEgress,
     packet_loop::{RtcIngress, UdpReceiveTask},
 };
-pub use crate::engine::media_transport::TransportSessionHealth;
 use crate::engine::media_transport::{
     TransportMediaId,
     rtc::{UfragWorkerMap, state::ufrag_registry::UfragRegistry},

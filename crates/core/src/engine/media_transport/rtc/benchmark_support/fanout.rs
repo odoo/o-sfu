@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RuntimeMetrics};
 use str0m::media::Mid;
 use tokio::sync::mpsc;
 
@@ -17,11 +19,7 @@ use super::super::{
         sample_forwarded_packet_with_rid_and_audio_activity, test_transport_session_key,
     },
 };
-use crate::engine::{
-    UserId,
-    metrics::{RtcMetricsRecorder, RtcRouteControlOutcome, RuntimeMetrics},
-    packet_sink_registry::PacketSinkRouteCache,
-};
+use crate::engine::packet_sink_registry::PacketSinkRouteCache;
 
 pub const ROUTE_PLANNING_TURNS: usize = 1024;
 

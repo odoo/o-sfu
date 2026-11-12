@@ -12,6 +12,7 @@
 
 use std::{panic, sync::Arc, time::Duration};
 
+use o_sfu_telemetry::metrics::RuntimeMetrics;
 use tokio::time::advance;
 
 use super::{
@@ -22,7 +23,7 @@ use super::{
     },
     fixtures::{TEST_ROOM_KEY, test_client_rtp_capabilities},
 };
-use crate::{RuntimeFeatureFlags, engine::metrics::RuntimeMetrics};
+use crate::RuntimeFeatureFlags;
 
 const TEST_RESERVATION_TTL: Duration = Duration::from_mins(1);
 const TEST_DEPARTURE_GRACE: Duration = Duration::from_mins(1);

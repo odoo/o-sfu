@@ -57,21 +57,24 @@ use std::{
     time::Instant,
 };
 
+use o_sfu_model::UserId;
 use o_sfu_router::topology::RoutedConsumerId;
 
 use super::{
     ConsumerSourceSelection, SubscriptionKey, consumer_setup::ConsumerSetupTarget,
     remove_from_index_set,
 };
-use crate::engine::{
-    ConnectionId, MediaWorkerId, UserId,
-    media_transport::{
-        ConsumerActivity, RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
-        TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
-        TransportSourceKey,
-    },
-    source_model::{
-        PolicyPauseReason, PublishedSourceId, SourceSelector, SourceSubscriptionIntent,
+use crate::{
+    ConnectionId, MediaWorkerId,
+    engine::{
+        media_transport::{
+            ConsumerActivity, RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
+            TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
+            TransportSourceKey,
+        },
+        source_model::{
+            PolicyPauseReason, PublishedSourceId, SourceSelector, SourceSubscriptionIntent,
+        },
     },
 };
 

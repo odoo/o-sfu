@@ -24,9 +24,9 @@ use super::{
     slots::{RouteDestinationHandle, SessionHandle},
     source_route::{DestinationKeyframeTarget, MediaRouteDestination},
 };
-use crate::engine::{
+use crate::{
     RoomInstanceId,
-    media_transport::{TransportMediaId, TransportSessionKey},
+    engine::media_transport::{TransportMediaId, TransportSessionKey},
 };
 
 mod clock;

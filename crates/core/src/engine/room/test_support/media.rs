@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use o_sfu_model::UserId;
 use o_sfu_router::{
     negotiation::derive_consumable_rtp_parameters, rtp::MediaStream as RouterRtpParameters,
 };
@@ -9,12 +10,14 @@ use super::{
     super::{DeactivateIntentOutcome, transition::StagedPublish},
     RoomTestApi,
 };
-use crate::engine::{
-    ConnectionId, UserId,
-    media_transport::{MediaTransport, TransportMediaId},
-    source_model::{
-        SourceDeactivateIntent, SourcePublishIntent, SourceSubscriptionIntent, UserStreamId,
-        test_support::{TestSourceKind, source_publish_intent_for_source},
+use crate::{
+    ConnectionId,
+    engine::{
+        media_transport::{MediaTransport, TransportMediaId},
+        source_model::{
+            SourceDeactivateIntent, SourcePublishIntent, SourceSubscriptionIntent, UserStreamId,
+            test_support::{TestSourceKind, source_publish_intent_for_source},
+        },
     },
 };
 

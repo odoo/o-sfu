@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_model::UserId;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::net::Protocol;
 
 pub use super::codec::client_rtp_capabilities_from_answer;
@@ -16,12 +18,8 @@ use super::{
     state::{PacketLoopState, demux::RemoteTransportAddr},
 };
 use crate::{
-    Bitrate,
-    engine::{
-        ConnectionId, MediaWorkerId, RoomInstanceId, UserId,
-        media_transport::TransportSessionKey,
-        metrics::{RtcMetricsRecorder, RuntimeMetrics},
-    },
+    Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId,
+    engine::media_transport::TransportSessionKey,
 };
 
 const MAX_PACKET_LEN: usize = 1500;

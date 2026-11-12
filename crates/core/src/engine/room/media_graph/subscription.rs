@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use o_sfu_model::UserId;
 use o_sfu_router::{MediaKind as RouterMediaKind, negotiation::negotiate_consumer_rtp_parameters};
 
 use super::{
@@ -7,16 +8,18 @@ use super::{
     ConsumerId, ConsumerRouteTarget, SubscriptionKey,
     consumer_setup::{ConsumerSetupTarget, PendingConsumerSetup},
 };
-use crate::engine::{
-    ConnectionId, UserId,
-    media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
-    room::{
-        outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
-        source_policy::VideoAdmissionRank,
-    },
-    source_model::{
-        ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceRoutePriority,
-        SourceSubscriptionIntent, UserStreamId,
+use crate::{
+    ConnectionId,
+    engine::{
+        media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
+        room::{
+            outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
+            source_policy::VideoAdmissionRank,
+        },
+        source_model::{
+            ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceRoutePriority,
+            SourceSubscriptionIntent, UserStreamId,
+        },
     },
 };
 

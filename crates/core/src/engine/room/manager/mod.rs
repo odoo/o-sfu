@@ -20,7 +20,11 @@ use futures_util::{
     future::try_join_all,
     stream::{self, BoxStream, FuturesUnordered},
 };
-use o_sfu_telemetry::schema::event as telemetry_event;
+use o_sfu_model::UserId;
+use o_sfu_telemetry::{
+    metrics::{RoomGaugeValues, RuntimeMetrics},
+    schema::event as telemetry_event,
+};
 use secrecy::SecretSlice;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
@@ -37,15 +41,16 @@ use super::{
     placement::JoinAdmissionTurn,
     source_policy::SourcePolicyTurn,
 };
-use crate::engine::{
-    ConnectionId, RoomInstanceId, UserId,
-    media_transport::{
-        ActiveSpeakerSource, MediaTransport, TransportAdapterError, TransportSessionKey,
-    },
-    metrics::{RoomGaugeValues, RuntimeMetrics},
-    room::{
-        directory::{ExpiryReason, RoomRemovalPolicy},
-        instance::RoomManagerServeError,
+use crate::{
+    ConnectionId, RoomInstanceId,
+    engine::{
+        media_transport::{
+            ActiveSpeakerSource, MediaTransport, TransportAdapterError, TransportSessionKey,
+        },
+        room::{
+            directory::{ExpiryReason, RoomRemovalPolicy},
+            instance::RoomManagerServeError,
+        },
     },
 };
 
