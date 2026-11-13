@@ -42,7 +42,7 @@ jobs:
         # dtolnay/rust-toolchain master
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: nightly-2026-04-01
+          toolchain: nightly-2026-08-21
           components: miri
 
       - name: Cache Rust build artifacts
@@ -52,14 +52,14 @@ jobs:
           shared-key: nightly-miri-${{ matrix.name }}
 
       - name: Bootstrap Miri
-        run: cargo +nightly-2026-04-01 miri setup
+        run: cargo +nightly-2026-08-21 miri setup
 
       - name: Run host-target UB-oriented tests
         if: matrix.host_suite
         run: |
-          MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly-2026-04-01 miri test -p o-sfu-tests --test miri_auth_codec
-          cargo +nightly-2026-04-01 miri test -p o-sfu-tests --test miri_protocol_core
-          cargo +nightly-2026-04-01 miri test -p o-sfu-tests --test miri_rtp_negotiation
+          MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly-2026-08-21 miri test -p o-sfu-tests --test miri_auth_codec
+          cargo +nightly-2026-08-21 miri test -p o-sfu-tests --test miri_protocol_core
+          cargo +nightly-2026-08-21 miri test -p o-sfu-tests --test miri_rtp_negotiation
 
   # Keep the cross-target big-endian replay off pull requests because it needs
   # extra toolchain setup
@@ -79,7 +79,7 @@ jobs:
         # dtolnay/rust-toolchain master
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: nightly-2026-04-01
+          toolchain: nightly-2026-08-21
           components: miri
 
       - name: Cache Rust build artifacts
@@ -89,21 +89,21 @@ jobs:
           shared-key: nightly-miri
 
       - name: Bootstrap Miri
-        run: cargo +nightly-2026-04-01 miri setup
+        run: cargo +nightly-2026-08-21 miri setup
 
       - name: Install big-endian Miri target
-        run: rustup target add --toolchain nightly-2026-04-01 s390x-unknown-linux-gnu
+        run: rustup target add --toolchain nightly-2026-08-21 s390x-unknown-linux-gnu
 
       - name: Install s390x cross compiler
         run: sudo apt-get update && sudo apt-get install -y gcc-s390x-linux-gnu
 
       - name: Run focused big-endian UB-oriented tests
         run: |
-          MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly-2026-04-01 miri test \
+          MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly-2026-08-21 miri test \
             -p o-sfu-tests \
             --target s390x-unknown-linux-gnu \
             --test miri_auth_codec
-          cargo +nightly-2026-04-01 miri test \
+          cargo +nightly-2026-08-21 miri test \
             -p o-sfu-tests \
             --target s390x-unknown-linux-gnu \
             --test miri_rtp_negotiation

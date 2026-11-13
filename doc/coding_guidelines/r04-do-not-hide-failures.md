@@ -10,11 +10,11 @@ and never record credentials, packet contents or raw signaling payloads.
 > [!NOTE]
 > Further reading: **[the OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)** and **[Prometheus instrumentation practices](https://prometheus.io/docs/practices/instrumentation/)**.
 >
-> Related lints: [dbg_macro](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#dbg_macro),
-> [map_err_ignore](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_err_ignore),
-> [print_stderr](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#print_stderr),
-> [print_stdout](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#print_stdout)
-> and [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unused_result_ok).
+> Related lints: [dbg_macro](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#dbg_macro),
+> [map_err_ignore](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#map_err_ignore),
+> [print_stderr](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#print_stderr),
+> [print_stdout](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#print_stdout)
+> and [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unused_result_ok).
 
 **Example:** `handshake::reject` records why a WebSocket connection was rejected
 before trying to close it.

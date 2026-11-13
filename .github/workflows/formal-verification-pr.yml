@@ -19,66 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Kani 0.67 uses rustc 1.93, which rejects o-sfu-core's rust-version = 1.95.
-  # Remove KANI_REV and prepare-kani once a Kani release can compile o-sfu-core.
-  KANI_REV: 101f81401da8fffcefcb4d87305c6c7c4073badf
+  KANI_VERSION: 0.68.0
 
 jobs:
-  prepare-kani:
-    name: Build pinned Kani
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    outputs:
-      bundle_sha256: ${{ steps.checksums.outputs.bundle_sha256 }}
-      installer_sha256: ${{ steps.checksums.outputs.installer_sha256 }}
-    steps:
-      - name: Checkout Kani
-        # actions/checkout v7.0.0
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: model-checking/kani
-          ref: ${{ env.KANI_REV }}
-          persist-credentials: false
-
-      - name: Verify Kani revision
-        run: test "$(git rev-parse HEAD)" = "$KANI_REV"
-
-      - name: Install Kani build dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: ubuntu-24.04
-
-      - name: Build Kani bundle and installer
-        run: |
-          set -euo pipefail
-          cargo bundle -- source
-          cargo package --locked -p kani-verifier
-          mv target/package/kani-verifier-*.crate kani-verifier.crate
-
-      - name: Record Kani bundle checksums
-        id: checksums
-        run: |
-          set -euo pipefail
-          sha256sum kani-source-x86_64-unknown-linux-gnu.tar.gz \
-            | awk '{ print "bundle_sha256=" $1 }' >> "$GITHUB_OUTPUT"
-          sha256sum kani-verifier.crate \
-            | awk '{ print "installer_sha256=" $1 }' >> "$GITHUB_OUTPUT"
-
-      - name: Upload Kani bundle
-        # actions/upload-artifact v7.0.1
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: kani-${{ env.KANI_REV }}-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            kani-source-x86_64-unknown-linux-gnu.tar.gz
-            kani-verifier.crate
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-
   kani-pr:
     name: PR Kani (${{ matrix.shard }})
-    needs: prepare-kani
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -119,40 +64,14 @@ jobs:
         # Swatinem/rust-cache v2
         uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31
         with:
-          key: kani-${{ env.KANI_REV }}
+          key: kani-${{ env.KANI_VERSION }}
           cache-bin: false
 
-      - name: Download Kani bundle
-        # actions/download-artifact v5
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: kani-${{ env.KANI_REV }}-${{ runner.os }}-${{ runner.arch }}
-          path: ${{ runner.temp }}/kani-artifact
-
-      - name: Verify Kani bundle checksums
-        env:
-          KANI_BUNDLE_SHA256: ${{ needs.prepare-kani.outputs.bundle_sha256 }}
-          KANI_INSTALLER_SHA256: ${{ needs.prepare-kani.outputs.installer_sha256 }}
+      - name: Install Kani
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/kani-artifact"
-          printf '%s  %s\n' \
-            "$KANI_BUNDLE_SHA256" kani-source-x86_64-unknown-linux-gnu.tar.gz \
-            "$KANI_INSTALLER_SHA256" kani-verifier.crate \
-            | sha256sum --check --strict
-
-      - name: Install pinned Kani
-        run: |
-          set -euo pipefail
-          installer_dir="$RUNNER_TEMP/kani-installer"
-          mkdir -p "$installer_dir"
-          tar --extract --gzip \
-            --file "$RUNNER_TEMP/kani-artifact/kani-verifier.crate" \
-            --directory "$installer_dir" \
-            --strip-components=1
-          cargo install --locked --force --path "$installer_dir"
-          cargo kani setup --use-local-bundle \
-            "$RUNNER_TEMP/kani-artifact/kani-source-x86_64-unknown-linux-gnu.tar.gz"
+          cargo install --locked --force kani-verifier --version "$KANI_VERSION"
+          cargo kani setup
           cargo kani --version --verbose
 
       - name: Run PR Kani proof shard

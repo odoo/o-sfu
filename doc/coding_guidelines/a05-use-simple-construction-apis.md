@@ -22,10 +22,10 @@ Guidelines on [builders for complex
 construction](https://rust-lang.github.io/api-guidelines/type-safety.html#builders-enable-construction-of-complex-values-c-builder).
 
 > [!NOTE]
-> Related lints: [pedantic::unnecessary_wraps](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_wraps),
-> [style::new_ret_no_self](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#new_ret_no_self),
-> [style::new_without_default](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#new_without_default)
-> and [style::self_named_constructors](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#self_named_constructors).
+> Related lints: [pedantic::unnecessary_wraps](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_wraps),
+> [style::new_ret_no_self](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#new_ret_no_self),
+> [style::new_without_default](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#new_without_default)
+> and [style::self_named_constructors](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#self_named_constructors).
 
 **Example:** `RoomMediaLimits::try_new` establishes the limits at construction
 time and private fields preserve them afterward.

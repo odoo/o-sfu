@@ -13,9 +13,9 @@ acquire that guard, either directly or through another call.
 > [!NOTE]
 > Further reading: **[Tokio's shared-state guidance](https://tokio.rs/tokio/tutorial/shared-state)** and **[the async `Mutex` contract](https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html)**.
 >
-> Related lints: [significant_drop_tightening](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#significant_drop_tightening),
-> [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_lock)
-> and [suspicious::await_holding_refcell_ref](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#await_holding_refcell_ref).
+> Related lints: [significant_drop_tightening](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#significant_drop_tightening),
+> [suspicious::await_holding_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#await_holding_lock)
+> and [suspicious::await_holding_refcell_ref](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#await_holding_refcell_ref).
 
 The [publication lifecycle test](../../crates/core/src/engine/room/TESTS/producer_tests/publish_lifecycle.rs)
 checks that a competing transition waits for the ordered turn to finish.

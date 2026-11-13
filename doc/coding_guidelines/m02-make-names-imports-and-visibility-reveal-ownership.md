@@ -36,12 +36,12 @@ until callers need access, then grant only the required visibility.
 > Further reading: **[naming conventions in Comprehensive Rust](https://google.github.io/comprehensive-rust/idiomatic/foundations-api-design/predictable-api/naming-conventions.html)**
 > and **[visibility and privacy in the Rust Reference](https://doc.rust-lang.org/reference/visibility-and-privacy.html)**.
 >
-> Related lints: [absolute_paths](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#absolute_paths),
-> [pedantic::enum_glob_use](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#enum_glob_use),
-> [pedantic::similar_names](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#similar_names),
-> [pedantic::struct_field_names](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#struct_field_names),
-> [pedantic::wildcard_imports](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#wildcard_imports)
-> and [style::wrong_self_convention](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#wrong_self_convention).
+> Related lints: [absolute_paths](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#absolute_paths),
+> [pedantic::enum_glob_use](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#enum_glob_use),
+> [pedantic::similar_names](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#similar_names),
+> [pedantic::struct_field_names](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#struct_field_names),
+> [pedantic::wildcard_imports](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#wildcard_imports)
+> and [style::wrong_self_convention](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#wrong_self_convention).
 
 **Example:** `PublishedSources` gives its short field names meaning, while
 explicit imports and narrow visibility reveal the module boundary.

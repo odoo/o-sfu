@@ -16,11 +16,11 @@ is appropriate only for infallible, lossless, value-preserving and obvious
 conversions, while `TryFrom` expresses conversions that can fail.
 
 > [!NOTE]
-> Related lints: [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_find),
-> [perf::map_entry](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_entry),
-> [style::from_over_into](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#from_over_into),
-> [style::should_implement_trait](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#should_implement_trait)
-> and [style::unnecessary_fallible_conversions](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unnecessary_fallible_conversions).
+> Related lints: [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_find),
+> [perf::map_entry](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#map_entry),
+> [style::from_over_into](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#from_over_into),
+> [style::should_implement_trait](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#should_implement_trait)
+> and [style::unnecessary_fallible_conversions](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_fallible_conversions).
 
 **Examples:** The RID parser uses `exactly_one` to enforce the single
 restriction it supports when a restriction list is present.

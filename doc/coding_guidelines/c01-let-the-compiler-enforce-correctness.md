@@ -14,7 +14,7 @@ and write handles or generational keys for recycled slots.
 > [!NOTE]
 > Further reading: **[the newtype pattern in The Rust Book](https://doc.rust-lang.org/book/ch20-03-advanced-types.html#type-safety-and-abstraction-with-the-newtype-pattern)** and **[typestate programming in The Embedded Rust Book](https://docs.rust-embedded.org/book/static-guarantees/typestate-programming.html)**.
 >
-> Related lints: [pedantic::struct_excessive_bools](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#struct_excessive_bools).
+> Related lints: [pedantic::struct_excessive_bools](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#struct_excessive_bools).
 
 **Example:** `PublishedSources::source` and
 `PublishedSourceDescriptor::encoding` accept distinct ID types, preventing

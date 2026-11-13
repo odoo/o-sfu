@@ -69,10 +69,11 @@ cargo bench --locked -p o-sfu-tests --features worker-benchmarks --bench packet_
 Use the [Miri](../.github/workflows/ub-tests.yml),
 [fuzzing](../.github/workflows/fuzzing.yml) and
 [Kani](../.github/workflows/formal-verification.yml) workflows for toolchain setup.
+The Miri, ASan and fuzzing nightlies must satisfy the workspace `rust-version`.
 Run Kani in CI unless developing a proof locally.
 
 Local fuzz builds must use `cargo-fuzz` to supply `cfg(fuzzing)`:
 
 ```bash
-cargo +nightly-2026-04-01 fuzz check --fuzz-dir tests/fuzz --features fuzz-targets
+cargo +nightly-2026-08-21 fuzz check --fuzz-dir tests/fuzz --features fuzz-targets
 ```

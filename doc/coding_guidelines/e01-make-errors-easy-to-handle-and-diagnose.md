@@ -16,8 +16,8 @@ not name, keeping chains short and stating each fact once.
 > [!NOTE]
 > Further reading: **[error types in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/interoperability.html#error-types-are-meaningful-and-well-behaved-c-good-err)**, **[`thiserror` attributes](https://docs.rs/thiserror/latest/thiserror/#details)**, **[`anyhow::Context`](https://docs.rs/anyhow/latest/anyhow/trait.Context.html)** and **[`Error::source` in the standard library](https://doc.rust-lang.org/std/error/trait.Error.html#error-source)**.
 >
-> Related lints: [map_err_ignore](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_err_ignore)
-> and [style::result_unit_err](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#result_unit_err).
+> Related lints: [map_err_ignore](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#map_err_ignore)
+> and [style::result_unit_err](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#result_unit_err).
 
 **Example:** `RoomManagerJoinError` gives callers variants to match, while
 `Env::var(...).required()` uses `anyhow::Context` to identify a missing variable.

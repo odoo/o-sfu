@@ -11,8 +11,8 @@ downstream crates. The attribute has no effect within the defining crate.
 > [!NOTE]
 > Further reading: **[the non_exhaustive attribute in the Rust Reference](https://doc.rust-lang.org/reference/attributes/type_system.html#the-non_exhaustive-attribute)**.
 >
-> Related lints: [pedantic::match_wildcard_for_single_variants](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#match_wildcard_for_single_variants)
-> and [style::manual_non_exhaustive](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_non_exhaustive).
+> Related lints: [pedantic::match_wildcard_for_single_variants](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#match_wildcard_for_single_variants)
+> and [style::manual_non_exhaustive](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_non_exhaustive).
 
 **Example:** An exhaustive `StreamType` match requires a decision for every
 variant.

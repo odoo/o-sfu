@@ -23,10 +23,10 @@ choices.
 > [!NOTE]
 > Further reading: **[the `must_use` attribute](https://doc.rust-lang.org/stable/core/attribute.must_use.html)**,  **[ignored values in Rust patterns](https://doc.rust-lang.org/book/ch19-03-pattern-syntax.html#ignoring-values-in-a-pattern)**, **[Asynchronous Cleanup by Without Boats](https://without.boats/blog/asynchronous-clean-up/)**.
 >
-> Related lints: [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#unused_result_ok),
-> [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_lock),
-> [pedantic::must_use_candidate](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#must_use_candidate)
-> and [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#let_underscore_future).
+> Related lints: [unused_result_ok](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unused_result_ok),
+> [correctness::let_underscore_lock](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#let_underscore_lock),
+> [pedantic::must_use_candidate](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#must_use_candidate)
+> and [suspicious::let_underscore_future](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#let_underscore_future).
 
 **Example:** Dropping a nonempty `RoomEffects` batch before its transport,
 signaling and policy work finishes reports unfinished work.

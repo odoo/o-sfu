@@ -16,19 +16,19 @@ the intended behavior: `map` and `and_then` preserve `None` or `Err`, while
 > **[`Option`](https://doc.rust-lang.org/std/option/index.html)** and
 > **[`Result`](https://doc.rust-lang.org/std/result/index.html)**.
 >
-> Related lints: [option_if_let_else](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#option_if_let_else),
-> [single_option_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#single_option_map),
-> [useless_let_if_seq](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#useless_let_if_seq),
-> [complexity::bind_instead_of_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#bind_instead_of_map),
-> [complexity::manual_filter](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_filter),
-> [complexity::manual_filter_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_filter_map),
-> [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_find),
-> [complexity::manual_find_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_find_map),
-> [complexity::option_map_unit_fn](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#option_map_unit_fn),
-> [complexity::result_map_unit_fn](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#result_map_unit_fn),
-> [pedantic::needless_for_each](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#needless_for_each),
-> [style::manual_map](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_map)
-> and [style::manual_ok_or](https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#manual_ok_or).
+> Related lints: [option_if_let_else](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#option_if_let_else),
+> [single_option_map](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#single_option_map),
+> [useless_let_if_seq](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#useless_let_if_seq),
+> [complexity::bind_instead_of_map](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#bind_instead_of_map),
+> [complexity::manual_filter](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_filter),
+> [complexity::manual_filter_map](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_filter_map),
+> [complexity::manual_find](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_find),
+> [complexity::manual_find_map](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_find_map),
+> [complexity::option_map_unit_fn](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#option_map_unit_fn),
+> [complexity::result_map_unit_fn](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#result_map_unit_fn),
+> [pedantic::needless_for_each](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_for_each),
+> [style::manual_map](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_map)
+> and [style::manual_ok_or](https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#manual_ok_or).
 
 **Example 1 (Iterator query):** `MediaCodecCapability::rtx_associated_payload_type_id`
 returns the first RTX association.
