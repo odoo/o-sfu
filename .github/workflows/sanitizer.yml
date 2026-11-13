@@ -68,7 +68,7 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: nightly-2026-04-01
+          toolchain: nightly-2026-08-21
           targets: x86_64-unknown-linux-gnu
 
       - name: Restore Rust cache
@@ -82,32 +82,32 @@ jobs:
 
       - name: Run pure crate tests under ASan
         run: |
-          cargo +nightly-2026-04-01 test --locked --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-08-21 test --locked --target x86_64-unknown-linux-gnu \
             -p o-sfu-model -p o-sfu-rfc -p o-sfu-router -p o-sfu-protocol \
             --lib --tests -- --test-threads=1 --nocapture
 
       - name: Run core runtime tests under ASan
         run: |
-          cargo +nightly-2026-04-01 test --locked --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-08-21 test --locked --target x86_64-unknown-linux-gnu \
             -p o-sfu-core --lib --tests -- --test-threads=1 --nocapture
 
       - name: Run server smoke test under ASan
         run: |
-          cargo +nightly-2026-04-01 test --locked --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-08-21 test --locked --target x86_64-unknown-linux-gnu \
             -p o-sfu-tests --test server_smoke \
             websocket_welcome_and_initial_offer_work_from_integration_test \
             -- --exact --test-threads=1 --nocapture
 
       - name: Run same-worker RTC smoke test under ASan
         run: |
-          cargo +nightly-2026-04-01 test --locked --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-08-21 test --locked --target x86_64-unknown-linux-gnu \
             -p o-sfu-tests --test full_stack \
             video_routing::fake_rtc_peers_forward_vp8_high_rid_keyframe_without_browsers \
             -- --exact --test-threads=1 --nocapture
 
       - name: Run relay RTC smoke test under ASan
         run: |
-          cargo +nightly-2026-04-01 test --locked --target x86_64-unknown-linux-gnu \
+          cargo +nightly-2026-08-21 test --locked --target x86_64-unknown-linux-gnu \
             -p o-sfu-tests --test full_stack \
             relay_spillover::fake_rtc_cross_worker_vp8_selected_rid_survives_relay \
             -- --exact --test-threads=1 --nocapture

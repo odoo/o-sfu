@@ -40,7 +40,7 @@ jobs:
         # dtolnay/rust-toolchain master
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: nightly-2026-04-01
+          toolchain: nightly-2026-08-21
 
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache v2
@@ -56,7 +56,7 @@ jobs:
 
       - name: Check fuzz targets
         working-directory: tests/fuzz
-        run: cargo +nightly-2026-04-01 fuzz check --features fuzz-targets
+        run: cargo +nightly-2026-08-21 fuzz check --features fuzz-targets
 
   fuzz-targets:
     name: fuzz ${{ matrix.target }}
@@ -84,7 +84,7 @@ jobs:
         # dtolnay/rust-toolchain master
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
-          toolchain: nightly-2026-04-01
+          toolchain: nightly-2026-08-21
 
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache v2
@@ -104,7 +104,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             max_total_time=60
           fi
-          cargo +nightly-2026-04-01 fuzz run --features fuzz-targets "${{ matrix.target }}" -- -max_total_time="$max_total_time"
+          cargo +nightly-2026-08-21 fuzz run --features fuzz-targets "${{ matrix.target }}" -- -max_total_time="$max_total_time"
 
       - name: Upload fuzz artifacts
         if: failure()
