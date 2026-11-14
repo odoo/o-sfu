@@ -57,6 +57,31 @@ fn changed_selection_refreshes_fallback_until_consumer_teardown() {
 }
 
 #[test]
+fn receiver_feedback_refreshes_delivered_bootstrap_fallback() {
+    let mut route = prepare_pending_selected_rid_route();
+    assert!(route.observe_rid_ready(route.fallback_rid, true, Instant::now()));
+    route.assert_packet_gate(
+        PacketLayerGate::Rid(route.fallback_rid),
+        Some(PacketLayerGate::Rid(route.selected_rid)),
+    );
+    assert_eq!(
+        route
+            .state
+            .active_consumer_kf_target(&route.consumer_session, Mid::from("cam-down"), None)
+            .map(|target| target.rid),
+        Some(Some(route.fallback_rid))
+    );
+    for rid in [route.fallback_rid, route.selected_rid] {
+        assert!(
+            route
+                .state
+                .routes
+                .has_local_kf_demand(route.src_media, Some(rid))
+        );
+    }
+}
+
+#[test]
 fn routes_without_pending_selection_do_not_request_fallback_refresh() {
     for packet_gate in [PacketLayerGate::Block, PacketLayerGate::Open] {
         let fallback_rid = Rid::from("lo");

@@ -680,7 +680,7 @@ fn route_feedback_cases() -> [RouteFeedbackCase; 6] {
                 pending: "hi",
             },
             feedback_rid: None,
-            expected: RouteFeedbackExpectation::Rid("hi"),
+            expected: RouteFeedbackExpectation::Rid("lo"),
             kind: KeyframeRequestKind::Pli,
         },
         RouteFeedbackCase {

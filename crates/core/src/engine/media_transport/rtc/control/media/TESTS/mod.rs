@@ -1336,22 +1336,6 @@ fn selected_rid_packet_gate_uses_bootstrap_fallback_before_becoming_strict()
         vec![route.source_session.clone()]
     );
     assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);
-    assert!(
-        !route
-            .state
-            .routes
-            .has_local_kf_demand(route.src_media, Some(route.fallback_rid))
-    );
-    retry_source_kf(
-        &mut route.state,
-        &route.rtc_metrics,
-        SourceKeyframeRequest {
-            src_media: route.src_media,
-            rid: Some(route.fallback_rid),
-            kind: KeyframeRequestKind::Pli,
-        },
-        now + Duration::from_secs(1),
-    );
     assert!(!route.observe_rid_ready(route.fallback_rid, false, now + Duration::from_secs(1)));
     assert!(drain_ready_sessions(&mut route.state).is_empty());
     assert_eq!(route.metrics.snapshot().rtc_route_control_forwarded(), 2);

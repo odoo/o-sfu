@@ -15,9 +15,7 @@ use super::{
             PacketLayerGate, SourceAudioPolicyState, aggregate_packet_gates, intersect_packet_gates,
         },
         slots::RouteDestinationHandle,
-        source_route::{
-            DestinationKeyframeTarget, MediaRouteDestination, MediaRouteEntry, SelectedRefresh,
-        },
+        source_route::{MediaRouteDestination, MediaRouteEntry, SelectedRefresh},
     },
     ConsumerRouteUpdate, RelayForwardView, RidReadinessScratch,
 };
@@ -308,12 +306,7 @@ impl RouteSource {
         self.source_active
             && self.local_route.as_ref().is_some_and(|route| {
                 route.destinations().iter().any(|destination| {
-                    destination.active
-                        && (matches!(
-                            destination.delivery.keyframe_target_rid(None),
-                            DestinationKeyframeTarget::Current(target_rid)
-                                if rid.is_none() || target_rid == rid
-                        ) || (rid.is_some() && destination.delivery.needs_fallback_refresh()))
+                    destination.active && destination.delivery.needs_refresh(rid)
                 })
             })
     }
