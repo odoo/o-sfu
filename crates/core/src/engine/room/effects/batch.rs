@@ -1,5 +1,6 @@
 use super::{output::RoomOutputPlan, transport::RoomTransportPlan};
 use crate::engine::{
+    director::SourcePolicyTurn,
     media_transport::MediaTransport,
     obligation::{Execute, Obligation, Work},
     room::{
@@ -8,7 +9,6 @@ use crate::engine::{
             ConsumerSetupOrigin, ProducerActivityCommit, PublishCommit, ReceiverRouteCommit,
             ReceiverRouteWork,
         },
-        source_policy::SourcePolicyTurn,
         state::{
             ConnectionCloseCommit, DisconnectCommit, LifecycleEffects, PresenceCommit,
             UserJoinedFanout,

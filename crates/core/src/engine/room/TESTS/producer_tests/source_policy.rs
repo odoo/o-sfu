@@ -15,6 +15,7 @@ use tokio::time::{Instant as TokioInstant, advance, pause, resume, timeout};
 
 use super::{super::tracing as test_tracing, support::*};
 use crate::engine::{
+    director::SourcePolicyTransaction,
     media_transport::{
         ActiveSpeakerSource, ReceiverBandwidthSnapshot, SourcePolicyUpdateSubscription,
         TransportBitrateSnapshot, TransportMediaId, TransportTeardown,
@@ -22,7 +23,6 @@ use crate::engine::{
     room::{
         DeactivateIntentOutcome,
         media_graph::{PendingUpgrade, ReceiverRouteActivity, SubscriptionKey},
-        source_policy::SourcePolicyTransaction,
         state::RoomState,
     },
     source_model::{

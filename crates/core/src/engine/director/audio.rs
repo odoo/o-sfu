@@ -4,7 +4,7 @@ use super::{
     action::ConsumerPacketSelectionUpdate, input::SourcePolicySnapshot,
     turn::SourcePolicyTransaction,
 };
-use crate::engine::{room::media_graph::ConsumerRouteView, source_model::PolicyPauseReason};
+use crate::engine::{room::ConsumerRouteView, source_model::PolicyPauseReason};
 
 const AUDIO_PAUSE_REASONS: [PolicyPauseReason; 2] = [
     PolicyPauseReason::AudioSpeakerLimit,

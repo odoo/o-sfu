@@ -2,13 +2,13 @@ use std::time::Instant;
 
 use o_sfu_model::UserId;
 
-use super::super::media_graph::{PendingUpgrade, SubscriptionKey};
 use crate::{
     Bitrate, ConnectionId,
     engine::{
         media_transport::{
             ConsumerActivity, ConsumerRouteControl, SourcePacketGate, TransportConsumerRoute,
         },
+        room::{PendingUpgrade, SubscriptionKey},
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId,
             ReceiverVideoBudgetDiagnostics, SourceSelector,
@@ -74,10 +74,10 @@ pub(super) enum UpgradeChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::engine::room) struct ConsumerPacketSelectionUpdate {
+pub(in crate::engine) struct ConsumerPacketSelectionUpdate {
     pub(super) key: SubscriptionKey,
     pub(super) source_id: PublishedSourceId,
-    pub(in crate::engine::room) route: TransportConsumerRoute,
+    pub(in crate::engine) route: TransportConsumerRoute,
     pub(super) selector: SourceSelector,
     pub(super) policy_pause_reason: Option<PolicyPauseReason>,
     pub(super) planned_budget: ReceiverVideoBudgetDiagnostics,
@@ -91,7 +91,7 @@ pub(in crate::engine::room) struct ConsumerPacketSelectionUpdate {
 }
 
 impl ConsumerPacketSelectionUpdate {
-    pub(in crate::engine::room) fn route_activity(
+    pub(in crate::engine) fn route_activity(
         key: SubscriptionKey,
         source_id: PublishedSourceId,
         route: TransportConsumerRoute,
@@ -119,7 +119,7 @@ impl ConsumerPacketSelectionUpdate {
         self.packet_gate.is_some() || self.route_activity_changed || self.request_keyframe
     }
 
-    pub(in crate::engine::room) fn route_control(&self) -> ConsumerRouteControl {
+    pub(in crate::engine) fn route_control(&self) -> ConsumerRouteControl {
         let mut control =
             ConsumerRouteControl::new(self.route.clone()).request_keyframe(self.request_keyframe);
         if self.route_activity_changed {
@@ -131,7 +131,7 @@ impl ConsumerPacketSelectionUpdate {
         control
     }
 
-    pub(in crate::engine::room) const fn route_active(&self) -> bool {
+    pub(in crate::engine) const fn route_active(&self) -> bool {
         self.policy_pause_reason.is_none()
     }
 }

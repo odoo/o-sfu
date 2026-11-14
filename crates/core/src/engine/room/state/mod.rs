@@ -11,7 +11,7 @@ pub use self::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum UserJoinedFanout {
+pub(in crate::engine) enum UserJoinedFanout {
     Emit,
     #[cfg(any(test, feature = "testing-transport"))]
     Suppress,

@@ -124,7 +124,7 @@ pub(super) struct CommittedConsumerRoute {
 
 /// Eligibility must remain continuous for this exact deliverable post-fit target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::engine::room) struct PendingUpgrade {
+pub(in crate::engine) struct PendingUpgrade {
     pub selector: SourceSelector,
     pub deadline: Instant,
 }

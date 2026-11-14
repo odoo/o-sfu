@@ -109,7 +109,7 @@ impl RoomTopology {
         }
     }
 
-    pub(in crate::engine::room) const fn video_allocation_revision(&self) -> u64 {
+    pub(in crate::engine) const fn video_allocation_revision(&self) -> u64 {
         self.video_allocation_revision
     }
 
@@ -194,7 +194,7 @@ impl RoomTopology {
     }
 
     /// Counts committed consumers, including inactive selections.
-    pub(in crate::engine::room) fn consumer_count(&self) -> usize {
+    pub(in crate::engine) fn consumer_count(&self) -> usize {
         self.route_graph.count()
     }
 
@@ -227,7 +227,7 @@ impl RoomTopology {
     }
 
     #[must_use]
-    pub(in crate::engine::room) fn source_for_transport_media(
+    pub(in crate::engine) fn source_for_transport_media(
         &self,
         transport_media_id: TransportMediaId,
     ) -> Option<&PublishedSource> {
@@ -257,9 +257,7 @@ impl RoomTopology {
     }
 
     /// Iterates committed sources in source-ID order.
-    pub(in crate::engine::room) fn published_sources(
-        &self,
-    ) -> impl Iterator<Item = &PublishedSource> {
+    pub(in crate::engine) fn published_sources(&self) -> impl Iterator<Item = &PublishedSource> {
         self.sources.iter()
     }
 
@@ -280,7 +278,7 @@ impl RoomTopology {
 
     /// Returns a detector owner with an active promotable source in the same group.
     #[must_use]
-    pub(in crate::engine::room) fn active_speaker_detector_owner(
+    pub(in crate::engine) fn active_speaker_detector_owner(
         &self,
         transport_media_id: TransportMediaId,
     ) -> Option<UserId> {
@@ -303,7 +301,7 @@ impl RoomTopology {
             .filter_map(|(key, current)| self.consumer_route(key, current))
     }
 
-    pub(in crate::engine::room) fn committed_consumer_routes_for_user(
+    pub(in crate::engine) fn committed_consumer_routes_for_user(
         &self,
         user_id: &UserId,
     ) -> impl Iterator<Item = ConsumerRouteView<'_>> {
@@ -365,7 +363,7 @@ impl RoomTopology {
 
     /// Returns merged receiver intent or the default for a missing subscription.
     #[must_use]
-    pub(in crate::engine::room) fn subscription_intent(
+    pub(in crate::engine) fn subscription_intent(
         &self,
         key: &SubscriptionKey,
     ) -> SourceSubscriptionIntent {
@@ -397,7 +395,7 @@ impl RoomTopology {
     }
 
     #[must_use]
-    pub(in crate::engine::room) fn committed_consumer_route_for_key(
+    pub(in crate::engine) fn committed_consumer_route_for_key(
         &self,
         key: &SubscriptionKey,
     ) -> Option<ConsumerRouteView<'_>> {
@@ -495,7 +493,7 @@ impl RoomTopology {
     }
 
     /// Commits a hold only for the active source, subscription and exact route.
-    pub(in crate::engine::room) fn update_consumer_upgrade(
+    pub(in crate::engine) fn update_consumer_upgrade(
         &mut self,
         key: &SubscriptionKey,
         source_id: PublishedSourceId,

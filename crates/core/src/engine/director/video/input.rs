@@ -8,10 +8,7 @@ use crate::{
     Bitrate,
     engine::{
         media_transport::TransportConsumerRoute,
-        room::{
-            media_graph::{PendingUpgrade, SubscriptionKey},
-            state::RoomState,
-        },
+        room::{PendingUpgrade, RoomState, SubscriptionKey},
         source_model::{
             ConsumerSourceSelection, PublishedSourceDescriptor, SourceAdaptationPolicy,
             SourceRoomPolicySelector,
@@ -102,7 +99,7 @@ pub(super) struct ReceiverVideoRouteInput<'a> {
 
 impl RoomState {
     #[must_use]
-    pub(in crate::engine::room) fn receiver_video_layout_role(
+    pub(in crate::engine) fn receiver_video_layout_role(
         &self,
         consumer_user_id: &UserId,
         source: &PublishedSourceDescriptor,
@@ -121,7 +118,7 @@ impl RoomState {
     }
 
     #[must_use]
-    pub(in crate::engine::room) fn diagnostics_video_layout_role(
+    pub(in crate::engine) fn diagnostics_video_layout_role(
         &self,
         consumer_user_id: &UserId,
         source: &PublishedSourceDescriptor,

@@ -4,7 +4,7 @@
 //! placement and empty-room removal. Each [`Room`] coordinates [`membership`],
 //! the desired [`media_graph`] and per-user [`outbound`] signaling.
 //!
-//! State transitions capture post-lock transport effects. [`source_policy`]
+//! State transitions capture post-lock transport effects. [`director`](super::director)
 //! recomputes route activity and packet selection from room and transport
 //! snapshots after state changes or coalesced policy wakeups. [`read_model`]
 //! captures room facts for diagnostics before they are combined with transport
@@ -25,7 +25,6 @@ mod outbound;
 mod placement;
 mod read_model;
 mod recording;
-mod source_policy;
 mod state;
 #[cfg(any(test, feature = "testing-transport"))]
 pub mod test_support;
@@ -33,7 +32,6 @@ mod transition;
 
 pub use factory::{RoomAdmissionPolicy, RoomConfig, RoomRuntimePolicy};
 pub(crate) use instance::RoomUserOperation;
-use instance::SourcePolicyGuard;
 pub use instance::{
     Room, RoomJoinError, RoomManagerJoinError, RoomManagerServeError, RoomMediaCounts,
 };
@@ -53,6 +51,13 @@ pub use read_model::{
     IncomingBitrateSnapshot, RoomDetailCapture, RoomOverviewCapture, RoomUserCapture,
     RoomUserStatsSnapshot, RoomUsersCapture,
 };
-#[cfg(feature = "internal-benchmarks")]
-pub use source_policy::run_source_policy_turn_for_benchmark;
 pub(crate) use transition::{DeactivateIntentOutcome, PublishIntentOutcome};
+
+// Director plans from and commits to these during a source policy turn.
+pub(in crate::engine) use self::{
+    effects::transport::RoomRouteEffects,
+    instance::SourcePolicyGuard,
+    media_graph::{ConsumerRouteView, PendingUpgrade, SubscriptionKey},
+    outbound::MessageFanout,
+    state::{ActiveUser, RoomState},
+};
