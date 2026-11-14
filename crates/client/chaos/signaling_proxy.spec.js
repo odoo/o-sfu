@@ -98,18 +98,37 @@ function mediaDiagnostics(
         streamType
     });
 }
-async function waitForDecodedVideo(page, sessionId, streamType, options) {
+async function waitForActiveSubscription(
+    channelUuid,
+    consumerSessionId,
+    producerSessionId,
+    streamType = "camera"
+) {
+    await expect
+        .poll(
+            () => mediaDiagnostics(channelUuid, consumerSessionId, producerSessionId, streamType),
+            { timeout: CONNECT_TIMEOUT_MS }
+        )
+        .toMatchObject({ publication: { active: true }, subscription: { state: "active" } });
+}
+// Live tracks precede RTP. Decode deadline waits for server subscription state active.
+async function waitForDecodedVideo(subscriber, channelUuid, streamType, options) {
+    await waitForActiveSubscription(
+        channelUuid,
+        SUBSCRIBER_SESSION_ID,
+        PUBLISHER_SESSION_ID,
+        streamType
+    );
     await expect
         .poll(
             async () =>
-                (await peerSnapshot(page)).consumers[String(sessionId)]?.[streamType]?.readyState ??
-                null,
-            {
-                timeout: CONNECT_TIMEOUT_MS
-            }
+                (await peerSnapshot(subscriber)).consumers[String(PUBLISHER_SESSION_ID)]?.[
+                    streamType
+                ]?.readyState ?? null,
+            { timeout: CONNECT_TIMEOUT_MS }
         )
         .toBe("live");
-    return waitForDecodedRemoteVideoFrame(page, sessionId, streamType, options);
+    return waitForDecodedRemoteVideoFrame(subscriber, PUBLISHER_SESSION_ID, streamType, options);
 }
 function broadcastsFrom(updates, sessionId, kind) {
     return updates
@@ -390,9 +409,10 @@ test("recovery applies latest intent and never replays a dropped broadcast", asy
         await publishSyntheticCamera(subscriber, "replay-subscriber-camera");
         await setStreamDownload(publisher, SUBSCRIBER_SESSION_ID, "camera", true);
         await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "camera", true);
+        // Recovery checks server state only. Baseline proves both routes active.
         await Promise.all([
-            waitForDecodedVideo(publisher, SUBSCRIBER_SESSION_ID, "camera"),
-            waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "camera")
+            waitForActiveSubscription(channelUuid, PUBLISHER_SESSION_ID, SUBSCRIBER_SESSION_ID),
+            waitForActiveSubscription(channelUuid, SUBSCRIBER_SESSION_ID, PUBLISHER_SESSION_ID)
         ]);
         await updateInfo(publisher, { isRaisingHand: false });
         await expect
@@ -571,16 +591,7 @@ test("lost renegotiation answer recovers the browser and publication", async ({
             })
             .toBe("connected");
         await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "camera", true);
-        await expect
-            .poll(
-                () => mediaDiagnostics(channelUuid, SUBSCRIBER_SESSION_ID, PUBLISHER_SESSION_ID),
-                { timeout: CONNECT_TIMEOUT_MS }
-            )
-            .toMatchObject({
-                publication: { active: true },
-                subscription: { state: "active" }
-            });
-        await waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "camera");
+        await waitForDecodedVideo(subscriber, channelUuid, "camera");
         expect((await peerSnapshot(publisher)).errors).toEqual([]);
     } finally {
         await disconnectPages(pages);
@@ -607,7 +618,7 @@ test("canceling camera during a held offer preserves established screen media", 
         );
         const screen = await publishSyntheticScreen(publisher, "screen-before-camera-cancel");
         await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "screen", true);
-        await waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "screen", {
+        await waitForDecodedVideo(subscriber, channelUuid, "screen", {
             expectedPixel: screen.fillPixel
         });
         const initialSdp = await peerLocalDescriptionSdp(publisher);
@@ -672,19 +683,7 @@ test("canceling camera during a held offer preserves established screen media", 
                 }
             )
             .toBeNull();
-        await expect
-            .poll(
-                () =>
-                    mediaDiagnostics(
-                        channelUuid,
-                        SUBSCRIBER_SESSION_ID,
-                        PUBLISHER_SESSION_ID,
-                        "screen"
-                    ),
-                { timeout: CONNECT_TIMEOUT_MS }
-            )
-            .toMatchObject({ publication: { active: true } });
-        await waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "screen", {
+        await waitForDecodedVideo(subscriber, channelUuid, "screen", {
             expectedPixel: screen.fillPixel
         });
         expect(
@@ -724,7 +723,7 @@ test("subscription and publication changes converge after held subscriber negoti
         );
         await publishSyntheticCamera(publisher, "topology-first-camera");
         await setStreamDownload(subscriber, PUBLISHER_SESSION_ID, "camera", true);
-        await waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "camera");
+        await waitForDecodedVideo(subscriber, channelUuid, "camera");
         await proxy.arm();
         const screen = await publishSyntheticVideo(publisher, "screen", "topology-screen", {
             width: browserName === "chromium" ? 1280 : 640,
@@ -794,28 +793,11 @@ test("subscription and publication changes converge after held subscriber negoti
             )
             .toMatchObject({ isRaisingHand: false });
         await proxy.release(blocked.connectionId);
-        for (const streamType of ["camera", "screen"]) {
-            await expect
-                .poll(
-                    () =>
-                        mediaDiagnostics(
-                            channelUuid,
-                            SUBSCRIBER_SESSION_ID,
-                            PUBLISHER_SESSION_ID,
-                            streamType
-                        ),
-                    { timeout: CONNECT_TIMEOUT_MS }
-                )
-                .toMatchObject({
-                    publication: { active: true },
-                    subscription: { state: "active" }
-                });
-        }
         await Promise.all([
-            waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "camera", {
+            waitForDecodedVideo(subscriber, channelUuid, "camera", {
                 expectedPixel: camera.fillPixel
             }),
-            waitForDecodedVideo(subscriber, PUBLISHER_SESSION_ID, "screen", {
+            waitForDecodedVideo(subscriber, channelUuid, "screen", {
                 expectedPixel: browserName === "chromium" ? null : screen.fillPixel
             })
         ]);

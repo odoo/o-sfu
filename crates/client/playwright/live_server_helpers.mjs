@@ -12,6 +12,8 @@ const TEST_SFU_HTTP_BASE_URL = "http://127.0.0.1:18080";
 export const TEST_SFU_WS_URL = "ws://127.0.0.1:18080/";
 const DIAGNOSTICS_ROOM_PATH = "/internal/diagnostics/rooms";
 const AUDIO_OPERATION_TIMEOUT_MS = 250;
+const DECODE_TIMEOUT_MS = 12_000;
+const DECODE_STATS_TIMEOUT_MS = 1_000;
 const ROOM_TOKEN_TTL_SECONDS = 30;
 const CONNECT_TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const HARNESS_URL = "/playwright/fixtures/harness.html";
@@ -590,7 +592,9 @@ export async function waitForDecodedRemoteVideoFrame(
             expectedPixel: nextExpectedPixel,
             maxPixelDistance: nextMaxPixelDistance,
             sessionId,
-            streamType: targetStreamType
+            statsTimeoutMs,
+            streamType: targetStreamType,
+            timeoutMs: nextTimeoutMs
         }) => {
             const sleep = (ms) =>
                 new Promise((resolve) => {
@@ -638,6 +642,30 @@ export async function waitForDecodedRemoteVideoFrame(
             };
             const pixelDistance = (left, right) =>
                 Math.hypot(left.red - right.red, left.green - right.green, left.blue - right.blue);
+            const inboundVideoStats = async (track) => {
+                const receiver = client._runtime._peerSession._activePeer
+                    ?.getReceivers()
+                    .find((candidate) => candidate.track === track);
+                if (!receiver) {
+                    return "receiver missing";
+                }
+                // Firefox getStats may stay unresolved after peer connection closure.
+                const stats = await Promise.race([
+                    receiver.getStats().catch((error) => String(error)),
+                    sleep(statsTimeoutMs).then(() => "getStats timed out")
+                ]);
+                if (typeof stats === "string") {
+                    return stats;
+                }
+                return [...stats.values()]
+                    .filter((report) => report.type === "inbound-rtp" && report.kind === "video")
+                    .map(({ framesDecoded, keyFramesDecoded, packetsReceived, pliCount }) => ({
+                        framesDecoded,
+                        keyFramesDecoded,
+                        packetsReceived,
+                        pliCount
+                    }));
+            };
             const harness = globalThis.__liveHarness;
             const client = harness.client;
             const track =
@@ -659,7 +687,7 @@ export async function waitForDecodedRemoteVideoFrame(
 
             try {
                 const startedAt = performance.now();
-                const deadline = startedAt + 12_000;
+                const deadline = startedAt + nextTimeoutMs;
                 requestPlayback(video);
                 const initialCurrentTime = video.currentTime;
                 const initialDecodedFrames =
@@ -702,7 +730,9 @@ export async function waitForDecodedRemoteVideoFrame(
                 }
 
                 throw new Error(
-                    `remote ${targetStreamType} video did not decode a matching frame before timeout`
+                    `session ${String(sessionId)} ${targetStreamType} video did not decode a ` +
+                        `matching frame within ${nextTimeoutMs} ms, inbound video stats: ` +
+                        JSON.stringify(await inboundVideoStats(track))
                 );
             } finally {
                 video.pause();
@@ -714,7 +744,9 @@ export async function waitForDecodedRemoteVideoFrame(
             expectedPixel,
             maxPixelDistance,
             sessionId: targetSessionId,
-            streamType
+            statsTimeoutMs: DECODE_STATS_TIMEOUT_MS,
+            streamType,
+            timeoutMs: DECODE_TIMEOUT_MS
         }
     );
 }
