@@ -39,7 +39,7 @@ impl UdpEgress {
         }
     }
 
-    /// Completes the UDP batch in bounded windows, preserving datagram order.
+    /// Completes bounded UDP windows, preserving order per destination.
     ///
     /// The caller removes other protocols before submission. Source rejection
     /// finishes preceding UDP output and separates future GSO groups.
