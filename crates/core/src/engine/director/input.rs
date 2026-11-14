@@ -14,10 +14,7 @@ use crate::{
             ActiveSpeakerSource, ReceiverBandwidthSnapshot, TransportBitrateSnapshot,
             TransportMediaId,
         },
-        room::{
-            media_graph::ConsumerRouteView,
-            state::{ActiveUser, RoomState},
-        },
+        room::{ActiveUser, ConsumerRouteView, RoomState},
     },
 };
 

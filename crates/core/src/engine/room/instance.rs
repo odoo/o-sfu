@@ -58,7 +58,7 @@ pub(crate) struct RoomUserOperation<'a> {
 /// cannot authorize them. Keep the guard across each state commit and its
 /// effects, including every publication resolved by one answer.
 #[must_use = "dropping this guard releases source-policy ordering"]
-pub(super) struct SourcePolicyGuard<'a> {
+pub(in crate::engine) struct SourcePolicyGuard<'a> {
     room: &'a Room,
     _lock: MutexGuard<'a, ()>,
 }
@@ -71,11 +71,11 @@ impl SourcePolicyGuard<'_> {
 
 pub struct Room {
     pub(super) definition: RoomDefinition,
-    pub(super) metrics: Arc<RuntimeMetrics>,
+    pub(in crate::engine) metrics: Arc<RuntimeMetrics>,
     /// Serializes publication commits and activity changes with source-policy
     /// turns so their transport effects cannot overtake each other.
     source_policy_turn: AsyncMutex<()>,
-    pub(super) state: RwLock<RoomState>,
+    pub(in crate::engine) state: RwLock<RoomState>,
 }
 
 impl Room {
@@ -122,7 +122,7 @@ impl Room {
     ///
     /// Call guarded operations while this guard is held. Acquiring another
     /// source-policy guard for this room before releasing it would deadlock.
-    pub(super) async fn lock_source_policy(&self) -> SourcePolicyGuard<'_> {
+    pub(in crate::engine) async fn lock_source_policy(&self) -> SourcePolicyGuard<'_> {
         SourcePolicyGuard {
             room: self,
             _lock: self.source_policy_turn.lock().await,

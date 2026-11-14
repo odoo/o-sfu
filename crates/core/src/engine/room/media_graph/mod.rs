@@ -24,6 +24,7 @@ mod TESTS;
 #[path = "TESTS/route_graph.rs"]
 mod route_graph_tests;
 
+pub(in crate::engine) use self::route_graph::PendingUpgrade;
 #[cfg(any(test, feature = "testing-transport"))]
 pub use self::subscription::ConsumerRouteState;
 pub(super) use self::{
@@ -32,13 +33,12 @@ pub(super) use self::{
         DeclaredConsumerSetup, PendingConsumerSetup,
     },
     producer::{ProducerActivityCommit, PublishCommit, PublishIntentPlan, ValidatedPublish},
-    route_graph::PendingUpgrade,
     subscription::{ReceiverRouteActivity, ReceiverRouteCommit, ReceiverRouteWork},
     topology::{RoomTopology, SessionPlacementCommit, SessionPlacementRejection},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct SubscriptionKey {
+pub(in crate::engine) struct SubscriptionKey {
     pub receiver: UserId,
     pub publisher: UserId,
     pub stream: UserStreamId,
@@ -61,7 +61,7 @@ pub(super) struct SourceKey {
 }
 
 #[derive(Debug)]
-pub(super) struct PublishedSource {
+pub(in crate::engine) struct PublishedSource {
     pub descriptor: PublishedSourceDescriptor,
     pub transport: TransportSourceKey,
     pub rtp: rtp::MediaStream,
@@ -71,7 +71,7 @@ pub(super) struct PublishedSource {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ConsumerRouteView<'a> {
+pub(in crate::engine) struct ConsumerRouteView<'a> {
     pub key: &'a SubscriptionKey,
     pub route: &'a TransportConsumerRoute,
     pub mid: &'a str,

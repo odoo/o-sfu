@@ -35,7 +35,7 @@ pub struct RoomState {
     next_track_snapshot_revision: u64,
     pub(super) recording_state: RecordingState,
     pub(in crate::engine::room) staged_publishes: StagedPublishes,
-    pub(in crate::engine::room) topology: RoomTopology,
+    pub(in crate::engine) topology: RoomTopology,
 }
 
 #[derive(Debug)]
@@ -46,7 +46,7 @@ pub struct ActiveUser {
     pub parsed_client_rtp_capabilities: Option<RouterRtpCapabilities>,
     pub connection_id: ConnectionId,
     /// Continuous receiver pressure survives victim changes within this connection.
-    pub(in crate::engine::room) video_soft_pause_deadline: Option<Instant>,
+    pub(in crate::engine) video_soft_pause_deadline: Option<Instant>,
     pub sender: OutboundSender,
 }
 
@@ -60,19 +60,19 @@ impl ActiveUser {
         self.info.apply_partial_update(info);
     }
 
-    pub(in crate::engine::room) const fn featured(&self) -> Option<bool> {
+    pub(in crate::engine) const fn featured(&self) -> Option<bool> {
         self.server_featured
     }
 
-    pub(in crate::engine::room) const fn is_deaf(&self) -> bool {
+    pub(in crate::engine) const fn is_deaf(&self) -> bool {
         matches!(self.info.is_deaf, Some(true))
     }
 
-    pub(in crate::engine::room) const fn is_screensharing(&self) -> bool {
+    pub(in crate::engine) const fn is_screensharing(&self) -> bool {
         matches!(self.info.is_screen_sharing_on, Some(true))
     }
 
-    pub(in crate::engine::room) fn set_featured(&mut self, featured: Option<bool>) {
+    pub(in crate::engine) fn set_featured(&mut self, featured: Option<bool>) {
         self.server_featured = featured;
     }
 
@@ -199,7 +199,7 @@ impl RoomState {
         self.topology.router().primary_worker()
     }
 
-    pub(in crate::engine::room) fn committed_consumer_routes(
+    pub(in crate::engine) fn committed_consumer_routes(
         &self,
     ) -> impl Iterator<Item = ConsumerRouteView<'_>> {
         self.topology.committed_consumer_routes().filter(|route| {

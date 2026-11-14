@@ -8,6 +8,7 @@ use super::receiver_route::ReceiverSetupTurn;
 #[cfg(any(test, feature = "testing-transport"))]
 use crate::engine::obligation::Simulate;
 use crate::engine::{
+    director::ConsumerPacketSelectionUpdate,
     media_transport::{
         ConsumerActivity, ConsumerRouteControl, ConsumerRouteControlOutcome, MediaControlPlan,
         MediaTransport, ProducerActivity, ReceiverBweTargetUpdate, SourceActivityUpdate,
@@ -20,14 +21,13 @@ use crate::engine::{
         media_graph::{
             ConsumerRouteTarget, ConsumerSetupOrigin, ReceiverRouteActivity, ReceiverRouteWork,
         },
-        source_policy::ConsumerPacketSelectionUpdate,
     },
     source_model::UserStreamId,
 };
 
 #[derive(Debug, Default)]
 #[must_use = "room transport plans must execute after the state transition commits"]
-pub(in crate::engine::room) struct RoomTransportPlan(Obligation<RoomTransportWork>);
+pub(in crate::engine) struct RoomTransportPlan(Obligation<RoomTransportWork>);
 
 #[derive(Debug, Default)]
 struct RoomTransportWork {
@@ -211,7 +211,7 @@ impl Simulate for RoomTransportWork {
 
 #[derive(Debug, Default)]
 #[must_use = "room route effects must be executed or intentionally dropped"]
-pub(in crate::engine::room) struct RoomRouteEffects(
+pub(in crate::engine) struct RoomRouteEffects(
     MediaControlPlan<ProducerRouteFinish, ConsumerRouteFinish>,
 );
 
@@ -265,7 +265,7 @@ impl RoomRouteEffects {
         );
     }
 
-    pub(in crate::engine::room) fn source_policy_update(
+    pub(in crate::engine) fn source_policy_update(
         &mut self,
         update: ConsumerPacketSelectionUpdate,
     ) {
@@ -275,7 +275,7 @@ impl RoomRouteEffects {
         );
     }
 
-    pub(in crate::engine::room) fn set_receiver_bwe_targets(
+    pub(in crate::engine) fn set_receiver_bwe_targets(
         &mut self,
         targets: Vec<ReceiverBweTargetUpdate>,
     ) {
@@ -286,11 +286,11 @@ impl RoomRouteEffects {
         self.0.append(other.0);
     }
 
-    pub(in crate::engine::room) fn is_empty(&self) -> bool {
+    pub(in crate::engine) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    pub(in crate::engine::room) async fn execute(
+    pub(in crate::engine) async fn execute(
         self,
         room_id: &str,
         media_transport: &MediaTransport,

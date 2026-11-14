@@ -173,7 +173,7 @@ impl RemoteTrackSnapshot {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::engine::room) struct VersionedRemoteTrackSnapshot {
+pub(in crate::engine) struct VersionedRemoteTrackSnapshot {
     pub(in crate::engine::room) snapshot: RemoteTrackSnapshot,
     pub(in crate::engine::room) revision: u64,
 }
@@ -574,13 +574,13 @@ async fn wait_for_overflow(
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct MessageFanout {
+pub(in crate::engine) struct MessageFanout {
     recipients: Vec<OutboundSender>,
     message: RoomEventMessage,
 }
 
 impl MessageFanout {
-    pub(super) fn emit(self) {
+    pub(in crate::engine) fn emit(self) {
         for recipient in self.recipients {
             let _ = recipient.send(UserOutbound::Message(self.message.clone()));
         }

@@ -11,11 +11,9 @@ use super::{
 use crate::{
     ConnectionId,
     engine::{
+        director::VideoAdmissionRank,
         media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
-        room::{
-            outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
-            source_policy::VideoAdmissionRank,
-        },
+        room::outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceRoutePriority,
             SourceSubscriptionIntent, UserStreamId,

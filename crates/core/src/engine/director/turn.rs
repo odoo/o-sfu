@@ -24,8 +24,7 @@ use crate::{
         },
         observability,
         room::{
-            Room, RoomEventMessage, SourcePolicyGuard, effects::transport::RoomRouteEffects,
-            outbound::MessageFanout, state::RoomState,
+            MessageFanout, Room, RoomEventMessage, RoomRouteEffects, RoomState, SourcePolicyGuard,
         },
         source_model::{
             PolicyPauseReason, ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy,
@@ -66,7 +65,7 @@ impl SourcePolicyTurn {
             .await;
     }
 
-    pub(in crate::engine::room) async fn execute_guarded(
+    pub(in crate::engine) async fn execute_guarded(
         self,
         guard: &SourcePolicyGuard<'_>,
         media_transport: Option<&MediaTransport>,
@@ -120,7 +119,7 @@ impl SourcePolicyTurn {
 }
 
 impl Room {
-    pub(in crate::engine::room) async fn source_policy_worker_indices(
+    pub(in crate::engine) async fn source_policy_worker_indices(
         &self,
         media_transport: &MediaTransport,
     ) -> Vec<usize> {
@@ -189,7 +188,7 @@ async fn run_packet_selection(
 }
 
 #[derive(Debug)]
-pub(in crate::engine::room) struct SourcePolicyTransaction {
+pub(in crate::engine) struct SourcePolicyTransaction {
     route_effects: RoomRouteEffects,
     state_updates: Vec<ConsumerPacketSelectionUpdate>,
     receiver_video_budget_plans: Vec<ReceiverVideoBudgetPlan>,
@@ -201,7 +200,7 @@ pub(in crate::engine::room) struct SourcePolicyTransaction {
 }
 
 impl SourcePolicyTransaction {
-    pub(in crate::engine::room) fn plan(
+    pub(in crate::engine) fn plan(
         state: &RoomState,
         active_speakers: &[ActiveSpeakerSource],
         receiver_bandwidth: &ReceiverBandwidthSnapshot,
@@ -321,11 +320,7 @@ impl SourcePolicyTransaction {
     }
 
     #[cfg(test)]
-    pub(in crate::engine::room) async fn execute(
-        self,
-        room: &Room,
-        media_transport: &MediaTransport,
-    ) {
+    pub(in crate::engine) async fn execute(self, room: &Room, media_transport: &MediaTransport) {
         self.commit(room, media_transport).await;
     }
 

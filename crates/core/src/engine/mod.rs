@@ -11,6 +11,7 @@
 //! lets them share media-engine state without making the server crate import
 //! RTC workers or room-state internals.
 
+pub(crate) mod director;
 pub mod media_transport;
 pub(crate) mod obligation;
 mod observability;

@@ -39,11 +39,11 @@ use super::{
     factory::RoomFactory,
     membership::JoinUserRequest,
     placement::JoinAdmissionTurn,
-    source_policy::SourcePolicyTurn,
 };
 use crate::{
     ConnectionId, RoomInstanceId,
     engine::{
+        director::SourcePolicyTurn,
         media_transport::{
             ActiveSpeakerSource, MediaTransport, TransportAdapterError, TransportSessionKey,
         },

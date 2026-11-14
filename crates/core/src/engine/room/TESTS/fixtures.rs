@@ -15,12 +15,13 @@ pub(super) use o_sfu_telemetry::metrics::{
 pub(super) use super::super::{
     JoinUserRequest, Room, RoomAdmissionPolicy, RoomConfig, RoomEventMessage, RoomJoinError,
     RoomManager, UserCloseReason, UserOutbound, UserOutboundReceiver, UserOutboundSender,
-    effects::batch::RoomEffectContext, source_policy::SourcePolicyTurn,
-    transition::PublishStageOutcome,
+    effects::batch::RoomEffectContext, transition::PublishStageOutcome,
 };
+use crate::engine::director::SourcePolicyTransaction;
 pub(super) use crate::{
     ConnectionId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
+        director::SourcePolicyTurn,
         media_transport::{
             AppliedSessionAnswer, MediaTransport, ReceiverBandwidthSnapshot,
             TransportBitrateSnapshot, TransportMediaId, TransportSessionHealth,
@@ -527,7 +528,7 @@ impl SourcePolicyScenario {
         for elapsed in [Duration::ZERO, VideoAdaptationTuning::DEFAULT_UPGRADE_DWELL] {
             let tx = {
                 let state = self.room.state.read().await;
-                super::super::source_policy::SourcePolicyTransaction::plan(
+                SourcePolicyTransaction::plan(
                     &state,
                     &sources,
                     &ReceiverBandwidthSnapshot::default(),

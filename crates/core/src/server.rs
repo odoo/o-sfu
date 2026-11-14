@@ -95,7 +95,7 @@ pub mod room {
 
     #[cfg(feature = "internal-benchmarks")]
     pub mod benchmark_support {
-        pub use crate::engine::room::run_source_policy_turn_for_benchmark;
+        pub use crate::engine::director::run_source_policy_turn_for_benchmark;
     }
 
     pub use crate::engine::room::{

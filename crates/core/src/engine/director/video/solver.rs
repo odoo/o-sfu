@@ -23,7 +23,7 @@ use crate::{
     Bitrate, VideoAdaptationTuning,
     engine::{
         media_transport::ReceiverBweTargetUpdate,
-        room::{media_graph::PendingUpgrade, state::RoomState},
+        room::{PendingUpgrade, RoomState},
         source_model::{
             PolicyPauseReason, PublishedSourceDescriptor, PublishedSourceId,
             ReceiverVideoBudgetDiagnostics, SourceAdaptationPolicy, SourceEncodingDescriptor,
@@ -150,7 +150,7 @@ impl<'a> PlannedReceiverRoute<'a> {
     }
 }
 
-pub(in crate::engine::room::source_policy) fn append_receiver_video_policy(
+pub(in crate::engine::director) fn append_receiver_video_policy(
     tx: &mut SourcePolicyTransaction,
     state: &RoomState,
     input: &SourcePolicySnapshot<'_>,
