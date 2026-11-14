@@ -28,6 +28,7 @@ use super::{Room, RoomMediaCounts, media_graph::PendingUpgrade, state::RoomState
 use crate::{
     Bitrate, ConnectionId, MediaWorkerId,
     engine::{
+        director,
         media_transport::{
             ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSourceDiagnostic,
             MediaTransport, TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
@@ -465,7 +466,7 @@ fn diagnostics_subscriptions(
                    consumer_media: Option<TransportMediaId>,
                    source_media: TransportMediaId,
                    route_state| {
-        let layout = state.diagnostics_video_layout_role(user_id, source);
+        let layout = director::diagnostics_video_layout_role(state, user_id, source);
         DiagnosticsSubscription {
             consumer_transport_media_id: consumer_media.map(TransportMediaId::as_u64),
             layout_priority: layout.map(|role| role.priority().into()),

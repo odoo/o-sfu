@@ -1,13 +1,13 @@
 //! Private media engine implementation tree.
 //!
-//! This tree owns the room engine, media transport facade, RTC worker implementation,
-//! recording hooks, diagnostics projections, metrics bridge and source policy
-//! machinery used below the public `o-sfu-core` front door.
+//! This tree owns the room engine, Director's receiver media policy, media
+//! transport facade, RTC worker implementation, recording hooks, diagnostics
+//! projections and metrics bridge used below the public `o-sfu-core` front door.
 //!
 //! The media engine has to coordinate state that is too concrete for the pure
 //! router and too low level for the server shell: room membership, publish or
 //! subscribe transactions, transport cleanup, packet sinks, relay setup, packet-
-//! loop observations and room media policy. Keeping those pieces together
+//! loop observations and receiver media policy. Keeping those pieces together
 //! lets them share media-engine state without making the server crate import
 //! RTC workers or room-state internals.
 

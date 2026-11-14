@@ -217,7 +217,7 @@ impl RoomTopology {
     }
 
     #[must_use]
-    pub(in crate::engine::room) fn source_descriptor(
+    pub(in crate::engine) fn source_descriptor(
         &self,
         source_id: PublishedSourceId,
     ) -> Option<&PublishedSourceDescriptor> {

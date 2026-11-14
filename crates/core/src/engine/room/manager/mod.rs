@@ -43,7 +43,7 @@ use super::{
 use crate::{
     ConnectionId, RoomInstanceId,
     engine::{
-        director::SourcePolicyTurn,
+        director::{self, SourcePolicyTurn},
         media_transport::{
             ActiveSpeakerSource, MediaTransport, TransportAdapterError, TransportSessionKey,
         },
@@ -337,7 +337,7 @@ impl RoomManager {
         let mut needed_workers = BTreeSet::new();
         for room in rooms {
             absent.remove(&room.instance_id());
-            let worker_indices = room.source_policy_worker_indices(media_transport).await;
+            let worker_indices = director::policy_worker_indices(&room, media_transport).await;
             needed_workers.extend(worker_indices.iter().copied());
             jobs.push((room, worker_indices));
         }
@@ -386,7 +386,9 @@ impl RoomManager {
                     let Ok(_permit) = self.policy_permits.acquire().await else {
                         return room_id;
                     };
-                    if room.source_policy_worker_indices(media_transport).await != worker_indices {
+                    if director::policy_worker_indices(&room, media_transport).await
+                        != worker_indices
+                    {
                         media_transport.schedule_source_policy_retry(room_id);
                         return room_id;
                     }

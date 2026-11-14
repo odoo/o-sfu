@@ -21,18 +21,19 @@
 //! server runtime
 //!   -> SfuCore::admit_user
 //!   -> MediaSession
-//!   -> room state and source policy
+//!   -> room state and Director
 //!   -> MediaTransport
 //!   -> RTC workers
 //! ```
 //!
 //! [`MediaTransport`](server::transport::MediaTransport) starts the worker threads
 //! and binds their UDP sockets. Room operations release state locks before awaiting
-//! transport work. Source policy maps layout intent, active-speaker observations
-//! and receiver bandwidth to route activity and packet gates. Worker-local packet
-//! loops then demultiplex UDP and forward RTP through those gates. The private
-//! `rtc::codec` boundary contains capability projection plus codec-specific packet
-//! inspection and rewrite, so source policy does not branch on payload details.
+//! transport work. Director, the private `engine::director` module, maps layout
+//! intent, active-speaker observations and receiver bandwidth to route activity
+//! and packet gates. Worker-local packet loops then demultiplex UDP and forward
+//! RTP through those gates. The private `rtc::codec` boundary contains capability
+//! projection plus codec-specific packet inspection and rewrite, so Director does
+//! not branch on payload details.
 //!
 //! # Server Construction
 //!
