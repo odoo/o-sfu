@@ -28,6 +28,21 @@ test("subscribe forwards additive video layout intent to the protocol core", asy
     ]);
 });
 
+test("subscribe and updateDownload forward default layout resets", async () => {
+    const { client, core } = createSfuClientHarness();
+
+    client.subscribe(42, { cameraLayout: "pinned", screenLayout: "hidden" });
+    client.subscribe(42, { cameraLayout: "default" });
+    client.updateDownload(42, { screenLayout: "default" });
+    await tick();
+
+    assert.deepEqual(core.subscriptionUpdates, [
+        { sessionId: 42, states: { cameraLayout: "pinned", screenLayout: "hidden" } },
+        { sessionId: 42, states: { cameraLayout: "default" } },
+        { sessionId: 42, states: { screenLayout: "default" } }
+    ]);
+});
+
 test("subscribe rejects invalid download state fields", () => {
     const { client, core } = createSfuClientHarness();
 
