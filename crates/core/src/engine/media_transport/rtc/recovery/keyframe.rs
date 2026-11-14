@@ -22,7 +22,7 @@ use super::super::{
         media_registry::RegisteredMediaHandle,
         relay_registry::RelayTargetId,
         route_table::RemoteSourceRegistration,
-        source_route::MediaRouteDestination,
+        source_route::{DestinationKeyframeTarget, MediaRouteDestination},
     },
 };
 use crate::engine::media_transport::{
@@ -475,7 +475,10 @@ pub fn worker_request_consumer_kf(
 
 /// Resolves the producer RID that consumer feedback must refresh.
 fn kf_req_rid(dst: &MediaRouteDestination) -> Option<Rid> {
-    dst.delivery.requested_keyframe_rid()
+    match dst.delivery.keyframe_target_rid(None) {
+        DestinationKeyframeTarget::Current(rid) => rid,
+        DestinationKeyframeTarget::Stale => None,
+    }
 }
 
 fn local_kf_req_mid(

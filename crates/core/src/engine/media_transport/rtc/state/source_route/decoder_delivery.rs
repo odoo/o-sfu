@@ -206,25 +206,37 @@ impl DecoderDelivery {
         Some(selected_rid)
     }
 
+    /// Receiver refresh RID: delivered RID first, pending RID otherwise.
+    ///
+    /// Bootstrap fallback delivery decodes fallback RID while selected RID may
+    /// stay silent. Decoder readiness requests pending RIDs separately.
     pub(in crate::engine::media_transport::rtc) fn keyframe_target_rid(
         &self,
         open_rid: Option<Rid>,
     ) -> DestinationKeyframeTarget {
-        if let Some(pending_gate) = self.pending_gate {
-            return DestinationKeyframeTarget::Current(pending_gate.selected_rid());
+        match (self.effective_gate, self.pending_gate) {
+            (PacketLayerGate::Rid(rid), _) => DestinationKeyframeTarget::Current(Some(rid)),
+            (_, Some(pending_gate)) => {
+                DestinationKeyframeTarget::Current(pending_gate.selected_rid())
+            }
+            (PacketLayerGate::Block, None) => DestinationKeyframeTarget::Stale,
+            (PacketLayerGate::Open, None) => DestinationKeyframeTarget::Current(open_rid),
         }
-        let target_rid = match self.effective_gate {
-            PacketLayerGate::Rid(rid) => Some(rid),
-            PacketLayerGate::Block => return DestinationKeyframeTarget::Stale,
-            PacketLayerGate::Open => open_rid,
-        };
-        DestinationKeyframeTarget::Current(target_rid)
     }
 
-    /// Targets the intended RID while a temporary fallback is being forwarded.
-    pub(in crate::engine::media_transport::rtc) fn requested_keyframe_rid(&self) -> Option<Rid> {
-        self.pending_gate
-            .and_then(|gate| gate.selected_rid())
-            .or_else(|| self.effective_gate.selected_rid())
+    /// Tests whether a keyframe from `rid`, or from any RID for `None`, serves this destination.
+    ///
+    /// Delivered RID, pending selection and bootstrap fallback for blocked
+    /// selection all keep demand.
+    pub(in crate::engine::media_transport::rtc) fn needs_refresh(&self, rid: Option<Rid>) -> bool {
+        let Some(rid) = rid else {
+            return !matches!(
+                self.keyframe_target_rid(None),
+                DestinationKeyframeTarget::Stale
+            );
+        };
+        self.effective_gate.selected_rid() == Some(rid)
+            || self.pending_gate.and_then(|gate| gate.selected_rid()) == Some(rid)
+            || self.needs_fallback_refresh()
     }
 }
