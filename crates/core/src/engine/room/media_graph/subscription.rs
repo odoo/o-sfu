@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use o_sfu_model::UserId;
 use o_sfu_router::{MediaKind as RouterMediaKind, negotiation::negotiate_consumer_rtp_parameters};
@@ -11,11 +11,11 @@ use super::{
 use crate::{
     ConnectionId,
     engine::{
-        director::VideoAdmissionRank,
+        director,
         media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
         room::outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
         source_model::{
-            ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId, SourceRoutePriority,
+            ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId,
             SourceSubscriptionIntent, UserStreamId,
         },
     },
@@ -205,41 +205,18 @@ impl RoomState {
         &mut self,
         mut targets: Vec<ConsumerSetupTarget>,
     ) -> Vec<PendingConsumerSetup> {
-        // Initial admission has no active-speaker snapshot. The following
-        // source-policy turn applies the current speaker ranking.
-        let active_speakers = BTreeSet::new();
-        targets.sort_by_key(|target| self.setup_rank(target, &active_speakers));
+        targets.sort_by_key(|target| {
+            director::initial_video_admission_rank(
+                self,
+                target.session.user_id(),
+                target.kind,
+                target.source_id,
+            )
+        });
         targets
             .into_iter()
             .filter_map(|target| self.plan_consumer(target))
             .collect()
-    }
-
-    fn setup_rank(
-        &self,
-        target: &ConsumerSetupTarget,
-        active_speakers: &BTreeSet<UserId>,
-    ) -> VideoAdmissionRank {
-        if target.kind != RouterMediaKind::Video {
-            return VideoAdmissionRank::new(
-                SourceRoutePriority::PinnedOrFeatured,
-                None,
-                target.source_id,
-            );
-        }
-        let Some(source) = self.topology.source_descriptor(target.source_id) else {
-            return VideoAdmissionRank::new(
-                SourceRoutePriority::HiddenOrOverflow,
-                None,
-                target.source_id,
-            );
-        };
-        VideoAdmissionRank::new(
-            self.receiver_video_layout_role(target.session.user_id(), source, active_speakers)
-                .priority(),
-            None,
-            target.source_id,
-        )
     }
 
     fn missing_receiver_route_targets(

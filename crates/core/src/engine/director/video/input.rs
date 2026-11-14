@@ -3,15 +3,15 @@ use std::collections::BTreeSet;
 use o_sfu_model::{UserId, VideoLayoutIntent};
 use o_sfu_router::MediaKind;
 
-use super::super::input::SourcePolicySnapshot;
+use super::{super::input::SourcePolicySnapshot, solver::VideoAdmissionRank};
 use crate::{
     Bitrate,
     engine::{
         media_transport::TransportConsumerRoute,
         room::{PendingUpgrade, RoomState, SubscriptionKey},
         source_model::{
-            ConsumerSourceSelection, PublishedSourceDescriptor, SourceAdaptationPolicy,
-            SourceRoomPolicySelector,
+            ConsumerSourceSelection, PublishedSourceDescriptor, PublishedSourceId,
+            SourceAdaptationPolicy, SourceRoomPolicySelector, SourceRoutePriority,
         },
     },
 };
@@ -29,7 +29,8 @@ pub(super) fn receiver_video_routes<'a>(
         {
             continue;
         }
-        let layout_role = state.receiver_video_layout_role(
+        let layout_role = receiver_video_layout_role(
+            state,
             &route.key.receiver,
             source,
             &input.featured_source_user_ids,
@@ -97,51 +98,75 @@ pub(super) struct ReceiverVideoRouteInput<'a> {
     pub(super) audio_budget_reserve: Bitrate,
 }
 
-impl RoomState {
-    #[must_use]
-    pub(in crate::engine) fn receiver_video_layout_role(
-        &self,
-        consumer_user_id: &UserId,
-        source: &PublishedSourceDescriptor,
-        active_speaker_source_user_ids: &BTreeSet<UserId>,
-    ) -> SourceRoomPolicySelector {
-        let preference = layout_preference(self, consumer_user_id, source);
-        source
-            .policy()
-            .layout()
-            .map_or(SourceRoomPolicySelector::Hidden, |policy| {
-                policy.resolve(
-                    preference,
-                    active_speaker_source_user_ids.contains(source.owner().user_id()),
-                )
-            })
+/// Orders consumer setups before their first policy turn.
+///
+/// Setup has no active-speaker snapshot, so video ranks by layout role alone
+/// and the next policy turn applies the speaker order. Audio shares the
+/// priority of pinned or featured video and the source id breaks their tie.
+#[must_use]
+pub(in crate::engine) fn initial_video_admission_rank(
+    state: &RoomState,
+    receiver: &UserId,
+    kind: MediaKind,
+    source_id: PublishedSourceId,
+) -> VideoAdmissionRank {
+    if kind != MediaKind::Video {
+        return VideoAdmissionRank::new(SourceRoutePriority::PinnedOrFeatured, None, source_id);
     }
+    let Some(source) = state.topology.source_descriptor(source_id) else {
+        return VideoAdmissionRank::new(SourceRoutePriority::HiddenOrOverflow, None, source_id);
+    };
+    VideoAdmissionRank::new(
+        receiver_video_layout_role(state, receiver, source, &BTreeSet::new()).priority(),
+        None,
+        source_id,
+    )
+}
 
-    #[must_use]
-    pub(in crate::engine) fn diagnostics_video_layout_role(
-        &self,
-        consumer_user_id: &UserId,
-        source: &PublishedSourceDescriptor,
-    ) -> Option<SourceRoomPolicySelector> {
-        let policy = source.policy().layout()?;
-        let preference = layout_preference(self, consumer_user_id, source);
-        let active_speaker = self
-            .users
-            .get(source.owner().user_id())
-            .is_some_and(|user| user.featured() == Some(true));
-        Some(policy.resolve(preference, active_speaker))
-    }
+/// Layout role shown in diagnostics. The committed featured flag stands in for
+/// the speaker observations of a policy turn.
+#[must_use]
+pub(in crate::engine) fn diagnostics_video_layout_role(
+    state: &RoomState,
+    receiver: &UserId,
+    source: &PublishedSourceDescriptor,
+) -> Option<SourceRoomPolicySelector> {
+    let policy = source.policy().layout()?;
+    let preference = layout_preference(state, receiver, source);
+    let active_speaker = state
+        .users
+        .get(source.owner().user_id())
+        .is_some_and(|user| user.featured() == Some(true));
+    Some(policy.resolve(preference, active_speaker))
+}
+
+fn receiver_video_layout_role(
+    state: &RoomState,
+    receiver: &UserId,
+    source: &PublishedSourceDescriptor,
+    active_speaker_source_user_ids: &BTreeSet<UserId>,
+) -> SourceRoomPolicySelector {
+    let preference = layout_preference(state, receiver, source);
+    source
+        .policy()
+        .layout()
+        .map_or(SourceRoomPolicySelector::Hidden, |policy| {
+            policy.resolve(
+                preference,
+                active_speaker_source_user_ids.contains(source.owner().user_id()),
+            )
+        })
 }
 
 fn layout_preference(
     state: &RoomState,
-    consumer_user_id: &UserId,
+    receiver: &UserId,
     source: &PublishedSourceDescriptor,
 ) -> Option<VideoLayoutIntent> {
     state
         .topology
         .subscription_intent(&SubscriptionKey::new(
-            consumer_user_id,
+            receiver,
             source.owner().user_id(),
             source.stream_id(),
         ))

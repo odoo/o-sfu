@@ -1,11 +1,18 @@
-//! Per-room audio admission and receiver-video allocation.
+//! Receiver media policy: decides which audio and which video encoding each
+//! receiver gets within its bandwidth and when to decide again.
+//!
+//! Director reads committed room facts, worker observations (active speakers,
+//! receiver bandwidth and source bitrate) and the time. It decides audio
+//! admission, the encoding each video route forwards, route pauses, receiver
+//! BWE targets, the room's featured user and the next decision deadline. It
+//! never changes membership or publications, never creates or removes routes
+//! and never handles packets.
 //!
 //! [`SourcePolicyTurn`] serializes policy refreshes with publication activity so
-//! their transport effects cannot overtake each other. Each turn combines
-//! committed routes, active-speaker observations, receiver bandwidth and source
-//! bitrate in a [`SourcePolicySnapshot`](input::SourcePolicySnapshot). Planning
-//! holds a room-state read guard. Planned transport controls run only after that
-//! guard is released.
+//! their transport effects cannot overtake each other. Each turn plans from a
+//! [`SourcePolicySnapshot`](input::SourcePolicySnapshot) while it holds a
+//! room-state read guard. Planned transport controls run only after that guard
+//! is released.
 //!
 //! Audio policy admits observed speakers up to the room limit and blocks audio
 //! for deaf receivers. Video policy maps receiver layout roles, source caps and
@@ -21,10 +28,12 @@ mod input;
 mod turn;
 mod video;
 
-pub(in crate::engine) use self::action::ConsumerPacketSelectionUpdate;
 #[cfg(test)]
 pub(super) use self::turn::SourcePolicyTransaction;
-pub(super) use self::turn::SourcePolicyTurn;
 #[cfg(feature = "internal-benchmarks")]
 pub use self::turn::run_source_policy_turn_for_benchmark;
-pub use self::video::VideoAdmissionRank;
+pub(super) use self::{
+    action::ConsumerPacketSelectionUpdate,
+    turn::{SourcePolicyTurn, policy_worker_indices},
+    video::{diagnostics_video_layout_role, initial_video_admission_rank},
+};

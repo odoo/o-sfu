@@ -99,7 +99,7 @@ impl SourcePolicyTurn {
         let transaction = if let Some(sources) = active_speaker_sources {
             run_packet_selection(room, sources, media_transport, bandwidth, now).await
         } else {
-            let worker_indices = room.source_policy_worker_indices(media_transport).await;
+            let worker_indices = policy_worker_indices(room, media_transport).await;
             let Ok(sources) = media_transport
                 .active_speaker_source_snapshot_for_workers(&worker_indices)
                 .await
@@ -118,23 +118,23 @@ impl SourcePolicyTurn {
     }
 }
 
-impl Room {
-    pub(in crate::engine) async fn source_policy_worker_indices(
-        &self,
-        media_transport: &MediaTransport,
-    ) -> Vec<usize> {
-        let state = self.state.read().await;
-        let mut indices = state
-            .topology
-            .published_sources()
-            .map(|source| source.transport.session_key().media_worker_id().as_usize())
-            .filter(|&worker| media_transport.worker_is_usable(worker))
-            .collect::<Vec<_>>();
-        drop(state);
-        indices.sort_unstable();
-        indices.dedup();
-        indices
-    }
+/// Sorted usable workers that host the room's published sources, which are
+/// the workers a policy turn reads speaker observations from.
+pub(in crate::engine) async fn policy_worker_indices(
+    room: &Room,
+    media_transport: &MediaTransport,
+) -> Vec<usize> {
+    let state = room.state.read().await;
+    let mut indices = state
+        .topology
+        .published_sources()
+        .map(|source| source.transport.session_key().media_worker_id().as_usize())
+        .filter(|&worker| media_transport.worker_is_usable(worker))
+        .collect::<Vec<_>>();
+    drop(state);
+    indices.sort_unstable();
+    indices.dedup();
+    indices
 }
 
 /// Runs policy with injected bandwidth and optional prebuilt speaker observations.
