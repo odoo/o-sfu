@@ -31,6 +31,7 @@ impl ProtocolWebSocketClient {
             AuthPayload {
                 jwt: SecretString::from(token),
                 channel: None,
+                mid_reuse: true,
             },
         )
         .await
@@ -46,6 +47,7 @@ impl ProtocolWebSocketClient {
             AuthPayload {
                 jwt: SecretString::from(token),
                 channel: Some(room_id.to_owned()),
+                mid_reuse: true,
             },
         )
         .await

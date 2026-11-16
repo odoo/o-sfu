@@ -107,7 +107,7 @@ async fn cancelling_after_transport_teardown_keeps_room_effects_obligation() {
         .transport_user_key(&fixture.user_id, fixture.connection_id)
         .await;
     media_transport
-        .create_initial_session_offer("room-effects-obligation", &session)
+        .create_initial_session_offer("room-effects-obligation", &session, true)
         .await
         .expect("test session should create an initial offer");
     media_transport

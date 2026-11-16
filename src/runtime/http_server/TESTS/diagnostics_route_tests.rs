@@ -120,6 +120,7 @@ async fn join_room_user(
                     label: None,
                     permissions: UserPermissions::default(),
                     sender: tx,
+                    mid_reuse: true,
                 },
             )
             .await,

@@ -276,8 +276,11 @@ pub struct MediaSession {
     /// MIDs of this connection's consumer media. Each offer replaces the map,
     /// so a consumer queued since the last offer has none until the next one.
     consumer_mids: BTreeMap<TransportMediaId, String>,
-    /// Tracks last handed to the caller.
-    delivered_tracks: Vec<RemoteTrackProjection>,
+    /// Tracks last handed to the caller, each with the consumer it names.
+    delivered_tracks: Vec<(TransportMediaId, RemoteTrackProjection)>,
+    /// Whether the client accepts a consumer MID that later names another
+    /// consumer.
+    mid_reuse: bool,
     closed: bool,
 }
 
@@ -315,6 +318,7 @@ impl SfuCore {
         room_id: &str,
         request: JoinUserRequest,
     ) -> Result<MediaSession, RoomManagerJoinError> {
+        let mid_reuse = request.mid_reuse;
         let admission = self
             .rooms
             .join_user(room_id, request, &self.media_transport)
@@ -327,6 +331,7 @@ impl SfuCore {
             tracks: RemoteTrackSnapshot::default(),
             consumer_mids: BTreeMap::new(),
             delivered_tracks: Vec::new(),
+            mid_reuse,
             closed: false,
         })
     }
@@ -350,7 +355,11 @@ impl MediaSession {
         let offer = self
             .core
             .media_transport
-            .create_initial_session_offer(self.room.uuid(), &self.transport_user_key)
+            .create_initial_session_offer(
+                self.room.uuid(),
+                &self.transport_user_key,
+                self.mid_reuse,
+            )
             .await
             .map_err(SfuCoreError::Transport)?;
         self.phase
@@ -567,25 +576,32 @@ impl MediaSession {
     /// The room knows the tracks and each offer brings the MIDs, so a track is
     /// named only here. One without a MID waits for the offer that adds its
     /// consumer media.
+    ///
+    /// A MID outlives its consumer, so a reconnected user's track can equal
+    /// the one delivered for its previous connection. The client dropped that
+    /// binding when the user left. Tracks are therefore compared with the
+    /// consumer they name.
     fn named_tracks(&mut self) -> Option<Vec<RemoteTrackProjection>> {
         let named = self
             .tracks
             .tracks
             .iter()
             .filter_map(|track| {
-                Some(RemoteTrackProjection {
+                let projection = RemoteTrackProjection {
                     consumer_mid: self.consumer_mids.get(&track.consumer_media)?.clone(),
                     user_id: track.user_id.clone(),
                     stream_id: track.stream_id.clone(),
                     producer_active: track.producer_active,
-                })
+                };
+                Some((track.consumer_media, projection))
             })
             .collect::<Vec<_>>();
         if named == self.delivered_tracks {
             return None;
         }
-        self.delivered_tracks.clone_from(&named);
-        Some(named)
+        let tracks = named.iter().map(|(_, track)| track.clone()).collect();
+        self.delivered_tracks = named;
+        Some(tracks)
     }
 
     /// applies receiver intent for sources published by another user

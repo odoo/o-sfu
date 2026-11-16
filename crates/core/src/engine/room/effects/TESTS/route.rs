@@ -220,7 +220,7 @@ async fn cancelled_final_consumer_setup_diagnoses_unfinished_transport_plan()
         .transport_user_key(&receiver, receiver_connection)
         .await;
     media_transport
-        .create_initial_session_offer("room-setup-obligation", &receiver_session)
+        .create_initial_session_offer("room-setup-obligation", &receiver_session, true)
         .await?;
     let setups = {
         let mut state = room.state.write().await;
@@ -404,10 +404,10 @@ impl RouteFixture {
         let source_session = session_key(1, UserId::Integer(1));
         let consumer_session = session_key(2, UserId::Integer(2));
         media_transport
-            .create_initial_session_offer("test-room", &source_session)
+            .create_initial_session_offer("test-room", &source_session, true)
             .await?;
         media_transport
-            .create_initial_session_offer("test-room", &consumer_session)
+            .create_initial_session_offer("test-room", &consumer_session, true)
             .await?;
 
         let source_media = media_transport

@@ -1,4 +1,5 @@
 use std::{
+    mem,
     num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
@@ -361,6 +362,7 @@ async fn publisher_leaving_during_an_offer_is_named_with_it_then_retracted() {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: subscriber_sender,
+                mid_reuse: true,
             },
         )
         .await
@@ -414,6 +416,89 @@ async fn publisher_leaving_during_an_offer_is_named_with_it_then_retracted() {
         .filter_map(|snapshot| subscriber.fresh_remote_tracks(snapshot))
         .collect::<Vec<_>>();
     assert_eq!(retracted, [Vec::new()]);
+}
+
+#[tokio::test]
+async fn reconnected_publisher_is_named_again_on_the_mid_it_reuses() {
+    // The new consumer takes the MID of the departed one, so its track reads
+    // like the one the client already has. It still names another consumer
+    // and the client dropped the binding when the user left.
+    let [first, reconnected] = Box::pin(offers_across_publisher_reconnect(true, 55_236)).await;
+    assert_eq!(reconnected.remote_tracks, first.remote_tracks);
+}
+
+#[tokio::test]
+async fn reconnected_publisher_gets_a_new_mid_for_a_client_without_mid_reuse() {
+    // A client released before MID reuse cannot give a MID to another track.
+    let [first, reconnected] = Box::pin(offers_across_publisher_reconnect(false, 55_239)).await;
+    assert_eq!(reconnected.remote_tracks.as_ref().map(Vec::len), Some(1));
+    assert_ne!(reconnected.remote_tracks, first.remote_tracks);
+}
+
+/// The offers that name a publisher to a subscriber before and after the
+/// publisher reconnects. The three peers bind `port` and the two after it.
+async fn offers_across_publisher_reconnect(mid_reuse: bool, port: u16) -> [NegotiationOffer; 2] {
+    let mut publisher = build_publisher_fixture(port).await;
+    establish_session(&mut publisher.session, &mut publisher.remote).await;
+    publish_source(&mut publisher, TestSourceKind::ScalableVideo).await;
+
+    let (subscriber_sender, mut subscriber_rx) = test_sender();
+    let mut subscriber = publisher
+        .core
+        .admit_user(
+            publisher.room.uuid(),
+            JoinUserRequest {
+                user_id: UserId::Integer(2),
+                label: None,
+                permissions: UserPermissions::default(),
+                sender: subscriber_sender,
+                mid_reuse,
+            },
+        )
+        .await
+        .expect("subscriber should join through core facade");
+    let mut subscriber_remote = build_remote_rtc(port + 1);
+    establish_session(&mut subscriber, &mut subscriber_remote).await;
+    let offer = subscriber
+        .renegotiate()
+        .await
+        .expect("subscriber renegotiation should succeed")
+        .expect("the queued consumer should produce an offer");
+    assert_eq!(offer.remote_tracks.as_ref().map(Vec::len), Some(1));
+    let answer = remote_answer_sdp(&mut subscriber_remote, &offer.sdp);
+    let follow_up = subscriber
+        .answer(&answer)
+        .await
+        .expect("subscriber answer should apply");
+    assert!(follow_up.is_none());
+
+    // The same user reconnects and publishes again before the subscriber has
+    // taken the departure from its queue.
+    let replacement = publisher
+        .core
+        .admit_user(
+            publisher.room.uuid(),
+            join_request(publisher.user_id.clone()),
+        )
+        .await
+        .expect("replacement user should join through core facade");
+    let mut replaced = mem::replace(&mut publisher.session, replacement);
+    assert!(!replaced.close().await);
+    publisher.remote = build_remote_rtc(port + 2);
+    establish_session(&mut publisher.session, &mut publisher.remote).await;
+    publish_source(&mut publisher, TestSourceKind::ScalableVideo).await;
+
+    let reconnect_offer = subscriber
+        .renegotiate()
+        .await
+        .expect("subscriber renegotiation should succeed")
+        .expect("the reconnected publisher should produce an offer");
+    let stale = drain_remote_track_snapshots(&mut subscriber_rx)
+        .into_iter()
+        .filter_map(|snapshot| subscriber.fresh_remote_tracks(snapshot))
+        .collect::<Vec<_>>();
+    assert!(stale.is_empty());
+    [offer, reconnect_offer]
 }
 
 #[tokio::test]
@@ -755,6 +840,7 @@ async fn build_consumer_answer_fixture() -> ConsumerAnswerFixture {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: subscriber_sender,
+                mid_reuse: true,
             },
         )
         .await
@@ -813,6 +899,7 @@ fn join_request(user_id: UserId) -> JoinUserRequest {
         label: None,
         permissions: UserPermissions::default(),
         sender,
+        mid_reuse: true,
     }
 }
 

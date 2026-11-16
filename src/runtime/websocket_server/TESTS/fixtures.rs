@@ -316,6 +316,7 @@ pub(super) async fn authenticate_silent_with_jwt(
     let payload = encode_protocol_auth(AuthPayload {
         jwt: SecretString::from(token),
         channel: None,
+        mid_reuse: true,
     })?;
     websocket.send_text(&payload).await?;
     Some(websocket)
@@ -409,6 +410,7 @@ pub(super) async fn authenticate_with_room(
     let payload = encode_protocol_auth(AuthPayload {
         jwt: SecretString::from(token),
         channel: room_id.map(str::to_owned),
+        mid_reuse: true,
     })?;
     websocket
         .send(tungstenite::Message::Text(payload.into()))

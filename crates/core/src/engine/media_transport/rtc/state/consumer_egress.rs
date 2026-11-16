@@ -8,6 +8,7 @@ use super::{
     super::{
         codec,
         consumer_egress::{LocalForwardedRtp, LocalPacketDestination, rotate_rtx_cache},
+        negotiation,
     },
     RtcSessionState, muxed_rtp_ssrc,
     slots::ConsumerStreamHandle,
@@ -61,12 +62,7 @@ impl RtcSessionState {
     /// Retires the destination `StreamTx` and host RTX state for one consumer MID.
     pub fn remove_consumer_stream_tx(&mut self, mid: Mid) {
         self.consumer_streams.reset_rtx_streams(mid);
-        {
-            let mut api = self.rtc.direct_api();
-            if let Some(ssrc) = api.stream_tx_by_mid(mid, None).map(|stream| stream.ssrc()) {
-                api.remove_stream_tx(ssrc);
-            }
-        }
+        negotiation::remove_send_streams(&mut self.rtc.direct_api(), mid);
         self.purge_removed_rtx_streams();
     }
 }

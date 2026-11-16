@@ -559,6 +559,7 @@ fn protocol_core_fresh_connect_supersedes_pending_recovery() {
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
             jwt: secrecy::SecretString::from("other-token"),
             channel: Some(String::from("other-room")),
+            mid_reuse: true,
         }))],
     );
 }

@@ -32,6 +32,7 @@ pub(super) struct AuthenticatedJoin {
     pub(super) room: Arc<Room>,
     pub(super) claims: WebSocketConnectClaims,
     pub(super) proof: WebSocketAuth,
+    pub(super) mid_reuse: bool,
 }
 
 #[derive(Debug, Error)]
@@ -148,6 +149,7 @@ async fn verify_auth_payload(
         room,
         claims,
         proof: WebSocketAuth(proof),
+        mid_reuse: auth_payload.mid_reuse,
     })
 }
 

@@ -21,6 +21,11 @@
 //! to the client before the offer, which it can only do for a consumer it has
 //! committed.
 //!
+//! Free MIDs: a removal offers its section as `inactive` and str0m keeps the
+//! MID. A send addition takes the free MID that [`super::send_streams`] allows
+//! before it adds a section. The MID then sends with new SSRCs, so the
+//! receiver decodes nothing of the consumer it had before.
+//!
 //! One outstanding offer: another [`SdpApi::apply`] would invalidate the
 //! [`SdpPendingOffer`] that the awaited answer needs. Changes made meanwhile
 //! stay queued for the next offer.
@@ -41,7 +46,9 @@ use super::{
         codec::{self, RepairSummary},
         commands::RtcSessionOffer,
     },
-    media, upload_kind,
+    media,
+    send_streams::{Placement, SendStreams, SyncGroup},
+    upload_kind,
 };
 use crate::{
     VideoBitrateLimits,
@@ -66,10 +73,31 @@ pub(in crate::engine::media_transport::rtc) enum QueuedChange {
     AddSend {
         media: TransportMediaId,
         kind: MediaKind,
-        stream_id: Option<String>,
+        sync_group: Option<SyncGroup>,
     },
     /// Keeps the MID and offers its m-section as `inactive` instead of
-    /// rejecting it out of the SDP.
+    /// rejecting it out of the SDP. A consumer's MID is then free.
+    Remove(Mid),
+}
+
+/// A queued change with the section of a send addition chosen.
+enum OfferStep {
+    AddRecv {
+        media: TransportMediaId,
+        kind: MediaKind,
+        rtp_parameters: RouterRtpParameters,
+    },
+    /// Adds a section to the `a=msid` stream `stream`.
+    AddSend {
+        media: TransportMediaId,
+        kind: MediaKind,
+        stream: String,
+    },
+    /// Gives the free MID to the consumer `media`.
+    ReuseSend {
+        media: TransportMediaId,
+        mid: Mid,
+    },
     Remove(Mid),
 }
 
@@ -100,6 +128,10 @@ pub(super) struct TakenOffer {
 #[derive(Default)]
 pub(in crate::engine::media_transport::rtc) struct SessionSdpNegotiationState {
     pub(in crate::engine::media_transport::rtc) queue: Vec<QueuedChange>,
+    send_streams: SendStreams,
+    /// Whether a removed consumer leaves its MID to a later one. The initial
+    /// offer sets it, before the session has a consumer.
+    mid_reuse: bool,
     pending: Option<PendingOffer>,
     bootstrap_mids: Vec<Mid>,
     initial_offer_applied: bool,
@@ -114,6 +146,7 @@ impl SessionSdpNegotiationState {
         rtc: &mut Rtc,
         profile: &RtpProfile,
         video_bitrate_limits: VideoBitrateLimits,
+        mid_reuse: bool,
     ) -> TransportResult<RtcSessionOffer> {
         if self.pending.is_some() {
             return Err(TransportAdapterError::InvalidInput);
@@ -121,6 +154,7 @@ impl SessionSdpNegotiationState {
         if self.initial_offer_applied {
             return Err(TransportAdapterError::UnsupportedFeature);
         }
+        self.mid_reuse = mid_reuse;
         let mut api = rtc.sdp_api();
         ensure_initial_negotiation_media(
             &mut self.bootstrap_mids,
@@ -180,6 +214,70 @@ impl SessionSdpNegotiationState {
         })
     }
 
+    /// Takes the changes of the next offer off the queue. A removal frees its
+    /// MID and a send addition gets its section, in queue order.
+    ///
+    /// A send addition whose media is not in `committed_consumers` stays queued.
+    fn take_steps(
+        &mut self,
+        rtc: &mut Rtc,
+        committed_consumers: &[TransportMediaId],
+    ) -> Vec<OfferStep> {
+        let Self {
+            queue,
+            send_streams,
+            mid_reuse,
+            ..
+        } = self;
+        queue
+            .extract_if(.., |change| match change {
+                QueuedChange::AddSend { media, .. } => committed_consumers.contains(media),
+                QueuedChange::AddRecv { .. } | QueuedChange::Remove(_) => true,
+            })
+            .map(|change| match change {
+                QueuedChange::AddRecv {
+                    media,
+                    kind,
+                    rtp_parameters,
+                } => OfferStep::AddRecv {
+                    media,
+                    kind,
+                    rtp_parameters,
+                },
+                QueuedChange::AddSend {
+                    media,
+                    kind,
+                    sync_group,
+                } => {
+                    let Placement { stream, free_mid } =
+                        send_streams.place(media, kind, sync_group);
+                    let Some(mid) = free_mid else {
+                        return OfferStep::AddSend {
+                            media,
+                            kind,
+                            stream,
+                        };
+                    };
+                    // The offer names the SSRCs of the transmit streams that
+                    // exist when str0m writes it. Without this stream the
+                    // receiver would learn them from the first packet.
+                    // `add_media` pairs every video stream with RTX.
+                    media::declare_send_stream(&mut rtc.direct_api(), mid, kind.is_video());
+                    OfferStep::ReuseSend { media, mid }
+                }
+                QueuedChange::Remove(mid) => {
+                    send_streams.release(rtc, mid, *mid_reuse);
+                    // The section sent until this offer, so an answer applied
+                    // since its consumer left gave it a transmit stream again.
+                    // A free MID has none: the consumer that takes it declares
+                    // the only one.
+                    media::remove_send_streams(&mut rtc.direct_api(), mid);
+                    OfferStep::Remove(mid)
+                }
+            })
+            .collect()
+    }
+
     /// Replays the queue into the one offer the session may have outstanding.
     ///
     /// A send addition whose media is not in `committed_consumers` stays queued.
@@ -200,16 +298,15 @@ impl SessionSdpNegotiationState {
         if !self.initial_offer_applied || self.pending.is_some() {
             return Err(TransportAdapterError::InvalidInput);
         }
+        // `SdpApi` borrows the `Rtc` until it writes the offer, so a reused MID
+        // gets its transmit stream first.
+        let steps = self.take_steps(rtc, committed_consumers);
         let mut api = rtc.sdp_api();
         let mut upload_slots = Vec::new();
         let mut bound_mids = Vec::new();
-        let offered = self.queue.extract_if(.., |change| match change {
-            QueuedChange::AddSend { media, .. } => committed_consumers.contains(media),
-            QueuedChange::AddRecv { .. } | QueuedChange::Remove(_) => true,
-        });
-        for change in offered {
-            match change {
-                QueuedChange::AddRecv {
+        for step in steps {
+            match step {
+                OfferStep::AddRecv {
                     media: transport_media_id,
                     kind,
                     rtp_parameters,
@@ -242,16 +339,20 @@ impl SessionSdpNegotiationState {
                     ));
                     bound_mids.push((transport_media_id, mid));
                 }
-                QueuedChange::AddSend {
+                OfferStep::AddSend {
                     media,
                     kind,
-                    stream_id,
+                    stream,
                 } => {
-                    let mid = api.add_media(kind, Direction::SendOnly, stream_id, None, None);
+                    let mid = api.add_media(kind, Direction::SendOnly, Some(stream), None, None);
+                    bound_mids.push((media, mid));
+                }
+                OfferStep::ReuseSend { media, mid } => {
+                    api.set_direction(mid, Direction::SendOnly);
                     bound_mids.push((media, mid));
                 }
                 // An already inactive MID records no change.
-                QueuedChange::Remove(mid) => api.set_direction(mid, Direction::Inactive),
+                OfferStep::Remove(mid) => api.set_direction(mid, Direction::Inactive),
             }
         }
         let (offer, token) = api

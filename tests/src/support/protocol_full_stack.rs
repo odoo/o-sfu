@@ -103,6 +103,7 @@ fn connect_fake_peer_with_video_answer<'a>(
                     AuthPayload {
                         jwt: SecretString::from(token),
                         channel: Some(room_id.to_owned()),
+                        mid_reuse: true,
                     },
                 ))])?
                 .into(),

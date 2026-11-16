@@ -98,6 +98,20 @@ export async function createPeerPage(context) {
             errors: [],
             localMedia: {},
             negotiationNeededByPeer: new WeakMap(),
+            // A consumer holds a clone of its receiver's track. The slot that
+            // made the clone names the receiver.
+            receiverOf(track) {
+                const { _media, _peerSession } = this.client._runtime;
+                const slot =
+                    track &&
+                    [..._media._slots.values()].find((candidate) => candidate.track === track);
+                return (
+                    slot &&
+                    _peerSession._activePeer
+                        ?.getReceivers()
+                        .find((candidate) => candidate.track === slot.receiverTrack)
+                );
+            },
             stateChanges: [],
             updates: []
         };
@@ -562,12 +576,10 @@ export async function streamDiagnostics({
 export async function decodedFrameCount(page, sessionId, streamType) {
     return page.evaluate(
         async ({ sessionId, streamType }) => {
-            const client = globalThis.__liveHarness.client;
-            const peer = client._runtime._peerSession._activePeer;
-            const track = client._consumers.get(sessionId)?.[streamType]?.track;
-            const receiver = peer
-                ?.getReceivers()
-                .find((candidate) => candidate.track?.id === track?.id);
+            const harness = globalThis.__liveHarness;
+            const receiver = harness.receiverOf(
+                harness.client._consumers.get(sessionId)?.[streamType]?.track
+            );
             if (!receiver) {
                 return null;
             }
@@ -643,9 +655,7 @@ export async function waitForDecodedRemoteVideoFrame(
             const pixelDistance = (left, right) =>
                 Math.hypot(left.red - right.red, left.green - right.green, left.blue - right.blue);
             const inboundVideoStats = async (track) => {
-                const receiver = client._runtime._peerSession._activePeer
-                    ?.getReceivers()
-                    .find((candidate) => candidate.track === track);
+                const receiver = harness.receiverOf(track);
                 if (!receiver) {
                     return "receiver missing";
                 }

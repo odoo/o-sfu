@@ -59,7 +59,7 @@ async fn prepare_publish_session(
     let connection_id = join_user(room, user_id).await;
     let session_key = room.transport_user_key(user_id, connection_id).await;
     media_transport
-        .create_initial_session_offer("test-room", &session_key)
+        .create_initial_session_offer("test-room", &session_key, true)
         .await
         .expect("test session should create an initial offer");
     assert_eq!(

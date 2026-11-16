@@ -153,6 +153,7 @@ async fn admit(
         room,
         claims,
         proof,
+        mid_reuse,
     }: AuthenticatedJoin,
     remote: Arc<str>,
     writer: &mut WsWriter,
@@ -173,6 +174,7 @@ async fn admit(
                 label: claims.label,
                 permissions: claims.permissions.unwrap_or_default(),
                 sender: outbound_tx,
+                mid_reuse,
             },
         )
         .await

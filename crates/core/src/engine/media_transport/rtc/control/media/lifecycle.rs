@@ -40,8 +40,8 @@ use crate::{
 /// Removes one transport media and its dependent routes.
 ///
 /// Media no offer has bound leaves the negotiation queue. A negotiated MID
-/// queues its removal for the next offer. Missing media is already removed and
-/// succeeds.
+/// queues its removal for the next offer, which frees a consumer's MID for
+/// another consumer. Missing media is already removed and succeeds.
 ///
 /// # Errors
 ///
@@ -232,7 +232,7 @@ pub fn worker_add_send_media(
             .push(QueuedChange::AddSend {
                 media: transport_media_id,
                 kind: media_kind,
-                stream_id: negotiation::consumer_stream_id(src_key, sync),
+                sync_group: negotiation::SyncGroup::of(src_key, sync),
             });
     }
     debug!(
@@ -267,18 +267,11 @@ fn declare_direct_send_media(
     if !has_media {
         api.declare_media(mid, media_kind);
     }
-    let ssrc = api.new_ssrc();
-    // SSRC-multiplexed RTX uses a different SSRC from the primary stream.
-    // https://www.rfc-editor.org/rfc/rfc4588.html#section-4
-    let repair_ssrc = codec::repair_enabled(consumer_rtp_parameters).then(|| {
-        loop {
-            let repair_ssrc = api.new_ssrc();
-            if repair_ssrc != ssrc {
-                break repair_ssrc;
-            }
-        }
-    });
-    api.declare_stream_tx(ssrc, repair_ssrc, mid, None);
+    let (ssrc, repair_ssrc) = negotiation::declare_send_stream(
+        &mut api,
+        mid,
+        codec::repair_enabled(consumer_rtp_parameters),
+    );
     debug!(
         ?mid,
         ?media_kind,

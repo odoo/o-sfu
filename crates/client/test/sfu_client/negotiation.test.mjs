@@ -61,9 +61,10 @@ test("negotiation creates a peer connection and emits lowercase track updates", 
     ]);
     assert.equal(client.state, "connected");
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,

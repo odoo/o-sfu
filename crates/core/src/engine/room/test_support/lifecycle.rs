@@ -53,6 +53,7 @@ impl RoomTestApi<'_> {
             label,
             permissions,
             sender,
+            mid_reuse: true,
         };
         self.admit_session(
             JoinAdmissionTurn::for_test(request, delays_ms, spillover_router_id),
@@ -79,6 +80,7 @@ impl RoomTestApi<'_> {
             label,
             permissions,
             sender,
+            mid_reuse: true,
         };
         self.admit_session(
             JoinAdmissionTurn::for_test(
@@ -112,7 +114,7 @@ impl RoomTestApi<'_> {
         let connection_id = self.connection_id(user_id).await?;
         let session_key = self.room.transport_user_key(user_id, connection_id).await;
         media_transport
-            .create_initial_session_offer("test-room", &session_key)
+            .create_initial_session_offer("test-room", &session_key, true)
             .await?;
         if self
             .mark_session_ready(user_id, sample_client_rtp_capabilities(), media_transport)

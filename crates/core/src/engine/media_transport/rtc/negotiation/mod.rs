@@ -41,8 +41,10 @@ use crate::{
 };
 
 mod media;
+mod send_streams;
 mod state;
-pub(super) use media::{consumer_stream_id, recv_encoding_identities};
+pub(super) use media::{declare_send_stream, recv_encoding_identities, remove_send_streams};
+pub(super) use send_streams::SyncGroup;
 use state::{PendingRecvStream, TakenOffer};
 pub(super) use state::{QueuedChange, SessionSdpNegotiationState};
 
@@ -69,6 +71,7 @@ pub(super) fn worker_create_initial_session_offer(
     config: OfferBootstrapConfig<'_>,
     room_id: Arc<str>,
     session_key: &TransportSessionKey,
+    mid_reuse: bool,
 ) -> Result<RtcSessionOffer, TransportAdapterError> {
     ensure_session_ready_for_offer(state, bitrate_registry, config, room_id, session_key)?;
     if state.session_has_registered_media(session_key) {
@@ -81,6 +84,7 @@ pub(super) fn worker_create_initial_session_offer(
         &mut session_state.rtc,
         config.profile,
         config.video_bitrate_limits,
+        mid_reuse,
     )
 }
 

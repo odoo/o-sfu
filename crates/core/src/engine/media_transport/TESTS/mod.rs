@@ -263,7 +263,7 @@ async fn expect_initial_offer(
     session_key: &TransportSessionKey,
 ) -> SessionOffer {
     adapter
-        .create_initial_session_offer("test-room", session_key)
+        .create_initial_session_offer("test-room", session_key, true)
         .await
         .unwrap_or_else(|error| panic!("test session should create an RTC offer: {error:?}"))
 }
@@ -780,7 +780,7 @@ async fn rtc_rejects_noncanonical_media_worker_id() {
     let session = test_session_key(13, 2, 1, UserId::Integer(4));
 
     let offer = adapter
-        .create_initial_session_offer("test-room", &session)
+        .create_initial_session_offer("test-room", &session, true)
         .await;
 
     assert_eq!(
@@ -969,7 +969,7 @@ async fn media_transport_terminal_teardown_falls_back_and_continues_batch() {
     );
     assert!(
         adapter
-            .create_initial_session_offer("test-room", &wrong_owner)
+            .create_initial_session_offer("test-room", &wrong_owner, true)
             .await
             .is_ok()
     );
@@ -1083,7 +1083,7 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
         .await;
     assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
     let _offer = adapter
-        .create_initial_session_offer("test-room", &local_consumer_session)
+        .create_initial_session_offer("test-room", &local_consumer_session, true)
         .await?;
     adapter.teardown([release(source_session.clone())]).await;
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;

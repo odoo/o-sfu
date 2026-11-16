@@ -430,6 +430,7 @@ async fn websocket_startup_send_timeout_releases_room_membership() {
     let auth_payload = encode_protocol_auth(AuthPayload {
         jwt: secrecy::SecretString::from(token),
         channel: Some(room.uuid().to_owned()),
+        mid_reuse: true,
     });
     assert!(auth_payload.is_some());
     let Some(auth_payload) = auth_payload else {
@@ -803,6 +804,7 @@ async fn join_large_snapshot_peer(
                 label: None,
                 permissions: UserPermissions::default(),
                 sender,
+                mid_reuse: true,
             },
             &server.media_transport,
         )

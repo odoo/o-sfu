@@ -197,10 +197,27 @@ export class FakeMediaTrack extends EventTarget {
         this.kind = kind;
         this.muted = muted;
         this.readyState = readyState;
+        /** Clones in creation order. */
+        this.clones = [];
     }
 
+    clone() {
+        const clone = new FakeMediaTrack({ ...this, id: `${this.id}-clone-${this.clones.length}` });
+        this.clones.push(clone);
+        return clone;
+    }
+
+    stop() {
+        this.readyState = "ended";
+    }
+
+    // A source mutes the tracks it feeds one after the other, each with its
+    // own event, in no order a caller can rely on. The clones go last here.
     setMuted(muted) {
         this.muted = muted;
         this.dispatchEvent(new Event(muted ? "mute" : "unmute"));
+        for (const clone of this.clones) {
+            clone.setMuted(muted);
+        }
     }
 }

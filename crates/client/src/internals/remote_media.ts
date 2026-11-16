@@ -13,9 +13,20 @@ import { mergeDownloadStates } from "./validation.js";
 type TrackUpdateEmitter = (update: ClientUpdateDetail) => void;
 
 type SlotBinding = Pick<TrackBinding, "active" | "sessionId" | "type">;
+// The server gives the MID of a removed track to a later one. The transceiver
+// keeps one receiver track for all of them and the browser fires no `track`
+// event unless the section was inactive in between, so a slot keeps it when
+// its binding leaves.
+//
+// A caller gets a clone, never the receiver track: `stop()` ends a track for
+// good and callers stop the tracks of a session that left. The clone stops
+// with its binding, so the previous owner never plays the next one's media.
 type RemoteMediaSlot = {
     binding?: SlotBinding;
+    receiverTrack?: MediaTrack;
+    /** Clone of `receiverTrack` the caller holds for `binding`. */
     track?: MediaTrack;
+    /** Removes the mute and unmute listeners of `track`. */
     removeTrackListeners?: () => void;
 };
 
@@ -33,7 +44,7 @@ export class RemoteMedia {
     clearPeerMedia(): void {
         this.consumers.clear();
         for (const slot of this._slots.values()) {
-            this.clearSlotTrack(slot);
+            this.stopTrack(slot);
         }
         this._slots.clear();
     }
@@ -44,9 +55,16 @@ export class RemoteMedia {
             nextBindings.set(binding.mid, binding);
         }
 
+        // Clear old owners before publishing replacements: a consumer can move
+        // between mids, and late cleanup would delete its new entry.
         for (const [mid, slot] of this._slots) {
-            if (slot.binding && !nextBindings.has(mid)) {
-                this.removeSlot(mid);
+            const next = nextBindings.get(mid);
+            if (
+                !next ||
+                (slot.binding &&
+                    (slot.binding.sessionId !== next.sessionId || slot.binding.type !== next.type))
+            ) {
+                this.clearBinding(slot);
             }
         }
 
@@ -57,9 +75,9 @@ export class RemoteMedia {
 
     removeSession(sessionId: SessionId): void {
         this.consumers.delete(sessionId);
-        for (const [mid, slot] of this._slots) {
+        for (const slot of this._slots.values()) {
             if (slot.binding?.sessionId === sessionId) {
-                this.removeSlot(mid);
+                this.clearBinding(slot);
             }
         }
     }
@@ -92,28 +110,20 @@ export class RemoteMedia {
         }
         const slot = this.getOrCreateSlot(mid);
         const previousActive = slot.binding ? this.effectiveActive(slot.binding) : undefined;
-        this.clearSlotTrack(slot);
-        slot.track = event.track;
-        this.attachTrackListeners(slot, mid, event.track, emitUpdate);
+        // A section that sends again repeats the event with the same track.
+        if (slot.receiverTrack !== event.track) {
+            this.stopTrack(slot);
+            slot.receiverTrack = event.track;
+        }
         this.projectTrackSlot(slot, previousActive, emitUpdate);
     }
 
     private applyBinding(mid: string, binding: TrackBinding, emitUpdate: TrackUpdateEmitter): void {
         const slot = this.getOrCreateSlot(mid);
-        const previousBinding = slot.binding;
-        const previousActive = previousBinding ? this.effectiveActive(previousBinding) : undefined;
         const { active, sessionId, type } = binding;
-        const rebinding =
-            previousBinding !== undefined &&
-            (previousBinding.sessionId !== sessionId || previousBinding.type !== type);
-        if (rebinding) {
-            this.clearConsumer(previousBinding.sessionId, previousBinding.type);
-            this.clearSlotTrack(slot);
-        }
+        const previousActive = slot.binding ? this.effectiveActive(slot.binding) : undefined;
         slot.binding = { active, sessionId, type };
-        if (!rebinding) {
-            this.projectTrackSlot(slot, previousActive, emitUpdate);
-        }
+        this.projectTrackSlot(slot, previousActive, emitUpdate);
     }
 
     private projectTrackSlot(
@@ -122,10 +132,11 @@ export class RemoteMedia {
         emitUpdate: TrackUpdateEmitter,
         forceEmit = false
     ): void {
-        const { binding, track } = slot;
-        if (!binding || !track) {
+        const { binding, receiverTrack } = slot;
+        if (!binding || !receiverTrack) {
             return;
         }
+        const track = (slot.track ??= this.cloneTrack(slot, receiverTrack, emitUpdate));
         const active = this.effectiveActive(binding);
         if (
             !forceEmit &&
@@ -155,29 +166,28 @@ export class RemoteMedia {
         });
     }
 
-    private attachTrackListeners(
-        currentSlot: RemoteMediaSlot,
-        mid: string,
-        track: MediaTrack,
+    /** Clones `receiverTrack` for the binding of `slot`. */
+    private cloneTrack(
+        slot: RemoteMediaSlot,
+        receiverTrack: MediaTrack,
         emitUpdate: TrackUpdateEmitter
-    ): void {
-        if (!("addEventListener" in track) || typeof track.addEventListener !== "function") {
-            return;
-        }
+    ): MediaTrack {
+        const track = receiverTrack.clone();
+        // The browser changes `muted` on each track of a source in turn, so
+        // only the clone's own events tell when the caller's track changed.
         const emitTrackUpdate = () => {
-            const slot = this._slots.get(mid);
-            if (!slot?.binding || slot.track !== track) {
-                return;
+            if (slot.binding) {
+                const previousActive = this.effectiveActive(slot.binding);
+                this.projectTrackSlot(slot, previousActive, emitUpdate, true);
             }
-            const previousActive = this.effectiveActive(slot.binding);
-            this.projectTrackSlot(slot, previousActive, emitUpdate, true);
         };
         track.addEventListener("mute", emitTrackUpdate);
         track.addEventListener("unmute", emitTrackUpdate);
-        currentSlot.removeTrackListeners = () => {
+        slot.removeTrackListeners = () => {
             track.removeEventListener("mute", emitTrackUpdate);
             track.removeEventListener("unmute", emitTrackUpdate);
         };
+        return track;
     }
 
     private effectiveActive(binding: SlotBinding): boolean {
@@ -188,16 +198,12 @@ export class RemoteMedia {
         return binding.active && (states?.[binding.type] ?? true);
     }
 
-    private removeSlot(mid: string): void {
-        const slot = this._slots.get(mid);
-        if (!slot) {
-            return;
-        }
+    private clearBinding(slot: RemoteMediaSlot): void {
         if (slot.binding) {
             this.clearConsumer(slot.binding.sessionId, slot.binding.type);
         }
-        this.clearSlotTrack(slot);
-        this._slots.delete(mid);
+        slot.binding = undefined;
+        this.stopTrack(slot);
     }
 
     private getOrCreateSlot(mid: string): RemoteMediaSlot {
@@ -210,9 +216,10 @@ export class RemoteMedia {
         return slot;
     }
 
-    private clearSlotTrack(slot: RemoteMediaSlot): void {
+    private stopTrack(slot: RemoteMediaSlot): void {
         slot.removeTrackListeners?.();
         slot.removeTrackListeners = undefined;
+        slot.track?.stop();
         slot.track = undefined;
     }
 

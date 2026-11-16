@@ -26,11 +26,21 @@ pub struct AuthPayload {
     pub jwt: SecretString,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// The client accepts a consumer MID that `tracks` later names for another
+    /// consumer.
+    ///
+    /// Clients released before this field omit it and need a MID per consumer.
+    /// Compatibility path: once the server stops supporting them, remove the
+    /// field and every `mid_reuse` it feeds.
+    #[serde(default, rename = "midReuse")]
+    pub mid_reuse: bool,
 }
 
 impl PartialEq for AuthPayload {
     fn eq(&self, other: &Self) -> bool {
-        self.jwt.expose_secret() == other.jwt.expose_secret() && self.channel == other.channel
+        self.jwt.expose_secret() == other.jwt.expose_secret()
+            && self.channel == other.channel
+            && self.mid_reuse == other.mid_reuse
     }
 }
 
@@ -47,10 +57,13 @@ impl Serialize for AuthPayload {
             jwt: &'a str,
             #[serde(skip_serializing_if = "Option::is_none")]
             channel: Option<&'a str>,
+            #[serde(rename = "midReuse")]
+            mid_reuse: bool,
         }
         WireAuthPayload {
             jwt: self.jwt.expose_secret(),
             channel: self.channel.as_deref(),
+            mid_reuse: self.mid_reuse,
         }
         .serialize(serializer)
     }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { SfuClient } from "../../dist/sfu_client.js";
-import { FakePeerConnection, FakeWebSocket } from "./browser_fakes.mjs";
+import { FakeMediaTrack, FakePeerConnection, FakeWebSocket } from "./browser_fakes.mjs";
 import {
     FakeProtocolCore,
     buildWelcomeFrame,
@@ -10,18 +10,11 @@ import {
 } from "./protocol_fakes.mjs";
 import { createProtocolCore } from "./real_protocol_core.mjs";
 
-const createTrack = ({ enabled = true, id, kind, muted = false }) => ({
-    enabled,
-    id,
-    kind,
-    muted
-});
-
 export const createCameraTrack = (id, options = {}) =>
-    createTrack({ id, kind: "video", ...options });
+    new FakeMediaTrack({ id, kind: "video", ...options });
 
 export const createScreenTrack = (id, options = {}) =>
-    createTrack({ id, kind: "video", ...options });
+    new FakeMediaTrack({ id, kind: "video", ...options });
 
 export const createSfuClientHarness = ({
     clearTimer,

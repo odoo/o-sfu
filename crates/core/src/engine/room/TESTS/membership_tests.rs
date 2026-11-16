@@ -190,6 +190,7 @@ async fn replacement_join_closes_displaced_transport_user() {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: first_tx,
+                mid_reuse: true,
             },
             &media_transport,
         )
@@ -198,7 +199,7 @@ async fn replacement_join_closes_displaced_transport_user() {
     let first_connection = first_admission.connection_id;
     let first_key = first_admission.transport_session_key.clone();
     media_transport
-        .create_initial_session_offer("test-room", &first_key)
+        .create_initial_session_offer("test-room", &first_key, true)
         .await
         .expect("first transport user should create an offer");
     media_transport
@@ -219,6 +220,7 @@ async fn replacement_join_closes_displaced_transport_user() {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: second_tx,
+                mid_reuse: true,
             },
             &media_transport,
         )

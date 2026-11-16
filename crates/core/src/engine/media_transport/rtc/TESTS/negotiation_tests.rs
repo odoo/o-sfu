@@ -17,12 +17,18 @@ use str0m::{
 };
 
 use super::{
-    super::{RtpProfile, control::WorkerCommandContext, state::PacketLoopState},
+    super::{
+        RtpProfile, commands::RtcWorkerCommand, control::WorkerCommandContext,
+        state::PacketLoopState,
+    },
     fixtures::*,
 };
 use crate::{
     AudioCodecPreference, RtcTcpConfig, VideoCodecPreference,
-    engine::media_transport::{AppliedSessionAnswer, SessionUploadSlot, TransportMediaId},
+    engine::{
+        media_transport::{AppliedSessionAnswer, SessionUploadSlot, TransportMediaId},
+        source_model::SourceSyncPolicy,
+    },
 };
 
 const CHROME_OFFER_AUDIO_ONLY: &str = include_str!("testdata/chrome_offer_audio_only.sdp");
@@ -1330,6 +1336,73 @@ async fn rtc_session_renegotiation_offer_stages_negotiated_consumer_removal() {
 }
 
 #[tokio::test]
+async fn rtc_session_consumer_joins_and_leaves_keep_the_section_count() {
+    let adapter = RtcWorker::default();
+    let src_key = transport_key(1, 64, UserId::Integer(64));
+    let consumer_key = transport_key(1, 65, UserId::Integer(65));
+    let (source_media_id, _) = setup_queued_removal_sources(&adapter, &src_key).await;
+    let mut remote = complete_initial_offer_answer(&adapter, &consumer_key, 55_021).await;
+    let join = async |ssrc: u32| {
+        adapter
+            .add_send_media(
+                &consumer_key,
+                Str0mMediaKind::Video,
+                TransportSourceKey::new(src_key.clone(), source_media_id),
+                &sample_router_rtp_parameters("compat-mid-reuse", ssrc),
+                true,
+            )
+            .await
+            .expect("consumer media should queue")
+    };
+
+    let mut consumer_media_id = join(84_000).await;
+    let join_sdp = exchange_offer(&adapter, &consumer_key, &mut remote).await;
+    let consumer_mid = adapter
+        .debug_resolve_mid(consumer_media_id)
+        .await
+        .expect("test probe must complete")
+        .expect("the offer should bind the consumer mid");
+    let section_count = media_section_count(&join_sdp);
+    let mut previous_pair = fid_pair_for_mid(&join_sdp, &consumer_mid);
+
+    for ssrc in [84_100, 84_200] {
+        adapter
+            .remove_media(&consumer_key, consumer_media_id)
+            .await
+            .expect("the consumer should leave");
+        let leave_sdp = exchange_offer(&adapter, &consumer_key, &mut remote).await;
+        assert_eq!(media_section_count(&leave_sdp), section_count);
+
+        // The next consumer takes the free MID and sends on a transmit stream
+        // the receiver has not seen.
+        consumer_media_id = join(ssrc).await;
+        let reuse_sdp = exchange_offer(&adapter, &consumer_key, &mut remote).await;
+        assert_eq!(
+            adapter
+                .debug_resolve_mid(consumer_media_id)
+                .await
+                .expect("test probe must complete"),
+            Some(consumer_mid)
+        );
+        assert_eq!(media_section_count(&reuse_sdp), section_count);
+        let reused_section = media_section_for_mid(&reuse_sdp, &consumer_mid)
+            .expect("the reused mid should stay in the offer");
+        assert!(reused_section.contains("a=sendonly"));
+        let pair = fid_pair_for_mid(&reuse_sdp, &consumer_mid);
+        assert!(pair.is_some(), "the offer should name the new stream");
+        assert_ne!(pair, previous_pair);
+        assert_eq!(
+            adapter
+                .debug_session_stream_tx_pair(&consumer_key, consumer_mid)
+                .await
+                .expect("test probe must complete"),
+            pair.map(|(ssrc, repair_ssrc)| (ssrc, Some(repair_ssrc)))
+        );
+        previous_pair = pair;
+    }
+}
+
+#[tokio::test]
 async fn rtc_session_renegotiation_offer_stages_negotiated_producer_removal() {
     let adapter = RtcWorker::default();
     let session_key = transport_key(1, 46, UserId::Integer(46));
@@ -1543,6 +1616,7 @@ async fn rtc_session_renegotiation_queues_changes_while_answer_is_pending() {
         .await
         .expect("second addition offer should be available");
     let second_addition_sdp = second_addition_offer.into_parts().0;
+    let section_count = media_section_count(&second_addition_sdp);
 
     assert!(
         adapter
@@ -1588,25 +1662,127 @@ async fn rtc_session_renegotiation_queues_changes_while_answer_is_pending() {
         .create_session_renegotiation_offer(&consumer_key)
         .await
         .expect("queued changes should produce one offer after the in-flight answer lands");
-    let queued_removal_sdp = queued_offer.into_parts().0;
-    let removal_section = media_section_for_mid(&queued_removal_sdp, &first_consumer_mid)
-        .expect("queued removal mid should remain in the follow-up offer");
-    assert!(removal_section.contains("a=inactive"));
-    let third_consumer_mid = adapter
-        .debug_resolve_mid(third_consumer_media_id)
-        .await
-        .expect("test probe must complete")
-        .expect("the follow-up offer should bind the queued addition");
-    let addition_section = media_section_for_mid(&queued_removal_sdp, &third_consumer_mid)
-        .expect("queued addition should be in the follow-up offer");
-    assert!(addition_section.contains("a=sendonly"));
+    let queued_sdp = queued_offer.into_parts().0;
+    // The queued addition takes the MID the queued removal frees, so the offer
+    // has as many sections as before the removal.
+    assert_eq!(
+        adapter
+            .debug_resolve_mid(third_consumer_media_id)
+            .await
+            .expect("test probe must complete"),
+        Some(first_consumer_mid),
+        "the follow-up offer should bind the queued addition to the freed mid"
+    );
+    let reused_section = media_section_for_mid(&queued_sdp, &first_consumer_mid)
+        .expect("the freed mid should remain in the follow-up offer");
+    assert!(reused_section.contains("a=sendonly"));
+    // The in-flight answer landed while the freed MID still sent, so str0m gave
+    // it a transmit stream again. The reuse must not send a second one.
+    assert_eq!(
+        reused_section.matches("a=ssrc-group:FID").count(),
+        1,
+        "the reused mid should send one stream: {reused_section}"
+    );
+    assert_eq!(media_section_count(&queued_sdp), section_count);
 
-    apply_offer_answer(&adapter, &consumer_key, &mut remote, queued_removal_sdp).await;
+    apply_offer_answer(&adapter, &consumer_key, &mut remote, queued_sdp).await;
     assert_eq!(
         adapter
             .create_session_renegotiation_offer(&consumer_key)
             .await,
         Err(TransportAdapterError::UnsupportedFeature)
+    );
+}
+
+#[tokio::test]
+async fn rtc_session_reused_mids_keep_one_sync_group_per_stream() {
+    use SourceSyncPolicy::{Independent, Publisher};
+    use Str0mMediaKind::{Audio, Video};
+    let adapter = RtcWorker::default();
+    let receiver = transport_key(1, 60, UserId::Integer(60));
+    let alice = transport_key(1, 61, UserId::Integer(61));
+    let bob = transport_key(1, 62, UserId::Integer(62));
+    let carol = transport_key(1, 63, UserId::Integer(63));
+    for publisher in [&alice, &bob, &carol] {
+        expect_initial_offer(&adapter, publisher).await;
+    }
+    let mut remote = complete_initial_offer_answer(&adapter, &receiver, 55_020).await;
+    let mid_of = async |media: TransportMediaId| {
+        adapter
+            .debug_resolve_mid(media)
+            .await
+            .expect("test probe must complete")
+            .expect("the offer should bind the consumer mid")
+    };
+
+    let microphone =
+        consume_new_source(&adapter, &receiver, &alice, Audio, Publisher, 91_001).await;
+    let camera = consume_new_source(&adapter, &receiver, &alice, Video, Publisher, 91_002).await;
+    let screen = consume_new_source(&adapter, &receiver, &alice, Video, Independent, 91_003).await;
+    let first_sdp = exchange_offer(&adapter, &receiver, &mut remote).await;
+    let (microphone_mid, camera_mid, screen_mid) = (
+        mid_of(microphone).await,
+        mid_of(camera).await,
+        mid_of(screen).await,
+    );
+    let pair_stream = msid_stream_for_mid(&first_sdp, &microphone_mid);
+    assert_eq!(msid_stream_for_mid(&first_sdp, &camera_mid), pair_stream);
+    assert_ne!(msid_stream_for_mid(&first_sdp, &screen_mid), pair_stream);
+
+    // Alice's pair leaves and her screen stays. Bob's screen syncs with no
+    // other consumer, so it leaves the two free MIDs to Bob's pair. Carol's
+    // microphone finds every stream taken.
+    for media in [microphone, camera] {
+        adapter
+            .remove_media(&receiver, media)
+            .await
+            .expect("the consumer should leave");
+    }
+    let bob_screen =
+        consume_new_source(&adapter, &receiver, &bob, Video, Independent, 92_003).await;
+    let bob_microphone =
+        consume_new_source(&adapter, &receiver, &bob, Audio, Publisher, 92_001).await;
+    let bob_camera = consume_new_source(&adapter, &receiver, &bob, Video, Publisher, 92_002).await;
+    let carol_microphone =
+        consume_new_source(&adapter, &receiver, &carol, Audio, Publisher, 93_001).await;
+    let second_sdp = exchange_offer(&adapter, &receiver, &mut remote).await;
+    assert_eq!(mid_of(bob_microphone).await, microphone_mid);
+    assert_eq!(mid_of(bob_camera).await, camera_mid);
+    assert_eq!(
+        msid_stream_for_mid(&second_sdp, &microphone_mid),
+        msid_stream_for_mid(&second_sdp, &camera_mid)
+    );
+    assert_ne!(
+        msid_stream_for_mid(&second_sdp, &mid_of(bob_screen).await),
+        pair_stream
+    );
+    let carol_microphone_mid = mid_of(carol_microphone).await;
+    let carol_stream = msid_stream_for_mid(&second_sdp, &carol_microphone_mid);
+    assert_ne!(carol_stream, pair_stream);
+    assert_eq!(
+        media_section_count(&second_sdp),
+        media_section_count(&first_sdp) + 2
+    );
+
+    // Alice's screen leaves. Carol's camera joins her microphone's stream and
+    // Carol's screen takes the MID the screen left.
+    adapter
+        .remove_media(&receiver, screen)
+        .await
+        .expect("the consumer should leave");
+    let carol_camera =
+        consume_new_source(&adapter, &receiver, &carol, Video, Publisher, 93_002).await;
+    let carol_screen =
+        consume_new_source(&adapter, &receiver, &carol, Video, Independent, 93_003).await;
+    let third_sdp = exchange_offer(&adapter, &receiver, &mut remote).await;
+    assert_eq!(
+        msid_stream_for_mid(&third_sdp, &mid_of(carol_camera).await),
+        carol_stream
+    );
+    assert_eq!(mid_of(carol_screen).await, screen_mid);
+    assert_eq!(
+        media_section_count(&third_sdp),
+        media_section_count(&second_sdp) + 1
     );
 }
 
@@ -1622,6 +1798,24 @@ async fn rtc_session_renegotiation_offer_stays_blocked_after_initial_answer() {
             .await,
         Err(TransportAdapterError::UnsupportedFeature)
     );
+}
+
+fn media_section_count(offer: &str) -> usize {
+    offer
+        .lines()
+        .filter(|line| line.starts_with(sdp::MEDIA))
+        .count()
+}
+
+fn msid_stream_for_mid<'a>(offer: &'a str, mid: &str) -> &'a str {
+    media_section_for_mid(offer, mid)
+        .and_then(|section| {
+            section
+                .lines()
+                .find_map(|line| line.strip_prefix("a=msid:")?.split_once(' '))
+        })
+        .map(|(stream, _track)| stream)
+        .expect("the offer should give the mid an msid stream")
 }
 
 fn media_section_for_mid<'a>(sdp: &'a str, mid: &str) -> Option<&'a str> {
@@ -1940,6 +2134,54 @@ async fn apply_offer_answer(
         .apply_session_answer(session_key, &answer_sdp)
         .await
         .unwrap_or_else(|error| panic!("answer should apply, got {error:?}: {answer_sdp}"))
+}
+
+/// Offers the queued changes of `session_key` and applies the remote answer.
+async fn exchange_offer(
+    adapter: &RtcWorker,
+    session_key: &TransportSessionKey,
+    remote: &mut Rtc,
+) -> String {
+    let offer_sdp = adapter
+        .create_session_renegotiation_offer(session_key)
+        .await
+        .expect("queued changes should produce an offer")
+        .into_parts()
+        .0;
+    apply_offer_answer(adapter, session_key, remote, offer_sdp.clone()).await;
+    offer_sdp
+}
+
+/// Publishes one source of `publisher` and queues its consumer for `receiver`.
+async fn consume_new_source(
+    adapter: &RtcWorker,
+    receiver: &TransportSessionKey,
+    publisher: &TransportSessionKey,
+    kind: Str0mMediaKind,
+    sync: SourceSyncPolicy,
+    ssrc: u32,
+) -> TransportMediaId {
+    let source_media_id = adapter
+        .add_recv_media(
+            publisher,
+            kind,
+            &sample_router_rtp_parameters(&ssrc.to_string(), ssrc),
+        )
+        .await
+        .expect("source media should register");
+    adapter
+        .request_worker(|response| RtcWorkerCommand::AddSendMedia {
+            consumer_key: receiver.clone(),
+            media_kind: kind,
+            source: TransportSourceKey::new(publisher.clone(), source_media_id),
+            sync,
+            remote_source_control: None,
+            consumer_rtp_parameters: sample_router_rtp_parameters("down", ssrc),
+            active: true,
+            response,
+        })
+        .await
+        .expect("consumer media should queue")
 }
 
 async fn setup_queued_removal_sources(

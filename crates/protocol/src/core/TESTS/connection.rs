@@ -65,6 +65,7 @@ fn protocol_core_ws_open_sends_auth_frame_immediately() {
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
             jwt: secrecy::SecretString::from("signed-token"),
             channel: Some(String::from("channel-1")),
+            mid_reuse: true,
         }))],
     );
 }

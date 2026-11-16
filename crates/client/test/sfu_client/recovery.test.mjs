@@ -54,7 +54,8 @@ for (const closeCode of [WS_CLOSE_CODE.ERROR, WS_CLOSE_CODE.OVERLOADED]) {
                 t: "auth",
                 p: {
                     jwt: "jwt-token",
-                    channel: "channel-a"
+                    channel: "channel-a",
+                    midReuse: true
                 }
             }
         ]);

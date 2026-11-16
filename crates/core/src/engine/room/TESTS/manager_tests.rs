@@ -41,6 +41,7 @@ async fn manager_join_user(
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: tx,
+                mid_reuse: true,
             },
             media_transport,
         )
@@ -64,6 +65,7 @@ async fn try_manager_join_user(
                 label: None,
                 permissions: UserPermissions::default(),
                 sender,
+                mid_reuse: true,
             },
             media_transport,
         )
@@ -533,6 +535,7 @@ async fn manager_lifecycle_future_does_not_block_empty_cleanup() {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender: first_tx,
+                mid_reuse: true,
             },
             &media_transport,
         )
@@ -633,6 +636,7 @@ async fn manager_concurrent_overload_joins_revalidate_local_router_cap_at_commit
                         label: None,
                         permissions: UserPermissions::default(),
                         sender,
+                        mid_reuse: true,
                     },
                     &media_transport,
                 )

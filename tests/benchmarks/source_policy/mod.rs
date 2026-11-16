@@ -527,6 +527,7 @@ impl SourcePolicyScenario {
                     label: Some(format!("user-{raw_user_id}")),
                     permissions: UserPermissions::default(),
                     sender,
+                    mid_reuse: true,
                 },
             )
             .await
