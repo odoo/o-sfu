@@ -1,14 +1,12 @@
 //! Worker-local media lifecycle for one RTC worker.
 //!
-//! Producer and consumer declarations stage SDP changes before committing media
-//! registration or removal through [`PacketLoopState`]. Offer and answer transitions
-//! remain in [`negotiation`].
+//! Before a session's first answer, declarations change str0m directly. After
+//! it they queue an SDP change for the next offer. Media registers when it is
+//! declared in both cases, because route controls address it before that offer
+//! exists. The offer then binds its MID. Offer and answer transitions remain in
+//! [`negotiation`].
 //!
-//! The helpers here rely on two invariants:
-//! - worker commands are serialized through one mutable `PacketLoopState`
-//! - the signaling edge obeys the one-outstanding-offer rule and does not try
-//!   to hand out a second local offer while the previous one still awaits an
-//!   answer
+//! Worker commands are serialized through one mutable `PacketLoopState`.
 
 use std::{
     sync::{Arc, Mutex},
@@ -24,38 +22,31 @@ use tracing::{debug, warn};
 
 use super::AddSendMediaRequest;
 use crate::{
-    Bitrate, VideoBitrateLimits,
-    engine::{
-        media_transport::{
-            TransportAdapterError, TransportMediaId, TransportResult, TransportSessionKey,
-            rtc::{
-                RtpProfile, codec, negotiation,
-                state::{
-                    ConsumerRouteRegistration, PacketLoopState, RtcSessionState,
-                    bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
-                    slots::ConsumerStreamHandle,
-                },
+    Bitrate,
+    engine::media_transport::{
+        TransportAdapterError, TransportMediaId, TransportResult, TransportSessionKey,
+        rtc::{
+            codec,
+            negotiation::{self, QueuedChange},
+            state::{
+                ConsumerRouteRegistration, PacketLoopState, RtcSessionState,
+                bitrate::BitrateRegistry, media_registry::RegisteredMediaHandle,
+                slots::ConsumerStreamHandle,
             },
         },
-        source_model::SourceSyncPolicy,
     },
 };
 
-#[derive(Clone, Copy)]
-pub struct RecvMediaPolicy<'a> {
-    pub max_bitrate_in: Bitrate,
-    pub video_bitrate_limits: VideoBitrateLimits,
-    pub profile: &'a RtpProfile,
-}
-
-/// Removes one registered transport media and its dependent routes.
+/// Removes one transport media and its dependent routes.
 ///
-/// Missing media is already removed and succeeds.
+/// Media no offer has bound leaves the negotiation queue. A negotiated MID
+/// queues its removal for the next offer. Missing media is already removed and
+/// succeeds.
 ///
 /// # Errors
 ///
 /// Returns [`TransportAdapterError::InvalidInput`] when the media belongs to a
-/// different session or its negotiated MID removal cannot be staged or queued.
+/// different session or its session no longer exists.
 pub fn worker_remove_media(
     state: &mut PacketLoopState,
     bitrate_registry: &Arc<Mutex<BitrateRegistry>>,
@@ -68,62 +59,30 @@ pub fn worker_remove_media(
     if handle.session_key() != session_key {
         return Err(TransportAdapterError::InvalidInput);
     }
-    if can_unregister_unnegotiated_producer(state, &handle) {
-        debug!(
-            user_id = ?session_key.user_id(),
-            media_worker_id = session_key.media_worker_id().as_usize(),
-            ?transport_media_id,
-            mid = ?handle.mid(),
-            "released unnegotiated producer media without staging sdp removal"
-        );
-        return state.unregister_media_handle(bitrate_registry, transport_media_id);
-    }
-    // Record the MID transition before unregistering the handle and routes. An
-    // in-flight offer queues the transition. Otherwise it is staged now.
-    stage_last_mid_removal_before_unregistering_handle(state, transport_media_id, &handle)?;
-    state.unregister_media_handle(bitrate_registry, transport_media_id)
-}
-
-fn stage_last_mid_removal_before_unregistering_handle(
-    state: &mut PacketLoopState,
-    transport_media_id: TransportMediaId,
-    handle: &RegisteredMediaHandle,
-) -> Result<(), TransportAdapterError> {
-    let mid_is_shared = state.mid_is_shared(handle.session_key(), handle.mid(), transport_media_id);
+    let mid_is_shared = handle
+        .mid()
+        .is_some_and(|mid| state.mid_is_shared(session_key, mid, transport_media_id));
     let session_state = state
         .users
-        .get_mut(handle.session_key())
+        .get_mut(session_key)
         .ok_or(TransportAdapterError::InvalidInput)?;
-    if mid_is_shared {
+    match handle.mid() {
+        // Media no offer has bound only leaves the queue.
+        None => session_state
+            .sdp_negotiation
+            .cancel_addition(transport_media_id),
         // Several handles may share one m-section. Disabling it while a sibling
         // remains would invalidate that sibling's negotiated media.
-        return Ok(());
-    }
-    if session_state.sdp_negotiation.initial_offer_applied() {
-        negotiation::queue_removal(session_state, handle.mid())
-    } else {
-        session_state.rtc.direct_api().remove_media(handle.mid());
-        Ok(())
-    }
-}
-
-fn can_unregister_unnegotiated_producer(
-    state: &PacketLoopState,
-    handle: &RegisteredMediaHandle,
-) -> bool {
-    match handle {
-        RegisteredMediaHandle::Producer { session_key, mid }
-            if let Some(session_state) = state.users.get(session_key) =>
-        {
-            session_state.sdp_negotiation.initial_offer_applied()
-                && !session_state.sdp_negotiation.is_awaiting_answer()
-                && !session_state
-                    .sdp_negotiation
-                    .negotiated_producer_parameters
-                    .contains_key(mid)
+        Some(_) if mid_is_shared => {}
+        Some(mid) if session_state.sdp_negotiation.initial_offer_applied() => {
+            session_state
+                .sdp_negotiation
+                .queue
+                .push(QueuedChange::Remove(mid));
         }
-        RegisteredMediaHandle::Producer { .. } | RegisteredMediaHandle::Consumer { .. } => false,
+        Some(mid) => session_state.rtc.direct_api().remove_media(mid),
     }
+    state.unregister_media_handle(bitrate_registry, transport_media_id)
 }
 
 /// Declares one recv-only producer media for a publishing session.
@@ -131,12 +90,11 @@ fn can_unregister_unnegotiated_producer(
 /// # Errors
 ///
 /// Returns [`TransportAdapterError::TransportUnavailable`] when the session is
-/// missing or str0m cannot stage the offer. Returns
-/// [`TransportAdapterError::InvalidInput`] while another offer awaits its answer.
+/// missing.
 pub fn worker_add_recv_media(
     state: &mut PacketLoopState,
     bitrate_registry: &Arc<Mutex<BitrateRegistry>>,
-    policy: RecvMediaPolicy<'_>,
+    max_bitrate_in: Bitrate,
     session_key: &TransportSessionKey,
     media_kind: MediaKind,
     rtp_parameters: &RouterRtpParameters,
@@ -144,16 +102,10 @@ pub fn worker_add_recv_media(
     let Some(session_state) = state.users.get_mut(session_key) else {
         return Err(TransportAdapterError::TransportUnavailable);
     };
+    // A negotiated description must change through an offer. Before the
+    // first answer there is no remote description to keep in sync.
     let mid = if session_state.sdp_negotiation.initial_offer_applied() {
-        // A negotiated description must change through an offer. Before the
-        // first answer there is no remote description to keep in sync.
-        negotiation::stage_recv_media(
-            session_state,
-            media_kind,
-            rtp_parameters,
-            policy.profile,
-            policy.video_bitrate_limits,
-        )?
+        None
     } else {
         let mid = transport_mid(rtp_parameters).unwrap_or_default();
         let has_media = session_state.rtc.media(mid).is_some();
@@ -167,15 +119,15 @@ pub fn worker_add_recv_media(
                 let stream_rx =
                     api.expect_stream_rx(stream.ssrc, stream.repair_ssrc, mid, stream.rid);
                 stream_rx.suppress_nack(stream.repair_ssrc.is_none());
-                stream_rx.request_remb(Str0mBitrate::bps(policy.max_bitrate_in.as_bps()));
+                stream_rx.request_remb(Str0mBitrate::bps(max_bitrate_in.as_bps()));
                 #[cfg(test)]
                 {
-                    session_state.max_bitrate_in = Some(policy.max_bitrate_in);
+                    session_state.max_bitrate_in = Some(max_bitrate_in);
                 }
             }
         }
         state.mark_session_dirty(session_key);
-        mid
+        Some(mid)
     };
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
@@ -185,6 +137,18 @@ pub fn worker_add_recv_media(
         let counter =
             bitrate.register_incoming_media(session_key, transport_media_id, Instant::now());
         state.register_incoming_bitrate_counter(transport_media_id, counter);
+    }
+    if mid.is_none()
+        && let Some(session_state) = state.users.get_mut(session_key)
+    {
+        session_state
+            .sdp_negotiation
+            .queue
+            .push(QueuedChange::AddRecv {
+                media: transport_media_id,
+                kind: media_kind,
+                rtp_parameters: rtp_parameters.clone(),
+            });
     }
     debug!(
         user_id = ?session_key.user_id(),
@@ -198,16 +162,17 @@ pub fn worker_add_recv_media(
 
 /// Declares one send-only consumer media and installs its source route.
 ///
+/// A negotiated session gets the MID from its next offer.
+///
 /// # Errors
 ///
 /// Returns [`TransportAdapterError::InvalidInput`] for conflicting source
-/// ownership or an offer already awaiting its answer. Returns
-/// [`TransportAdapterError::TransportUnavailable`] when required session or
-/// source state is missing or str0m cannot stage the offer.
+/// ownership. Returns [`TransportAdapterError::TransportUnavailable`] when
+/// required session or source state is missing.
 pub fn worker_add_send_media(
     state: &mut PacketLoopState,
     request: AddSendMediaRequest<'_>,
-) -> TransportResult<(TransportMediaId, String)> {
+) -> TransportResult<TransportMediaId> {
     let AddSendMediaRequest {
         consumer_key,
         media_kind,
@@ -237,32 +202,19 @@ pub fn worker_add_send_media(
                 return Err(error);
             }
         };
-    let declared = state
-        .users
-        .get_mut(consumer_key)
-        .ok_or(TransportAdapterError::TransportUnavailable)
-        .and_then(|session_state| {
-            declare_consumer_stream(
-                session_state,
-                src_key,
-                media_kind,
-                sync,
-                consumer_rtp_parameters,
-            )
-        });
-    let (mid, consumer_stream, should_mark_dirty) = match declared {
-        Ok(consumer_stream) => consumer_stream,
-        Err(error) => {
-            if let Some(transaction) = remote_transaction {
-                state.routes.rollback_remote_source(transaction);
-            }
-            return Err(error);
+    let Some(session_state) = state.users.get_mut(consumer_key) else {
+        if let Some(transaction) = remote_transaction {
+            state.routes.rollback_remote_source(transaction);
         }
+        return Err(TransportAdapterError::TransportUnavailable);
     };
-    if should_mark_dirty {
-        state.mark_session_dirty(consumer_key);
-    }
-    let mid_string = mid.to_string();
+    let (consumer_stream, mid) = if session_state.sdp_negotiation.initial_offer_applied() {
+        (ConsumerStreamHandle::default(), None)
+    } else {
+        let mid = transport_mid(consumer_rtp_parameters).unwrap_or_default();
+        declare_direct_send_media(session_state, mid, media_kind, consumer_rtp_parameters);
+        (session_state.consumer_streams.allocate(mid), Some(mid))
+    };
     let transport_media_id = state.register_consumer_route(ConsumerRouteRegistration {
         consumer_key,
         consumer_stream,
@@ -271,6 +223,18 @@ pub fn worker_add_send_media(
         consumer_rtp: consumer_rtp_parameters,
         active,
     });
+    if mid.is_some() {
+        state.mark_session_dirty(consumer_key);
+    } else if let Some(session_state) = state.users.get_mut(consumer_key) {
+        session_state
+            .sdp_negotiation
+            .queue
+            .push(QueuedChange::AddSend {
+                media: transport_media_id,
+                kind: media_kind,
+                stream_id: negotiation::consumer_stream_id(src_key, sync),
+            });
+    }
     debug!(
         consumer_user_id = ?consumer_key.user_id(),
         consumer_media_worker_id = consumer_key.media_worker_id().as_usize(),
@@ -285,28 +249,7 @@ pub fn worker_add_send_media(
         downstream_rid_policy = "single_ridless_stream",
         "declared send-only media and registered media route for consumer"
     );
-    Ok((transport_media_id, mid_string))
-}
-
-fn declare_consumer_stream(
-    session_state: &mut RtcSessionState,
-    source: &TransportSessionKey,
-    media_kind: MediaKind,
-    sync: SourceSyncPolicy,
-    consumer_rtp_parameters: &RouterRtpParameters,
-) -> TransportResult<(Mid, ConsumerStreamHandle, bool)> {
-    let mid = if session_state.sdp_negotiation.initial_offer_applied() {
-        negotiation::stage_send_media(session_state, source, media_kind, sync)?
-    } else {
-        let mid = transport_mid(consumer_rtp_parameters).unwrap_or_default();
-        declare_direct_send_media(session_state, mid, media_kind, consumer_rtp_parameters);
-        mid
-    };
-    Ok((
-        mid,
-        session_state.consumer_streams.allocate(mid),
-        !session_state.sdp_negotiation.initial_offer_applied(),
-    ))
+    Ok(transport_media_id)
 }
 
 /// Declares one RID-less downstream stream for the consumer.

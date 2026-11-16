@@ -5,19 +5,22 @@ use o_sfu_protocol::{
     host::NegotiationKind,
     wire::{
         ClientResponse, DownloadStates, NegotiationUploadEncoding, NegotiationUploadSlot,
-        RequestId, ServerEnvelope, ServerRequest, SessionDescriptionPayload, StreamType, UserId,
+        RequestId, ServerEnvelope, ServerMessage, ServerRequest, SessionDescriptionPayload,
+        StreamType, TrackBinding, UserId,
     },
 };
 use tracing::{Span, field, instrument, warn};
 
 use super::{User, UserError, UserOutput};
 use crate::{
-    application::stream_catalog::{DiscussStream, source_publish_intent_for_stream_type},
-    core::prelude::{
-        MediaSession, NegotiationOffer, SessionError, SfuCoreError, SourceDeactivateIntent,
-        SourcePublishIntent,
+    application::stream_catalog::{
+        DiscussStream, source_publish_intent_for_stream_type, stream_type_for_stream_id,
     },
-    runtime::telemetry::schema::event as telemetry_event,
+    core::prelude::{
+        MediaSession, NegotiationOffer, RemoteTrackProjection, SessionError, SfuCoreError,
+        SourceDeactivateIntent, SourcePublishIntent,
+    },
+    runtime::{room::RemoteTrackSnapshot, telemetry::schema::event as telemetry_event},
 };
 
 impl User {
@@ -195,10 +198,23 @@ impl ServerMediaNegotiation {
         self.session.close().await;
     }
 
+    /// Projects a track snapshot the room queued, unless the client already
+    /// has its tracks or newer ones.
+    pub(super) fn remote_tracks(
+        &mut self,
+        snapshot: RemoteTrackSnapshot,
+    ) -> Option<ServerEnvelope> {
+        self.session
+            .fresh_remote_tracks(snapshot)
+            .map(tracks_message)
+    }
+
     fn issue(&mut self, kind: NegotiationKind, offer: Option<NegotiationOffer>) -> UserOutput {
-        let Some(offer) = offer else {
+        let Some(mut offer) = offer else {
             return UserOutput::new();
         };
+        // The client learns each new consumer MID before the offer that adds it.
+        let mut output = UserOutput::from_iter(offer.remote_tracks.take().map(tracks_message));
         let req_id = RequestId::new(format!("server-{}", self.next));
         self.next = self.next.saturating_add(1);
         let payload = session_description_payload(offer);
@@ -207,15 +223,32 @@ impl ServerMediaNegotiation {
             NegotiationKind::Renegotiate => ServerRequest::Renegotiate(payload),
         };
         self.pending = Some((req_id.clone(), kind));
-        vec![ServerEnvelope::Request {
+        output.push(ServerEnvelope::Request {
             request_id: req_id,
             request,
-        }]
+        });
+        output
     }
 
     fn expects(&self, id: &RequestId, kind: NegotiationKind) -> bool {
         matches!(self.pending.as_ref(), Some((req_id, pending_kind)) if req_id == id && *pending_kind == kind)
     }
+}
+
+fn tracks_message(tracks: Vec<RemoteTrackProjection>) -> ServerEnvelope {
+    ServerEnvelope::Message(ServerMessage::Tracks(
+        tracks
+            .into_iter()
+            .filter_map(|track| {
+                Some(TrackBinding {
+                    mid: track.consumer_mid,
+                    user_id: track.user_id,
+                    stream_type: stream_type_for_stream_id(&track.stream_id)?,
+                    active: track.producer_active,
+                })
+            })
+            .collect(),
+    ))
 }
 
 fn session_description_payload(offer: NegotiationOffer) -> SessionDescriptionPayload {

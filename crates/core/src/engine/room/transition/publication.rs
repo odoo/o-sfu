@@ -3,18 +3,21 @@
 //! ```text
 //! publish intent
 //!   |
-//!   +-- existing producer --> activity commit --> effects after lock
+//!   +-- existing producer -------> activity commit --> effects after lock
 //!   |
-//!   +-- offer in flight ----> queued intent ---> answer ---> stage next offer
+//!   +-- initial offer in flight -> queued intent ----> answer --> stage
 //!   |
-//!   +-- new producer -------> StagedPublish ---> answer-proven RTP
-//!                              |                  |
-//!                              |                  v
-//!                              |                room graph commit
-//!                              |                  |
-//!                              v                  v
-//!                         rollback teardown   effects after lock
+//!   +-- new producer ------------> StagedPublish ----> answer-proven RTP
+//!                                    |                   |
+//!                                    |                   v
+//!                                    |                 room graph commit
+//!                                    |                   |
+//!                                    v                   v
+//!                               rollback teardown    effects after lock
 //! ```
+//!
+//! A publish staged while a later offer is in flight waits in the transport
+//! for the next offer and stays staged across the answer in between.
 //!
 //! only answer-proven RTP enters the room graph
 //! teardown, worker route updates and fanout run after state mutation releases
@@ -220,7 +223,7 @@ impl RoomUserOperation<'_> {
             let mut state = source_policy_guard.room().state.write().await;
             state
                 .staged_publishes
-                .take_for_connection(self.user_id, self.connection_id)
+                .take_answered(self.user_id, self.connection_id, applied_answer)
         };
         for publish in staged {
             publish

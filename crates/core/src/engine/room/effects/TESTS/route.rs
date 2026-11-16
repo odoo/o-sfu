@@ -418,8 +418,8 @@ impl RouteFixture {
             )
             .await?;
         let source = TransportSourceKey::new(source_session.clone(), source_media);
-        let (consumer_media, _mid) = media_transport
-            .consume_media_with_mid(
+        let consumer_media = media_transport
+            .consume_media(
                 &consumer_session,
                 MediaKind::Video,
                 &source,

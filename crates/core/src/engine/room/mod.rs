@@ -41,10 +41,9 @@ pub use manager::{
 pub use membership::{JoinUserRequest, UserCloseReason};
 pub use outbound::{
     BroadcastPayload, BroadcastPayloadError, DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
-    DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY, RemoteTrackProjection, RemoteTrackSnapshot,
-    RoomEventMessage, UserOutbound, UserOutboundEvent, UserOutboundOverflow,
-    UserOutboundOverflowKind, UserOutboundQueueLimits, UserOutboundReceiver, UserOutboundSendError,
-    UserOutboundSender,
+    DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY, RemoteTrack, RemoteTrackSnapshot, RoomEventMessage,
+    UserOutbound, UserOutboundEvent, UserOutboundOverflow, UserOutboundOverflowKind,
+    UserOutboundQueueLimits, UserOutboundReceiver, UserOutboundSendError, UserOutboundSender,
 };
 pub use placement::{RoomRuntimeContext, RouterPlacement};
 pub use read_model::{

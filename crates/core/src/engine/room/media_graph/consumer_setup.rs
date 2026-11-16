@@ -8,7 +8,7 @@ use tracing::warn;
 
 use super::{
     super::{
-        outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
+        outbound::{OutboundSender, RemoteTrackSnapshot},
         state::RoomState,
     },
     ConsumerId, ConsumerRouteTarget, PublishedSource, SubscriptionKey,
@@ -55,7 +55,6 @@ pub struct PendingConsumerSetup {
 pub struct DeclaredConsumerSetup {
     pub(super) pending: PendingConsumerSetup,
     pub(super) route: TransportConsumerRoute,
-    pub(super) mid: Option<String>,
 }
 
 pub struct CommittedConsumerSetup {
@@ -75,7 +74,7 @@ pub enum ConsumerSetupOutcome {
         target: ConsumerSetupTarget,
         route: TransportConsumerRoute,
         sender: OutboundSender,
-        track_snapshot: VersionedRemoteTrackSnapshot,
+        track_snapshot: RemoteTrackSnapshot,
         remote_source_activity: Option<TransportSourceActivityEffect>,
         transport_activity_update: Option<bool>,
         readiness_keyframe: Option<ConsumerRouteTarget>,
@@ -196,7 +195,7 @@ impl PendingConsumerSetup {
         origin: ConsumerSetupOrigin,
     ) -> Result<DeclaredConsumerSetup, Self> {
         match media_transport
-            .consume_media_with_mid(
+            .consume_media(
                 &self.target.session,
                 self.target.kind,
                 &self.target.source,
@@ -206,10 +205,9 @@ impl PendingConsumerSetup {
             )
             .await
         {
-            Ok((media, mid)) => Ok(DeclaredConsumerSetup {
+            Ok(media) => Ok(DeclaredConsumerSetup {
                 route: self.target.transport_consumer_route(media),
                 pending: self,
-                mid: Some(mid),
             }),
             Err(error) => {
                 warn!(

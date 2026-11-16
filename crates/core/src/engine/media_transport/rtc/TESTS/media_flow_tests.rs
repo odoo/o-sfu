@@ -223,7 +223,7 @@ async fn rtc_consume_media_uses_negotiated_mid_and_destination_ssrc() {
     assert!(route_entry.destinations.iter().any(|dest| {
         dest.dest_session == consumer_key
             && dest.dest_transport_media_id == consumer_media_id
-            && dest.dest_mid == expected_dest_mid
+            && dest.dest_mid == Some(expected_dest_mid)
     }));
     assert!(
         adapter

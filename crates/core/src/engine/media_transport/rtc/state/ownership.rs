@@ -92,8 +92,9 @@ impl PacketLoopState {
         }
     }
 
-    /// returns the MID for a local producer after enforcing source ownership
+    /// returns the MID of a local producer after enforcing source ownership
     ///
+    /// the MID is `None` until the offer that adds the producer exists
     /// this is the strict form used by command paths that must reject stale or
     /// misaddressed producer effects
     ///
@@ -106,7 +107,7 @@ impl PacketLoopState {
         &self,
         src_key: &TransportSessionKey,
         src_media: TransportMediaId,
-    ) -> Result<Mid, TransportAdapterError> {
+    ) -> Result<Option<Mid>, TransportAdapterError> {
         match self.media_handle(src_media) {
             Some(RegisteredMediaHandle::Producer { session_key, mid })
                 if session_key == src_key && self.users.contains_key(src_key) =>

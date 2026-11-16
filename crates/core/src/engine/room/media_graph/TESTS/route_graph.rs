@@ -101,13 +101,9 @@ fn commit_route(
 ) -> TransportConsumerRoute {
     let route = route(target, media);
     graph
-        .commit(
-            reservation,
-            route.clone(),
-            String::from("mid"),
-            selection,
-            || Some(routed_consumer(target, media)),
-        )
+        .commit(reservation, route.clone(), selection, || {
+            Some(routed_consumer(target, media))
+        })
         .expect("current reservation should commit");
     route
 }
@@ -185,7 +181,6 @@ fn receiver_reset_rejects_stale_reservation_for_same_publication() {
             .commit(
                 stale,
                 route(&target, 100),
-                String::from("stale"),
                 ConsumerSourceSelection::open(true),
                 || {
                     accepted = true;
@@ -250,11 +245,13 @@ fn pending_and_committed_counts_follow_realization_state() {
         ConsumerSourceSelection::open(true),
     );
     assert_eq!(graph.count(), 1);
-    let committed = graph
-        .current(&committed_key)
-        .and_then(|(_, current)| current.committed())
-        .expect("committed realization should be projected");
-    assert_eq!(committed.mid, "mid");
+    assert!(
+        graph
+            .current(&committed_key)
+            .and_then(|(_, current)| current.committed())
+            .is_some(),
+        "committed realization should be projected"
+    );
 
     assert!(graph.release_consumer_setup(pending).is_empty());
     assert_eq!(graph.subscription_count(), 1);
@@ -320,7 +317,6 @@ fn stale_source_or_route_cannot_commit_after_reattach() {
             .commit(
                 stale,
                 route(&old_target, 100),
-                String::from("old"),
                 ConsumerSourceSelection::open(true),
                 || {
                     router_called = true;
@@ -447,7 +443,6 @@ fn rejected_route_preserves_selection_and_shared_relay() {
                 .commit(
                     active,
                     route(&active_target, 101),
-                    String::from("active"),
                     ConsumerSourceSelection::open(true),
                     || None,
                 )

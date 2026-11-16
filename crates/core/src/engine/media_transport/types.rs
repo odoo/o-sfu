@@ -178,12 +178,14 @@ impl ConsumerActivity {
 ///
 /// Producer RTP parameters and declined consumer media are answer-derived.
 /// Returning both lets room state commit or release the corresponding graph
-/// realization from the same accepted answer.
+/// realization from the same accepted answer. Producers staged after the
+/// answered offer are named so the room keeps them for the next one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppliedSessionAnswer {
     client_capabilities: Option<MediaCapabilities>,
     negotiated_producers: BTreeMap<TransportMediaId, AppliedProducer>,
     declined_consumers: Vec<TransportMediaId>,
+    queued_producers: Vec<TransportMediaId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,6 +256,11 @@ impl AppliedSessionAnswer {
         self
     }
 
+    pub(crate) fn with_queued_producers(mut self, queued_producers: Vec<TransportMediaId>) -> Self {
+        self.queued_producers = queued_producers;
+        self
+    }
+
     pub(crate) fn with_client_capabilities(
         mut self,
         capabilities: Option<MediaCapabilities>,
@@ -268,6 +275,13 @@ impl AppliedSessionAnswer {
 
     pub(crate) fn declined_consumers(&self) -> &[TransportMediaId] {
         &self.declined_consumers
+    }
+
+    /// Whether `producer` was staged after the answered offer was created.
+    ///
+    /// The answer says nothing about such a producer. The next offer adds it.
+    pub(crate) fn awaits_offer(&self, producer: TransportMediaId) -> bool {
+        self.queued_producers.contains(&producer)
     }
 
     #[must_use]
@@ -762,23 +776,13 @@ pub struct SessionOffer {
     pub sdp: String,
     /// media sections the client may publish after applying the offer
     pub upload_slots: Vec<SessionUploadSlot>,
+    /// every consumer media of the session with a MID once this offer exists
+    ///
+    /// a consumer absent from this list has no MID yet
+    pub consumer_mids: Vec<(TransportMediaId, String)>,
 }
 
 impl SessionOffer {
-    #[must_use]
-    pub fn new(sdp: String) -> Self {
-        Self {
-            sdp,
-            upload_slots: Vec::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn with_upload_slots(mut self, upload_slots: Vec<SessionUploadSlot>) -> Self {
-        self.upload_slots = upload_slots;
-        self
-    }
-
     #[must_use]
     pub fn into_parts(self) -> (String, Vec<SessionUploadSlot>) {
         (self.sdp, self.upload_slots)

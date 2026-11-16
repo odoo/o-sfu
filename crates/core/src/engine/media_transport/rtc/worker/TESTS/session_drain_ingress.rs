@@ -115,7 +115,7 @@ impl ProducerIngressFixture {
         drain_mutation(&mut peer)?;
         let media = state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: session.clone(),
-            mid,
+            mid: Some(mid),
         });
         state.refresh_producer_ssrcs(
             &session,

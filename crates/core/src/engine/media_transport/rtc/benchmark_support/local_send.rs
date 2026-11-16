@@ -81,7 +81,7 @@ impl LocalSendBenchFixture {
                 dest_session: consumer.clone(),
                 dest_transport_media_id: dst_media,
                 dest_stream: stream,
-                dest_mid: mid,
+                dest_mid: Some(mid),
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,

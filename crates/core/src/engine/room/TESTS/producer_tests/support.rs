@@ -1,4 +1,4 @@
-pub(super) use std::{net::SocketAddr, time::Instant};
+pub(super) use std::{collections::BTreeSet, net::SocketAddr, time::Instant};
 
 pub(super) use o_sfu_router::{
     MediaKind,
@@ -16,7 +16,7 @@ pub(super) use crate::{
     Bitrate, RoomMediaLimits,
     engine::{
         media_transport::{
-            SessionOffer, TransportMediaId, TransportSessionKey,
+            SessionOffer, TransportAdapterError, TransportMediaId, TransportSessionKey,
             test_support::{
                 test_media_transport_config, test_media_transport_deps, test_rtc_port_range,
             },
@@ -248,7 +248,7 @@ pub(super) async fn consumer_destination_identity(
     adapter: &MediaTransport,
     source_media_id: TransportMediaId,
     receiver_user_id: &UserId,
-) -> (TransportMediaId, Mid) {
+) -> (TransportMediaId, Option<Mid>) {
     let entry = adapter
         .test_api()
         .route_entry_by_media_id(source_media_id)
@@ -415,6 +415,44 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
         subscriber_rx,
         subscriber_remote,
     }
+}
+
+/// Creates the subscriber's next offer through the room, as
+/// `MediaSession::renegotiate` does.
+pub(super) async fn refresh_offer(
+    scenario: &RealRtcRefreshScenario,
+) -> Result<(SessionOffer, RemoteTrackSnapshot), TransportAdapterError> {
+    scenario
+        .room
+        .user_operation(
+            &scenario.subscriber_user_id,
+            scenario.subscriber_session_key.connection_id(),
+            &scenario.media_transport,
+        )
+        .create_renegotiation_offer(&scenario.subscriber_session_key)
+        .await
+}
+
+/// Creates the subscriber's next offer and returns the streams whose consumer
+/// MID it carries. `MediaSession` names those to the client before the offer.
+pub(super) async fn create_refresh_offer(
+    scenario: &RealRtcRefreshScenario,
+) -> (SessionOffer, BTreeSet<UserStreamId>) {
+    let (offer, tracks) = refresh_offer(scenario)
+        .await
+        .expect("queued consumer media should produce an offer");
+    let named = tracks
+        .tracks
+        .iter()
+        .filter(|track| {
+            offer
+                .consumer_mids
+                .iter()
+                .any(|(media, _mid)| *media == track.consumer_media)
+        })
+        .map(|track| track.stream_id.clone())
+        .collect();
+    (offer, named)
 }
 
 pub(super) async fn settle_refresh_offer(

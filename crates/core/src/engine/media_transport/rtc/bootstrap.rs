@@ -5,8 +5,8 @@
 //!
 //! bootstrap stops at transport setup
 //! room policy, media registration, SDP
-//! staging and packet routing stay in the worker modules responsible for those
-//! contracts
+//! negotiation and packet routing stay in the worker modules responsible for
+//! those contracts
 
 use std::{
     collections::HashMap,

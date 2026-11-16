@@ -10,9 +10,7 @@ use o_sfu_router::rtp::{MediaCapabilities, MediaCapabilities as RouterRtpCapabil
 use super::super::{
     RoomAdmissionPolicy, RoomMediaCounts,
     media_graph::{ConsumerRouteView, RoomTopology},
-    outbound::{
-        OutboundSender, RemoteTrackProjection, RemoteTrackSnapshot, VersionedRemoteTrackSnapshot,
-    },
+    outbound::{OutboundSender, RemoteTrack, RemoteTrackSnapshot},
     transition::StagedPublishes,
 };
 use crate::{
@@ -236,37 +234,60 @@ impl RoomState {
         &mut self,
         user_id: &UserId,
         requires_negotiation: bool,
-    ) -> VersionedRemoteTrackSnapshot {
+    ) -> RemoteTrackSnapshot {
         let revision = self.next_track_snapshot_revision;
         self.next_track_snapshot_revision = revision.saturating_add(1);
-        let connection_id = self.user_connection_id(user_id);
-        let snapshot = RemoteTrackSnapshot {
-            tracks: self
-                .topology
-                .committed_consumer_routes_for_user(user_id)
-                .filter(|route| {
-                    connection_id == Some(route.route.consumer_session_key().connection_id())
-                })
-                .map(|route| {
-                    let source = &route.source.descriptor;
-                    RemoteTrackProjection {
-                        consumer_mid: route.mid.to_owned(),
-                        user_id: source.owner().user_id().clone(),
-                        stream_id: source.stream_id().clone(),
-                        producer_active: route.source.active,
-                    }
-                })
-                .collect(),
+        RemoteTrackSnapshot {
+            tracks: self.remote_tracks(user_id, self.user_connection_id(user_id)),
             requires_negotiation,
-        };
-        VersionedRemoteTrackSnapshot { snapshot, revision }
+            revision,
+        }
+    }
+
+    /// Tracks `connection_id` consumes as the room has them now, for the offer
+    /// that lists their consumer media.
+    ///
+    /// Carries the revision of the newest snapshot built so far, so only a
+    /// snapshot built later supersedes it.
+    pub(in crate::engine::room) fn committed_remote_tracks(
+        &self,
+        user_id: &UserId,
+        connection_id: ConnectionId,
+    ) -> RemoteTrackSnapshot {
+        RemoteTrackSnapshot {
+            tracks: self.remote_tracks(user_id, Some(connection_id)),
+            requires_negotiation: false,
+            revision: self.next_track_snapshot_revision.saturating_sub(1),
+        }
+    }
+
+    fn remote_tracks(
+        &self,
+        user_id: &UserId,
+        connection_id: Option<ConnectionId>,
+    ) -> Vec<RemoteTrack> {
+        self.topology
+            .committed_consumer_routes_for_user(user_id)
+            .filter(|route| {
+                connection_id == Some(route.route.consumer_session_key().connection_id())
+            })
+            .map(|route| {
+                let source = &route.source.descriptor;
+                RemoteTrack {
+                    consumer_media: route.route.consumer_transport_media_id(),
+                    user_id: source.owner().user_id().clone(),
+                    stream_id: source.stream_id().clone(),
+                    producer_active: route.source.active,
+                }
+            })
+            .collect()
     }
 
     pub(in crate::engine::room) fn remote_track_snapshots_for_users(
         &mut self,
         user_ids: BTreeSet<UserId>,
         requires_negotiation: bool,
-    ) -> Vec<(OutboundSender, VersionedRemoteTrackSnapshot)> {
+    ) -> Vec<(OutboundSender, RemoteTrackSnapshot)> {
         user_ids
             .into_iter()
             .filter_map(|user_id| {

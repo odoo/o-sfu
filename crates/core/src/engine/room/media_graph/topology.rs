@@ -547,7 +547,6 @@ impl RoomTopology {
         Some(ConsumerRouteView {
             key,
             route: &committed.route,
-            mid: &committed.mid,
             pending_upgrade: committed.pending_upgrade.as_ref(),
             source,
             selection: current.selection,
@@ -723,9 +722,6 @@ impl RoomTopology {
         )
     }
 
-    /// Selects MID from the transport declaration, negotiated RTP MID then the
-    /// consumer identity.
-    ///
     /// # Errors
     ///
     /// Returns the declared route and relay release effects when the reservation
@@ -743,33 +739,28 @@ impl RoomTopology {
                     consumer,
                     reservation,
                     sender,
-                    rtp,
+                    rtp: _,
                     relays: _,
                 },
             route,
-            mid,
         } = setup;
         let active = selection.delivery_active();
         let declared_active = reservation.declared_activity().is_active();
-        let committed_mid = mid.unwrap_or_else(|| {
-            rtp.mid()
-                .map_or_else(|| consumer.to_string(), ToOwned::to_owned)
-        });
         let (route_graph, room_router) = (&mut self.route_graph, &mut self.router);
         // Remove pending state first so router rejection cannot strand a reservation.
         let result =
-            route_graph.commit(reservation, route.clone(), committed_mid, selection, || {
-                match room_router.add_consumer(target.session.user_id(), consumer, target.routed) {
-                    Ok(routed_consumer) => Some(routed_consumer),
-                    Err(error) => {
-                        warn!(
-                            consumer_user_id = ?target.session.user_id(),
-                            source_id = ?target.source_id,
-                            ?error,
-                            "router rejected consumer creation"
-                        );
-                        None
-                    }
+            route_graph.commit(reservation, route.clone(), selection, || match room_router
+                .add_consumer(target.session.user_id(), consumer, target.routed)
+            {
+                Ok(routed_consumer) => Some(routed_consumer),
+                Err(error) => {
+                    warn!(
+                        consumer_user_id = ?target.session.user_id(),
+                        source_id = ?target.source_id,
+                        ?error,
+                        "router rejected consumer creation"
+                    );
+                    None
                 }
             });
         if let Err(relays) = result {

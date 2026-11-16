@@ -58,13 +58,9 @@ impl RtcSessionState {
             .purge_removed_rtx_streams(&mut self.rtc);
     }
 
-    pub fn reset_rtx_streams(&mut self, mid: Mid) {
-        self.consumer_streams.reset_rtx_streams(mid);
-    }
-
     /// Retires the destination `StreamTx` and host RTX state for one consumer MID.
     pub fn remove_consumer_stream_tx(&mut self, mid: Mid) {
-        self.reset_rtx_streams(mid);
+        self.consumer_streams.reset_rtx_streams(mid);
         {
             let mut api = self.rtc.direct_api();
             if let Some(ssrc) = api.stream_tx_by_mid(mid, None).map(|stream| stream.ssrc()) {

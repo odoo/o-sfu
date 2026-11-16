@@ -1,10 +1,10 @@
 //! Offer/answer ownership for worker-local RTC users.
 //!
 //! This module keeps the one-outstanding-offer rule local to the worker that
-//! owns the user's `str0m::Rtc`. It is responsible for creating the initial
-//! server-authored offer, handing out staged follow-up offers, accepting remote
-//! answers, and refreshing any worker-local state that answer application
-//! invalidates.
+//! owns the user's `str0m::Rtc`. It creates the initial server-authored offer,
+//! builds each follow-up offer from the session's queue of media changes,
+//! accepts remote answers and refreshes the worker-local state that answer
+//! application invalidates. [`state`] documents the queue contract.
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -18,7 +18,7 @@ use o_sfu_rfc::webrtc::MediaKind as ProtocolMediaKind;
 use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::{
     change::SdpAnswer,
-    media::{Direction, Media, MediaKind, Mid},
+    media::{Media, MediaKind, Mid},
 };
 use tracing::debug;
 
@@ -42,11 +42,9 @@ use crate::{
 
 mod media;
 mod state;
-pub(super) use media::{
-    queue_removal, recv_encoding_identities, stage_recv_media, stage_send_media,
-};
-use state::PendingRecvStream;
-pub(super) use state::SessionSdpNegotiationState;
+pub(super) use media::{consumer_stream_id, recv_encoding_identities};
+use state::{PendingRecvStream, TakenOffer};
+pub(super) use state::{QueuedChange, SessionSdpNegotiationState};
 
 #[derive(Clone, Copy)]
 pub(super) struct OfferBootstrapConfig<'a> {
@@ -86,26 +84,48 @@ pub(super) fn worker_create_initial_session_offer(
     )
 }
 
-/// Returns the one staged follow-up offer for `session_key`.
+/// Builds the follow-up offer for `session_key` from its queued media changes.
 ///
-/// Delivery retains the token and answer projection until answer application.
-/// The same offer cannot be requested twice.
+/// A queued consumer joins the offer only when `committed_consumers` lists it.
+/// The offer binds a MID to each addition it makes and names every consumer
+/// MID of the session, so its caller needs no earlier list.
 ///
 /// # Errors
 ///
 /// Returns [`TransportAdapterError::TransportUnavailable`] when the session is
 /// absent. Returns [`TransportAdapterError::InvalidInput`] before the initial
 /// answer or while another answer is pending. Returns
-/// [`TransportAdapterError::UnsupportedFeature`] when no media change staged an
+/// [`TransportAdapterError::UnsupportedFeature`] when no queued change needs an
 /// offer.
 pub(super) fn worker_create_session_renegotiation_offer(
     state: &mut PacketLoopState,
+    profile: &RtpProfile,
+    video_bitrate_limits: VideoBitrateLimits,
     session_key: &TransportSessionKey,
+    committed_consumers: &[TransportMediaId],
 ) -> Result<RtcSessionOffer, TransportAdapterError> {
     let Some(session_state) = state.users.get_mut(session_key) else {
         return Err(TransportAdapterError::TransportUnavailable);
     };
-    session_state.sdp_negotiation.take_offer()
+    let TakenOffer {
+        offer,
+        upload_slots,
+        bound_mids,
+    } = session_state.sdp_negotiation.take_offer(
+        &mut session_state.rtc,
+        profile,
+        video_bitrate_limits,
+        committed_consumers,
+    )?;
+    for (media, mid) in bound_mids {
+        state.bind_mid(media, mid);
+    }
+    let consumer_mids = state
+        .consumer_media_snapshot(session_key)
+        .into_iter()
+        .map(|(consumer_media, mid, _src_media)| (consumer_media, mid.to_string()))
+        .collect();
+    Ok(RtcSessionOffer::new(offer, upload_slots, consumer_mids))
 }
 
 /// Accept the currently pending local offer and reconcile every worker-local
@@ -113,8 +133,8 @@ pub(super) fn worker_create_session_renegotiation_offer(
 ///
 /// Applying an answer can recreate recv bindings inside `str0m`, so this path
 /// must rebuild pending recv expectations, refresh negotiated producer
-/// parameters, stage any deferred removals, and index the remote candidate
-/// addresses that later packet-loop recovery depends on.
+/// parameters and index the remote candidate addresses that later packet-loop
+/// recovery depends on. Changes queued meanwhile wait for the next offer.
 pub(super) fn worker_apply_session_answer(
     state: &mut PacketLoopState,
     max_bitrate_in: Bitrate,
@@ -189,9 +209,11 @@ pub(super) fn worker_apply_session_answer(
     )?
     .into_iter()
     .collect::<BTreeMap<_, _>>();
-    if let Some(session_state) = state.users.get_mut(session_key) {
-        stage_queued_removal_offer(session_state);
-    }
+    let queued_producers = state
+        .users
+        .get(session_key)
+        .map(|session| session.sdp_negotiation.queued_producers().collect())
+        .unwrap_or_default();
     state.mark_session_dirty(session_key);
     state
         .remote_addr_demux
@@ -213,6 +235,7 @@ pub(super) fn worker_apply_session_answer(
             }),
     )
     .with_declined_consumers(declined_consumers)
+    .with_queued_producers(queued_producers)
     .with_client_capabilities(client_capabilities))
 }
 
@@ -367,28 +390,6 @@ fn apply_pending_recv_streams(
     #[cfg(test)]
     {
         session_state.max_bitrate_in = Some(max_bitrate_in);
-    }
-}
-
-fn stage_queued_removal_offer(session_state: &mut super::state::RtcSessionState) {
-    if session_state.sdp_negotiation.queued_removal_mids.is_empty() {
-        return;
-    }
-
-    let queued_removal_mids = mem::take(&mut session_state.sdp_negotiation.queued_removal_mids);
-    // No offer can be delivered between accepting the answer and this call in
-    // the same worker turn, so staging cannot reject an outstanding offer.
-    // Already inactive MIDs need no further SDP change.
-    let _ = session_state
-        .sdp_negotiation
-        .stage_change(&mut session_state.rtc, |api| {
-            for mid in &queued_removal_mids {
-                api.set_direction(*mid, Direction::Inactive);
-            }
-            ((), Vec::new())
-        });
-    for mid in &queued_removal_mids {
-        session_state.reset_rtx_streams(*mid);
     }
 }
 

@@ -84,7 +84,7 @@ impl PacketSinkFanoutBenchFixture {
         let mut state = PacketLoopState::default();
         state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: source_session.clone(),
-            mid: Mid::from("cam-up"),
+            mid: Some(Mid::from("cam-up")),
         });
 
         let packet_sinks = RoomPacketSinkRegistry::default();

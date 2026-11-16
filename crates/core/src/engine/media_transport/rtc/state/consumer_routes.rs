@@ -20,8 +20,10 @@ use crate::engine::media_transport::{
 #[derive(Clone, Copy)]
 pub struct ConsumerRouteRegistration<'a> {
     pub consumer_key: &'a TransportSessionKey,
+    /// The default handle while `consumer_mid` is `None`.
     pub consumer_stream: ConsumerStreamHandle,
-    pub consumer_mid: Mid,
+    /// `None` for media queued for the next offer, which binds both.
+    pub consumer_mid: Option<Mid>,
     pub src_media: TransportMediaId,
     pub consumer_rtp: &'a RouterRtpParameters,
     pub active: bool,

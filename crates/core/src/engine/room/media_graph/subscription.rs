@@ -13,7 +13,7 @@ use crate::{
     engine::{
         director,
         media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
-        room::outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
+        room::outbound::{OutboundSender, RemoteTrackSnapshot},
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId,
             SourceSubscriptionIntent, UserStreamId,
@@ -62,8 +62,7 @@ pub struct ReceiverRouteWork {
 #[derive(Debug)]
 pub struct ReceiverRouteCommit {
     pub(in crate::engine::room) work: ReceiverRouteWork,
-    pub(in crate::engine::room) track_snapshots:
-        Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
+    pub(in crate::engine::room) track_snapshots: Vec<(OutboundSender, RemoteTrackSnapshot)>,
 }
 
 #[derive(Clone, Copy)]

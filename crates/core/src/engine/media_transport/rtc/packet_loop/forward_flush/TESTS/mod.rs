@@ -102,7 +102,7 @@ impl ForwardingHarness {
         self.state
             .register_media_handle(RegisteredMediaHandle::Producer {
                 session_key: session.clone(),
-                mid: Mid::from("aud-up"),
+                mid: Some(Mid::from("aud-up")),
             })
     }
 
@@ -142,7 +142,7 @@ impl ForwardingHarness {
                 dest_session: consumer,
                 dest_transport_media_id: consumer_media,
                 dest_stream: ConsumerStreamHandle::default(),
-                dest_mid: consumer_mid,
+                dest_mid: Some(consumer_mid),
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,

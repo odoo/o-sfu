@@ -48,14 +48,6 @@ impl WorkerCommandContext<'_> {
             rtc_tcp_config: self.config.rtc_tcp_config,
         }
     }
-
-    fn recv_media_policy(&self) -> media::RecvMediaPolicy<'_> {
-        media::RecvMediaPolicy {
-            max_bitrate_in: self.config.bitrate_limits.max_bitrate_in(),
-            video_bitrate_limits: self.config.video_bitrate_limits,
-            profile: self.config.profile.as_ref(),
-        }
-    }
 }
 
 /// Applies one production command to worker-local RTC state.
@@ -94,10 +86,17 @@ pub fn handle_worker_command(
         } => respond_source_diagnostics(state, &transport_media_ids, context.now, response),
         RtcWorkerCommand::CreateSessionRenegotiationOffer {
             session_key,
+            committed_consumers,
             response,
         } => respond(
             response,
-            negotiation::worker_create_session_renegotiation_offer(state, &session_key),
+            negotiation::worker_create_session_renegotiation_offer(
+                state,
+                context.config.profile.as_ref(),
+                context.config.video_bitrate_limits,
+                &session_key,
+                &committed_consumers,
+            ),
         ),
         RtcWorkerCommand::ApplySessionAnswer {
             session_key,
@@ -159,7 +158,7 @@ pub fn handle_worker_command(
             media::worker_add_recv_media(
                 state,
                 context.bitrate_registry,
-                context.recv_media_policy(),
+                context.config.bitrate_limits.max_bitrate_in(),
                 &session_key,
                 media_kind,
                 &rtp_parameters,

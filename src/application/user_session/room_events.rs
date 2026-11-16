@@ -1,13 +1,9 @@
 use o_sfu_protocol::wire::{
     PeerInfoPayload, PeerLeftPayload, ServerBroadcastPayload, ServerEnvelope, ServerMessage,
-    TrackBinding,
 };
 
 use super::{User, UserError, UserOutput};
-use crate::{
-    application::stream_catalog::stream_type_for_stream_id,
-    runtime::room::{RoomEventMessage, UserOutbound},
-};
+use crate::runtime::room::{RoomEventMessage, UserOutbound};
 
 impl User {
     pub(crate) async fn apply_room_outbound(
@@ -51,21 +47,9 @@ impl User {
                 }
             },
             UserOutbound::RemoteTracks(snapshot) => {
-                output.push(ServerEnvelope::Message(ServerMessage::Tracks(
-                    snapshot
-                        .tracks
-                        .into_iter()
-                        .filter_map(|track| {
-                            Some(TrackBinding {
-                                mid: track.consumer_mid,
-                                user_id: track.user_id,
-                                stream_type: stream_type_for_stream_id(&track.stream_id)?,
-                                active: track.producer_active,
-                            })
-                        })
-                        .collect(),
-                )));
-                if snapshot.requires_negotiation {
+                let requires_negotiation = snapshot.requires_negotiation;
+                output.extend(self.media.remote_tracks(snapshot));
+                if requires_negotiation {
                     output.extend(self.renegotiate().await?);
                 }
             }

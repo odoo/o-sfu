@@ -1,4 +1,4 @@
-//! Session-local str0m state, staged negotiation and ingress accounting.
+//! Session-local str0m state, queued negotiation and ingress accounting.
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Instant};
 
@@ -73,7 +73,8 @@ pub(in super::super) struct RtcSessionState {
     pub(in super::super) packet_loop_dirty: bool,
     /// Current str0m deadline used to reject stale timeout heap entries.
     pub(in super::super) next_timeout: Option<Instant>,
-    /// staged SDP state owned by the worker-local offer and answer paths
+    /// queued SDP changes and the outstanding offer of the worker-local offer
+    /// and answer paths
     pub(in super::super) sdp_negotiation: SessionSdpNegotiationState,
     /// monotonic RTP identity state keyed by consumer transport media
     ///

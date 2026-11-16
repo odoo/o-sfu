@@ -349,7 +349,7 @@ impl DebugProbe for ObserveAudioActivityProbe {
 pub struct DebugRouteDestination {
     pub dest_session: TransportSessionKey,
     pub dest_transport_media_id: TransportMediaId,
-    pub dest_mid: Mid,
+    pub dest_mid: Option<Mid>,
     pub active: bool,
 }
 

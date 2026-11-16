@@ -1,6 +1,10 @@
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::{
+    num::{NonZeroU64, NonZeroUsize},
+    time::Duration,
+};
 
 use o_sfu_rfc::webrtc::sdp;
+use tokio::time::timeout;
 
 use super::support::*;
 use crate::{
@@ -112,7 +116,7 @@ async fn media_session_closes_after_str0m_answer_failure() {
     assert!(matches!(
         fixture
             .media_transport
-            .create_session_renegotiation_offer(&key)
+            .create_session_renegotiation_offer(&key, Vec::new())
             .await,
         Err(TransportAdapterError::TransportUnavailable)
     ));
@@ -197,7 +201,6 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
         source,
         source_media_id,
         declined_media_id,
-        declined_mid,
         mut subscriber,
         mut subscriber_remote,
         mut subscriber_rx,
@@ -218,6 +221,11 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
         .await
         .expect("subscriber renegotiation should succeed")
         .expect("consumer setup should stage an offer");
+    // The offer binds the consumer MID and brings the tracks that name it.
+    let [track] = offer.remote_tracks.as_deref().unwrap_or_default() else {
+        panic!("the offer should name its one consumer track");
+    };
+    let declined_mid = Mid::from(track.consumer_mid.as_str());
     let answer = remote_answer_sdp(&mut subscriber_remote, &offer.sdp);
     let inactive_answer = inactive_answer_for_mid(&answer, declined_mid);
     drain_remote_track_snapshots(&mut subscriber_rx);
@@ -265,9 +273,10 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
             .refresh_session(&subscriber_user_id, &media_transport)
             .await
     );
-    let (replacement_media_id, replacement_mid) =
+    let (replacement_media_id, unbound_mid) =
         consumer_destination_identity(&media_transport, source_media_id, &subscriber_user_id).await;
     assert_ne!(replacement_media_id, declined_media_id);
+    assert_eq!(unbound_mid, None, "only an offer binds a consumer MID");
     assert_eq!(
         transport
             .source_relay_target_count(&source)
@@ -281,6 +290,9 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
         .await
         .expect("replacement renegotiation should succeed")
         .expect("later readiness should stage a replacement offer");
+    let (_, replacement_mid) =
+        consumer_destination_identity(&media_transport, source_media_id, &subscriber_user_id).await;
+    let replacement_mid = replacement_mid.expect("the offer should bind the replacement MID");
     let answer = remote_answer_sdp(&mut subscriber_remote, &offer.sdp);
     let offer = subscriber
         .answer(&answer)
@@ -293,6 +305,115 @@ async fn inactive_consumer_answer_releases_room_route_for_later_retry() {
         .await
         .expect("test probe must complete");
     assert!(tx_pair.is_some());
+}
+
+#[tokio::test]
+async fn joiner_negotiates_every_published_track_in_one_exchange() {
+    let mut publisher = build_publisher_fixture(55_232).await;
+    establish_session(&mut publisher.session, &mut publisher.remote).await;
+    publish_source(&mut publisher, TestSourceKind::ScalableVideo).await;
+    publish_source(&mut publisher, TestSourceKind::ReadableVideo).await;
+
+    let mut subscriber = publisher
+        .core
+        .admit_user(publisher.room.uuid(), join_request(UserId::Integer(2)))
+        .await
+        .expect("subscriber should join through core facade");
+    let mut subscriber_remote = build_remote_rtc(55_233);
+    // The initial answer makes the joiner ready, which queues both consumers.
+    establish_session(&mut subscriber, &mut subscriber_remote).await;
+
+    let offer = subscriber
+        .renegotiate()
+        .await
+        .expect("joiner renegotiation should succeed")
+        .expect("the queued consumers should produce an offer");
+    assert_eq!(
+        offer.remote_tracks.as_ref().map(Vec::len),
+        Some(2),
+        "one offer should name both published tracks"
+    );
+    let answer = remote_answer_sdp(&mut subscriber_remote, &offer.sdp);
+    let offer = subscriber
+        .answer(&answer)
+        .await
+        .expect("joiner answer should apply");
+    assert!(
+        offer.is_none(),
+        "one exchange should negotiate every consumer"
+    );
+    assert_eq!(publisher.room.test_api().consumer_count().await, 2);
+}
+
+#[tokio::test]
+async fn publisher_leaving_during_an_offer_is_named_with_it_then_retracted() {
+    let mut publisher = build_publisher_fixture(55_234).await;
+    establish_session(&mut publisher.session, &mut publisher.remote).await;
+    publish_source(&mut publisher, TestSourceKind::ScalableVideo).await;
+
+    let (subscriber_sender, mut subscriber_rx) = test_sender();
+    let mut subscriber = publisher
+        .core
+        .admit_user(
+            publisher.room.uuid(),
+            JoinUserRequest {
+                user_id: UserId::Integer(2),
+                label: None,
+                permissions: UserPermissions::default(),
+                sender: subscriber_sender,
+            },
+        )
+        .await
+        .expect("subscriber should join through core facade");
+    let mut subscriber_remote = build_remote_rtc(55_235);
+    establish_session(&mut subscriber, &mut subscriber_remote).await;
+    assert_eq!(publisher.room.test_api().consumer_count().await, 1);
+
+    // The paused worker holds the offer command, then the removal of the
+    // consumer: the room commits the departure before the offer exists and
+    // the worker still adds the consumer to it.
+    let release_worker = publisher
+        .media_transport
+        .test_api()
+        .pause_first_worker()
+        .await
+        .expect("test worker should pause before the offer");
+    let mut offer = Box::pin(subscriber.renegotiate());
+    assert!(
+        timeout(Duration::from_millis(10), offer.as_mut())
+            .await
+            .is_err()
+    );
+    let mut leave = Box::pin(publisher.session.close());
+    assert!(
+        timeout(Duration::from_millis(10), leave.as_mut())
+            .await
+            .is_err()
+    );
+    assert_eq!(publisher.room.test_api().consumer_count().await, 0);
+    release_worker.send(()).expect("test worker should resume");
+    let offer = offer
+        .await
+        .expect("subscriber renegotiation should succeed")
+        .expect("the queued consumer should produce an offer");
+    assert!(leave.await);
+
+    let [track] = offer.remote_tracks.as_deref().unwrap_or_default() else {
+        panic!("the offer should name the consumer it adds");
+    };
+    assert_eq!(track.user_id, publisher.user_id);
+    assert!(
+        offer
+            .sdp
+            .contains(&format!("a=mid:{}\r\n", track.consumer_mid))
+    );
+
+    // The setup snapshot is older than the offer. Only the departure retracts.
+    let retracted = drain_remote_track_snapshots(&mut subscriber_rx)
+        .into_iter()
+        .filter_map(|snapshot| subscriber.fresh_remote_tracks(snapshot))
+        .collect::<Vec<_>>();
+    assert_eq!(retracted, [Vec::new()]);
 }
 
 #[tokio::test]
@@ -529,7 +650,6 @@ struct ConsumerAnswerFixture {
     source: TransportSourceKey,
     source_media_id: TransportMediaId,
     declined_media_id: TransportMediaId,
-    declined_mid: Mid,
     subscriber: MediaSession,
     subscriber_remote: Rtc,
     subscriber_rx: UserOutboundReceiver,
@@ -658,7 +778,7 @@ async fn build_consumer_answer_fixture() -> ConsumerAnswerFixture {
         .await
         .expect("published source should expose its transport media id");
     let source = TransportSourceKey::new(publisher_session_key.clone(), source_media_id);
-    let (declined_media_id, declined_mid) = consumer_destination_identity(
+    let (declined_media_id, _unbound_mid) = consumer_destination_identity(
         &publisher.media_transport,
         source_media_id,
         &subscriber_user_id,
@@ -680,7 +800,6 @@ async fn build_consumer_answer_fixture() -> ConsumerAnswerFixture {
         source,
         source_media_id,
         declined_media_id,
-        declined_mid,
         subscriber,
         subscriber_remote,
         subscriber_rx,

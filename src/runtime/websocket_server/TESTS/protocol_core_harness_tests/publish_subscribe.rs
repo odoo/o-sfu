@@ -203,23 +203,24 @@ async fn protocol_core_queues_one_follow_up_offer_until_first_answer() -> TestRe
         alice.answer_next_negotiation().await.is_some(),
         "publisher should answer the queued follow-up negotiation"
     );
-    // RTC staging may coalesce several track snapshots into one subscriber offer.
-    // Snapshot count is therefore independent of negotiation request count.
-    for expected in [
-        &[ProtocolStreamType::Camera, ProtocolStreamType::Audio][..],
-        &[
-            ProtocolStreamType::Camera,
-            ProtocolStreamType::Audio,
-            ProtocolStreamType::Screen,
-        ],
-    ] {
+    // A subscriber offer names every consumer queued before it. The screen
+    // track therefore arrives with the audio track or in the next snapshot.
+    loop {
         let Some(tracks) = read_track_snapshot(&mut bob).await else {
             panic!("subscriber should receive each queued publish snapshot");
         };
-        assert_eq!(tracks.len(), expected.len());
-        for stream_type in expected {
-            assert_track_snapshot_contains(&tracks, &ProtocolSessionId::Integer(73), *stream_type);
+        for stream_type in [ProtocolStreamType::Camera, ProtocolStreamType::Audio] {
+            assert_track_snapshot_contains(&tracks, &ProtocolSessionId::Integer(73), stream_type);
         }
+        if tracks.len() == 3 {
+            assert_track_snapshot_contains(
+                &tracks,
+                &ProtocolSessionId::Integer(73),
+                ProtocolStreamType::Screen,
+            );
+            break;
+        }
+        assert_eq!(tracks.len(), 2);
     }
     assert!(
         timeout(Duration::from_millis(150), read_track_snapshot(&mut bob),)

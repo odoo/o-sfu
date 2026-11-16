@@ -101,12 +101,12 @@ pub mod room {
     pub use crate::engine::room::{
         BroadcastPayload, BroadcastPayloadError, DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY,
         DEFAULT_USER_OUTBOUND_QUEUE_CAPACITY, IncomingBitrateSnapshot, JoinUserRequest,
-        RemoteTrackProjection, RemoteTrackSnapshot, Room, RoomAdmissionPolicy, RoomConfig,
-        RoomDetailCapture, RoomEventMessage, RoomJoinError, RoomManager, RoomManagerJoinError,
-        RoomManagerServeError, RoomMediaCounts, RoomOverviewCapture, RoomRuntimePolicy,
-        RoomUserAdmission, RoomUserCapture, RoomUserStatsSnapshot, RoomUsersCapture,
-        RuntimeRoomDirectorySnapshot, RuntimeRoomStatsSnapshot, UserCloseReason, UserOutbound,
-        UserOutboundEvent, UserOutboundOverflow, UserOutboundOverflowKind, UserOutboundQueueLimits,
+        RemoteTrack, RemoteTrackSnapshot, Room, RoomAdmissionPolicy, RoomConfig, RoomDetailCapture,
+        RoomEventMessage, RoomJoinError, RoomManager, RoomManagerJoinError, RoomManagerServeError,
+        RoomMediaCounts, RoomOverviewCapture, RoomRuntimePolicy, RoomUserAdmission,
+        RoomUserCapture, RoomUserStatsSnapshot, RoomUsersCapture, RuntimeRoomDirectorySnapshot,
+        RuntimeRoomStatsSnapshot, UserCloseReason, UserOutbound, UserOutboundEvent,
+        UserOutboundOverflow, UserOutboundOverflowKind, UserOutboundQueueLimits,
         UserOutboundReceiver, UserOutboundSendError, UserOutboundSender,
     };
 }

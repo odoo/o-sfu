@@ -6,7 +6,7 @@ use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::media::MediaKind;
 #[cfg(test)]
 use {
-    super::super::commands::ParsedSessionAnswer,
+    super::super::{commands::ParsedSessionAnswer, negotiation::QueuedChange},
     crate::engine::{
         media_transport::{AppliedSessionAnswer, TransportMediaId, TransportSourceKey},
         source_model::SourceSyncPolicy,
@@ -37,14 +37,37 @@ impl RtcWorker {
         .map(RtcSessionOffer::into_session_offer)
     }
 
+    /// Offers every queued change. Worker tests have no room, so each queued
+    /// consumer counts as committed.
     #[cfg(test)]
     pub async fn create_session_renegotiation_offer(
         &self,
         session_key: &TransportSessionKey,
     ) -> Result<SessionOffer, TransportAdapterError> {
+        let queued_session = session_key.clone();
+        let committed_consumers = self
+            .read_debug_worker(move |state, _context| {
+                state
+                    .users
+                    .get(&queued_session)
+                    .map_or_else(Vec::new, |session| {
+                        session
+                            .sdp_negotiation
+                            .queue
+                            .iter()
+                            .filter_map(|change| match change {
+                                QueuedChange::AddSend { media, .. } => Some(*media),
+                                QueuedChange::AddRecv { .. } | QueuedChange::Remove(_) => None,
+                            })
+                            .collect()
+                    })
+            })
+            .await
+            .map_err(|_unavailable| TransportAdapterError::TransportUnavailable)?;
         self.request_worker(
             |response| RtcWorkerCommand::CreateSessionRenegotiationOffer {
                 session_key: session_key.clone(),
+                committed_consumers,
                 response,
             },
         )
@@ -126,6 +149,5 @@ impl RtcWorker {
             response,
         })
         .await
-        .map(|(transport_media_id, _mid)| transport_media_id)
     }
 }

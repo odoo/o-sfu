@@ -74,9 +74,11 @@ impl StagedPublishes {
         user_id: &UserId,
         connection_id: ConnectionId,
     ) -> Vec<TransportTeardown> {
-        self.take_for_connection(user_id, connection_id)
-            .into_iter()
-            .map(StagedPublish::release_into_teardown)
+        self.staged
+            .extract_if(.., |key, _publish| {
+                &key.0 == user_id && key.1 == connection_id
+            })
+            .map(|(_key, publish)| publish.release_into_teardown())
             .collect()
     }
 
@@ -90,14 +92,19 @@ impl StagedPublishes {
             .remove(&staged_publish_key(user_id, connection_id, stream_id))
     }
 
-    pub(in crate::engine::room) fn take_for_connection(
+    /// Takes the connection's publishes that `applied_answer` resolves. One
+    /// staged after the answered offer stays for the next offer.
+    pub(in crate::engine::room) fn take_answered(
         &mut self,
         user_id: &UserId,
         connection_id: ConnectionId,
+        applied_answer: &AppliedSessionAnswer,
     ) -> Vec<StagedPublish> {
         self.staged
-            .extract_if(.., |key, _publish| {
-                &key.0 == user_id && key.1 == connection_id
+            .extract_if(.., |key, publish| {
+                &key.0 == user_id
+                    && key.1 == connection_id
+                    && !applied_answer.awaits_offer(publish.media())
             })
             .map(|(_key, publish)| publish)
             .collect()

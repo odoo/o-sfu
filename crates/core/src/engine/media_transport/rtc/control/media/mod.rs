@@ -3,8 +3,8 @@
 //! [`lifecycle`] combines str0m media changes with complete registration or
 //! removal in
 //! [`PacketLoopState`](crate::engine::media_transport::rtc::state::PacketLoopState).
-//! Media changes stage renegotiation offers. [`negotiation`](super::super::negotiation)
-//! returns those offers and applies answers.
+//! Media changes queue for the next renegotiation offer.
+//! [`negotiation`](super::super::negotiation) builds that offer and applies answers.
 //!
 //! [`responses`] handles media batches and relay commands. [`routes`] adjusts
 //! activity and packet gates, coupling delivery changes to RTX invalidation.
@@ -38,7 +38,7 @@ pub(super) struct AddSendMediaRequest<'a> {
 }
 
 pub(super) use self::lifecycle::{
-    RecvMediaPolicy, worker_add_recv_media, worker_add_send_media, worker_remove_media,
+    worker_add_recv_media, worker_add_send_media, worker_remove_media,
 };
 pub use self::responses::apply_media_control_batch;
 pub(in crate::engine::media_transport::rtc) use self::responses::apply_route_control_request;

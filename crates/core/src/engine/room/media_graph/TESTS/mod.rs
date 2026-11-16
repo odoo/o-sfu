@@ -6,7 +6,7 @@
     reason = "test assertions use panic, unwrap, expect, and direct indexing for clear failure messages"
 )]
 
-use std::{collections::BTreeMap, mem, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use o_sfu_model::{UserId, VideoLayoutIntent};
 use o_sfu_router::{
@@ -49,16 +49,11 @@ use crate::{
 };
 
 impl PendingConsumerSetup {
-    pub(crate) fn declared(
-        self,
-        media: TransportMediaId,
-        mid: Option<String>,
-    ) -> DeclaredConsumerSetup {
+    pub(crate) fn declared(self, media: TransportMediaId) -> DeclaredConsumerSetup {
         let route = self.target.transport_consumer_route(media);
         DeclaredConsumerSetup {
             pending: self,
             route,
-            mid,
         }
     }
 }
@@ -203,12 +198,7 @@ fn install_test_consumer_route(
     assert_eq!(setups.len(), 1);
     let setup = setups.pop().expect("consumer setup should be planned");
     assert!(matches!(
-        commit_setup_with_media(
-            state,
-            setup,
-            TransportMediaId::new(2),
-            Some(String::from("camera-down")),
-        ),
+        commit_setup_with_media(state, setup, TransportMediaId::new(2)),
         ConsumerSetupOutcome::Committed { .. }
     ));
     (route_key, consumer_connection_id)
@@ -325,50 +315,42 @@ fn commit_setup_with_media(
     state: &mut RoomState,
     setup: PendingConsumerSetup,
     media: TransportMediaId,
-    mid: Option<String>,
 ) -> ConsumerSetupOutcome {
-    let setup = setup.declared(media, mid);
+    let setup = setup.declared(media);
     state.commit_declared_consumer_setup(setup, ConsumerSetupOrigin::Subscribe)
 }
 
 fn commit_setup(state: &mut RoomState, setup: PendingConsumerSetup) -> ConsumerSetupOutcome {
-    commit_setup_with_media(
-        state,
-        setup,
-        TransportMediaId::new(20),
-        Some(String::from("m0")),
-    )
+    commit_setup_with_media(state, setup, TransportMediaId::new(20))
 }
 
 #[test]
-fn consumer_setup_mid_uses_transport_then_negotiated_then_id() {
-    for (negotiated, transport, expected) in [
-        (None, None, "consumer-1"),
-        (Some("negotiated-mid"), None, "negotiated-mid"),
-        (
-            Some("negotiated-mid"),
-            Some(String::from("transport-mid")),
-            "transport-mid",
-        ),
-    ] {
-        let (mut state, publisher, subscriber, _, stream, mut setup) = pending_consumer_setup();
-        if let Some(mid) = negotiated {
-            setup.rtp = mem::take(&mut setup.rtp).with_mid(mid);
-        }
-        assert!(matches!(
-            commit_setup_with_media(&mut state, setup, TransportMediaId::new(20), transport),
-            ConsumerSetupOutcome::Committed { .. }
-        ));
-        let key = SubscriptionKey::new(&subscriber, &publisher, &stream);
+fn offer_reads_the_committed_tracks_at_the_newest_revision() {
+    let (mut state, _, subscriber, connection, stream, setup) = pending_consumer_setup();
+    assert!(
+        state
+            .committed_remote_tracks(&subscriber, connection)
+            .tracks
+            .is_empty(),
+        "a consumer the room has not committed is not listed for an offer"
+    );
 
-        assert_eq!(
-            state
-                .topology
-                .committed_consumer_route_for_key(&key)
-                .map(|route| route.mid),
-            Some(expected)
-        );
-    }
+    let ConsumerSetupOutcome::Committed { track_snapshot, .. } = commit_setup(&mut state, setup)
+    else {
+        panic!("current room state should accept the setup");
+    };
+    assert!(track_snapshot.requires_negotiation);
+    let [track] = track_snapshot.tracks.as_slice() else {
+        panic!("the commit should list its track");
+    };
+    assert_eq!(track.consumer_media, TransportMediaId::new(20));
+    assert_eq!(track.stream_id, stream);
+
+    // The session drops a queued snapshot no newer than the tracks of its offer.
+    let offered = state.committed_remote_tracks(&subscriber, connection);
+    assert_eq!(offered.tracks, track_snapshot.tracks);
+    assert_eq!(offered.revision, track_snapshot.revision);
+    assert!(!offered.requires_negotiation);
 }
 
 #[test]
@@ -559,13 +541,7 @@ fn consumer_setup_commit_uses_latest_room_state() {
     else {
         panic!("current room state should still accept the setup");
     };
-    assert!(
-        snapshot
-            .snapshot
-            .tracks
-            .iter()
-            .any(|track| !track.producer_active)
-    );
+    assert!(snapshot.tracks.iter().any(|track| !track.producer_active));
     let transport_activity_update =
         transport_activity_update.expect("transport declaration should be corrected");
     assert!(!transport_activity_update);

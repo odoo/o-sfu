@@ -34,9 +34,13 @@ pub(in super::super) struct MediaRouteDestination {
     /// the counters live in the destination session
     /// this handle lets a route destination reach them without keying local
     /// RTP projection by sparse transport media ids on the hot path
+    /// it names no stream while `dest_mid` is `None`
     pub(in super::super) dest_stream: ConsumerStreamHandle,
     /// consumer MID used when rewriting the packet for local egress
-    pub(in super::super) dest_mid: Mid,
+    ///
+    /// `None` until the offer that adds the consumer media binds it, so the
+    /// destination takes route controls but sends nothing before that offer
+    pub(in super::super) dest_mid: Option<Mid>,
     /// payload type negotiated for this consumer stream
     ///
     /// source payload types can differ from consumer payload types after router

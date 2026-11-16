@@ -25,7 +25,7 @@ fn consumer_media_lookup_uses_the_reverse_index() {
 
     state.register_media_handle(RegisteredMediaHandle::Consumer {
         session_key: consumer_session.clone(),
-        mid: consumer_mid,
+        mid: Some(consumer_mid),
         src_media,
         destination: RouteDestinationHandle::default(),
     });
@@ -45,7 +45,7 @@ fn consumer_media_lookup_clears_when_the_handle_is_removed() {
 
     let consumer_media = state.register_media_handle(RegisteredMediaHandle::Consumer {
         session_key: consumer_session.clone(),
-        mid: consumer_mid,
+        mid: Some(consumer_mid),
         src_media,
         destination: RouteDestinationHandle::default(),
     });
@@ -64,7 +64,7 @@ fn consumer_media_lookup_clears_when_the_handle_is_removed() {
             src_media: removed_src_media,
             ..
         }) if session_key == consumer_session
-            && mid == consumer_mid
+            && mid == Some(consumer_mid)
             && removed_src_media == src_media
     ));
     assert_eq!(
@@ -83,17 +83,17 @@ fn session_media_index_drives_bulk_session_removal() {
     let kept_mid = Mid::from("kept-cam-up");
     let producer_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: removed_session.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     let consumer_media_id = state.register_media_handle(RegisteredMediaHandle::Consumer {
         session_key: removed_session.clone(),
-        mid: consumer_mid,
+        mid: Some(consumer_mid),
         src_media: producer_media_id,
         destination: RouteDestinationHandle::default(),
     });
     let kept_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: kept_session.clone(),
-        mid: kept_mid,
+        mid: Some(kept_mid),
     });
 
     let mut removed_ids = state.remove_session_media_handles(&removed_session);
@@ -122,11 +122,11 @@ fn producer_media_lookup_is_session_scoped_by_mid() {
     let shared_mid = Mid::from("cam-up");
     let first_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: first_session.clone(),
-        mid: shared_mid,
+        mid: Some(shared_mid),
     });
     let second_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: second_session.clone(),
-        mid: shared_mid,
+        mid: Some(shared_mid),
     });
 
     assert_eq!(
@@ -155,7 +155,7 @@ fn producer_media_lookup_falls_back_to_negotiated_ssrc() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     state.refresh_producer_ssrcs(
         &producer_session,
@@ -179,7 +179,7 @@ fn dynamic_producer_ssrc_rid_lookup_clears_with_media_handle() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
 
     state.refresh_producer_ssrcs(
@@ -247,7 +247,7 @@ fn producer_ssrc_lookup_refresh_replaces_stale_bindings() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
 
     state.refresh_producer_ssrcs(
@@ -284,7 +284,7 @@ fn producer_mid_lookup_survives_ssrc_binding_refresh() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
 
     assert_eq!(
@@ -318,11 +318,11 @@ fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
     let mut state = PacketLoopState::default();
     let first_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: first_mid,
+        mid: Some(first_mid),
     });
     let second_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: second_mid,
+        mid: Some(second_mid),
     });
 
     for (mid, rid) in [(first_mid, "hi"), (second_mid, "lo")] {
@@ -408,11 +408,11 @@ fn rejected_negotiated_ssrc_binding_does_not_clear_existing_owner() {
     let mut state = PacketLoopState::default();
     let first_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: first_mid,
+        mid: Some(first_mid),
     });
     let second_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: second_mid,
+        mid: Some(second_mid),
     });
 
     state.refresh_producer_ssrcs(
@@ -444,7 +444,7 @@ fn expired_local_and_relay_speakers_resolve_the_same_room_once() {
     let session = test_transport_session_key(31, 0, 32, UserId::Integer(33));
     let local_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid: Mid::from("cam-up-a"),
+        mid: Some(Mid::from("cam-up-a")),
     });
     let relay_id = TransportMediaId::new(40);
     let (control_tx, _control_rx) = mpsc::channel(1);
@@ -481,7 +481,7 @@ fn producer_ssrc_rotation_keeps_only_current_encoding_binding() {
     let mut state = PacketLoopState::default();
     let media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid,
+        mid: Some(mid),
     });
     state.refresh_producer_ssrcs(
         &session,
@@ -529,7 +529,7 @@ fn producer_encoding_rotation_bounds_primary_and_repair_indexes() {
         let mut state = PacketLoopState::default();
         let media = state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: session.clone(),
-            mid,
+            mid: Some(mid),
         });
         let bindings = rids
             .iter()
@@ -590,7 +590,7 @@ fn rejected_producer_binding_preserves_both_indexes() {
     let mut state = PacketLoopState::default();
     let media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid,
+        mid: Some(mid),
     });
     state.refresh_producer_ssrcs(
         &session,
@@ -658,7 +658,7 @@ fn answer_refresh_keeps_preceding_ssrc_rejected_for_same_encoding() {
     let mut state = PacketLoopState::default();
     let media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid,
+        mid: Some(mid),
     });
     let parameters = RouterRtpParameters::new(
         vec![],
@@ -704,11 +704,11 @@ fn answer_refresh_reassigns_ssrcs_between_producer_mids() {
     let mut state = PacketLoopState::default();
     let first_media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid: first_mid,
+        mid: Some(first_mid),
     });
     let second_media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session.clone(),
-        mid: second_mid,
+        mid: Some(second_mid),
     });
     state.refresh_producer_ssrcs(&session, first_mid, &rtp_parameters_with_ssrc(first_mid, 1));
     state.refresh_producer_ssrcs(

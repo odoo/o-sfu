@@ -157,15 +157,18 @@ async fn publish_until_ready(
     .flatten()
 }
 
+type RenegotiationRequest = (RequestId, ServerRequest);
+
+/// Reads until the track snapshot and returns the renegotiation request of its
+/// batch. The offer that adds a consumer MID must follow the snapshot naming
+/// it, so a request seen first fails.
 async fn assert_track_snapshot(
     websocket: &mut TestWebSocket,
     expected_bindings: Vec<TrackBinding>,
-) -> Option<Option<(RequestId, ServerRequest)>> {
-    let mut pre_snapshot_renegotiation = None;
-    let actual_bindings = loop {
+) -> Option<Option<RenegotiationRequest>> {
+    let (actual_bindings, renegotiation) = loop {
         let batch = read_protocol_server_batch(websocket).await?;
-        capture_pre_snapshot_renegotiation(&mut pre_snapshot_renegotiation, &batch);
-        if let Some(snapshot) = track_snapshot_in_batch(batch) {
+        if let Some(snapshot) = track_snapshot_then_renegotiation(batch) {
             break snapshot;
         }
     };
@@ -179,13 +182,14 @@ async fn assert_track_snapshot(
         assert!(!actual.mid.is_empty());
         assert_eq!(actual.active, expected.active);
     }
-    Some(pre_snapshot_renegotiation)
+    Some(renegotiation)
 }
 
 #[test]
-fn request_only_batch_retains_pre_snapshot_renegotiation() -> TestResult {
+fn track_snapshot_batch_returns_the_renegotiation_that_follows_it() -> TestResult {
     let request_id = "server-0";
-    let request_batch = vec![
+    let batch = vec![
+        ServerEnvelope::Message(ServerMessage::Tracks(Vec::new())).into_envelope()?,
         ServerEnvelope::Request {
             request_id: RequestId::new(request_id),
             request: ServerRequest::Renegotiate(SessionDescriptionPayload {
@@ -195,39 +199,44 @@ fn request_only_batch_retains_pre_snapshot_renegotiation() -> TestResult {
         }
         .into_envelope()?,
     ];
-    let snapshot_batch =
-        vec![ServerEnvelope::Message(ServerMessage::Tracks(Vec::new())).into_envelope()?];
 
-    let mut pre_snapshot_renegotiation = None;
-    capture_pre_snapshot_renegotiation(&mut pre_snapshot_renegotiation, &request_batch);
-    assert!(track_snapshot_in_batch(request_batch).is_none());
-    assert_eq!(track_snapshot_in_batch(snapshot_batch), Some(Vec::new()));
-    assert!(
-        matches!(
-            pre_snapshot_renegotiation,
-            Some((id, ServerRequest::Renegotiate(_))) if id.as_str() == request_id
-        ),
-        "reader should keep the request id until the snapshot arrives"
-    );
+    assert!(matches!(
+        track_snapshot_then_renegotiation(batch),
+        Some((tracks, Some((id, ServerRequest::Renegotiate(_)))))
+            if tracks.is_empty() && id.as_str() == request_id
+    ));
     Ok(())
 }
 
-fn capture_pre_snapshot_renegotiation(
-    pending_renegotiation: &mut Option<(RequestId, ServerRequest)>,
-    batch: &EnvelopeBatch,
-) {
-    let Some(batch_request) = first_protocol_server_request(batch) else {
-        return;
-    };
-    assert!(
-        matches!(&batch_request.1, ServerRequest::Renegotiate(_)),
-        "subscriber should receive a renegotiation request before the first track snapshot"
-    );
-    assert!(
-        pending_renegotiation.is_none(),
-        "subscriber should not receive overlapping renegotiation requests before the first answer"
-    );
-    *pending_renegotiation = Some(batch_request);
+fn track_snapshot_then_renegotiation(
+    batch: EnvelopeBatch,
+) -> Option<(Vec<TrackBinding>, Option<RenegotiationRequest>)> {
+    let mut tracks = None;
+    let mut renegotiation = None;
+    for envelope in batch {
+        match ServerEnvelope::decode(envelope) {
+            Ok(ServerEnvelope::Message(ServerMessage::Tracks(track_bindings))) => {
+                assert!(tracks.replace(track_bindings).is_none());
+            }
+            Ok(ServerEnvelope::Request {
+                request_id,
+                request,
+            }) => {
+                assert!(
+                    tracks.is_some(),
+                    "the offer must follow the track snapshot that names its consumer MIDs"
+                );
+                assert!(matches!(request, ServerRequest::Renegotiate(_)));
+                assert!(
+                    renegotiation.replace((request_id, request)).is_none(),
+                    "subscriber should not receive overlapping renegotiation requests"
+                );
+            }
+            Ok(ServerEnvelope::Message(_) | ServerEnvelope::Response { .. }) => {}
+            Err(error) => panic!("server envelope should decode: {error:?}"),
+        }
+    }
+    tracks.map(|tracks| (tracks, renegotiation))
 }
 
 async fn expect_renegotiation_request(
@@ -237,24 +246,6 @@ async fn expect_renegotiation_request(
     let (request_id, request) = first_protocol_server_request(&batch)?;
     assert!(matches!(request, ServerRequest::Renegotiate(_)));
     Some((request_id, request))
-}
-
-fn track_snapshot_in_batch(batch: EnvelopeBatch) -> Option<Vec<TrackBinding>> {
-    let mut tracks = None;
-    for envelope in batch {
-        match ServerEnvelope::decode(envelope) {
-            Ok(ServerEnvelope::Message(ServerMessage::Tracks(track_bindings))) => {
-                assert!(tracks.replace(track_bindings).is_none());
-            }
-            Ok(
-                ServerEnvelope::Message(_)
-                | ServerEnvelope::Request { .. }
-                | ServerEnvelope::Response { .. },
-            ) => {}
-            Err(error) => panic!("server envelope should decode: {error:?}"),
-        }
-    }
-    tracks
 }
 
 fn track_binding(mid: &str, stream_type: StreamType) -> TrackBinding {

@@ -28,7 +28,7 @@ use o_sfu_telemetry::metrics::{
     RtcMetricsRecorder, RuntimeMetrics, test_support::RuntimeMetricsSnapshotTestExt,
 };
 use str0m::{
-    media::{Direction, Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
+    media::{Frequency, KeyframeRequestKind, MediaKind, Mid, Pt, Rid},
     rtp::Ssrc,
 };
 use tokio::sync::mpsc;
@@ -42,7 +42,7 @@ use super::{
     worker_add_send_media, worker_remove_media,
 };
 use crate::{
-    Bitrate,
+    Bitrate, CodecPreferences, MediaCodecFlags, VideoBitrateLimits,
     engine::{
         media_transport::{
             ConsumerActivity, ConsumerRouteControl, ConsumerRouteControlOutcome, ProducerActivity,
@@ -50,7 +50,7 @@ use crate::{
             TransportAdapterError, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
             TransportSourceKey,
             rtc::{
-                bootstrap, codec,
+                RtpProfile, bootstrap, codec,
                 commands::{
                     RemoteSourceControl, RouteControlRequest, RtcWorkerCommand,
                     WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
@@ -58,6 +58,7 @@ use crate::{
                 consumer_egress::test_support::{
                     SourceRtpIdentity, project_identity, queue_repairable_write,
                 },
+                negotiation,
                 recovery::{
                     drain_due_publisher_kf, observe_src_rid_ready, request_consumer_feedback_kf,
                     request_recovery_kf, retry_source_kf, worker_request_remote_kf,
@@ -130,6 +131,9 @@ fn arm_destination_repair(
         })
         .cloned()
         .ok_or("local route should have one destination")?;
+    let dest_mid = destination
+        .dest_mid
+        .ok_or("local route destination should have a MID")?;
     bootstrap::test_support::ensure_session_rtc_state(
         &mut state.users,
         &destination.dest_session,
@@ -142,7 +146,7 @@ fn arm_destination_repair(
         .get_mut(&destination.dest_session)
         .ok_or("consumer session should exist")?
         .consumer_streams
-        .allocate(destination.dest_mid);
+        .allocate(dest_mid);
     let removed = state
         .routes
         .remove_consumer_route(
@@ -159,17 +163,17 @@ fn arm_destination_repair(
         .users
         .get_mut(&destination.dest_session)
         .ok_or("consumer session should exist")?;
-    if session.rtc.media(destination.dest_mid).is_none() {
+    if session.rtc.media(dest_mid).is_none() {
         session
             .rtc
             .direct_api()
-            .declare_media(destination.dest_mid, MediaKind::Video);
+            .declare_media(dest_mid, MediaKind::Video);
     }
     let primary_ssrc = {
         let mut api = session.rtc.direct_api();
         let primary_ssrc = api.new_ssrc();
         let repair_ssrc = api.new_ssrc();
-        api.declare_stream_tx(primary_ssrc, Some(repair_ssrc), destination.dest_mid, None);
+        api.declare_stream_tx(primary_ssrc, Some(repair_ssrc), dest_mid, None);
         primary_ssrc
     };
     queue_repairable_write(&mut session.consumer_streams, dest_stream, primary_ssrc);
@@ -369,7 +373,7 @@ fn media_removal_rejects_a_registered_handle_without_its_owner_session() {
     let source_media = prepare_source_session(&mut state, &source_session, source_mid, 91_000);
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: source_session.clone(),
-        mid: source_mid,
+        mid: Some(source_mid),
     });
     assert!(state.users.remove(&source_session).is_some());
 
@@ -393,7 +397,7 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
         prepare_source_session(&mut state, &source_session, source_mid, *primary_ssrc);
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: source_session.clone(),
-        mid: source_mid,
+        mid: Some(source_mid),
     });
     let parameters = RouterRtpParameters::new(
         vec![],
@@ -462,7 +466,7 @@ fn register_routeless_consumer(
 ) -> TransportMediaId {
     state.register_media_handle(RegisteredMediaHandle::Consumer {
         session_key: session_key.clone(),
-        mid,
+        mid: Some(mid),
         src_media,
         destination: RouteDestinationHandle::default(),
     })
@@ -784,7 +788,7 @@ fn source_only_activity_respects_revision_and_media_kind() {
         direct_api.expect_stream_rx(Ssrc::from(ssrc), None, source_mid, None);
         let src_media = state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: source_session.clone(),
-            mid: source_mid,
+            mid: Some(source_mid),
         });
         let source = TransportSourceKey::new(source_session.clone(), src_media);
         let pause_revision = SourceActivityRevision::default().next();
@@ -2442,112 +2446,76 @@ fn remote_source_teardown_drops_pending_gate_state() {
     }
 }
 
-fn prepare_consumer_awaiting_answer(
-    state: &mut PacketLoopState,
-    consumer_session: &TransportSessionKey,
-) {
-    bootstrap::test_support::ensure_session_rtc_state(
-        &mut state.users,
-        consumer_session,
-        SocketAddr::from(([127, 0, 0, 1], 47_102)),
-        Bitrate::from_mbps(10),
-    )
-    .expect("consumer session must initialize");
-    let session = state
-        .users
-        .get_mut(consumer_session)
-        .expect("consumer session must exist");
-    session.sdp_negotiation.mark_initial_offer_applied();
-    let (offer, pending) = {
-        let mut api = session.rtc.sdp_api();
-        api.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        api.apply().expect("consumer offer must be staged")
-    };
-    session.sdp_negotiation.set_delivered_offer(&offer, pending);
-}
-
 #[test]
 fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_fails() {
     for existing_registration in [false, true] {
-        for awaiting_answer in [false, true] {
-            let source_session = test_source_session_key(151);
-            let consumer_session = test_consumer_session_key_on_worker(151, 1);
-            let mut state = PacketLoopState::default();
-            let metrics = RuntimeMetrics::default();
-            let rtc_metrics = metrics.register_rtc_worker();
-            let src_media = TransportMediaId::new(33);
-            let old_target = RelayTargetId::new(10);
-            let mut old_rx = existing_registration.then(|| {
-                let receiver = register_saturated_remote_source(
-                    &mut state,
-                    src_media,
-                    &source_session,
-                    old_target,
-                    Arc::clone(&rtc_metrics),
-                );
-                state
-                    .routes
-                    .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
-                receiver
-            });
-            if awaiting_answer {
-                prepare_consumer_awaiting_answer(&mut state, &consumer_session);
-            }
-            let (command_tx, mut new_rx) = mpsc::channel(1);
-            let control = RemoteSourceControl::new(
-                command_tx,
-                RelayTargetId::new(11),
+        let source_session = test_source_session_key(151);
+        let consumer_session = test_consumer_session_key_on_worker(151, 1);
+        let mut state = PacketLoopState::default();
+        let metrics = RuntimeMetrics::default();
+        let rtc_metrics = metrics.register_rtc_worker();
+        let src_media = TransportMediaId::new(33);
+        let old_target = RelayTargetId::new(10);
+        let mut old_rx = existing_registration.then(|| {
+            let receiver = register_saturated_remote_source(
+                &mut state,
+                src_media,
+                &source_session,
+                old_target,
                 Arc::clone(&rtc_metrics),
             );
-            let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
-            let source = TransportSourceKey::new(source_session.clone(), src_media);
-            let result = worker_add_send_media(
-                &mut state,
-                AddSendMediaRequest {
-                    consumer_key: &consumer_session,
-                    media_kind: MediaKind::Video,
-                    sync: SourceSyncPolicy::Independent,
-                    source: &source,
-                    remote_source_control: Some(control),
-                    consumer_rtp_parameters: &parameters,
-                    active: true,
-                },
-            );
-            let error = if awaiting_answer {
-                TransportAdapterError::InvalidInput
-            } else {
-                TransportAdapterError::TransportUnavailable
-            };
-            assert_eq!(result, Err(error));
-            if let Some(receiver) = &mut old_rx {
-                assert!(receiver.try_recv().is_ok());
-                state.routes.flush_remote_pkt_gates();
-                assert_remote_packet_gate_command(
-                    receiver,
-                    &source_session,
-                    src_media,
-                    old_target,
-                    PacketLayerGate::Block,
-                );
-                assert!(receiver.try_recv().is_err());
-            } else {
-                assert!(state.routes.remote_source(src_media).is_none());
-            }
+            state
+                .routes
+                .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+            receiver
+        });
+        let (command_tx, mut new_rx) = mpsc::channel(1);
+        let control =
+            RemoteSourceControl::new(command_tx, RelayTargetId::new(11), Arc::clone(&rtc_metrics));
+        let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
+        let source = TransportSourceKey::new(source_session.clone(), src_media);
+        let result = worker_add_send_media(
+            &mut state,
+            AddSendMediaRequest {
+                consumer_key: &consumer_session,
+                media_kind: MediaKind::Video,
+                sync: SourceSyncPolicy::Independent,
+                source: &source,
+                remote_source_control: Some(control),
+                consumer_rtp_parameters: &parameters,
+                active: true,
+            },
+        );
+        // The consumer session was never created.
+        assert_eq!(result, Err(TransportAdapterError::TransportUnavailable));
+        if let Some(receiver) = &mut old_rx {
+            assert!(receiver.try_recv().is_ok());
             state.routes.flush_remote_pkt_gates();
-            assert!(new_rx.try_recv().is_err());
-            assert_eq!(
-                metrics.snapshot().rtc_remote_control_packet_gate_drops(),
-                u64::from(existing_registration)
+            assert_remote_packet_gate_command(
+                receiver,
+                &source_session,
+                src_media,
+                old_target,
+                PacketLayerGate::Block,
             );
-            assert_eq!(
-                metrics.snapshot().rtc_remote_packet_gate_retries(),
-                u64::from(existing_registration)
-            );
-            assert_eq!(
-                metrics.snapshot().rtc_remote_packet_gate_flushes(),
-                u64::from(existing_registration)
-            );
+            assert!(receiver.try_recv().is_err());
+        } else {
+            assert!(state.routes.remote_source(src_media).is_none());
         }
+        state.routes.flush_remote_pkt_gates();
+        assert!(new_rx.try_recv().is_err());
+        assert_eq!(
+            metrics.snapshot().rtc_remote_control_packet_gate_drops(),
+            u64::from(existing_registration)
+        );
+        assert_eq!(
+            metrics.snapshot().rtc_remote_packet_gate_retries(),
+            u64::from(existing_registration)
+        );
+        assert_eq!(
+            metrics.snapshot().rtc_remote_packet_gate_flushes(),
+            u64::from(existing_registration)
+        );
     }
 }
 
@@ -2574,6 +2542,7 @@ fn consumer_sdp_groups_only_selected_publisher_tracks() {
         .mark_initial_offer_applied();
     let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
     // Declare the screen first so receiver stream order cannot make it the mic's pair.
+    let mut consumers = Vec::new();
     for (mid, kind, sync, source, ssrc) in [
         ("screen", MediaKind::Video, Independent, &publisher, 71_000),
         ("audio", MediaKind::Audio, Publisher, &publisher, 71_001),
@@ -2588,7 +2557,7 @@ fn consumer_sdp_groups_only_selected_publisher_tracks() {
         ),
     ] {
         let media = prepare_source_session(&mut state, source, Mid::from(mid), ssrc);
-        worker_add_send_media(
+        let consumer_media = worker_add_send_media(
             &mut state,
             AddSendMediaRequest {
                 consumer_key: &consumer,
@@ -2600,16 +2569,22 @@ fn consumer_sdp_groups_only_selected_publisher_tracks() {
                 active: true,
             },
         )
-        .expect("consumer media must be staged");
+        .expect("consumer media must queue");
+        consumers.push(consumer_media);
     }
-    let offer = state
-        .users
-        .get_mut(&consumer)
-        .and_then(|session| session.sdp_negotiation.take_offer().ok())
-        .expect("consumer media must produce an offer")
-        .into_session_offer()
-        .into_parts()
-        .0;
+    let profile = RtpProfile::compile(MediaCodecFlags::default(), CodecPreferences::default())
+        .expect("default profile must compile");
+    let offer = negotiation::worker_create_session_renegotiation_offer(
+        &mut state,
+        &profile,
+        VideoBitrateLimits::default(),
+        &consumer,
+        &consumers,
+    )
+    .expect("consumer media must produce one offer")
+    .into_session_offer();
+    assert_eq!(offer.consumer_mids.len(), 5);
+    let offer = offer.sdp;
     let tracks: Vec<_> = offer
         .lines()
         .filter_map(|line| line.strip_prefix("a=msid:")?.split_once(' '))
@@ -2668,7 +2643,7 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
     .with_mid(consumer_mid.to_string());
     let source = TransportSourceKey::new(source_session.clone(), src_media);
 
-    let (_consumer_media, declared_mid) = worker_add_send_media(
+    worker_add_send_media(
         &mut state,
         AddSendMediaRequest {
             consumer_key: &consumer_session,
@@ -2681,7 +2656,6 @@ fn add_send_media_declares_one_ridless_downstream_stream_for_simulcast_source() 
         },
     )
     .expect("consumer media declaration must succeed");
-    assert_eq!(declared_mid, consumer_mid.to_string());
 
     let Some(consumer_session_state) = state.users.get_mut(&consumer_session) else {
         panic!("consumer session should exist after RTC state bootstrap");

@@ -187,13 +187,19 @@ impl ParsedSessionAnswer {
 pub struct RtcSessionOffer {
     offer: SdpOffer,
     upload_slots: Vec<SessionUploadSlot>,
+    consumer_mids: Vec<(TransportMediaId, String)>,
 }
 
 impl RtcSessionOffer {
-    pub(super) fn new(offer: SdpOffer, upload_slots: Vec<SessionUploadSlot>) -> Self {
+    pub(super) fn new(
+        offer: SdpOffer,
+        upload_slots: Vec<SessionUploadSlot>,
+        consumer_mids: Vec<(TransportMediaId, String)>,
+    ) -> Self {
         Self {
             offer,
             upload_slots,
+            consumer_mids,
         }
     }
 
@@ -206,7 +212,11 @@ impl RtcSessionOffer {
         for media in &self.offer.media_lines {
             let _ = write!(sdp, "{media}");
         }
-        SessionOffer::new(sdp).with_upload_slots(self.upload_slots)
+        SessionOffer {
+            sdp,
+            upload_slots: self.upload_slots,
+            consumer_mids: self.consumer_mids,
+        }
     }
 }
 
@@ -276,14 +286,17 @@ pub enum RtcWorkerCommand {
         session_key: TransportSessionKey,
         response: RtcWorkerResponse<RtcSessionOffer>,
     },
-    /// drain a staged follow-up offer after media topology changed
+    /// build the follow-up offer from the media changes queued since the last one
     ///
-    /// media add and remove commands stage the SDP work before this command
+    /// media add and remove commands queue their SDP change before this command
     /// runs
-    /// this command hands the staged offer to the worker API and preserves the
+    /// a queued consumer joins the offer only when `committed_consumers` lists
+    /// it, because the caller must name its MID to the client before the offer
+    /// this command binds a MID to each addition it makes and preserves the
     /// one-outstanding-offer rule owned by the worker
     CreateSessionRenegotiationOffer {
         session_key: TransportSessionKey,
+        committed_consumers: Vec<TransportMediaId>,
         response: RtcWorkerResponse<RtcSessionOffer>,
     },
     /// read active-speaker sources from worker-local route-control state
@@ -320,8 +333,8 @@ pub enum RtcWorkerCommand {
     ///
     /// producer removal drops incoming bitrate tracking and the source route
     /// consumer removal drops local rewrite state and the destination route
-    /// negotiated media removal may stage the next SDP offer before the handle
-    /// leaves the public registry
+    /// a negotiated MID queues its removal for the next offer and media no
+    /// offer has bound leaves the queue
     RemoveMedia {
         session_key: TransportSessionKey,
         transport_media_id: TransportMediaId,
@@ -338,11 +351,11 @@ pub enum RtcWorkerCommand {
     },
     /// register one browser upload as worker-local producer media
     ///
-    /// before the initial answer this can declare receive state directly in
+    /// before the initial answer this declares receive state directly in
     /// str0m
-    /// after negotiation it stages a recv-only m-section plus pending
-    /// receive identities, then registers bitrate counters and the producer
-    /// media handle
+    /// after it the recv-only m-section queues for the next offer, which
+    /// binds its MID
+    /// both register the producer media handle and its bitrate counters
     AddRecvMedia {
         session_key: TransportSessionKey,
         media_kind: MediaKind,
@@ -351,9 +364,11 @@ pub enum RtcWorkerCommand {
     },
     /// register one browser download as consumer media for a source
     ///
-    /// the worker validates local or remote source ownership, stages or declares
+    /// the worker validates local or remote source ownership, declares or queues
     /// send-only media, registers the consumer handle and creates the packet-loop
     /// route destination
+    /// the response carries the MID only when the media was declared directly
+    /// a queued consumer gets its MID from the next offer
     /// remote sources install rollback-protected control so failed consumer
     /// setup does not leave stale relay state behind
     AddSendMedia {
@@ -364,7 +379,7 @@ pub enum RtcWorkerCommand {
         remote_source_control: Option<RemoteSourceControl>,
         consumer_rtp_parameters: RouterRtpParameters,
         active: bool,
-        response: RtcWorkerResponse<(TransportMediaId, String)>,
+        response: RtcWorkerResponse<TransportMediaId>,
     },
     ApplyMediaControlBatch {
         batch: WorkerMediaControlBatch,

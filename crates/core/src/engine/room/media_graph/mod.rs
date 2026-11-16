@@ -74,7 +74,6 @@ pub(in crate::engine) struct PublishedSource {
 pub(in crate::engine) struct ConsumerRouteView<'a> {
     pub key: &'a SubscriptionKey,
     pub route: &'a TransportConsumerRoute,
-    pub mid: &'a str,
     /// Borrow holds so policy snapshots do not copy deadlines for every route.
     pub pending_upgrade: Option<&'a PendingUpgrade>,
     pub source: &'a PublishedSource,
