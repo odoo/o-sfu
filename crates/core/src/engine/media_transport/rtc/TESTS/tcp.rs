@@ -81,7 +81,7 @@ async fn write_tcp_frame(stream: &mut TcpStream, frame: TcpFrame) {
 async fn create_session_offer(transport: &MediaTransport) -> (TransportSessionKey, String) {
     let session_key = test_transport_session_key(45, 0, 12, UserId::Integer(9));
     let offer = transport
-        .create_initial_session_offer("test-room", &session_key)
+        .create_initial_session_offer("test-room", &session_key, true)
         .await
         .expect("should be able to create test offer")
         .into_parts()

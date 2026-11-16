@@ -127,6 +127,7 @@ pub async fn join_user_with_receiver(
                 label: None,
                 permissions: UserPermissions::default(),
                 sender,
+                mid_reuse: true,
             },
             media_transport,
         )
@@ -198,6 +199,7 @@ pub async fn join_ready_users(user_ids: &[i64]) -> Result<ReadyRoom> {
                     label: None,
                     permissions: UserPermissions::default(),
                     sender,
+                    mid_reuse: true,
                 },
             )
             .await

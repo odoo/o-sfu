@@ -64,6 +64,7 @@ fn recovery_replay_splits_session_and_publication_phases() {
         vec![ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
             jwt: SecretString::from("signed-token"),
             channel: None,
+            mid_reuse: true,
         }))]
     );
 

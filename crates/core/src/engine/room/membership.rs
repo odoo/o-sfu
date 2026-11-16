@@ -39,6 +39,9 @@ pub struct JoinUserRequest {
     /// Ignored by room admission.
     pub permissions: UserPermissions,
     pub sender: UserOutboundSender,
+    /// Whether the client accepts a consumer MID that later names another
+    /// consumer. Ignored by room admission.
+    pub mid_reuse: bool,
 }
 
 impl Room {

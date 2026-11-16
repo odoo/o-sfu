@@ -26,6 +26,8 @@ fn parse_auth_payload_accepts_single_auth_message() {
     };
     assert_eq!(payload.jwt.expose_secret(), "token");
     assert_eq!(payload.channel.as_deref(), Some("room-1"));
+    // The frame of a client released before MID reuse.
+    assert!(!payload.mid_reuse);
 }
 
 #[test]

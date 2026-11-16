@@ -368,6 +368,9 @@ impl ProtocolCore {
             ClientMessage::Auth(AuthPayload {
                 jwt: SecretString::from(connect_context.jwt.clone()),
                 channel: connect_context.room.clone(),
+                // Host contract: a MID that `tracks` names for another consumer
+                // carries that consumer's media from then on.
+                mid_reuse: true,
             }),
             FlushMode::Immediate,
         )

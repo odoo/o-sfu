@@ -1,35 +1,49 @@
 //! SDP projections of the media a session queues for its next offer.
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
+    change::DirectApi,
     media::{MediaKind, Mid},
     rtp::Ssrc,
 };
 
-use super::{super::RtpProfile, super::codec, PendingRecvStream, upload_kind};
-use crate::{
-    VideoBitrateLimits,
-    engine::{
-        media_transport::{SessionUploadSlot, TransportSessionKey},
-        source_model::SourceSyncPolicy,
-    },
+use super::{
+    super::{RtpProfile, codec},
+    PendingRecvStream, upload_kind,
 };
+use crate::{VideoBitrateLimits, engine::media_transport::SessionUploadSlot};
 
-/// Returns the SDP stream id that groups a consumer with its publisher's
-/// synchronized pair.
-pub(in crate::engine::media_transport::rtc) fn consumer_stream_id(
-    source: &TransportSessionKey,
-    sync: SourceSyncPolicy,
-) -> Option<String> {
-    // Browsers synchronize only one audio/video pair per SDP stream. Sources
-    // outside that pair need independent IDs so they cannot displace its video.
-    // https://webrtc.googlesource.com/src/+/refs/heads/main/call/call.cc
-    match sync {
-        SourceSyncPolicy::Independent => None,
-        SourceSyncPolicy::Publisher => Some(format!(
-            "sfu-{}-{}",
-            source.room_instance_id(),
-            source.connection_id()
-        )),
+/// Declares the RID-less transmit stream of the send section `mid`, with an
+/// RTX stream when `repair`.
+pub(in crate::engine::media_transport::rtc) fn declare_send_stream(
+    api: &mut DirectApi<'_>,
+    mid: Mid,
+    repair: bool,
+) -> (Ssrc, Option<Ssrc>) {
+    let ssrc = api.new_ssrc();
+    // SSRC-multiplexed RTX uses a different SSRC from the primary stream.
+    // https://www.rfc-editor.org/rfc/rfc4588.html#section-4
+    let repair_ssrc = repair.then(|| {
+        loop {
+            let repair_ssrc = api.new_ssrc();
+            if repair_ssrc != ssrc {
+                break repair_ssrc;
+            }
+        }
+    });
+    api.declare_stream_tx(ssrc, repair_ssrc, mid, None);
+    (ssrc, repair_ssrc)
+}
+
+/// Removes the RID-less transmit streams of the send section `mid`.
+///
+/// Besides the stream its consumer declared, the section may hold one str0m
+/// created: every answer gives a sending section without a stream a new one.
+pub(in crate::engine::media_transport::rtc) fn remove_send_streams(
+    api: &mut DirectApi<'_>,
+    mid: Mid,
+) {
+    while let Some(ssrc) = api.stream_tx_by_mid(mid, None).map(|stream| stream.ssrc()) {
+        api.remove_stream_tx(ssrc);
     }
 }
 

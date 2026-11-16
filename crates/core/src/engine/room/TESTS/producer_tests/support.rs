@@ -493,7 +493,7 @@ pub(super) async fn bootstrap_real_rtc_user(
     session_key: &TransportSessionKey,
 ) -> SessionOffer {
     media_transport
-        .create_initial_session_offer("test-room", session_key)
+        .create_initial_session_offer("test-room", session_key, true)
         .await
         .expect("rtc user should produce an initial offer")
 }

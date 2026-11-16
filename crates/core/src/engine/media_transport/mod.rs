@@ -164,6 +164,10 @@ impl MediaTransport {
     /// [`TransportSessionKey`]. The returned offer is transport state that
     /// callers should send to the browser unchanged.
     ///
+    /// With `mid_reuse` a consumer of the session takes the MID a removed
+    /// consumer left. Without it every consumer gets a MID of its own, for a
+    /// client that cannot give a MID to another track.
+    ///
     /// # Errors
     ///
     /// Returns [`TransportAdapterError`] when the session cannot be addressed or
@@ -172,6 +176,7 @@ impl MediaTransport {
         &self,
         room_id: &str,
         session_key: &TransportSessionKey,
+        mid_reuse: bool,
     ) -> Result<SessionOffer, TransportAdapterError> {
         let room_id: Arc<str> = Arc::from(room_id);
         self.request_session_command(
@@ -179,6 +184,7 @@ impl MediaTransport {
             move |response| RtcWorkerCommand::CreateInitialSessionOffer {
                 room_id,
                 session_key: session_key.clone(),
+                mid_reuse,
                 response,
             },
             |error| {

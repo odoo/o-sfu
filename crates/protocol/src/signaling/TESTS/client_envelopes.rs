@@ -7,6 +7,7 @@ fn protocol_client_auth_message_round_trips_to_wire_envelope() -> serde_json::Re
     let envelope = ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
         jwt: secrecy::SecretString::from("jwt-token"),
         channel: Some(String::from("channel-1")),
+        mid_reuse: true,
     }))
     .into_envelope()?;
     assert_eq!(
@@ -16,8 +17,21 @@ fn protocol_client_auth_message_round_trips_to_wire_envelope() -> serde_json::Re
             "p": {
                 "jwt": "jwt-token",
                 "channel": "channel-1",
+                "midReuse": true,
             },
         })
+    );
+    // A client released before MID reuse sends no `midReuse`.
+    assert_eq!(
+        ClientEnvelope::decode(Envelope::message(
+            "auth",
+            Some(json!({ "jwt": "jwt-token", "channel": "channel-1" })),
+        )),
+        Ok(ClientEnvelope::Message(ClientMessage::Auth(AuthPayload {
+            jwt: secrecy::SecretString::from("jwt-token"),
+            channel: Some(String::from("channel-1")),
+            mid_reuse: false,
+        })))
     );
     Ok(())
 }

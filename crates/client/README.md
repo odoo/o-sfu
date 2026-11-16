@@ -75,7 +75,7 @@ RTCPeerConnection track event              Server Tracks snapshot
              |                                      |
    handleTrackEvent(event)              emitUpdate(remote_media) command
    store track by MID                               |
-   attach mute/unmute listeners           replaceTrackBindings()
+             |                            replaceTrackBindings()
              |                            applyBinding(mid, binding)
              |                            store binding by MID
              +------------------+-------------------+
@@ -95,8 +95,8 @@ RTCPeerConnection track event              Server Tracks snapshot
 ```
 
 Track and binding arrival order is independent. Rebinding a MID to a different
-session or stream clears the previous consumer and track then waits for a fresh
-track event. Local `DownloadStates` only overlays `active` for the binding's
+session or stream clears the previous consumer and emits the track for the new
+one. Local `DownloadStates` only overlays `active` for the binding's
 stream type. The mute and unmute listeners force a new projection so consumers
 observe the track's changed `muted` state without changing the computed
 `active` value.

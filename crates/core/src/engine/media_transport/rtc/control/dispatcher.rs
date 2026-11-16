@@ -65,6 +65,7 @@ pub fn handle_worker_command(
         RtcWorkerCommand::CreateInitialSessionOffer {
             room_id,
             session_key,
+            mid_reuse,
             response,
         } => respond(
             response,
@@ -74,6 +75,7 @@ pub fn handle_worker_command(
                 context.offer_bootstrap_config(),
                 room_id,
                 &session_key,
+                mid_reuse,
             ),
         ),
         RtcWorkerCommand::ActiveSpeakerSourceSnapshot { response } => respond(

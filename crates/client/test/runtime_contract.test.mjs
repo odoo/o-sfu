@@ -57,7 +57,10 @@ test("generated Wasm conforms to the complete host-command contract", () => {
         { kind: COMMAND_KIND.CONNECT, url: "ws://example.test/ws" }
     ]);
     assertCommands(core.onWsOpen(), [
-        sendWebSocket({ t: "auth", p: { channel: "channel-a", jwt: "jwt-token" } })
+        sendWebSocket({
+            t: "auth",
+            p: { channel: "channel-a", jwt: "jwt-token", midReuse: true }
+        })
     ]);
 
     const peerInfo = { isTalking: true, isRaisingHand: false };

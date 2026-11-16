@@ -338,6 +338,7 @@ async fn overflow_does_not_revive_a_replaced_session() -> TestResult {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender,
+                mid_reuse: true,
             },
         )
         .await?;

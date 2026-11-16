@@ -106,6 +106,7 @@ async fn room_manager_join_user_reports_missing_room() -> Result<()> {
                 label: None,
                 permissions: UserPermissions::default(),
                 sender,
+                mid_reuse: true,
             },
             &media_transport,
         )

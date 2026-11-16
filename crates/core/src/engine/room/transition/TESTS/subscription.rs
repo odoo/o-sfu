@@ -110,7 +110,7 @@ async fn join_negotiated_user_with_sender(
     if create_transport_session {
         let session_key = room.transport_user_key(user_id, connection_id).await;
         media_transport
-            .create_initial_session_offer("test-room", &session_key)
+            .create_initial_session_offer("test-room", &session_key, true)
             .await
             .expect("test session should create an initial offer");
     }
@@ -586,7 +586,7 @@ async fn transport_consume_failure_releases_pending_setup_for_retry() {
         .transport_user_key(&subscriber_id, subscriber_connection_id)
         .await;
     media_transport
-        .create_initial_session_offer("test-room", &subscriber_session_key)
+        .create_initial_session_offer("test-room", &subscriber_session_key, true)
         .await
         .expect("retry session should create an initial offer");
 

@@ -7,7 +7,6 @@ import { FakeProtocolCore, tick } from "../support/protocol_fakes.mjs";
 import {
     createCameraTrack,
     createSfuClientHarness,
-    createScreenTrack,
     emitOfferWithBinding
 } from "../support/sfu_client_harness.mjs";
 import {
@@ -26,12 +25,13 @@ test("track metadata updates re-emit track state for existing remote tracks", as
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     await emitMessage("inactive-track-binding");
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -62,8 +62,8 @@ test("track events wait for later binding snapshots before publishing", async ()
     await connectWithWelcome();
     await emitMessage("offer");
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     assert.deepEqual(updates, []);
@@ -71,6 +71,7 @@ test("track events wait for later binding snapshots before publishing", async ()
 
     await emitMessage("inactive-track-binding");
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -109,10 +110,11 @@ test("initial peer creation keeps earlier binding snapshots", async () => {
     await emitMessage("inactive-track-binding");
     await emitMessage("offer-without-track-bindings");
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -134,13 +136,14 @@ test("track-only slots survive empty binding snapshots before publishing", async
     await connectWithWelcome();
     await emitMessage("offer");
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     await emitMessage("clear-track-bindings");
     await emitMessage("inactive-track-binding");
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -163,8 +166,8 @@ test("subscribe overlays local download state onto existing remote tracks", asyn
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     client.subscribe(42, { camera: false });
@@ -177,6 +180,7 @@ test("subscribe overlays local download state onto existing remote tracks", asyn
     await tick();
     await tick();
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -220,10 +224,11 @@ test("subscribe preferences apply to future remote track bindings", async () => 
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
+    const [track] = receiverTrack.clones;
     assert.deepEqual(updates, [
         {
             name: CLIENT_UPDATE.TRACK,
@@ -318,16 +323,16 @@ test("peer teardown clears bindings before the next peer can emit tracks", async
             payload: {
                 active: true,
                 sessionId: 84,
-                track: earlyTrack,
+                track: earlyTrack.clones[0],
                 type: "screen"
             }
         }
     ]);
     assert.equal(client._consumers.has(42), false);
-    assert.equal(client._consumers.get(84).screen.track, earlyTrack);
+    assert.equal(client._consumers.get(84).screen.track, earlyTrack.clones[0]);
 });
 
-test("track rebinding waits for a fresh track event before re-emitting state", async () => {
+test("a reused mid gives each owner a track of its own", async () => {
     const { client, core, emitMessage, peerConnections, updates, connectWithWelcome } =
         createSfuClientHarness();
 
@@ -335,51 +340,72 @@ test("track rebinding waits for a fresh track event before re-emitting state", a
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const firstTrack = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(firstTrack, "0");
+    const receiverTrack = new FakeMediaTrack({ id: "track-1", kind: "video" });
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
+    // One snapshot renames the mid. Its section stayed sendonly, so the
+    // browser fires no track event.
     await emitMessage("track-rebind");
 
-    assert.deepEqual(updates, [
-        {
-            name: CLIENT_UPDATE.TRACK,
-            payload: {
-                active: true,
-                sessionId: 42,
-                track: firstTrack,
-                type: "camera"
-            }
-        }
-    ]);
+    const [cameraTrack, screenTrack] = receiverTrack.clones;
     assert.equal(client._consumers.has(42), false);
-    assert.equal(client._consumers.has(84), false);
+    assert.equal(client._consumers.get(84).screen.track, screenTrack);
+    // The previous owner cannot play what the mid receives next.
+    assert.equal(cameraTrack.readyState, "ended");
 
-    const reboundTrack = createScreenTrack("track-2");
-    peerConnections[0].emitTrack(reboundTrack, "0");
+    // A retracted owner hears nothing more of the track. Odoo stops the tracks
+    // of a session that left.
+    await emitMessage("clear-track-bindings");
+    screenTrack.stop();
+    receiverTrack.setMuted(true);
     await tick();
 
-    assert.deepEqual(updates, [
-        {
-            name: CLIENT_UPDATE.TRACK,
-            payload: {
-                active: true,
-                sessionId: 42,
-                track: firstTrack,
-                type: "camera"
-            }
-        },
-        {
-            name: CLIENT_UPDATE.TRACK,
-            payload: {
-                active: true,
-                sessionId: 84,
-                track: reboundTrack,
-                type: "screen"
-            }
-        }
-    ]);
-    assert.equal(client._consumers.get(84).screen.track, reboundTrack);
+    assert.equal(client._consumers.size, 0);
+
+    // The section was inactive in between, so the browser repeats the event.
+    await emitMessage("inactive-track-binding");
+    peerConnections[0].emitTrack(receiverTrack, "0");
+    await tick();
+
+    const reboundTrack = receiverTrack.clones[2];
+    assert.deepEqual(
+        updates.map(({ payload }) => [payload.sessionId, payload.type, payload.active]),
+        [
+            [42, "camera", true],
+            [84, "screen", true],
+            [42, "camera", false]
+        ]
+    );
+    assert.deepEqual(
+        updates.map(({ payload }) => payload.track),
+        [cameraTrack, screenTrack, reboundTrack]
+    );
+    assert.equal(client._consumers.get(42).camera.track, reboundTrack);
+    assert.equal(reboundTrack.readyState, "live");
+    assert.equal(receiverTrack.clones.length, 3);
+
+    // Both mids change owners in one snapshot, without another track event.
+    core.trackBindings.set("1", { active: true, mid: "1", sessionId: 84, type: "screen" });
+    await emitMessage("inactive-track-binding");
+    const secondReceiverTrack = createCameraTrack("track-2");
+    peerConnections[0].emitTrack(secondReceiverTrack, "1");
+    await tick();
+
+    core.trackBindings.set("1", { active: false, mid: "1", sessionId: 42, type: "camera" });
+    await emitMessage("track-rebind");
+
+    assert.equal(client._consumers.get(84)?.screen?.track, receiverTrack.clones[3]);
+    assert.equal(client._consumers.get(42)?.camera?.track, secondReceiverTrack.clones[1]);
+    assert.equal(reboundTrack.readyState, "ended");
+    assert.equal(secondReceiverTrack.clones[0].readyState, "ended");
+    assert.deepEqual(
+        updates.slice(-2).map(({ payload }) => [payload.sessionId, payload.type, payload.track]),
+        [
+            [84, "screen", receiverTrack.clones[3]],
+            [42, "camera", secondReceiverTrack.clones[1]]
+        ]
+    );
 });
 
 test("peer departure clears remote-track state before disconnect update", async () => {
@@ -396,8 +422,8 @@ test("peer departure clears remote-track state before disconnect update", async 
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = createCameraTrack("track-1");
-    peerConnections[0].emitTrack(track, "0");
+    const receiverTrack = createCameraTrack("track-1");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     await emitMessage("peer-left");
@@ -422,7 +448,7 @@ test("peer connection teardown clears stale remote consumer state", async () => 
     peerConnections[0].emitTrack(createCameraTrack("track-1"), "0");
     await tick();
 
-    assert.equal(client._consumers.get(42).camera.track.id, "track-1");
+    assert.equal(client._consumers.get(42).camera.track.id, "track-1-clone-0");
 
     await emitMessage("close-peer-connection");
 
@@ -438,17 +464,25 @@ test("remote track lifecycle updates re-emit when the browser unmutes the track"
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = new FakeMediaTrack({
+    // What a caller reads from the track at the time it is told.
+    const mutedAtUpdate = [];
+    client.addEventListener("update", ({ detail }) => {
+        mutedAtUpdate.push(detail.payload.track.muted);
+    });
+
+    const receiverTrack = new FakeMediaTrack({
         id: "track-1",
         kind: "video",
         muted: true
     });
-    peerConnections[0].emitTrack(track, "0");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
-    track.setMuted(false);
+    receiverTrack.setMuted(false);
     await tick();
 
+    const [track] = receiverTrack.clones;
+    assert.deepEqual(mutedAtUpdate, [true, false]);
     assert.deepEqual(updates.at(-1), {
         name: CLIENT_UPDATE.TRACK,
         payload: {
@@ -470,19 +504,19 @@ test("duplicate remote track events keep one lifecycle listener", async () => {
 
     await emitOfferWithBinding({ core, emitMessage });
 
-    const track = new FakeMediaTrack({
+    const receiverTrack = new FakeMediaTrack({
         id: "track-1",
         kind: "video",
         muted: true
     });
-    peerConnections[0].emitTrack(track, "0");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
-    peerConnections[0].emitTrack(track, "0");
+    peerConnections[0].emitTrack(receiverTrack, "0");
     await tick();
 
     assert.equal(updates.length, 1);
 
-    track.setMuted(false);
+    receiverTrack.setMuted(false);
     await tick();
 
     assert.equal(updates.length, 2);

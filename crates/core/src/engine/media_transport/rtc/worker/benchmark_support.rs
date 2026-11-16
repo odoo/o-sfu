@@ -30,6 +30,7 @@ impl RtcWorker {
             move |response| RtcWorkerCommand::CreateInitialSessionOffer {
                 room_id,
                 session_key: session_key.clone(),
+                mid_reuse: true,
                 response,
             },
         )

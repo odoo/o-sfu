@@ -245,6 +245,93 @@ test("late-joining subscriber receives the already-live publication", async ({ c
         });
 });
 
+test("a publisher joining after another left takes its sections as one sync group", async ({
+    browserName,
+    context
+}) => {
+    test.setTimeout(60_000);
+    const bystanderSessionId = 43;
+    const joinerSessionId = 44;
+    const channelUuid = await createChannel();
+    const subscriber = await createPeerPage(context);
+    const leaver = await createPeerPage(context);
+    const bystander = await createPeerPage(context);
+    const joiner = await createPeerPage(context);
+    const connect = async (page, sessionId) => {
+        await connectPeer(page, {
+            channelUuid,
+            jwt: createConnectToken(channelUuid, sessionId)
+        });
+        await expect.poll(async () => (await peerSnapshot(page)).state).toBe("connected");
+    };
+    const publishPair = async (page, sessionId, label) => {
+        await publishSyntheticAudio(page, `${label}-audio`);
+        const camera = await publishSyntheticCamera(page, `${label}-camera`);
+        await expectTrackUpdate(subscriber, sessionId, "audio", true, "audio");
+        await expectCameraTrackUpdate(subscriber, sessionId, true);
+        return camera;
+    };
+    // A track event precedes the answer that sets the direction.
+    const negotiatedSections = async (sessionId) => {
+        await expect
+            .poll(() => remoteSections(subscriber, sessionId))
+            .toMatchObject({
+                audio: { direction: "recvonly" },
+                camera: { direction: "recvonly" }
+            });
+        return remoteSections(subscriber, sessionId);
+    };
+
+    await connect(subscriber, SUBSCRIBER_SESSION_ID);
+    await stopTracksOfDepartedSessions(subscriber);
+    await connect(leaver, PUBLISHER_SESSION_ID);
+    await connect(bystander, bystanderSessionId);
+    await publishPair(leaver, PUBLISHER_SESSION_ID, "leaver");
+    await publishPair(bystander, bystanderSessionId, "bystander");
+
+    const leaverSections = await negotiatedSections(PUBLISHER_SESSION_ID);
+    const bystanderSections = await negotiatedSections(bystanderSessionId);
+    expect(leaverSections.camera.stream).toBe(leaverSections.audio.stream);
+    expect(bystanderSections.camera.stream).toBe(bystanderSections.audio.stream);
+    expect(bystanderSections.audio.stream).not.toBe(leaverSections.audio.stream);
+    const transceiverCount = await remoteTransceiverCount(subscriber);
+
+    await disconnectPeer(leaver);
+    await expect
+        .poll(async () => (await peerSnapshot(subscriber)).consumers[String(PUBLISHER_SESSION_ID)])
+        .toBeUndefined();
+    const leaverAudioSsrcs = (await inboundStreams(subscriber, leaverSections.audio.mid)).map(
+        ({ ssrc }) => ssrc
+    );
+
+    await connect(joiner, joinerSessionId);
+    const joinerCamera = await publishPair(joiner, joinerSessionId, "joiner-two");
+
+    // The joiner's pair is on the leaver's sections with live tracks of its
+    // own, so it shares their stream and the bystander keeps a stream of its own.
+    await expect.poll(() => remoteSections(subscriber, joinerSessionId)).toEqual(leaverSections);
+    expect(await remoteSections(subscriber, bystanderSessionId)).toEqual(bystanderSections);
+    expect(await remoteTransceiverCount(subscriber)).toBe(transceiverCount);
+
+    const frame = await waitForDecodedRemoteVideoFrame(
+        subscriber,
+        joinerSessionId,
+        "camera",
+        browserName === "chromium" ? { expectedPixel: joinerCamera.fillPixel } : {}
+    );
+    expect(frame.width).toBeGreaterThan(0);
+    expect(frame.height).toBeGreaterThan(0);
+    // The section receives the joiner's microphone on a stream of its own.
+    await expect
+        .poll(async () =>
+            (await inboundStreams(subscriber, leaverSections.audio.mid)).some(
+                ({ packetsReceived, ssrc }) =>
+                    packetsReceived > 0 && !leaverAudioSsrcs.includes(ssrc)
+            )
+        )
+        .toBe(true);
+});
+
 test("audio and screen streams publish, pause and clean up independently", async ({
     browserName,
     context
@@ -860,6 +947,80 @@ function streamIdentity({ publication, source, subscription }) {
         subscriptionSourceId: subscription.sourceId,
         subscriptionSourceTransportMediaId: subscription.sourceTransportMediaId
     };
+}
+
+// MID, negotiated direction, msid stream and track state of the sections that
+// carry the microphone and camera of one session.
+function remoteSections(page, sessionId) {
+    return page.evaluate((targetSessionId) => {
+        const harness = globalThis.__liveHarness;
+        const client = harness.client;
+        const peer = client._runtime._peerSession._activePeer;
+        const streamByMid = new Map();
+        for (const section of (peer.remoteDescription?.sdp ?? "").split("\r\nm=").slice(1)) {
+            streamByMid.set(
+                section.match(/\r\na=mid:(\S+)/)?.[1],
+                section.match(/\r\na=msid:(\S+) /)?.[1] ?? null
+            );
+        }
+        const consumers = client._consumers.get(targetSessionId);
+        return Object.fromEntries(
+            ["audio", "camera"].map((type) => {
+                const track = consumers?.[type]?.track;
+                const receiver = harness.receiverOf(track);
+                const transceiver =
+                    receiver &&
+                    peer.getTransceivers().find((candidate) => candidate.receiver === receiver);
+                return [
+                    type,
+                    transceiver
+                        ? {
+                              direction: transceiver.currentDirection,
+                              mid: transceiver.mid,
+                              stream: streamByMid.get(transceiver.mid) ?? null,
+                              track: track.readyState
+                          }
+                        : null
+                ];
+            })
+        );
+    }, sessionId);
+}
+
+// Odoo stops the tracks it got for a session when that session leaves.
+function stopTracksOfDepartedSessions(page) {
+    return page.evaluate(() => {
+        const tracksBySession = new Map();
+        globalThis.__liveHarness.client.addEventListener("update", ({ detail }) => {
+            const { sessionId, track } = detail.payload ?? {};
+            if (detail.name === "track") {
+                tracksBySession.set(sessionId, [...(tracksBySession.get(sessionId) ?? []), track]);
+            } else if (detail.name === "disconnect") {
+                for (const delivered of tracksBySession.get(sessionId) ?? []) {
+                    delivered.stop();
+                }
+            }
+        });
+    });
+}
+
+function remoteTransceiverCount(page) {
+    return page.evaluate(
+        () =>
+            globalThis.__liveHarness.client._runtime._peerSession._activePeer.getTransceivers()
+                .length
+    );
+}
+
+function inboundStreams(page, mid) {
+    return page.evaluate(async (targetMid) => {
+        const peer = globalThis.__liveHarness.client._runtime._peerSession._activePeer;
+        const transceiver = peer.getTransceivers().find((candidate) => candidate.mid === targetMid);
+        const stats = (await transceiver?.receiver.getStats()) ?? new Map();
+        return [...stats.values()]
+            .filter((report) => report.type === "inbound-rtp")
+            .map(({ packetsReceived = 0, ssrc }) => ({ packetsReceived, ssrc }));
+    }, mid);
 }
 
 async function expectCameraTrackUpdate(page, sessionId, active) {

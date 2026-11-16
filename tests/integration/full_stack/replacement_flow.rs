@@ -11,7 +11,7 @@ async fn fake_rtc_peers_rebootstrap_user_replacement_without_stale_media_routes(
     } = st::ready_room_fake_integer_peers("issuer-replacement-rtc", 80, 81).await?;
 
     let mut source = s::FakeMediaSource::audio();
-    m::publish_source_and_ready_route(
+    let initial_track = m::publish_source_and_ready_route(
         &server,
         &room,
         &mut initial_publisher,
@@ -56,7 +56,7 @@ async fn fake_rtc_peers_rebootstrap_user_replacement_without_stale_media_routes(
             .await,
         "replacement peer should reach ready state",
     )?;
-    m::publish_source_and_ready_route(
+    let replacement_track = m::publish_source_and_ready_route(
         &server,
         &room,
         &mut replacement,
@@ -65,6 +65,8 @@ async fn fake_rtc_peers_rebootstrap_user_replacement_without_stale_media_routes(
         &source,
     )
     .await;
+    // The subscriber gets the replacement on the MID the departure freed.
+    assert_eq!(replacement_track.mid, initial_track.mid);
     m::assert_packet_forwarded(&mut replacement, &mut subscriber, &mut source, &mut clock).await;
     server.join().await
 }

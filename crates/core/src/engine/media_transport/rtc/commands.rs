@@ -281,9 +281,11 @@ pub enum RtcWorkerCommand {
     /// worker startup binds the shared UDP socket, then this command lazily creates
     /// session RTC state from its candidate address
     /// it rejects a pending offer, a committed initial answer or registered media
+    /// without `mid_reuse` every consumer of the session keeps a MID of its own
     CreateInitialSessionOffer {
         room_id: Arc<str>,
         session_key: TransportSessionKey,
+        mid_reuse: bool,
         response: RtcWorkerResponse<RtcSessionOffer>,
     },
     /// build the follow-up offer from the media changes queued since the last one
