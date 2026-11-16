@@ -12,9 +12,10 @@ use o_sfu_router::rtp::MediaCapabilities;
 use super::super::{
     RoomUserOperation,
     effects::batch::{RoomEffectContext, RoomEffects},
+    outbound::RemoteTrackSnapshot,
 };
 use crate::engine::{
-    media_transport::TransportMediaId,
+    media_transport::{SessionOffer, TransportAdapterError, TransportMediaId, TransportSessionKey},
     source_model::{SourceSubscriptionIntent, UserStreamId},
 };
 
@@ -52,6 +53,45 @@ impl RoomUserOperation<'_> {
             .execute(self.room, RoomEffectContext::runtime(self.media_transport))
             .await;
         Some(())
+    }
+
+    /// Creates this connection's next offer from the tracks the room has
+    /// committed for it and returns both.
+    ///
+    /// The offer adds only the consumers of the returned tracks, so a caller
+    /// that names those tracks before the offer names every consumer MID it
+    /// adds. The tracks are read once, before the transport call: a setup turn
+    /// declares its consumer in the transport before the room commits its
+    /// route. A consumer committed later joins the next offer. A publisher
+    /// that leaves later is retracted by the snapshot of its departure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the session
+    /// cannot be addressed, [`TransportAdapterError::InvalidInput`] before the
+    /// initial answer or while an offer awaits its answer and
+    /// [`TransportAdapterError::UnsupportedFeature`] when no change needs an
+    /// offer.
+    pub(crate) async fn create_renegotiation_offer(
+        self,
+        session_key: &TransportSessionKey,
+    ) -> Result<(SessionOffer, RemoteTrackSnapshot), TransportAdapterError> {
+        let tracks = self
+            .room
+            .state
+            .read()
+            .await
+            .committed_remote_tracks(self.user_id, self.connection_id);
+        let committed_consumers = tracks
+            .tracks
+            .iter()
+            .map(|track| track.consumer_media)
+            .collect();
+        let offer = self
+            .media_transport
+            .create_session_renegotiation_offer(session_key, committed_consumers)
+            .await?;
+        Ok((offer, tracks))
     }
 
     pub(crate) async fn apply_receiver_intent(

@@ -1359,7 +1359,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
             .state
             .register_media_handle(RegisteredMediaHandle::Producer {
                 session_key: session_key.clone(),
-                mid,
+                mid: Some(mid),
             });
         let bindings = streams
             .iter()
@@ -1589,7 +1589,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
                 dest_session: session_key,
                 dest_transport_media_id: consumer_media,
                 dest_stream,
-                dest_mid: mid,
+                dest_mid: Some(mid),
                 dest_payload_type,
                 repair_enabled: false,
                 active: true,

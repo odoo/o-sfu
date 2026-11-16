@@ -64,7 +64,7 @@ fn local_forwarded_packet_resolves_transport_media_id_through_session_handle() {
     };
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: Mid::from("aud-up"),
+        mid: Some(Mid::from("aud-up")),
     });
     let mut packet = sample_local_forwarded_packet(session_handle, "aud-up", b"payload");
 
@@ -86,7 +86,7 @@ fn stale_local_forwarded_packet_does_not_resolve_through_reused_slot() {
     let _replacement_handle = install_test_session(&mut state, &replacement_session_key);
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: replacement_session_key,
-        mid: Mid::from("aud-up"),
+        mid: Some(Mid::from("aud-up")),
     });
     let mut packet = sample_local_forwarded_packet(stale_handle, "aud-up", b"payload");
     packet.src_media = Some(TransportMediaId::new(99));
@@ -109,7 +109,7 @@ fn cached_local_packet_rejects_a_reused_session_slot() -> Result<(), &'static st
     let mid = Mid::from("aud-up");
     let media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid,
+        mid: Some(mid),
     });
     state.refresh_producer_ssrcs(
         &session_key,
@@ -146,7 +146,7 @@ fn forwarded_packet_decoder_refresh_follows_the_packet_payload_type() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     let parameters = RouterRtpParameters::new(
         vec![
@@ -188,7 +188,7 @@ fn producer_packet_inspector_rebuilds_on_renegotiation_and_clear() {
     let mut state = PacketLoopState::default();
     let source_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     let vp8 = RouterRtpParameters::new(vec![video_format(CodecName::Vp8, 96)], vec![], vec![]);
     let h264 = RouterRtpParameters::new(vec![video_format(CodecName::H264, 96)], vec![], vec![]);
@@ -236,7 +236,7 @@ fn forwarded_packet_relay_clone_preserves_source_facts() {
     };
     let src_media = source_state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key,
-        mid: Mid::from("cam-up"),
+        mid: Some(Mid::from("cam-up")),
     });
     source_state.routes.refresh_packet_inspector(
         src_media,
@@ -311,7 +311,7 @@ fn forwarded_packet_facts_carry_codec_packet() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: Mid::from("cam-up"),
+        mid: Some(Mid::from("cam-up")),
     });
     let parameters =
         RouterRtpParameters::new(vec![video_format(CodecName::Vp8, 111)], vec![], vec![]);
@@ -346,7 +346,7 @@ fn forwarded_packet_recovers_rid_from_ssrc_binding_when_extension_is_absent() {
     let mut state = PacketLoopState::default();
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     let parameters = RouterRtpParameters::new(
         vec![video_format(CodecName::Vp8, 96)],
@@ -395,7 +395,7 @@ fn local_packet_prefers_negotiated_rid_including_ridless() {
         };
         let src_media = state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: session_key.clone(),
-            mid: producer_mid,
+            mid: Some(producer_mid),
         });
         let mut encoding = StreamBinding::new().with_ssrc(producer_ssrc);
         if let Some(rid) = negotiated_rid {
@@ -461,7 +461,7 @@ fn local_packet_keeps_mid_owner_when_ssrc_collides() -> Result<(), &'static str>
     let first_mid = Mid::from("first");
     let first = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: first_mid,
+        mid: Some(first_mid),
     });
     state.refresh_producer_ssrcs(
         &session_key,
@@ -471,7 +471,7 @@ fn local_packet_keeps_mid_owner_when_ssrc_collides() -> Result<(), &'static str>
     let second_mid = Mid::from("second");
     let second = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: second_mid,
+        mid: Some(second_mid),
     });
     state.refresh_producer_ssrcs(
         &session_key,
@@ -506,7 +506,7 @@ fn forwarded_packet_falls_back_to_ssrc_when_mid_is_missing() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: producer_mid,
+        mid: Some(producer_mid),
     });
     state.refresh_producer_ssrcs(
         &session_key,
@@ -529,7 +529,7 @@ fn forwarded_packet_caches_the_resolved_src_media() {
     let mut state = PacketLoopState::default();
     let transport_media_id = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: session_key.clone(),
-        mid: Mid::from("aud-up"),
+        mid: Some(Mid::from("aud-up")),
     });
     let mut packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
 

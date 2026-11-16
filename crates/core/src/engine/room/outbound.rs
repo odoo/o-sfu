@@ -23,7 +23,9 @@ use tokio::sync::{
 };
 
 use super::UserCloseReason;
-use crate::engine::{source_model::UserStreamId, sync::lock_unpoisoned};
+use crate::engine::{
+    media_transport::TransportMediaId, source_model::UserStreamId, sync::lock_unpoisoned,
+};
 
 pub const MAX_BROADCAST_PAYLOAD_BYTES: usize = 16 * 1024;
 
@@ -140,18 +142,22 @@ pub const DEFAULT_USER_OUTBOUND_QUEUE_BYTE_CAPACITY: usize =
 
 pub(super) type OutboundSender = UserOutboundSender;
 
+/// One track a connection consumes. The room knows no MID: the session adds
+/// it once an offer has bound `consumer_media`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteTrackProjection {
-    pub consumer_mid: String,
+pub struct RemoteTrack {
+    pub consumer_media: TransportMediaId,
     pub user_id: UserId,
     pub stream_id: UserStreamId,
     pub producer_active: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RemoteTrackSnapshot {
-    pub tracks: Vec<RemoteTrackProjection>,
+    pub tracks: Vec<RemoteTrack>,
     pub requires_negotiation: bool,
+    /// Order in which the room built its snapshots. A higher one supersedes.
+    pub(crate) revision: u64,
 }
 
 impl RemoteTrackSnapshot {
@@ -165,17 +171,10 @@ impl RemoteTrackSnapshot {
                 };
                 bytes
                     .saturating_add(TRACK_PROJECTION_QUEUE_OVERHEAD_BYTES)
-                    .saturating_add(track.consumer_mid.len())
                     .saturating_add(user_id_bytes)
                     .saturating_add(track.stream_id.as_str().len())
             })
     }
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::engine) struct VersionedRemoteTrackSnapshot {
-    pub(in crate::engine::room) snapshot: RemoteTrackSnapshot,
-    pub(in crate::engine::room) revision: u64,
 }
 
 /// room output that belongs to one connected user
@@ -321,7 +320,7 @@ pub struct UserOutboundSender {
     metrics: Arc<RuntimeMetrics>,
     limits: UserOutboundQueueLimits,
     queued_bytes: Arc<AtomicUsize>,
-    latest_track_snapshot: Arc<Mutex<Option<VersionedRemoteTrackSnapshot>>>,
+    latest_track_snapshot: Arc<Mutex<Option<RemoteTrackSnapshot>>>,
 }
 
 #[derive(Debug)]
@@ -385,7 +384,7 @@ impl UserOutboundSender {
     /// forward on the latest snapshot.
     pub(in crate::engine::room) fn send_remote_tracks(
         &self,
-        snapshot: VersionedRemoteTrackSnapshot,
+        snapshot: RemoteTrackSnapshot,
     ) -> Result<(), UserOutboundSendError> {
         let revision = snapshot.revision;
         {
@@ -397,16 +396,16 @@ impl UserOutboundSender {
                 .as_ref()
                 .is_none_or(|current| revision > current.revision)
             {
-                self.enqueue(UserOutbound::RemoteTracks(snapshot.snapshot.clone()))?;
+                self.enqueue(UserOutbound::RemoteTracks(snapshot.clone()))?;
                 *latest = Some(snapshot);
                 return Ok(());
             }
             if let Some(current) = latest.as_mut()
                 && revision < current.revision
-                && snapshot.snapshot.requires_negotiation
+                && snapshot.requires_negotiation
             {
-                current.snapshot.requires_negotiation = true;
-                self.enqueue(UserOutbound::RemoteTracks(current.snapshot.clone()))?;
+                current.requires_negotiation = true;
+                self.enqueue(UserOutbound::RemoteTracks(current.clone()))?;
             }
         }
         Ok(())

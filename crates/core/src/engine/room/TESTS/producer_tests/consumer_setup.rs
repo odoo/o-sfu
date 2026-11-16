@@ -1,4 +1,8 @@
 use super::support::*;
+use crate::engine::{
+    media_transport::{ConsumerActivity, TransportSourceKey},
+    source_model::SourceSyncPolicy,
+};
 
 #[tokio::test]
 async fn initial_answer_sets_up_pending_consumers_once() {
@@ -31,8 +35,10 @@ async fn initial_answer_sets_up_pending_consumers_once() {
 }
 
 #[tokio::test]
-async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
+async fn consumer_staged_behind_a_pending_offer_joins_the_next_offer_on_real_rtc() {
     let mut scenario = Box::pin(setup_real_rtc_refresh_scenario()).await;
+    let scalable = stream_id_for_source(TestSourceKind::ScalableVideo);
+    let readable = stream_id_for_source(TestSourceKind::ReadableVideo);
 
     publish_track(
         &scenario.room,
@@ -49,11 +55,8 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
     );
     assert_eq!(scenario.room.test_api().consumer_count().await, 1);
 
-    let first_refresh_offer = scenario
-        .media_transport
-        .create_session_renegotiation_offer(&scenario.subscriber_session_key)
-        .await
-        .expect("first subscriber refresh should stage an rtc offer");
+    let (first_refresh_offer, named) = create_refresh_offer(&scenario).await;
+    assert_eq!(named, BTreeSet::from([scalable.clone()]));
 
     publish_track(
         &scenario.room,
@@ -65,43 +68,109 @@ async fn refresh_retry_sets_up_only_missing_consumers_on_real_rtc() {
     .await;
     assert_eq!(
         scenario.room.test_api().consumer_count().await,
-        1,
-        "second consumer must stay pending while the first rtc offer awaits an answer"
+        2,
+        "the second consumer commits while the first rtc offer awaits its answer"
     );
-    assert!(
-        drain_outbound(&mut scenario.subscriber_rx).is_empty(),
-        "no second setup should be emitted before the first refresh answer lands"
-    );
-
-    let requests_before_refresh = keyframe_request_count(&scenario);
-    settle_refresh_offer(&mut scenario, first_refresh_offer).await;
-    assert_eq!(
-        keyframe_request_count(&scenario),
-        requests_before_refresh + 1,
-        "refresh answer should keyframe only the newly committed active video route"
-    );
-
-    assert_eq!(scenario.room.test_api().consumer_count().await, 2);
     assert_remote_track_snapshot_for_stream(
         &drain_outbound(&mut scenario.subscriber_rx),
         TestSourceKind::ReadableVideo,
     );
-
-    let second_refresh_offer = scenario
-        .media_transport
-        .create_session_renegotiation_offer(&scenario.subscriber_session_key)
-        .await
-        .expect("retry should stage the deferred rtc offer");
-    settle_refresh_offer(&mut scenario, second_refresh_offer).await;
-
     assert_eq!(
-        scenario.room.test_api().consumer_count().await,
-        2,
-        "retry pass must not duplicate already-committed consumers"
+        refresh_offer(&scenario).await,
+        Err(TransportAdapterError::InvalidInput),
+        "the queued consumer must wait for the answer of the pending offer"
     );
+
+    settle_refresh_offer(&mut scenario, first_refresh_offer).await;
+    assert_eq!(scenario.room.test_api().consumer_count().await, 2);
     assert!(
         drain_outbound(&mut scenario.subscriber_rx).is_empty(),
-        "no new setup should be emitted once every consumer already exists"
+        "the answer leaves no consumer to set up again"
+    );
+
+    let (second_refresh_offer, named) = create_refresh_offer(&scenario).await;
+    assert_eq!(named, BTreeSet::from([scalable, readable]));
+    settle_refresh_offer(&mut scenario, second_refresh_offer).await;
+
+    assert_eq!(scenario.room.test_api().consumer_count().await, 2);
+    assert!(drain_outbound(&mut scenario.subscriber_rx).is_empty());
+    assert_eq!(
+        refresh_offer(&scenario).await,
+        Err(TransportAdapterError::UnsupportedFeature)
+    );
+}
+
+#[tokio::test]
+async fn offer_leaves_out_a_consumer_the_room_has_not_committed_on_real_rtc() {
+    let mut scenario = Box::pin(setup_real_rtc_refresh_scenario()).await;
+    publish_track(
+        &scenario.room,
+        &scenario.publisher_user_id,
+        TestSourceKind::ScalableVideo,
+        video_rtp_parameters_with_mid("cam-uncommitted", 22_222),
+        &scenario.media_transport,
+    )
+    .await;
+    drain_outbound(&mut scenario.subscriber_rx);
+    let publisher_connection_id =
+        user_connection_id(&scenario.room, &scenario.publisher_user_id).await;
+    let source = TransportSourceKey::new(
+        scenario
+            .room
+            .transport_user_key(&scenario.publisher_user_id, publisher_connection_id)
+            .await,
+        scenario
+            .room
+            .test_api()
+            .first_published_transport_media_id()
+            .await
+            .expect("published source should expose its transport media id"),
+    );
+
+    // A setup turn declares its consumer in the transport, then commits it in
+    // the room. This consumer stops between both steps.
+    let uncommitted_media = scenario
+        .media_transport
+        .consume_media(
+            &scenario.subscriber_session_key,
+            MediaKind::Video,
+            &source,
+            SourceSyncPolicy::Independent,
+            &video_rtp_parameters_with_mid("cam-uncommitted-down", 44_444),
+            ConsumerActivity::Active,
+        )
+        .await
+        .expect("transport should declare the consumer");
+
+    let (offer, named) = create_refresh_offer(&scenario).await;
+    assert_eq!(
+        named,
+        BTreeSet::from([stream_id_for_source(TestSourceKind::ScalableVideo)])
+    );
+    assert_eq!(
+        scenario
+            .media_transport
+            .transport_media_mid(&scenario.subscriber_session_key, uncommitted_media)
+            .await
+            .expect("MID observation must complete"),
+        None,
+        "an offer must not add a consumer the room cannot name yet"
+    );
+
+    settle_refresh_offer(&mut scenario, offer).await;
+    let offer = scenario
+        .media_transport
+        .create_session_renegotiation_offer(
+            &scenario.subscriber_session_key,
+            vec![uncommitted_media],
+        )
+        .await
+        .expect("the consumer should join the offer that follows its commit");
+    assert!(
+        offer
+            .consumer_mids
+            .iter()
+            .any(|(media, _mid)| *media == uncommitted_media)
     );
 }
 
@@ -167,7 +236,7 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         &scenario.media_transport,
         &publisher_session_key,
         &mut publisher_remote,
-        scenario.publisher_initial_offer.into_parts().0,
+        scenario.publisher_initial_offer.sdp.clone(),
     )
     .await;
 
@@ -182,7 +251,7 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         .expect("protocol publish intent should stage a recv-only media line");
     let publish_offer = scenario
         .media_transport
-        .create_session_renegotiation_offer(&publisher_session_key)
+        .create_session_renegotiation_offer(&publisher_session_key, Vec::new())
         .await
         .expect("protocol publish should stage a follow-up offer");
     let publish_answer = remote_answer_sdp(&mut publisher_remote, &publish_offer.into_parts().0);
@@ -218,4 +287,9 @@ async fn negotiated_publish_commit_sets_up_consumers_on_real_rtc() {
         TestSourceKind::ScalableVideo,
     );
     assert_eq!(scenario.room.test_api().consumer_count().await, 1);
+    let (_offer, named) = create_refresh_offer(&scenario).await;
+    assert_eq!(
+        named,
+        BTreeSet::from([stream_id_for_source(TestSourceKind::ScalableVideo)])
+    );
 }

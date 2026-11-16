@@ -154,7 +154,7 @@ impl LocalRtcPacketDestination {
                 route_destination.dest_transport_media_id,
                 route_destination.dest_stream,
                 route_destination.delivery.generation(),
-                route_destination.dest_mid,
+                route_destination.dest_mid?,
                 route_destination.dest_payload_type,
                 route_destination.repair_enabled,
             );

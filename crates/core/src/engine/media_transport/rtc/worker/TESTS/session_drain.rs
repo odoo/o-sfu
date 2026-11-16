@@ -317,7 +317,7 @@ impl LocalWriteDrainFixture {
                 dest_session: consumer.clone(),
                 dest_transport_media_id: TransportMediaId::new(11),
                 dest_stream: stream,
-                dest_mid: mid,
+                dest_mid: Some(mid),
                 dest_payload_type: Some(payload_type),
                 repair_enabled,
                 active: true,

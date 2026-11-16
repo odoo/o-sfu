@@ -33,7 +33,7 @@ use std::{
 use itertools::Itertools;
 use o_sfu_router::rtp::MediaStream;
 use str0m::{
-    media::{KeyframeRequestKind, Pt, Rid},
+    media::{KeyframeRequestKind, Mid, Pt, Rid},
     rtp::Ssrc,
 };
 use tracing::debug;
@@ -56,7 +56,7 @@ use super::{
     },
     relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
     route_control::PacketLayerGate,
-    slots::RouteDestinationHandle,
+    slots::{ConsumerStreamHandle, RouteDestinationHandle},
     source_route::{MediaRouteDestination, MediaRouteEntry},
 };
 
@@ -294,6 +294,19 @@ impl RouteTable {
             .get_mut(&source_id)
             .ok_or(TransportAdapterError::TransportUnavailable)?
             .set_consumer_pkt_gate(destination, media_id, packet_gate)
+    }
+
+    pub(in super::super) fn bind_consumer_egress(
+        &mut self,
+        source_id: TransportMediaId,
+        destination: RouteDestinationHandle,
+        media_id: TransportMediaId,
+        mid: Mid,
+        stream: ConsumerStreamHandle,
+    ) {
+        if let Some(source) = self.sources.get_mut(&source_id) {
+            source.bind_consumer_egress(destination, media_id, mid, stream);
+        }
     }
 
     pub(in super::super) fn update_decoder_readiness(

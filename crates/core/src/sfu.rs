@@ -14,8 +14,10 @@
 //! ```
 //!
 //! `&mut MediaSession` serializes negotiation. [`MediaSession::publish`] queues
-//! the first intent for each stream while an offer awaits its answer. A successful
-//! [`MediaSession::answer`] may return the follow-up offer.
+//! the first intent for each stream while the initial offer awaits its answer.
+//! Media published or consumed while a later offer is out waits in the
+//! transport for the next one. A successful [`MediaSession::answer`] may return
+//! that follow-up offer.
 use std::{collections::BTreeMap, mem::replace, sync::Arc};
 
 use o_sfu_model::{
@@ -24,18 +26,18 @@ use o_sfu_model::{
 };
 
 pub use crate::engine::media_transport::{
-    SessionOffer as NegotiationOffer, SessionUploadEncoding as UploadEncoding,
-    SessionUploadSlot as UploadSlot,
+    SessionUploadEncoding as UploadEncoding, SessionUploadSlot as UploadSlot,
 };
 use crate::{
     ConnectionId,
     engine::{
         media_transport::{
-            MediaTransport, TransportAdapterError, TransportSessionHealth, TransportSessionKey,
+            MediaTransport, TransportAdapterError, TransportMediaId, TransportSessionHealth,
+            TransportSessionKey,
         },
         room::{
             BroadcastPayloadError, DeactivateIntentOutcome, JoinUserRequest, PublishIntentOutcome,
-            Room, RoomManager, RoomManagerJoinError, RoomUserOperation,
+            RemoteTrackSnapshot, Room, RoomManager, RoomManagerJoinError, RoomUserOperation,
         },
         source_model::{
             SourceDeactivateIntent, SourcePublishIntent, SourceSubscriptionIntent, UserStreamId,
@@ -43,11 +45,32 @@ use crate::{
     },
 };
 
+/// One remote track as the client binds it: a room track with the MID of its
+/// consumer media.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTrackProjection {
+    pub consumer_mid: String,
+    pub user_id: UserId,
+    pub stream_id: UserStreamId,
+    pub producer_active: bool,
+}
+
+/// Server-authored SDP offer for the client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NegotiationOffer {
+    /// send it to the client unchanged
+    pub sdp: String,
+    /// media sections the client may publish after applying the offer
+    pub upload_slots: Vec<UploadSlot>,
+    /// Tracks naming the consumer MIDs this offer adds. Send them before the
+    /// offer so the client knows each new media section when it applies it.
+    pub remote_tracks: Option<Vec<RemoteTrackProjection>>,
+}
+
 /// media-session negotiation phase
 ///
-/// queued publishes live beside the offer state so a user action that arrives
-/// while a browser answer is pending cannot interleave with the in-flight SDP
-/// exchange
+/// queued publishes live beside the offer state so a publish that arrives
+/// while the initial answer is pending waits for it
 #[derive(Debug, Default)]
 enum SessionPhase {
     /// no initial offer has been created yet
@@ -68,8 +91,18 @@ struct InFlightOffer {
 }
 
 impl SessionPhase {
+    /// Only the initial offer defers a publish. The room accepts one once the
+    /// initial answer gives it the client capabilities, and until then the
+    /// transport declares media without negotiation. Behind a later offer the
+    /// transport queues the media for the next one.
     fn can_stage_publish(&self) -> bool {
-        !matches!(self, Self::WaitingForAnswer(_))
+        !matches!(
+            self,
+            Self::WaitingForAnswer(InFlightOffer {
+                purpose: SessionOfferPurpose::EstablishSession,
+                ..
+            })
+        )
     }
 
     fn has_queued_publish(&self, stream_id: &UserStreamId) -> bool {
@@ -238,6 +271,13 @@ pub struct MediaSession {
     room: Arc<Room>,
     transport_user_key: TransportSessionKey,
     phase: SessionPhase,
+    /// Newest tracks the room gave this connection.
+    tracks: RemoteTrackSnapshot,
+    /// MIDs of this connection's consumer media. Each offer replaces the map,
+    /// so a consumer queued since the last offer has none until the next one.
+    consumer_mids: BTreeMap<TransportMediaId, String>,
+    /// Tracks last handed to the caller.
+    delivered_tracks: Vec<RemoteTrackProjection>,
     closed: bool,
 }
 
@@ -284,6 +324,9 @@ impl SfuCore {
             room: admission.room,
             transport_user_key: admission.transport_session_key,
             phase: SessionPhase::default(),
+            tracks: RemoteTrackSnapshot::default(),
+            consumer_mids: BTreeMap::new(),
+            delivered_tracks: Vec::new(),
             closed: false,
         })
     }
@@ -312,7 +355,12 @@ impl MediaSession {
             .map_err(SfuCoreError::Transport)?;
         self.phase
             .wait_for_answer(SessionOfferPurpose::EstablishSession);
-        Ok(Some(offer))
+        // The initial offer precedes every consumer, so it names no track.
+        Ok(Some(NegotiationOffer {
+            sdp: offer.sdp,
+            upload_slots: offer.upload_slots,
+            remote_tracks: None,
+        }))
     }
 
     /// accepts the answer for the pending offer and commits any ready room work
@@ -385,7 +433,7 @@ impl MediaSession {
     /// applies publish intent for one user stream
     ///
     /// returns no offer when the intent is already queued, already active or
-    /// must wait for an in-flight answer
+    /// must wait for an in-flight answer, whose completion returns the offer
     /// returns an offer when the browser must answer a new offer before the
     /// publication can commit
     ///
@@ -474,10 +522,9 @@ impl MediaSession {
         if !self.phase.request_renegotiation() {
             return Ok(None);
         }
-        let offer = match self
-            .core
-            .media_transport
-            .create_session_renegotiation_offer(&self.transport_user_key)
+        let (offer, tracks) = match self
+            .room_operation()
+            .create_renegotiation_offer(&self.transport_user_key)
             .await
         {
             Ok(offer) => offer,
@@ -486,7 +533,59 @@ impl MediaSession {
         };
         self.phase
             .wait_for_answer(SessionOfferPurpose::RefreshSession);
-        Ok(Some(offer))
+        // The offer adds only consumers of `tracks`, so the tracks named from
+        // both cover every MID it adds.
+        self.tracks = tracks;
+        self.consumer_mids = offer.consumer_mids.into_iter().collect();
+        Ok(Some(NegotiationOffer {
+            sdp: offer.sdp,
+            upload_slots: offer.upload_slots,
+            remote_tracks: self.named_tracks(),
+        }))
+    }
+
+    /// Adopts a track snapshot the room queued and returns the tracks to give
+    /// the client, or `None` when it already has them.
+    ///
+    /// The tracks read for an offer skip the room queue, so a snapshot built
+    /// before that read can still be queued. It is dropped because the offer's
+    /// tracks are newer.
+    pub fn fresh_remote_tracks(
+        &mut self,
+        snapshot: RemoteTrackSnapshot,
+    ) -> Option<Vec<RemoteTrackProjection>> {
+        if snapshot.revision <= self.tracks.revision {
+            return None;
+        }
+        self.tracks = snapshot;
+        self.named_tracks()
+    }
+
+    /// Returns the room tracks whose consumer media has a MID, or `None` when
+    /// the caller already has them.
+    ///
+    /// The room knows the tracks and each offer brings the MIDs, so a track is
+    /// named only here. One without a MID waits for the offer that adds its
+    /// consumer media.
+    fn named_tracks(&mut self) -> Option<Vec<RemoteTrackProjection>> {
+        let named = self
+            .tracks
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                Some(RemoteTrackProjection {
+                    consumer_mid: self.consumer_mids.get(&track.consumer_media)?.clone(),
+                    user_id: track.user_id.clone(),
+                    stream_id: track.stream_id.clone(),
+                    producer_active: track.producer_active,
+                })
+            })
+            .collect::<Vec<_>>();
+        if named == self.delivered_tracks {
+            return None;
+        }
+        self.delivered_tracks.clone_from(&named);
+        Some(named)
     }
 
     /// applies receiver intent for sources published by another user

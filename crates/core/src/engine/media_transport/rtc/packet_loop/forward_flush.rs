@@ -428,8 +428,10 @@ fn source_is_video(
     src_key: &TransportSessionKey,
     transport_media_id: TransportMediaId,
 ) -> bool {
-    let Some(RegisteredMediaHandle::Producer { session_key, mid }) =
-        state.media_handle(transport_media_id)
+    let Some(RegisteredMediaHandle::Producer {
+        session_key,
+        mid: Some(mid),
+    }) = state.media_handle(transport_media_id)
     else {
         return false;
     };

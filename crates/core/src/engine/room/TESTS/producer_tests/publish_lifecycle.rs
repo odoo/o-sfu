@@ -241,7 +241,6 @@ async fn publish_track_emits_remote_track_snapshot_with_committed_mid() {
     let [projection] = snapshot.tracks.as_slice() else {
         panic!("subscriber should receive one remote track");
     };
-    assert!(!projection.consumer_mid.is_empty());
     assert_eq!(
         projection.stream_id,
         stream_id_for_source(TestSourceKind::ScalableVideo)

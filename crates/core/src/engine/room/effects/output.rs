@@ -1,12 +1,12 @@
 use crate::engine::room::{
     UserOutbound,
-    outbound::{MessageFanout, OutboundSender, VersionedRemoteTrackSnapshot},
+    outbound::{MessageFanout, OutboundSender, RemoteTrackSnapshot},
     state::LifecycleEffects,
 };
 
 #[derive(Debug, Default)]
 pub(super) struct RoomOutputPlan {
-    pub(super) track_snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
+    pub(super) track_snapshots: Vec<(OutboundSender, RemoteTrackSnapshot)>,
     pub(super) user_info_before_policy: Option<MessageFanout>,
     pub(super) user_info: Option<MessageFanout>,
     pub(super) lifecycle: LifecycleEffects,

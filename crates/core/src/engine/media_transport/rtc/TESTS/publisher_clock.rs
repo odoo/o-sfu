@@ -41,7 +41,7 @@ impl Source {
         let mid = Mid::from(mid);
         let media = state.register_media_handle(RegisteredMediaHandle::Producer {
             session_key: session.clone(),
-            mid,
+            mid: Some(mid),
         });
         let parameters =
             MediaStream::new(vec![], vec![], vec![StreamBinding::new().with_ssrc(ssrc)])

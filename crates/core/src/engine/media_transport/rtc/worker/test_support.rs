@@ -159,7 +159,10 @@ impl RtcWorker {
     }
 
     #[cfg(test)]
-    async fn read_debug_worker<F, Output>(&self, read: F) -> Result<Output, DebugProbeUnavailable>
+    pub(super) async fn read_debug_worker<F, Output>(
+        &self,
+        read: F,
+    ) -> Result<Output, DebugProbeUnavailable>
     where
         F: FnOnce(&PacketLoopState, &WorkerCommandContext<'_>) -> Output + Send + 'static,
         Output: Send + 'static,

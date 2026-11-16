@@ -76,7 +76,7 @@ pub fn worker_request_resumed_video_kf(
     now: Instant,
 ) {
     let src_media = source.transport_media_id();
-    let Ok(mid) = state.ensure_local_producer_mid(source.session_key(), src_media) else {
+    let Ok(Some(mid)) = state.ensure_local_producer_mid(source.session_key(), src_media) else {
         return;
     };
     let is_video = state
@@ -488,7 +488,10 @@ fn local_kf_req_mid(
     rid: Option<Rid>,
     kind: KeyframeRequestKind,
 ) -> Option<Mid> {
-    let mid = state.ensure_local_producer_mid(src_key, src_media).ok();
+    let mid = state
+        .ensure_local_producer_mid(src_key, src_media)
+        .ok()
+        .flatten();
     if mid.is_none() {
         log_ignored_kf_req(
             src_key,

@@ -437,7 +437,7 @@ fn insert_open_route(
             dest_session: consumer_session.clone(),
             dest_transport_media_id: consumer_media,
             dest_stream: consumer_stream,
-            dest_mid: consumer_mid,
+            dest_mid: Some(consumer_mid),
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
@@ -453,7 +453,7 @@ fn register_producer_media(
 ) -> TransportMediaId {
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: producer_session.clone(),
-        mid: Mid::from(producer_mid),
+        mid: Some(Mid::from(producer_mid)),
     })
 }
 
@@ -471,7 +471,7 @@ fn register_consumer_route_fixture(
         dest_session: consumer_session.clone(),
         dest_transport_media_id: consumer_media,
         dest_stream: ConsumerStreamHandle::default(),
-        dest_mid: consumer_mid,
+        dest_mid: Some(consumer_mid),
         dest_payload_type: None,
         repair_enabled: false,
         active,
@@ -1191,7 +1191,7 @@ fn selected_rid_keyframe_does_not_admit_an_earlier_delta_from_the_same_batch()
             dest_session: consumer_session,
             dest_transport_media_id: consumer_media,
             dest_stream: ConsumerStreamHandle::default(),
-            dest_mid: consumer_mid,
+            dest_mid: Some(consumer_mid),
             dest_payload_type: None,
             repair_enabled: false,
             active: true,
@@ -2286,7 +2286,7 @@ fn silent_audio_packets_are_dropped_from_routed_fanout_after_transport_activity_
             dest_session: consumer_session.clone(),
             dest_transport_media_id: consumer_media,
             dest_stream: ConsumerStreamHandle::default(),
-            dest_mid: consumer_mid,
+            dest_mid: Some(consumer_mid),
             dest_payload_type: None,
             repair_enabled: false,
             active: true,

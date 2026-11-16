@@ -33,15 +33,19 @@ mod clock;
 
 use clock::{ClockAnchor, MAX_REPORT_AGE, PublisherClock, SenderClock};
 
+/// Media registered when it is declared.
+///
+/// `mid` is `None` while the media waits in the negotiation queue. The offer
+/// that adds it binds the MID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in super::super) enum RegisteredMediaHandle {
     Producer {
         session_key: TransportSessionKey,
-        mid: Mid,
+        mid: Option<Mid>,
     },
     Consumer {
         session_key: TransportSessionKey,
-        mid: Mid,
+        mid: Option<Mid>,
         src_media: TransportMediaId,
         /// destination the source route issued for this consumer media
         destination: RouteDestinationHandle,
@@ -125,7 +129,7 @@ impl RegisteredMediaHandle {
         }
     }
 
-    pub(in super::super) fn mid(&self) -> Mid {
+    pub(in super::super) fn mid(&self) -> Option<Mid> {
         match self {
             Self::Producer { mid, .. } | Self::Consumer { mid, .. } => *mid,
         }
@@ -376,31 +380,7 @@ impl PacketLoopState {
         transport_media_id: TransportMediaId,
         handle: RegisteredMediaHandle,
     ) {
-        if let RegisteredMediaHandle::Producer { session_key, mid } = &handle {
-            let session_lookup = self.session_media.entry(session_key.clone()).or_default();
-            session_lookup.insert_owned_media(transport_media_id);
-            session_lookup
-                .producer_mids
-                .insert(*mid, transport_media_id);
-            self.routes.register_local_source(transport_media_id);
-        } else if let RegisteredMediaHandle::Consumer {
-            session_key,
-            mid,
-            src_media,
-            destination,
-        } = &handle
-        {
-            let session_lookup = self.session_media.entry(session_key.clone()).or_default();
-            session_lookup.insert_owned_media(transport_media_id);
-            session_lookup.consumer_mids.insert(
-                *mid,
-                ConsumerMidBinding {
-                    consumer_media: transport_media_id,
-                    src_media: *src_media,
-                    destination: *destination,
-                },
-            );
-        }
+        self.index_media_handle(transport_media_id, &handle);
         self.mid_registry.insert(
             transport_media_id,
             RegisteredMedia {
@@ -410,13 +390,82 @@ impl PacketLoopState {
         );
     }
 
+    /// Indexes `handle` under its session and, once it has one, under its MID.
+    fn index_media_handle(
+        &mut self,
+        transport_media_id: TransportMediaId,
+        handle: &RegisteredMediaHandle,
+    ) {
+        let session_lookup = self
+            .session_media
+            .entry(handle.session_key().clone())
+            .or_default();
+        session_lookup.insert_owned_media(transport_media_id);
+        match handle {
+            RegisteredMediaHandle::Producer { mid, .. } => {
+                if let Some(mid) = mid {
+                    session_lookup
+                        .producer_mids
+                        .insert(*mid, transport_media_id);
+                }
+                self.routes.register_local_source(transport_media_id);
+            }
+            RegisteredMediaHandle::Consumer {
+                mid,
+                src_media,
+                destination,
+                ..
+            } => {
+                if let Some(mid) = mid {
+                    session_lookup.consumer_mids.insert(
+                        *mid,
+                        ConsumerMidBinding {
+                            consumer_media: transport_media_id,
+                            src_media: *src_media,
+                            destination: *destination,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Gives queued media the MID its offer created. A consumer also gets the
+    /// stream that rewrites onto that MID.
+    pub(in super::super) fn bind_mid(&mut self, transport_media_id: TransportMediaId, mid: Mid) {
+        let Some(registered) = self.mid_registry.get_mut(&transport_media_id) else {
+            return;
+        };
+        let (RegisteredMediaHandle::Producer { mid: bound_mid, .. }
+        | RegisteredMediaHandle::Consumer { mid: bound_mid, .. }) = &mut registered.handle;
+        *bound_mid = Some(mid);
+        let handle = registered.handle.clone();
+        if let RegisteredMediaHandle::Consumer {
+            session_key,
+            src_media,
+            destination,
+            ..
+        } = &handle
+            && let Some(session_state) = self.users.get_mut(session_key)
+        {
+            self.routes.bind_consumer_egress(
+                *src_media,
+                *destination,
+                transport_media_id,
+                mid,
+                session_state.consumer_streams.allocate(mid),
+            );
+        }
+        self.index_media_handle(transport_media_id, &handle);
+    }
+
     pub(in super::super) fn resolve_mid(
         &self,
         transport_media_id: TransportMediaId,
     ) -> Option<Mid> {
         self.mid_registry
             .get(&transport_media_id)
-            .map(|registered| registered.handle.mid())
+            .and_then(|registered| registered.handle.mid())
     }
 
     pub(in super::super) fn media_handle(
@@ -478,7 +527,7 @@ impl PacketLoopState {
                             && self
                                 .mid_registry
                                 .get(&transport_media_id)
-                                .is_some_and(|registered| registered.handle.mid() == mid)
+                                .is_some_and(|registered| registered.handle.mid() == Some(mid))
                     })
             })
     }
@@ -499,7 +548,9 @@ impl PacketLoopState {
             RegisteredMediaHandle::Producer { session_key, mid } => {
                 if let Some(session_lookup) = self.session_media.get_mut(session_key) {
                     session_lookup.remove_owned_media(transport_media_id);
-                    session_lookup.producer_mids.remove(mid);
+                    if let Some(mid) = mid {
+                        session_lookup.producer_mids.remove(mid);
+                    }
                 }
                 self.clear_producer_ssrcs(session_key, transport_media_id);
                 self.routes.unregister_local_source(transport_media_id);
@@ -510,7 +561,9 @@ impl PacketLoopState {
             } => {
                 if let Some(session_lookup) = self.session_media.get_mut(session_key) {
                     session_lookup.remove_owned_media(transport_media_id);
-                    session_lookup.consumer_mids.remove(mid);
+                    if let Some(mid) = mid {
+                        session_lookup.consumer_mids.remove(mid);
+                    }
                 }
             }
         }

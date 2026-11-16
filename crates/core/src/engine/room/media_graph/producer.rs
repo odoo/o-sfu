@@ -9,7 +9,7 @@ use tracing::{error, warn};
 
 use super::{
     super::{
-        outbound::{OutboundSender, VersionedRemoteTrackSnapshot},
+        outbound::{OutboundSender, RemoteTrackSnapshot},
         state::{PresenceCommit, RoomState},
     },
     ReceiverRouteWork,
@@ -57,7 +57,7 @@ pub struct ProducerActivityCommit {
     pub stream_id: UserStreamId,
     pub update: SourceActivityUpdate,
     pub remote_activity_effects: Vec<TransportSourceActivityEffect>,
-    pub track_snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
+    pub track_snapshots: Vec<(OutboundSender, RemoteTrackSnapshot)>,
     pub presence: Option<PresenceCommit>,
 }
 

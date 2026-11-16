@@ -14,7 +14,7 @@ use super::{
         UserCloseReason,
         effects::transport::RoomTransportPlan,
         media_graph::{SessionPlacementCommit, SessionPlacementRejection},
-        outbound::{MessageFanout, OutboundSender, VersionedRemoteTrackSnapshot, fanout_all},
+        outbound::{MessageFanout, OutboundSender, RemoteTrackSnapshot, fanout_all},
     },
     UserJoinedFanout,
     shared::{ActiveUser, RoomState},
@@ -34,7 +34,7 @@ mod TESTS;
 pub struct LifecycleEffects {
     pub close_requests: Vec<UserCloseRequest>,
     pub fanouts: Vec<MessageFanout>,
-    pub track_snapshots: Vec<(OutboundSender, VersionedRemoteTrackSnapshot)>,
+    pub track_snapshots: Vec<(OutboundSender, RemoteTrackSnapshot)>,
 }
 
 impl LifecycleEffects {

@@ -116,7 +116,6 @@ enum ConsumerRealization {
 #[derive(Debug)]
 pub(super) struct CommittedConsumerRoute {
     pub route: TransportConsumerRoute,
-    pub mid: String,
     routed: RoutedConsumerId,
     relay: Option<RouteRelay>,
     pub pending_upgrade: Option<PendingUpgrade>,
@@ -376,7 +375,6 @@ impl RouteGraph {
         &mut self,
         reservation: ConsumerRouteReservation,
         route: TransportConsumerRoute,
-        mid: String,
         selection: ConsumerSourceSelection,
         accept: impl FnOnce() -> Option<RoutedConsumerId>,
     ) -> Result<(), Vec<TransportRelayRouteEffect>> {
@@ -396,7 +394,6 @@ impl RouteGraph {
         current.selection = selection;
         current.realization = ConsumerRealization::Committed(CommittedConsumerRoute {
             route,
-            mid,
             routed,
             relay,
             pending_upgrade: None,

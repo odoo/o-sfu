@@ -1,8 +1,30 @@
-//! One outstanding offer and its answer-time projections.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    mem,
-};
+//! Negotiation queue, outstanding offer and answer projections of one session.
+//!
+//! ```text
+//! add recv, add send, remove --> queue --take_offer--> offer --answer--> idle
+//!                                  ^                     |
+//!                                  +-- changes made while the offer is out
+//! ```
+//!
+//! Queue: a producer's recv addition, a consumer's send addition and the
+//! removal of a negotiated MID wait here in arrival order. The
+//! [`TransportMediaId`] returned to the caller names an addition until its MID
+//! exists.
+//!
+//! MID binding: str0m draws a MID inside [`SdpApi::add_media`] and only the
+//! [`SdpApi`] that applies the change keeps it. `take_offer` replays the queue
+//! into one [`SdpApi`] and applies it once, so an addition gets its MID there
+//! and no earlier.
+//!
+//! Committed consumers: `take_offer` leaves a send addition queued until its
+//! caller lists the consumer as committed. The caller names each consumer MID
+//! to the client before the offer, which it can only do for a consumer it has
+//! committed.
+//!
+//! One outstanding offer: another [`SdpApi::apply`] would invalidate the
+//! [`SdpPendingOffer`] that the awaited answer needs. Changes made meanwhile
+//! stay queued for the next offer.
+use std::collections::BTreeMap;
 
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::{
@@ -19,11 +41,13 @@ use super::{
         codec::{self, RepairSummary},
         commands::RtcSessionOffer,
     },
-    upload_kind,
+    media, upload_kind,
 };
 use crate::{
     VideoBitrateLimits,
-    engine::media_transport::{SessionUploadSlot, TransportAdapterError, TransportResult},
+    engine::media_transport::{
+        SessionUploadSlot, TransportAdapterError, TransportMediaId, TransportResult,
+    },
 };
 
 #[cfg(test)]
@@ -33,21 +57,26 @@ mod tests;
 const INITIAL_NEGOTIATION_DIRECTION: Direction = Direction::RecvOnly;
 const INITIAL_NEGOTIATION_MEDIA_KINDS: [MediaKind; 2] = [MediaKind::Audio, MediaKind::Video];
 
-#[derive(Default)]
-enum OfferPhase {
-    #[default]
-    Idle,
-    Staged {
-        offer: Box<SdpOffer>,
-        pending: PendingOffer,
+pub(in crate::engine::media_transport::rtc) enum QueuedChange {
+    AddRecv {
+        media: TransportMediaId,
+        kind: MediaKind,
+        rtp_parameters: RouterRtpParameters,
     },
-    Delivered(PendingOffer),
+    AddSend {
+        media: TransportMediaId,
+        kind: MediaKind,
+        stream_id: Option<String>,
+    },
+    /// Keeps the MID and offers its m-section as `inactive` instead of
+    /// rejecting it out of the SDP.
+    Remove(Mid),
 }
 
 struct PendingOffer {
     token: SdpPendingOffer,
     repair: RepairSummary,
-    // Keep the projection after delivery: answer RIDs are checked against this offer.
+    // Answer RIDs are checked against the slots of this offer.
     upload_slots: Vec<SessionUploadSlot>,
 }
 
@@ -61,15 +90,22 @@ impl PendingOffer {
     }
 }
 
+/// A renegotiation offer and the MIDs it bound to queued additions.
+pub(super) struct TakenOffer {
+    pub(super) offer: SdpOffer,
+    pub(super) upload_slots: Vec<SessionUploadSlot>,
+    pub(super) bound_mids: Vec<(TransportMediaId, Mid)>,
+}
+
 #[derive(Default)]
 pub(in crate::engine::media_transport::rtc) struct SessionSdpNegotiationState {
-    phase: OfferPhase,
+    pub(in crate::engine::media_transport::rtc) queue: Vec<QueuedChange>,
+    pending: Option<PendingOffer>,
     bootstrap_mids: Vec<Mid>,
     initial_offer_applied: bool,
     pub(super) pending_recv_streams: BTreeMap<Mid, Vec<PendingRecvStream>>,
     pub(in crate::engine::media_transport::rtc) negotiated_producer_parameters:
         BTreeMap<Mid, RouterRtpParameters>,
-    pub(super) queued_removal_mids: BTreeSet<Mid>,
 }
 
 impl SessionSdpNegotiationState {
@@ -79,7 +115,7 @@ impl SessionSdpNegotiationState {
         profile: &RtpProfile,
         video_bitrate_limits: VideoBitrateLimits,
     ) -> TransportResult<RtcSessionOffer> {
-        if !matches!(self.phase, OfferPhase::Idle) {
+        if self.pending.is_some() {
             return Err(TransportAdapterError::InvalidInput);
         }
         if self.initial_offer_applied {
@@ -95,23 +131,20 @@ impl SessionSdpNegotiationState {
         let (offer, token) = api
             .apply()
             .ok_or(TransportAdapterError::TransportUnavailable)?;
-        self.phase = OfferPhase::Delivered(PendingOffer::new(&offer, token, Vec::new()));
+        self.pending = Some(PendingOffer::new(&offer, token, Vec::new()));
         Ok(RtcSessionOffer::new(
             offer,
             initial_upload_slots(&self.bootstrap_mids, profile, video_bitrate_limits),
+            Vec::new(),
         ))
     }
 
     pub(super) fn offered_repair(&self) -> Option<&RepairSummary> {
-        self.pending_offer().map(|pending| &pending.repair)
+        self.pending.as_ref().map(|pending| &pending.repair)
     }
 
     pub(in crate::engine::media_transport::rtc) fn initial_offer_applied(&self) -> bool {
         self.initial_offer_applied
-    }
-
-    pub(in crate::engine::media_transport::rtc) fn is_awaiting_answer(&self) -> bool {
-        matches!(self.phase, OfferPhase::Delivered(_))
     }
 
     pub(in crate::engine::media_transport::rtc) fn pending_recv_streams(
@@ -121,77 +154,127 @@ impl SessionSdpNegotiationState {
         self.pending_recv_streams.get(&mid).map(Vec::as_slice)
     }
 
-    fn pending_offer(&self) -> Option<&PendingOffer> {
-        match &self.phase {
-            OfferPhase::Idle => None,
-            OfferPhase::Staged { pending, .. } | OfferPhase::Delivered(pending) => Some(pending),
-        }
-    }
-
     pub(super) fn upload_slots(&self) -> &[SessionUploadSlot] {
-        self.pending_offer()
+        self.pending
+            .as_ref()
             .map_or(&[], |pending| pending.upload_slots.as_slice())
     }
 
-    pub(super) fn stage_change<T>(
+    /// Drops the addition of `media` unless an offer already bound it.
+    pub(in crate::engine::media_transport::rtc) fn cancel_addition(
+        &mut self,
+        media: TransportMediaId,
+    ) {
+        self.queue.retain(|change| match change {
+            QueuedChange::AddRecv { media: queued, .. }
+            | QueuedChange::AddSend { media: queued, .. } => *queued != media,
+            QueuedChange::Remove(_) => true,
+        });
+    }
+
+    /// Producers whose recv addition still waits for an offer.
+    pub(super) fn queued_producers(&self) -> impl Iterator<Item = TransportMediaId> + '_ {
+        self.queue.iter().filter_map(|change| match change {
+            QueuedChange::AddRecv { media, .. } => Some(*media),
+            QueuedChange::AddSend { .. } | QueuedChange::Remove(_) => None,
+        })
+    }
+
+    /// Replays the queue into the one offer the session may have outstanding.
+    ///
+    /// A send addition whose media is not in `committed_consumers` stays queued.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError::InvalidInput`] before the initial answer
+    /// or while an offer awaits its answer. The queue is kept. Returns
+    /// [`TransportAdapterError::UnsupportedFeature`] when no replayed change
+    /// needs an offer.
+    pub(super) fn take_offer(
         &mut self,
         rtc: &mut Rtc,
-        change: impl FnOnce(&mut SdpApi<'_>) -> (T, Vec<SessionUploadSlot>),
-    ) -> TransportResult<Option<T>> {
-        let mut api = rtc.sdp_api();
-        let mut upload_slots = match mem::take(&mut self.phase) {
-            OfferPhase::Staged { pending, .. } => {
-                api.merge(pending.token);
-                pending.upload_slots
-            }
-            OfferPhase::Idle => Vec::new(),
-            OfferPhase::Delivered(pending) => {
-                self.phase = OfferPhase::Delivered(pending);
-                return Err(TransportAdapterError::InvalidInput);
-            }
-        };
-        let (result, slots) = change(&mut api);
-        // Merged offers still contain earlier producer additions, so their
-        // upload slots must survive later changes to the same draft.
-        upload_slots.extend(slots);
-        let Some((offer, token)) = api.apply() else {
-            return Ok(None);
-        };
-        self.phase = OfferPhase::Staged {
-            pending: PendingOffer::new(&offer, token, upload_slots),
-            offer: Box::new(offer),
-        };
-        Ok(Some(result))
-    }
-
-    pub(in crate::engine::media_transport::rtc) fn take_offer(
-        &mut self,
-    ) -> TransportResult<RtcSessionOffer> {
-        if !self.initial_offer_applied || self.is_awaiting_answer() {
+        profile: &RtpProfile,
+        video_bitrate_limits: VideoBitrateLimits,
+        committed_consumers: &[TransportMediaId],
+    ) -> TransportResult<TakenOffer> {
+        if !self.initial_offer_applied || self.pending.is_some() {
             return Err(TransportAdapterError::InvalidInput);
         }
-        let OfferPhase::Staged { offer, pending } = mem::take(&mut self.phase) else {
-            return Err(TransportAdapterError::UnsupportedFeature);
-        };
-        let upload_slots = pending.upload_slots.clone();
-        self.phase = OfferPhase::Delivered(pending);
-        Ok(RtcSessionOffer::new(*offer, upload_slots))
+        let mut api = rtc.sdp_api();
+        let mut upload_slots = Vec::new();
+        let mut bound_mids = Vec::new();
+        let offered = self.queue.extract_if(.., |change| match change {
+            QueuedChange::AddSend { media, .. } => committed_consumers.contains(media),
+            QueuedChange::AddRecv { .. } | QueuedChange::Remove(_) => true,
+        });
+        for change in offered {
+            match change {
+                QueuedChange::AddRecv {
+                    media: transport_media_id,
+                    kind,
+                    rtp_parameters,
+                } => {
+                    let mid = api.add_media(
+                        kind,
+                        Direction::RecvOnly,
+                        None,
+                        None,
+                        codec::publish_recv_simulcast_or_default(
+                            kind,
+                            &rtp_parameters,
+                            profile,
+                            video_bitrate_limits,
+                        ),
+                    );
+                    // `accept_answer` can recreate `StreamRx` bindings. Retain SSRC and RID so
+                    // answer application can restore publisher identity and the bitrate cap.
+                    let streams =
+                        media::recv_encoding_identities(&rtp_parameters).collect::<Vec<_>>();
+                    if !streams.is_empty() {
+                        self.pending_recv_streams.insert(mid, streams);
+                    }
+                    upload_slots.push(media::upload_slot(
+                        mid,
+                        kind,
+                        &rtp_parameters,
+                        profile,
+                        video_bitrate_limits,
+                    ));
+                    bound_mids.push((transport_media_id, mid));
+                }
+                QueuedChange::AddSend {
+                    media,
+                    kind,
+                    stream_id,
+                } => {
+                    let mid = api.add_media(kind, Direction::SendOnly, stream_id, None, None);
+                    bound_mids.push((media, mid));
+                }
+                // An already inactive MID records no change.
+                QueuedChange::Remove(mid) => api.set_direction(mid, Direction::Inactive),
+            }
+        }
+        let (offer, token) = api
+            .apply()
+            .ok_or(TransportAdapterError::UnsupportedFeature)?;
+        self.pending = Some(PendingOffer::new(&offer, token, upload_slots.clone()));
+        Ok(TakenOffer {
+            offer,
+            upload_slots,
+            bound_mids,
+        })
     }
 
-    /// Only a delivered offer can be answered. Rejection preserves an undelivered draft.
+    /// Rejection before str0m sees the answer keeps the offer outstanding.
     pub(super) fn accept_answer(
         &mut self,
         rtc: &mut Rtc,
         answer: SdpAnswer,
     ) -> TransportResult<Vec<SessionUploadSlot>> {
-        let pending = match mem::take(&mut self.phase) {
-            OfferPhase::Idle => return Err(TransportAdapterError::InvalidInput),
-            staged @ OfferPhase::Staged { .. } => {
-                self.phase = staged;
-                return Err(TransportAdapterError::InvalidInput);
-            }
-            OfferPhase::Delivered(pending) => pending,
-        };
+        let pending = self
+            .pending
+            .take()
+            .ok_or(TransportAdapterError::InvalidInput)?;
         // str0m consumes the token and may mutate ICE/DTLS before failing. The room
         // must close this session because retrying cannot restore the transaction.
         rtc.sdp_api()

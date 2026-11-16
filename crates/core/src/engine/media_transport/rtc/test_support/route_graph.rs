@@ -59,7 +59,7 @@ pub fn prepare_source_session_with_rid(
     direct_api.expect_stream_rx(Ssrc::from(ssrc), None, src_mid, rid);
     state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: src_key.clone(),
-        mid: src_mid,
+        mid: Some(src_mid),
     })
 }
 
@@ -74,7 +74,10 @@ impl<'a> MediaWorkerScenario<'a> {
 
     pub fn source(&mut self, session_key: TransportSessionKey, mid: Mid) -> TransportMediaId {
         self.state
-            .register_media_handle(RegisteredMediaHandle::Producer { session_key, mid })
+            .register_media_handle(RegisteredMediaHandle::Producer {
+                session_key,
+                mid: Some(mid),
+            })
     }
 
     pub fn destination(
@@ -126,7 +129,7 @@ impl<'a> MediaWorkerScenario<'a> {
                 dest_session: session_key,
                 dest_transport_media_id: consumer_media,
                 dest_stream: ConsumerStreamHandle::default(),
-                dest_mid: mid,
+                dest_mid: Some(mid),
                 dest_payload_type: None,
                 repair_enabled: false,
                 active: true,

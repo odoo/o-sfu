@@ -193,24 +193,30 @@ impl MediaTransport {
         .map(RtcSessionOffer::into_session_offer)
     }
 
-    /// Creates a new SDP offer after transport media state changed.
+    /// Creates the SDP offer for the media changes queued since the last one.
     ///
-    /// Backends reject sessions that cannot renegotiate in their current state.
-    /// Callers should treat the returned offer as replacing any older pending
-    /// transport offer for the same session.
+    /// A session has one offer outstanding. Media published, consumed or
+    /// removed while it awaits its answer goes into the next offer. A queued
+    /// consumer joins an offer only when `committed_consumers` lists it, so
+    /// the caller can name every consumer MID the offer adds.
     ///
     /// # Errors
     ///
-    /// Returns [`TransportAdapterError`] when the session cannot be addressed or
-    /// the active backend cannot create a renegotiation offer.
+    /// Returns [`TransportAdapterError::TransportUnavailable`] when the session
+    /// cannot be addressed. Returns [`TransportAdapterError::InvalidInput`]
+    /// before the initial answer or while an offer awaits its answer. Returns
+    /// [`TransportAdapterError::UnsupportedFeature`] when no queued change
+    /// needs an offer.
     pub async fn create_session_renegotiation_offer(
         &self,
         session_key: &TransportSessionKey,
+        committed_consumers: Vec<TransportMediaId>,
     ) -> Result<SessionOffer, TransportAdapterError> {
         self.request_session_command(
             session_key,
             |response| RtcWorkerCommand::CreateSessionRenegotiationOffer {
                 session_key: session_key.clone(),
+                committed_consumers,
                 response,
             },
             |error| {
@@ -271,7 +277,9 @@ impl MediaTransport {
     ///
     /// `rtp_parameters` must come from router media state accepted by the core.
     /// The returned [`TransportMediaId`] addresses the backend-local producer
-    /// for later route, activity and cleanup operations.
+    /// for later route, activity and cleanup operations. On a negotiated
+    /// session the producer waits for the next offer, whose upload slot names
+    /// its MID.
     ///
     /// # Errors
     ///
@@ -306,13 +314,17 @@ impl MediaTransport {
         .await
     }
 
-    /// Declares consumer media and returns the MID from the same worker turn.
+    /// Declares consumer media on a transport session.
+    ///
+    /// A negotiated session queues the media and names its MID in
+    /// [`SessionOffer::consumer_mids`] of the first offer created after the
+    /// caller lists the consumer as committed.
     ///
     /// # Errors
     ///
     /// Returns [`TransportAdapterError`] when either session is unavailable,
     /// the source is unknown or the worker cannot create the consumer.
-    pub(in crate::engine) async fn consume_media_with_mid(
+    pub(in crate::engine) async fn consume_media(
         &self,
         consumer_session_key: &TransportSessionKey,
         media_kind: MediaKind,
@@ -320,7 +332,7 @@ impl MediaTransport {
         sync: SourceSyncPolicy,
         consumer_rtp_parameters: &RouterRtpParameters,
         initial_activity: ConsumerActivity,
-    ) -> Result<(TransportMediaId, String), TransportAdapterError> {
+    ) -> Result<TransportMediaId, TransportAdapterError> {
         let source_session_key = source.session_key();
         let source_media_id = source.transport_media_id();
         let result = async {

@@ -20,7 +20,7 @@ pub use crate::{
         VideoAdaptationTuningError, VideoBitrateLimits, VideoCodecPreference,
     },
     sfu::{
-        MediaSession, NegotiationOffer, SessionError, SfuCore, SfuCoreError, UploadEncoding,
-        UploadSlot,
+        MediaSession, NegotiationOffer, RemoteTrackProjection, SessionError, SfuCore, SfuCoreError,
+        UploadEncoding, UploadSlot,
     },
 };

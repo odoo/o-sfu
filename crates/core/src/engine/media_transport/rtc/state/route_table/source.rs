@@ -3,7 +3,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use str0m::{media::Rid, rtp::Ssrc};
+use str0m::{
+    media::{Mid, Rid},
+    rtp::Ssrc,
+};
 use tracing::debug;
 
 use super::{
@@ -14,7 +17,7 @@ use super::{
         route_control::{
             PacketLayerGate, SourceAudioPolicyState, aggregate_packet_gates, intersect_packet_gates,
         },
-        slots::RouteDestinationHandle,
+        slots::{ConsumerStreamHandle, RouteDestinationHandle},
         source_route::{MediaRouteDestination, MediaRouteEntry, SelectedRefresh},
     },
     ConsumerRouteUpdate, RelayForwardView, RidReadinessScratch,
@@ -236,6 +239,23 @@ impl RouteSource {
             transition.changed(),
             transition.delivery_changed() && dst.repair_enabled,
         ))
+    }
+
+    pub(super) fn bind_consumer_egress(
+        &mut self,
+        destination: RouteDestinationHandle,
+        media_id: TransportMediaId,
+        mid: Mid,
+        stream: ConsumerStreamHandle,
+    ) {
+        if let Some(dst) = self
+            .local_route
+            .as_mut()
+            .and_then(|route| route.destination_mut(destination, media_id))
+        {
+            dst.dest_mid = Some(mid);
+            dst.dest_stream = stream;
+        }
     }
 
     pub(super) fn update_decoder_readiness(
