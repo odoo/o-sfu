@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use o_sfu_rfc::webrtc::sdp;
 use o_sfu_router::rtp::{MediaStream, StreamBinding};
-use str0m::media::{Mid, Rid};
+use str0m::media::Mid;
 
 use super::*;
 use crate::Bitrate;
@@ -31,134 +31,64 @@ fn default_upload_ladder_respects_video_cap() {
 fn send_rids(
     answer_sdp: &str,
     offered_encodings: &[SessionUploadEncoding],
-) -> Result<Vec<NegotiatedRid>, SimulcastAnswerError> {
-    negotiate_answer_rids(&parse_section_rids(answer_sdp)?, offered_encodings)
+) -> Result<Vec<SessionUploadEncoding>, SimulcastAnswerError> {
+    accepted_encodings(&parse_section_rids(answer_sdp)?, offered_encodings)
 }
 
 #[test]
-fn answer_preserves_declared_bitrate() {
-    let answer = answer(
-        "video_0",
-        &[("lo", Some("max-br=150000")), ("hi", Some("max-br=900000"))],
-        Some("lo;hi"),
-    );
+fn answer_keeps_offered_encodings_in_simulcast_order() {
+    let answer = answer("video_0", &["hi", "lo"], Some("lo;hi"));
 
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
-        Ok(vec![
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_LOW_RID),
-                max_bitrate: Some(DEFAULT_LOW_MAX_BITRATE),
-            },
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_HIGH_RID),
-                max_bitrate: Some(HIGH_MAX_BITRATE),
-            },
-        ])
+        Ok(default_upload_encodings())
     );
 }
 
 #[test]
 fn answer_keeps_only_accepted_simulcast_rids() {
-    let answer = answer(
-        "video_0",
-        &[("lo", Some("max-br=150000")), ("hi", Some("max-br=900000"))],
-        Some("lo"),
-    );
+    let answer = answer("video_0", &["lo", "hi"], Some("lo"));
 
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
-        Ok(vec![NegotiatedRid {
-            rid: Rid::from(DEFAULT_LOW_RID),
-            max_bitrate: Some(DEFAULT_LOW_MAX_BITRATE),
-        }])
+        Ok(default_upload_encodings()[..1].to_vec())
     );
 }
 
 #[test]
-fn answer_preserves_simulcast_order() {
-    let answer = answer(
-        "video_0",
-        &[("hi", Some("max-br=900000")), ("lo", Some("max-br=150000"))],
-        Some("lo;hi"),
-    );
+fn answer_rejects_rid_restrictions() {
+    for restriction in [
+        "max-br=150000",
+        "max-br=149999",
+        "max-br",
+        "pt=96",
+        "max-br=150000;max-width=640",
+    ] {
+        // The restricted RID is rejected whether or not the answer selects it.
+        for simulcast in [Some("lo;hi"), Some("hi"), None] {
+            let unrestricted = answer("video_0", &["lo", "hi"], simulcast);
+            let restricted = unrestricted.replacen(
+                "a=rid:lo send\r\n",
+                &format!("a=rid:lo send {restriction}\r\n"),
+                1,
+            );
 
-    assert_eq!(
-        send_rids(&answer, &default_upload_encodings()),
-        Ok(vec![
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_LOW_RID),
-                max_bitrate: Some(DEFAULT_LOW_MAX_BITRATE),
-            },
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_HIGH_RID),
-                max_bitrate: Some(HIGH_MAX_BITRATE),
-            },
-        ])
-    );
-}
-
-#[test]
-fn answer_uses_offered_bitrate_when_omitted() {
-    let answer = answer("video_0", &[("lo", None), ("hi", None)], Some("lo;hi"));
-
-    assert_eq!(
-        send_rids(&answer, &default_upload_encodings()),
-        Ok(vec![
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_LOW_RID),
-                max_bitrate: Some(DEFAULT_LOW_MAX_BITRATE),
-            },
-            NegotiatedRid {
-                rid: Rid::from(DEFAULT_HIGH_RID),
-                max_bitrate: Some(HIGH_MAX_BITRATE),
-            },
-        ])
-    );
-}
-
-#[test]
-fn answer_rejects_bitrate_when_offer_has_none() {
-    let answer = answer("video_0", &[("lo", Some("max-br=150000"))], Some("lo"));
-
-    assert_eq!(
-        send_rids(&answer, &custom_upload_encodings("lo", None)),
-        Err(SimulcastAnswerError)
-    );
-}
-
-#[test]
-fn answer_accepts_lower_bitrate_than_offer() {
-    let answer = answer("video_0", &[("lo", Some("max-br=149999"))], Some("lo"));
-
-    assert_eq!(
-        send_rids(&answer, &custom_upload_encodings("lo", Some(150_000))),
-        Ok(vec![NegotiatedRid {
-            rid: Rid::from("lo"),
-            max_bitrate: Some(Bitrate::from_bps(149_999)),
-        }])
-    );
-}
-
-#[test]
-fn answer_rejects_malformed_or_valueless_bitrate() {
-    for restriction in ["max-br=bad", "max-br"] {
-        let answer = answer("video_0", &[("lo", Some(restriction))], Some("lo"));
-
-        assert_eq!(
-            send_rids(&answer, &custom_upload_encodings("lo", Some(150_000))),
-            Err(SimulcastAnswerError)
-        );
+            assert!(
+                parse_answer(&unrestricted).is_ok(),
+                "simulcast {simulcast:?} without restriction"
+            );
+            assert_eq!(
+                parse_answer(&restricted).err(),
+                Some(SimulcastAnswerError),
+                "{restriction} with simulcast {simulcast:?}"
+            );
+        }
     }
 }
 
 #[test]
 fn answer_rejects_duplicate_rid_declaration() {
-    let answer = answer(
-        "video_0",
-        &[("lo", Some("max-br=150000")), ("lo", Some("max-br=149999"))],
-        Some("lo"),
-    );
+    let answer = answer("video_0", &["lo", "lo"], Some("lo"));
 
     assert_eq!(
         send_rids(&answer, &custom_upload_encodings("lo", Some(150_000))),
@@ -167,25 +97,8 @@ fn answer_rejects_duplicate_rid_declaration() {
 }
 
 #[test]
-fn answer_rejects_multiple_rid_restrictions() {
-    for restriction in [
-        "max-br=150000;max-width=640",
-        "pt=96;max-br=150000",
-        "max-br=150000;max-br=149999",
-        "max-br=150000;",
-    ] {
-        let answer = answer("video_0", &[("lo", Some(restriction))], Some("lo"));
-
-        assert_eq!(
-            send_rids(&answer, &custom_upload_encodings("lo", Some(150_000))),
-            Err(SimulcastAnswerError)
-        );
-    }
-}
-
-#[test]
 fn answer_rejects_rid_prefix_alias() {
-    let answer = answer("video_0", &[("abcdefghX", None)], Some("abcdefghX"));
+    let answer = answer("video_0", &["abcdefghX"], Some("abcdefghX"));
 
     assert_eq!(
         send_rids(&answer, &custom_upload_encodings("abcdefgh", None)),
@@ -195,11 +108,7 @@ fn answer_rejects_rid_prefix_alias() {
 
 #[test]
 fn answer_requires_accepted_simulcast_send_list() {
-    let answer = answer(
-        "video_0",
-        &[("lo", Some("max-br=150000")), ("hi", Some("max-br=900000"))],
-        None,
-    );
+    let answer = answer("video_0", &["lo", "hi"], None);
 
     assert!(matches!(
         send_rids(&answer, &default_upload_encodings()),
@@ -209,11 +118,7 @@ fn answer_requires_accepted_simulcast_send_list() {
 
 #[test]
 fn answer_rejects_multiple_simulcast_attributes() {
-    let mut answer = answer(
-        "video_0",
-        &[("lo", Some("max-br=150000")), ("hi", Some("max-br=900000"))],
-        Some("lo"),
-    );
+    let mut answer = answer("video_0", &["lo", "hi"], Some("lo"));
     answer.push_str("a=simulcast:send hi\r\n");
 
     assert_eq!(
@@ -230,15 +135,7 @@ fn answer_rejects_simulcast_alternatives() {
         alternative = sdp::simulcast::ALTERNATIVE_SEPARATOR,
         separator = sdp::simulcast::STREAM_SEPARATOR,
     );
-    let answer = answer(
-        "video_0",
-        &[
-            ("lo", Some("max-br=150000")),
-            ("backup", Some("max-br=450000")),
-            ("hi", Some("max-br=900000")),
-        ],
-        Some(&send),
-    );
+    let answer = answer("video_0", &["lo", "backup", "hi"], Some(&send));
 
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
@@ -260,42 +157,31 @@ fn answer_matches_exact_mid_section() -> Result<(), SimulcastAnswerError> {
             "a=mid:camera\r\n",
             "a=sendonly\r\n",
             "a=rtpmap:96 VP8/90000\r\n",
-            "a={rid}:wrong {send} {max_br}=111000\r\n",
+            "a={rid}:wrong {send}\r\n",
             "a={simulcast}:{send} wrong\r\n",
             "m=video 9 UDP/TLS/RTP/SAVPF 96\r\n",
             "a=mid:cam\r\n",
             "a=sendonly\r\n",
             "a=rtpmap:96 VP8/90000\r\n",
-            "a={rid}:right {send} {max_br}=222000\r\n",
+            "a={rid}:right {send}\r\n",
             "a={simulcast}:{send} right\r\n"
         ),
         rid = sdp::attribute::RID,
         simulcast = sdp::attribute::SIMULCAST,
         send = sdp::rid::DIRECTION_SEND,
-        max_br = sdp::rid_restriction::MAX_BITRATE,
     );
-    let answer = SdpAnswer::from_sdp_string(&answer_sdp).map_err(|_error| SimulcastAnswerError)?;
-    let rids = ParsedAnswerRids::parse(&answer_sdp, &answer);
+    let rids = parse_answer(&answer_sdp)?;
+    let right = custom_upload_encodings("right", Some(222_000));
+    let wrong = custom_upload_encodings("wrong", Some(111_000));
 
+    assert_eq!(rids.negotiate(Mid::from("cam"), &right), Ok(right.clone()));
     assert_eq!(
-        rids.negotiate(
-            Mid::from("cam"),
-            &custom_upload_encodings("right", Some(222_000))
-        ),
-        Ok(vec![NegotiatedRid {
-            rid: Rid::from("right"),
-            max_bitrate: Some(Bitrate::from_bps(222_000)),
-        }])
+        rids.negotiate(Mid::from("camera"), &wrong),
+        Ok(wrong.clone())
     );
     assert_eq!(
-        rids.negotiate(
-            Mid::from("camera"),
-            &custom_upload_encodings("wrong", Some(111_000))
-        ),
-        Ok(vec![NegotiatedRid {
-            rid: Rid::from("wrong"),
-            max_bitrate: Some(Bitrate::from_bps(111_000)),
-        }])
+        rids.negotiate(Mid::from("cam"), &wrong),
+        Err(SimulcastAnswerError)
     );
     Ok(())
 }
@@ -306,15 +192,7 @@ fn answer_rejects_invalid_rfc8852_ids() {
         "low-1{separator}hi_2{separator}hi2",
         separator = sdp::simulcast::STREAM_SEPARATOR,
     );
-    let answer = answer(
-        "video_0",
-        &[
-            ("low-1", Some("max-br=150000")),
-            ("hi_2", Some("max-br=450000")),
-            ("hi2", Some("max-br=900000")),
-        ],
-        Some(&send),
-    );
+    let answer = answer("video_0", &["low-1", "hi_2", "hi2"], Some(&send));
 
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
@@ -335,23 +213,16 @@ fn three_rid_answer_accepts_offered_streams_and_subsets() {
         },
     );
     for accepted in [
-        &[("lo", 150_000), ("mid", 450_000), ("hi", 900_000)][..],
-        &[("lo", 150_000), ("hi", 900_000)],
-        &[("mid", 450_000), ("hi", 900_000)],
-        &[("mid", 450_000)],
+        &["lo", "mid", "hi"][..],
+        &["lo", "hi"],
+        &["mid", "hi"],
+        &["mid"],
     ] {
-        let rids = accepted.iter().map(|(rid, _)| *rid).collect::<Vec<_>>();
-        let answer = answer(
-            "video_0",
-            &[("lo", None), ("mid", None), ("hi", None)],
-            Some(&rids.join(";")),
-        );
-        let expected = accepted
+        let answer = answer("video_0", &["lo", "mid", "hi"], Some(&accepted.join(";")));
+        let expected = offered_encodings
             .iter()
-            .map(|(rid, bitrate)| NegotiatedRid {
-                rid: Rid::from(*rid),
-                max_bitrate: Some(Bitrate::from_bps(*bitrate)),
-            })
+            .filter(|encoding| accepted.contains(&encoding.rid.as_str()))
+            .cloned()
             .collect();
         assert_eq!(send_rids(&answer, &offered_encodings), Ok(expected));
     }
@@ -363,15 +234,7 @@ fn answer_rejects_unoffered_simulcast_stream() {
         "lo{separator}mid{separator}hi",
         separator = sdp::simulcast::STREAM_SEPARATOR,
     );
-    let answer = answer(
-        "video_0",
-        &[
-            ("lo", Some("max-br=150000")),
-            ("mid", Some("max-br=450000")),
-            ("hi", Some("max-br=900000")),
-        ],
-        Some(&send),
-    );
+    let answer = answer("video_0", &["lo", "mid", "hi"], Some(&send));
 
     assert_eq!(
         send_rids(&answer, &default_upload_encodings()),
@@ -441,13 +304,29 @@ fn initial_gate_keeps_ridless_or_mixed_routes_open() {
     assert_eq!(initial_packet_gate(&mixed), PacketLayerGate::Open);
 }
 
-fn answer(mid: &str, declarations: &[(&str, Option<&str>)], simulcast: Option<&str>) -> String {
-    let mut answer = format!("v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:{mid}\r\n");
-    for (rid, restriction) in declarations {
-        let restriction = restriction.map_or(String::new(), |value| format!(" {value}"));
+fn parse_answer(answer_sdp: &str) -> Result<ParsedAnswerRids, SimulcastAnswerError> {
+    let answer = SdpAnswer::from_sdp_string(answer_sdp).expect("test answer should parse");
+    ParsedAnswerRids::parse(answer_sdp, &answer)
+}
+
+fn answer(mid: &str, send_rids: &[&str], simulcast: Option<&str>) -> String {
+    let mut answer = format!(
+        concat!(
+            "v=0\r\n",
+            "o=- 1 1 IN IP4 0.0.0.0\r\n",
+            "s=-\r\n",
+            "t=0 0\r\n",
+            "m=video 9 UDP/TLS/RTP/SAVPF 96\r\n",
+            "a=mid:{mid}\r\n",
+            "a=sendonly\r\n",
+            "a=rtpmap:96 VP8/90000\r\n",
+        ),
+        mid = mid,
+    );
+    for rid in send_rids {
         let _ = write!(
             answer,
-            "a={attribute}:{rid} {send}{restriction}\r\n",
+            "a={attribute}:{rid} {send}\r\n",
             attribute = sdp::attribute::RID,
             send = sdp::rid::DIRECTION_SEND,
         );

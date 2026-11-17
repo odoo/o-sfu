@@ -34,9 +34,8 @@ use super::{
 use crate::{
     Bitrate, RtcTcpConfig, VideoBitrateLimits,
     engine::media_transport::{
-        AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, SessionUploadSlot,
-        TransportAdapterError, TransportMediaId, TransportSessionKey,
-        rtc::state::demux::RemoteTransportAddr,
+        AppliedProducer, AppliedSessionAnswer, SessionUploadEncoding, TransportAdapterError,
+        TransportMediaId, TransportSessionKey, rtc::state::demux::RemoteTransportAddr,
     },
 };
 
@@ -177,7 +176,7 @@ pub(super) fn worker_apply_session_answer(
     let client_capabilities = codec::client_rtp_capabilities_from_sdp_answer(&answer)?;
     let producer_answer_projection = answer_producer_projection(&answer, &producer_mids)?;
     let offer_encodings = offer_encodings_by_mid(state, session_key, &producer_mids)?;
-    let rids_by_mid = producer_mids
+    let mut encodings_by_mid = producer_mids
         .iter()
         .map(|mid| {
             let encodings = offer_encodings
@@ -185,22 +184,21 @@ pub(super) fn worker_apply_session_answer(
                 .map(Vec::as_slice)
                 .unwrap_or_default();
             rids.negotiate(*mid, encodings)
-                .map(|rids| (*mid, rids))
+                .map(|encodings| (*mid, encodings))
                 .map_err(|_error| TransportAdapterError::InvalidInput)
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let staged_upload_slots = {
+    {
         let Some(session_state) = state.users.get_mut(session_key) else {
             return Err(TransportAdapterError::TransportUnavailable);
         };
-        let staged_upload_slots = session_state
+        session_state
             .sdp_negotiation
             .accept_answer(&mut session_state.rtc, answer)?;
         session_state.purge_removed_rtx_streams();
         apply_pending_recv_streams(session_state, max_bitrate_in);
         session_state.dtls_started = true;
-        staged_upload_slots
-    };
+    }
     let declined_consumers =
         remove_declined_consumer_media(state, session_key, consumer_media_snapshot);
     let mut refreshed_by_mid = refresh_negotiated_producer_parameters(
@@ -208,7 +206,7 @@ pub(super) fn worker_apply_session_answer(
         session_key,
         &producer_mids,
         producer_answer_projection,
-        &rids_by_mid,
+        &encodings_by_mid,
         max_bitrate_in,
     )?
     .into_iter()
@@ -227,12 +225,11 @@ pub(super) fn worker_apply_session_answer(
             .into_iter()
             .filter_map(|(transport_media_id, mid)| {
                 refreshed_by_mid.remove(&mid).map(|parameters| {
-                    let rids = rids_by_mid.get(&mid).map(Vec::as_slice).unwrap_or_default();
                     (
                         transport_media_id,
                         AppliedProducer::new(
                             parameters,
-                            upload_encodings_for_mid(&staged_upload_slots, mid, rids),
+                            encodings_by_mid.remove(&mid).unwrap_or_default(),
                         ),
                     )
                 })
@@ -312,32 +309,6 @@ fn offer_encodings_by_mid(
         entry.insert(simulcast_encodings);
     }
     Ok(encodings)
-}
-
-fn upload_encodings_for_mid(
-    upload_slots: &[SessionUploadSlot],
-    mid: Mid,
-    accepted_rids: &[codec::NegotiatedRid],
-) -> Vec<SessionUploadEncoding> {
-    let mid_name: &str = &mid;
-    let Some(slot) = upload_slots.iter().find(|slot| slot.mid == mid_name) else {
-        return Vec::new();
-    };
-    accepted_rids
-        .iter()
-        .filter_map(|rid| {
-            let rid_name: &str = &rid.rid;
-            let mut encoding = slot
-                .simulcast_encodings
-                .iter()
-                .find(|encoding| encoding.rid == rid_name)?
-                .clone();
-            if let Some(max_bitrate) = rid.max_bitrate {
-                encoding.max_bitrate = Some(max_bitrate);
-            }
-            Some(encoding)
-        })
-        .collect()
 }
 
 fn answer_remote_candidate_addrs(answer: &SdpAnswer) -> Vec<RemoteTransportAddr> {

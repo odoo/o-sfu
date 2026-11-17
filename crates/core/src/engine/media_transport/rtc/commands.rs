@@ -170,12 +170,13 @@ impl ParsedSessionAnswer {
     /// # Errors
     ///
     /// Returns [`TransportAdapterError::InvalidInput`] for malformed repair
-    /// topology or SDP that str0m cannot parse.
+    /// topology, a restricted send RID or SDP that str0m cannot parse.
     pub(in crate::engine::media_transport) fn parse(answer_sdp: &str) -> TransportResult<Self> {
         let repair = validate_answer_sdp(answer_sdp)?;
         let answer = SdpAnswer::from_sdp_string(answer_sdp)
             .map_err(|_error| TransportAdapterError::InvalidInput)?;
-        let rids = ParsedAnswerRids::parse(answer_sdp, &answer);
+        let rids = ParsedAnswerRids::parse(answer_sdp, &answer)
+            .map_err(|_error| TransportAdapterError::InvalidInput)?;
         Ok(Self {
             answer,
             rids,

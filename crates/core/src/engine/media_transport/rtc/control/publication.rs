@@ -29,7 +29,7 @@ use super::{
 };
 use crate::{
     Bitrate,
-    engine::media_transport::{TransportAdapterError, TransportSessionKey},
+    engine::media_transport::{SessionUploadEncoding, TransportAdapterError, TransportSessionKey},
 };
 
 pub(in crate::engine::media_transport::rtc) struct AnswerProducerProjection {
@@ -83,7 +83,7 @@ pub(in crate::engine::media_transport::rtc) fn refresh_negotiated_producer_param
     session_key: &TransportSessionKey,
     producer_mids: &[Mid],
     answer_projection: Vec<AnswerProducerProjection>,
-    rids_by_mid: &BTreeMap<Mid, Vec<codec::NegotiatedRid>>,
+    encodings_by_mid: &BTreeMap<Mid, Vec<SessionUploadEncoding>>,
     max_bitrate_in: Bitrate,
 ) -> Result<Vec<(Mid, RouterRtpParameters)>, TransportAdapterError> {
     let mut refreshed_parameters = Vec::with_capacity(producer_mids.len());
@@ -118,12 +118,15 @@ pub(in crate::engine::media_transport::rtc) fn refresh_negotiated_producer_param
             };
             let primary_payload_type = codec::router_payload_type(*primary_payload.pt())?;
             let formats = project_media_formats(media_kind, &media_line.payload_params)?;
-            let rids = rids_by_mid.get(&mid).map(Vec::as_slice).unwrap_or_default();
+            let encodings = encodings_by_mid
+                .get(&mid)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             let bindings = project_bindings(
                 session_state,
                 mid,
                 primary_payload_type,
-                rids,
+                encodings,
                 &media_line.signaled_ssrcs,
             );
             if bindings.is_empty() {
@@ -195,24 +198,23 @@ fn project_bindings(
     session_state: &mut RtcSessionState,
     mid: Mid,
     primary_payload_type: PayloadType,
-    rids: &[codec::NegotiatedRid],
+    encodings: &[SessionUploadEncoding],
     signaled_ssrcs: &[(u32, Option<u32>)],
 ) -> Vec<StreamBinding> {
-    if !rids.is_empty() {
+    if !encodings.is_empty() {
         // RepairedRtpStreamId associates each repair stream with its source RID.
         // https://www.rfc-editor.org/rfc/rfc8852.html#section-3
-        return rids
+        return encodings
             .iter()
-            .map(|rid| {
+            .map(|encoding| {
                 let mut binding = StreamBinding::new()
-                    .with_rid(rid.rid.to_string())
+                    .with_rid(encoding.rid.clone())
                     .with_payload_type(primary_payload_type);
-                if let Some(max_bitrate) = rid.max_bitrate {
+                if let Some(max_bitrate) = encoding.max_bitrate {
                     binding = binding.with_max_bitrate(max_bitrate.as_bps());
                 }
-                if let Some((ssrc, repair_ssrc)) =
-                    stream_rx_ssrcs(session_state, mid, Some(rid.rid))
-                {
+                let rid = Rid::from(encoding.rid.as_str());
+                if let Some((ssrc, repair_ssrc)) = stream_rx_ssrcs(session_state, mid, Some(rid)) {
                     binding = binding.with_ssrc(ssrc);
                     if let Some(repair_ssrc) = repair_ssrc {
                         binding = binding.with_repair_ssrc(repair_ssrc);

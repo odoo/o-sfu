@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use itertools::Itertools;
 use o_sfu_rfc::webrtc::{self, sdp};
 use o_sfu_router::rtp::MediaStream;
 use str0m::{
@@ -20,24 +19,24 @@ pub(super) const DEFAULT_LOW_MAX_BITRATE: Bitrate = Bitrate::from_kbps(150);
 const MIDDLE_BITRATE_DIVISOR: u64 = 5;
 pub const MAX_SEND_STREAMS: usize = 3;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::engine::media_transport::rtc) struct NegotiatedRid {
-    pub(in crate::engine::media_transport::rtc) rid: Rid,
-    pub(in crate::engine::media_transport::rtc) max_bitrate: Option<Bitrate>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::engine::media_transport::rtc) struct SimulcastAnswerError;
 
 pub(in crate::engine::media_transport::rtc) struct ParsedAnswerRids {
-    by_mid: BTreeMap<Mid, Result<Vec<AnswerRid>, SimulcastAnswerError>>,
+    by_mid: BTreeMap<Mid, Result<Vec<String>, SimulcastAnswerError>>,
 }
 
 impl ParsedAnswerRids {
+    /// Parses the send RIDs of every media section in `answer_sdp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulcastAnswerError`] when any section declares a restricted
+    /// send RID, whether or not the section or the RID is negotiated later.
     pub(in crate::engine::media_transport::rtc) fn parse(
         answer_sdp: &str,
         answer: &SdpAnswer,
-    ) -> Self {
+    ) -> Result<Self, SimulcastAnswerError> {
         let mut by_mid = BTreeMap::new();
         // str0m 0.21's public answer view drops RID restrictions and all but
         // the first RID alternative. Keep the original media section until
@@ -49,6 +48,7 @@ impl ParsedAnswerRids {
             .iter()
             .zip(answer_sdp.split("\nm=").skip(1))
         {
+            reject_send_rid_restrictions(section)?;
             match parse_section_rids(section) {
                 Ok(rids) if rids.is_empty() => {}
                 result => {
@@ -56,16 +56,22 @@ impl ParsedAnswerRids {
                 }
             }
         }
-        Self { by_mid }
+        Ok(Self { by_mid })
     }
 
+    /// Returns the offered encodings the answer accepts, in answer order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimulcastAnswerError`] when the answer section is malformed
+    /// or accepts a RID that `offered_encodings` lacks.
     pub(in crate::engine::media_transport::rtc) fn negotiate(
         &self,
         mid: Mid,
         offered_encodings: &[SessionUploadEncoding],
-    ) -> Result<Vec<NegotiatedRid>, SimulcastAnswerError> {
+    ) -> Result<Vec<SessionUploadEncoding>, SimulcastAnswerError> {
         match self.by_mid.get(&mid) {
-            Some(Ok(parsed_rids)) => negotiate_answer_rids(parsed_rids, offered_encodings),
+            Some(Ok(answer_rids)) => accepted_encodings(answer_rids, offered_encodings),
             Some(Err(error)) => Err(*error),
             None => Ok(Vec::new()),
         }
@@ -101,6 +107,10 @@ pub(super) fn default_layers(video_bitrate_limits: VideoBitrateLimits) -> [Layer
     ]
 }
 
+/// Builds the offered receive simulcast without RID restrictions.
+///
+/// `uploadSlots` is the only carrier of a layer's bitrate cap. The client
+/// applies it with `setParameters`, so the SDP settles RIDs only.
 pub(super) fn recv_simulcast(layers: &[LayerSpec<'_>]) -> Simulcast {
     Simulcast {
         send: Vec::new(),
@@ -108,12 +118,7 @@ pub(super) fn recv_simulcast(layers: &[LayerSpec<'_>]) -> Simulcast {
             .iter()
             .map(|layer| SimulcastLayer {
                 rid: Rid::from(layer.rid),
-                attributes: layer.max_bitrate.map(|max_bitrate| {
-                    vec![(
-                        sdp::rid_restriction::MAX_BITRATE.to_owned(),
-                        max_bitrate.as_bps().to_string(),
-                    )]
-                }),
+                attributes: None,
             })
             .collect(),
     }
@@ -174,115 +179,72 @@ pub(in crate::engine::media_transport::rtc) fn initial_packet_gate(
     first_rid.map_or(PacketLayerGate::Open, PacketLayerGate::Rid)
 }
 
-fn parse_section_rids(section: &str) -> Result<Vec<AnswerRid>, SimulcastAnswerError> {
+fn reject_send_rid_restrictions(section: &str) -> Result<(), SimulcastAnswerError> {
+    section
+        .lines()
+        .try_for_each(|line| parse_send_rid(line.trim_end_matches(sdp::CR)).map(drop))
+}
+
+fn parse_section_rids(section: &str) -> Result<Vec<String>, SimulcastAnswerError> {
     accepted_send_simulcast_rids(section)?
         .into_iter()
         .map(|rid| {
-            let declaration = send_rid_declaration(section, rid)?;
-            Ok(AnswerRid {
-                rid: declaration.rid.to_owned(),
-                max_bitrate: declaration.max_bitrate,
-            })
+            require_one_send_rid_declaration(section, rid)?;
+            Ok(rid.to_owned())
         })
         .collect()
 }
 
-fn negotiate_answer_rids(
-    answer_rids: &[AnswerRid],
+fn accepted_encodings(
+    answer_rids: &[String],
     offered_encodings: &[SessionUploadEncoding],
-) -> Result<Vec<NegotiatedRid>, SimulcastAnswerError> {
+) -> Result<Vec<SessionUploadEncoding>, SimulcastAnswerError> {
     answer_rids
         .iter()
-        .map(|answer_rid| {
-            let max_bitrate = negotiated_rid_max_bitrate(answer_rid, offered_encodings)?;
-            Ok(NegotiatedRid {
-                rid: Rid::from(answer_rid.rid.as_str()),
-                max_bitrate,
-            })
+        .map(|rid| {
+            offered_encodings
+                .iter()
+                .find(|encoding| encoding.rid == *rid)
+                .cloned()
+                .ok_or(SimulcastAnswerError)
         })
         .collect()
 }
 
-fn negotiated_rid_max_bitrate(
-    answer_rid: &AnswerRid,
-    offered_encodings: &[SessionUploadEncoding],
-) -> Result<Option<Bitrate>, SimulcastAnswerError> {
-    let rid = answer_rid.rid.as_str();
-    let Some(offered) = offered_encodings
-        .iter()
-        .find(|encoding| encoding.rid == rid)
-    else {
-        return Err(SimulcastAnswerError);
-    };
-    // RFC 8851 sections 6.3 and 6.4 let an answer tighten an offered
-    // restriction but never relax it or introduce a new one. Omission keeps
-    // the offered ceiling instead of removing it.
-    // https://www.rfc-editor.org/rfc/rfc8851.html#section-6.3
-    // https://www.rfc-editor.org/rfc/rfc8851.html#section-6.4
-    match (answer_rid.max_bitrate, offered.max_bitrate) {
-        (RidMaxBitrate::Absent, offered) => Ok(offered),
-        (RidMaxBitrate::Value(answer), Some(offer)) if answer <= offer => Ok(Some(answer)),
-        (RidMaxBitrate::Value(_) | RidMaxBitrate::Valueless, _) => Err(SimulcastAnswerError),
-    }
-}
-
-struct SendRidDeclaration<'a> {
-    rid: &'a str,
-    max_bitrate: RidMaxBitrate,
-}
-
-struct AnswerRid {
-    rid: String,
-    max_bitrate: RidMaxBitrate,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RidMaxBitrate {
-    Absent,
-    Valueless,
-    Value(Bitrate),
-}
-
-fn send_rid_declaration<'a>(
-    section: &'a str,
-    rid: &str,
-) -> Result<SendRidDeclaration<'a>, SimulcastAnswerError> {
-    let mut found = None;
+fn require_one_send_rid_declaration(section: &str, rid: &str) -> Result<(), SimulcastAnswerError> {
+    let mut found = false;
     for line in section.lines() {
-        let Some(declaration) = parse_send_rid(line.trim_end_matches(sdp::CR))? else {
-            continue;
-        };
-        if declaration.rid != rid {
+        if parse_send_rid(line.trim_end_matches(sdp::CR))? != Some(rid) {
             continue;
         }
-        if found.replace(declaration).is_some() {
+        if found {
             return Err(SimulcastAnswerError);
         }
+        found = true;
     }
-    found.ok_or(SimulcastAnswerError)
+    found.then_some(()).ok_or(SimulcastAnswerError)
 }
 
-fn parse_send_rid(line: &str) -> Result<Option<SendRidDeclaration<'_>>, SimulcastAnswerError> {
+fn parse_send_rid(line: &str) -> Result<Option<&str>, SimulcastAnswerError> {
     let Some(rid_value) = sdp_attribute_value(line, sdp::attribute::RID) else {
         return Ok(None);
     };
     let mut parts = rid_value.splitn(3, sdp::SP);
-    let Some(rid) = parts.next() else {
+    let (Some(rid), Some(direction)) = (parts.next(), parts.next()) else {
         return Ok(None);
     };
-    if !sdp::rid::is_id(rid) {
+    if !sdp::rid::is_id(rid)
+        || webrtc::RtpStreamDirection::parse(direction) != Some(webrtc::RtpStreamDirection::Send)
+    {
         return Ok(None);
     }
-    let Some(direction) = parts.next() else {
-        return Ok(None);
-    };
-    if webrtc::RtpStreamDirection::parse(direction) != Some(webrtc::RtpStreamDirection::Send) {
-        return Ok(None);
+    // The offer writes no restriction, and RFC 8851 section 6.4 forbids an
+    // answer from adding one. A layer's cap comes from `uploadSlots` alone.
+    // https://www.rfc-editor.org/rfc/rfc8851.html#section-6.4
+    if parts.next().is_some() {
+        return Err(SimulcastAnswerError);
     }
-    Ok(Some(SendRidDeclaration {
-        rid,
-        max_bitrate: parse_rid_restrictions(parts.next())?,
-    }))
+    Ok(Some(rid))
 }
 
 fn accepted_send_simulcast_rids(section: &str) -> Result<Vec<&str>, SimulcastAnswerError> {
@@ -353,39 +315,6 @@ fn parse_simulcast_rid_list(value: &str) -> Result<Vec<&str>, SimulcastAnswerErr
         }
     }
     Ok(rids)
-}
-
-fn parse_rid_restrictions(
-    restrictions: Option<&str>,
-) -> Result<RidMaxBitrate, SimulcastAnswerError> {
-    let Some(restrictions) = restrictions else {
-        return Ok(RidMaxBitrate::Absent);
-    };
-    let restriction = restrictions
-        .split(sdp::rid_restriction::PARAMETER_SEPARATOR)
-        .exactly_one()
-        .map_err(|_error| SimulcastAnswerError)?
-        .trim();
-    if restriction.is_empty() {
-        return Err(SimulcastAnswerError);
-    }
-    let (key, value) = restriction
-        .split_once(sdp::rid_restriction::NAME_VALUE_SEPARATOR)
-        .map_or((restriction, None), |(key, value)| {
-            (key.trim(), Some(value.trim()))
-        });
-    if key != sdp::rid_restriction::MAX_BITRATE {
-        return Err(SimulcastAnswerError);
-    }
-    match value {
-        Some(value) if !value.is_empty() => value
-            .parse::<u64>()
-            .map(Bitrate::from_bps)
-            .map(RidMaxBitrate::Value)
-            .map_err(|_error| SimulcastAnswerError),
-        Some(_) => Err(SimulcastAnswerError),
-        None => Ok(RidMaxBitrate::Valueless),
-    }
 }
 
 #[cfg(test)]

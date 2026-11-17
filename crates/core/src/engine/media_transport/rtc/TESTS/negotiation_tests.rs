@@ -168,18 +168,7 @@ async fn rtc_initial_session_offer_advertises_vp8_simulcast_receive_surface() {
         .await
         .into_parts();
 
-    assert!(
-        offer_sdp.contains(&sdp_rid_line("lo", sdp::rid::DIRECTION_RECV, Some(150_000))),
-        "video offers should claim the low receive RID on the production VP8 path"
-    );
-    assert!(
-        offer_sdp.contains(&sdp_rid_line(
-            "hi",
-            sdp::rid::DIRECTION_RECV,
-            Some(4_000_000)
-        )),
-        "video offers should claim the high receive RID on the production VP8 path"
-    );
+    assert_unrestricted_recv_rids(&offer_sdp, &["lo", "mid", "hi"]);
     assert!(
         offer_sdp.contains(&sdp_simulcast_line(
             sdp::simulcast::DIRECTION_RECV,
@@ -226,10 +215,7 @@ async fn rtc_initial_session_offer_advertises_h264_simulcast_when_h264_leads() {
         .await
         .into_parts();
 
-    assert!(
-        offer_sdp.contains(&sdp_rid_line("lo", sdp::rid::DIRECTION_RECV, Some(150_000))),
-        "H264-first video offers should claim the low RID on the promoted matrix"
-    );
+    assert_unrestricted_recv_rids(&offer_sdp, &["lo", "mid", "hi"]);
     assert!(
         offer_sdp.contains(&sdp_simulcast_line(
             sdp::simulcast::DIRECTION_RECV,
@@ -461,14 +447,7 @@ async fn rtc_simulcast_publish_intent_preserves_negotiated_encoding_facts() {
         video_slot.codecs,
         vec![String::from(rfc_rtp::codec_name::VP8)]
     );
-    assert!(
-        renegotiation_offer.contains(&sdp_rid_line("lo", sdp::rid::DIRECTION_RECV, Some(150_000))),
-        "simulcast publish offers should expose low RID receive metadata"
-    );
-    assert!(
-        renegotiation_offer.contains(&sdp_rid_line("hi", sdp::rid::DIRECTION_RECV, Some(900_000))),
-        "simulcast publish offers should expose high RID receive metadata"
-    );
+    assert_unrestricted_recv_rids(&renegotiation_offer, &["lo", "hi"]);
     assert!(
         renegotiation_offer.contains(&sdp_simulcast_line(
             sdp::simulcast::DIRECTION_RECV,
@@ -496,11 +475,7 @@ async fn rtc_simulcast_publish_intent_preserves_negotiated_encoding_facts() {
         webrtc::rtp_header_extension_uri::REPAIRED_RTP_STREAM_ID,
         6,
     );
-    let answer_sdp = answer_with_simulcast_send_rids(
-        &answer_sdp,
-        &negotiated_mid,
-        &[("lo", Some(150_000)), ("hi", Some(900_000))],
-    );
+    let answer_sdp = answer_with_simulcast_send_rids(&answer_sdp, &negotiated_mid, &["lo", "hi"]);
     let answer_sdp = answer_with_leading_fid_pair(&answer_sdp, &negotiated_mid);
     let applied_answer = adapter
         .apply_session_answer(&session_key, &answer_sdp)
@@ -605,17 +580,14 @@ async fn rtc_simulcast_answer_rejects_unoffered_rid_alternatives() {
         )
         .expect("remote simulcast answer should build")
         .to_sdp_string();
-    let valid_answer_sdp = answer_with_simulcast_send_rids(
-        &answer_sdp,
+    let valid_answer_sdp =
+        answer_with_simulcast_send_rids(&answer_sdp, &negotiated_mid, &["lo", "hi"]);
+    let lo_declaration = sdp_rid_line("lo", sdp::rid::DIRECTION_SEND);
+    let duplicate_rid_answer = answer_with_mid_section_edit(
+        &valid_answer_sdp,
         &negotiated_mid,
-        &[("lo", Some(150_000)), ("hi", Some(900_000))],
-    );
-    let lo_declaration = sdp_rid_line("lo", sdp::rid::DIRECTION_SEND, Some(150_000));
-    let lo_declaration = format!("{lo_declaration}{}", sdp::CRLF);
-    let duplicate_rid_answer = valid_answer_sdp.replacen(
         &lo_declaration,
         &format!("{lo_declaration}{lo_declaration}"),
-        1,
     );
     assert_eq!(
         adapter
@@ -624,7 +596,9 @@ async fn rtc_simulcast_answer_rejects_unoffered_rid_alternatives() {
         Err(TransportAdapterError::InvalidInput)
     );
 
-    let alternative_rid_answer = valid_answer_sdp.replacen(
+    let alternative_rid_answer = answer_with_mid_section_edit(
+        &valid_answer_sdp,
+        &negotiated_mid,
         &sdp_simulcast_line(sdp::simulcast::DIRECTION_SEND, &["lo", "hi"]),
         &format!(
             "{}{}{}{}{}lo{}backup{}hi",
@@ -636,7 +610,6 @@ async fn rtc_simulcast_answer_rejects_unoffered_rid_alternatives() {
             sdp::simulcast::ALTERNATIVE_SEPARATOR,
             sdp::simulcast::STREAM_SEPARATOR
         ),
-        1,
     );
 
     assert_eq!(
@@ -684,11 +657,8 @@ async fn rtc_simulcast_answer_rejects_unoffered_plain_rid() {
         )
         .expect("remote simulcast answer should build")
         .to_sdp_string();
-    let answer_sdp = answer_with_simulcast_send_rids(
-        &answer_sdp,
-        &negotiated_mid,
-        &[("lo", Some(150_000)), ("backup", Some(450_000))],
-    );
+    let answer_sdp =
+        answer_with_simulcast_send_rids(&answer_sdp, &negotiated_mid, &["lo", "backup"]);
 
     assert_eq!(
         adapter
@@ -699,7 +669,7 @@ async fn rtc_simulcast_answer_rejects_unoffered_plain_rid() {
 }
 
 #[tokio::test]
-async fn rtc_simulcast_answer_rejects_larger_max_br_than_offer() {
+async fn rtc_simulcast_answer_rejects_rid_restriction() {
     let adapter =
         rtc_with_bitrate_limits(Bitrate::from_bps(2_222_222), Bitrate::from_bps(3_333_333));
     let session_key = transport_key(1, 337, UserId::Integer(337));
@@ -731,18 +701,34 @@ async fn rtc_simulcast_answer_rejects_larger_max_br_than_offer() {
         )
         .expect("remote simulcast answer should build")
         .to_sdp_string();
-    let invalid_answer_sdp = answer_with_simulcast_send_rids(
+    let valid_answer_sdp =
+        answer_with_simulcast_send_rids(&valid_answer_sdp, &negotiated_mid, &["lo", "hi"]);
+    let lo_declaration = sdp_rid_line("lo", sdp::rid::DIRECTION_SEND);
+    // Even a restriction within the offered cap is refused.
+    let restricted_lo_declaration = lo_declaration.replace(sdp::CRLF, " max-br=150000\r\n");
+    let producer_restriction = answer_with_mid_section_edit(
         &valid_answer_sdp,
         &negotiated_mid,
-        &[("lo", Some(150_001)), ("hi", Some(900_000))],
+        &lo_declaration,
+        &restricted_lo_declaration,
+    );
+    // The bootstrap video section precedes the producer and declares the same RIDs.
+    let bootstrap_restriction =
+        valid_answer_sdp.replacen(&lo_declaration, &restricted_lo_declaration, 1);
+    assert_eq!(
+        media_section_for_mid(&bootstrap_restriction, &negotiated_mid),
+        media_section_for_mid(&valid_answer_sdp, &negotiated_mid),
+        "the bootstrap edit should leave the producer section unchanged"
     );
 
-    assert_eq!(
-        adapter
-            .apply_session_answer(&session_key, &invalid_answer_sdp)
-            .await,
-        Err(TransportAdapterError::InvalidInput)
-    );
+    for invalid_answer_sdp in [producer_restriction, bootstrap_restriction] {
+        assert_eq!(
+            adapter
+                .apply_session_answer(&session_key, &invalid_answer_sdp)
+                .await,
+            Err(TransportAdapterError::InvalidInput)
+        );
+    }
     adapter
         .apply_session_answer(&session_key, &valid_answer_sdp)
         .await
@@ -1008,14 +994,8 @@ async fn rtc_protocol_publish_projects_rid_bindings_when_publish_intent_is_empty
             .filter(|(rid, _, _)| accepted_rids.contains(rid))
             .copied()
             .collect::<Vec<_>>();
-        let answer_sdp = answer_with_simulcast_send_rids(
-            &answer_sdp,
-            &negotiated_mid,
-            &accepted
-                .iter()
-                .map(|(rid, bitrate, _scale)| (*rid, *bitrate))
-                .collect::<Vec<_>>(),
-        );
+        let answer_sdp =
+            answer_with_simulcast_send_rids(&answer_sdp, &negotiated_mid, accepted_rids);
         let applied = adapter
             .apply_session_answer(&session_key, &answer_sdp)
             .await
@@ -1039,9 +1019,13 @@ async fn rtc_protocol_publish_projects_rid_bindings_when_publish_intent_is_empty
         assert_eq!(
             negotiated_parameters
                 .bindings()
-                .map(|binding| binding.rid())
+                .map(|binding| (binding.rid(), binding.max_bitrate()))
                 .collect::<Vec<_>>(),
-            accepted_rids.iter().copied().map(Some).collect::<Vec<_>>()
+            accepted
+                .iter()
+                .map(|(rid, bitrate, _scale)| (Some(*rid), *bitrate))
+                .collect::<Vec<_>>(),
+            "producer bindings must carry the cap sent in uploadSlots"
         );
     }
 }
@@ -1831,6 +1815,16 @@ fn media_section_for_mid<'a>(sdp: &'a str, mid: &str) -> Option<&'a str> {
     Some(&sdp[section_start..section_end])
 }
 
+fn answer_with_mid_section_edit(answer_sdp: &str, mid: &str, from: &str, to: &str) -> String {
+    let section = media_section_for_mid(answer_sdp, mid)
+        .expect("test answer should contain the target MID section");
+    assert!(
+        section.contains(from),
+        "the target section should contain {from:?}"
+    );
+    answer_sdp.replacen(section, &section.replacen(from, to, 1), 1)
+}
+
 fn answer_with_mid_direction(answer_sdp: &str, mid: &str, direction: &str) -> String {
     let Some(section) = media_section_for_mid(answer_sdp, mid) else {
         return answer_sdp.to_owned();
@@ -1940,23 +1934,27 @@ fn assert_default_vp8_upload_slot(upload_slots: &[SessionUploadSlot]) {
     );
 }
 
-fn sdp_rid_line(rid: &str, direction: &str, max_bitrate: Option<u64>) -> String {
-    let mut line = format!(
-        "{}{}{}{}{}{}",
+fn sdp_rid_line(rid: &str, direction: &str) -> String {
+    format!(
+        "{}{}{}{}{}{}{}",
         sdp::ATTR,
         sdp::attribute::RID,
         sdp::ATTR_SEP,
         rid,
         sdp::SP,
         direction,
-    );
-    if let Some(max_bitrate) = max_bitrate {
-        line.push(sdp::SP);
-        line.push_str(sdp::rid_restriction::MAX_BITRATE);
-        line.push(sdp::rid_restriction::NAME_VALUE_SEPARATOR);
-        line.push_str(&max_bitrate.to_string());
+        sdp::CRLF,
+    )
+}
+
+fn assert_unrestricted_recv_rids(offer: &str, rids: &[&str]) {
+    for rid in rids {
+        let line = sdp_rid_line(rid, sdp::rid::DIRECTION_RECV);
+        assert!(
+            offer.contains(&line),
+            "the offer should declare {line:?} without restrictions"
+        );
     }
-    line
 }
 
 fn sdp_simulcast_line(direction: &str, rids: &[&str]) -> String {
@@ -1978,11 +1976,7 @@ fn without_vp8_repair(sdp: &str) -> String {
         .replace("a=fmtp:97 apt=96\r\n", "")
 }
 
-fn answer_with_simulcast_send_rids(
-    answer_sdp: &str,
-    mid: &str,
-    rids: &[(&str, Option<u64>)],
-) -> String {
+fn answer_with_simulcast_send_rids(answer_sdp: &str, mid: &str, rids: &[&str]) -> String {
     let section = media_section_for_mid(answer_sdp, mid)
         .expect("test answer should contain the target MID section");
     // str0m retains simulcast declarations, so custom answers replace them once.
@@ -2007,18 +2001,10 @@ fn answer_with_simulcast_send_rids(
         sdp::CRLF,
     );
     let mut replacement = marker.clone();
-    for (rid, max_bitrate) in rids {
-        replacement.push_str(&sdp_rid_line(rid, sdp::rid::DIRECTION_SEND, *max_bitrate));
-        replacement.push_str(sdp::CRLF);
+    for rid in rids {
+        replacement.push_str(&sdp_rid_line(rid, sdp::rid::DIRECTION_SEND));
     }
-    let rid_values = rids
-        .iter()
-        .map(|(rid, _max_bitrate)| *rid)
-        .collect::<Vec<_>>();
-    replacement.push_str(&sdp_simulcast_line(
-        sdp::simulcast::DIRECTION_SEND,
-        &rid_values,
-    ));
+    replacement.push_str(&sdp_simulcast_line(sdp::simulcast::DIRECTION_SEND, rids));
     replacement.push_str(sdp::CRLF);
     let updated_section = section_without_simulcast.replacen(&marker, &replacement, 1);
     answer_sdp.replacen(section, &updated_section, 1)
