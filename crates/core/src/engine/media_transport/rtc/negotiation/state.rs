@@ -371,7 +371,7 @@ impl SessionSdpNegotiationState {
         &mut self,
         rtc: &mut Rtc,
         answer: SdpAnswer,
-    ) -> TransportResult<Vec<SessionUploadSlot>> {
+    ) -> TransportResult<()> {
         let pending = self
             .pending
             .take()
@@ -383,7 +383,7 @@ impl SessionSdpNegotiationState {
             .inspect_err(|error| warn!(?error, "str0m failed to accept the session answer"))
             .map_err(|_error| TransportAdapterError::AnswerApplicationFailed)?;
         self.initial_offer_applied = true;
-        Ok(pending.upload_slots)
+        Ok(())
     }
 }
 
