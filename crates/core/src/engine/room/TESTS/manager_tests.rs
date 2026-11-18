@@ -265,6 +265,10 @@ async fn policy_survives_a_terminal_worker_in_the_same_room() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the placement race shares one paused-worker fixture"
+)]
 async fn policy_sync_retries_when_room_gains_publisher_worker_during_observation() {
     let manager = manager_with_room_worker_policy(spillover_policy(2));
     let media_transport = real_adapter();
@@ -330,29 +334,43 @@ async fn policy_sync_retries_when_room_gains_publisher_worker_during_observation
             )
             .is_some()
     );
-    room.test_api()
-        .publish_negotiated_track(
-            &publisher_id,
-            NegotiatedPublish {
-                connection_id: publisher_connection_id,
-                stream_type: TestSourceKind::AudioDetector,
-                transport_media_id: TransportMediaId::new(99),
-                consumable_rtp_parameters: test_audio_rtp_parameters(),
-            },
-            &media_transport,
-        )
-        .await
-        .expect("second worker publication should commit");
+    let publication = room.test_api().publish_negotiated_track(
+        &publisher_id,
+        NegotiatedPublish {
+            connection_id: publisher_connection_id,
+            stream_type: TestSourceKind::AudioDetector,
+            transport_media_id: TransportMediaId::new(99),
+            consumable_rtp_parameters: test_audio_rtp_parameters(),
+        },
+        &media_transport,
+    );
+    tokio::pin!(publication);
+    // Publication commits before its consumer setup waits on the paused worker.
+    assert!(futures_util::poll!(&mut publication).is_pending());
+    assert!(
+        room.test_api()
+            .has_published_source(
+                &publisher_id,
+                publisher_connection_id,
+                TestSourceKind::AudioDetector
+            )
+            .await
+    );
     let _ = updates.take_pending_updates();
     release_worker
         .send(())
         .expect("paused worker should resume");
+    let (observed, published) = tokio::join!(
+        timeout(Duration::from_secs(1), turns.next()),
+        timeout(Duration::from_secs(1), publication),
+    );
     assert_eq!(
-        timeout(Duration::from_secs(1), turns.next())
-            .await
-            .expect("policy sync should complete"),
+        observed.expect("policy sync should complete"),
         Some(room.instance_id())
     );
+    published
+        .expect("publication effects should finish")
+        .expect("second worker publication should complete");
     let retried = timeout(Duration::from_secs(2), updates.wait_for_update())
         .await
         .expect("new publisher worker should schedule a policy retry");

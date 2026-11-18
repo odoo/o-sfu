@@ -6,6 +6,7 @@ use str0m::media::Mid;
 use tokio::sync::mpsc;
 
 use super::super::{
+    commands::{RelayTarget, RtcWorkerCommand},
     packet_loop::{
         ForwardingDestination, PacketGateDecision, forwarded_packet::ForwardedPacket, plan_forwards,
     },
@@ -19,7 +20,9 @@ use super::super::{
         sample_forwarded_packet_with_rid_and_audio_activity, test_transport_session_key,
     },
 };
-use crate::engine::packet_sink_registry::PacketSinkRouteCache;
+use crate::engine::{
+    media_transport::TransportSourceKey, packet_sink_registry::PacketSinkRouteCache,
+};
 
 pub const ROUTE_PLANNING_TURNS: usize = 1024;
 
@@ -123,6 +126,7 @@ impl FanoutBenchTopology {
 pub struct RelayFanoutBenchFixture {
     topology: FanoutBenchTopology,
     receivers: Vec<mpsc::Receiver<ForwardedPacket>>,
+    _activity_receivers: Vec<mpsc::Receiver<RtcWorkerCommand>>,
 }
 
 impl RelayFanoutBenchFixture {
@@ -138,18 +142,19 @@ impl RelayFanoutBenchFixture {
             PacketLayerGate::Rid("lo".into()),
             PacketLayerGate::Block,
         ];
+        let source = TransportSourceKey::new(producer_session.clone(), src_media);
         let mut receivers = Vec::with_capacity(gates.len());
+        let mut activity_receivers = Vec::with_capacity(gates.len());
         for (index, gate) in (0..).zip(gates) {
-            let target = RelayTargetId::new(index);
             let (sender, receiver) = mpsc::channel(1);
-            state
-                .routes
-                .add_relay_target(src_media, target, RelayPacketMailbox::new(sender));
-            state
-                .routes
-                .set_relay_target_active(src_media, target, true);
-            state.routes.set_relay_pkt_gate(src_media, target, gate);
+            let (target, activity_receiver) = RelayTarget::with_control_queue(
+                RelayTargetId::new(index),
+                RelayPacketMailbox::new(sender),
+                1,
+            );
+            state.routes.add_relay_target(&source, target, gate);
             receivers.push(receiver);
+            activity_receivers.push(activity_receiver);
         }
         let mut topology = FanoutBenchTopology {
             state,
@@ -171,6 +176,7 @@ impl RelayFanoutBenchFixture {
         Self {
             topology,
             receivers,
+            _activity_receivers: activity_receivers,
         }
     }
 

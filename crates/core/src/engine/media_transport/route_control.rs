@@ -11,7 +11,6 @@ use super::{
         WorkerMediaControlBatchOutcome as WorkerBatchOutcome,
     },
 };
-use crate::MediaWorkerId;
 
 /// Maximum mutations in one synchronous worker command.
 ///
@@ -19,13 +18,6 @@ use crate::MediaWorkerId;
 /// dispatch. The packet loop runs its pump phase between chunks.
 const MAX_MEDIA_CONTROL_BATCH_ITEMS: usize = 64;
 const UNAVAILABLE: TransportAdapterError = TransportAdapterError::TransportUnavailable;
-
-#[derive(Debug)]
-pub(crate) struct TransportSourceActivityEffect {
-    pub(crate) source: TransportSourceKey,
-    pub(crate) target_media_worker_id: MediaWorkerId,
-    pub(crate) update: SourceActivityUpdate,
-}
 
 #[derive(Debug)]
 #[must_use = "media-control plans must be executed or intentionally dropped"]

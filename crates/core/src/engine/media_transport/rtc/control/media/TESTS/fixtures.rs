@@ -16,19 +16,17 @@ use crate::{
         ConsumerRouteControl, ProducerActivity, SourceActivityRevision, SourceActivityUpdate,
         TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
         rtc::{
-            commands::{
-                RemoteSourceControl, RtcWorkerCommand, WorkerMediaControlBatch,
-                WorkerMediaControlBatchOutcome,
-            },
+            commands::{RtcWorkerCommand, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome},
             recovery::observe_src_rid_ready,
             state::{
                 PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate,
             },
             test_support::{
-                add_source_rid_stream, assert_consumer_packet_gate, drain_ready_sessions,
+                add_source_rid_stream, assert_consumer_packet_gate,
+                assert_relay_target_add_command, drain_ready_sessions,
                 install_video_route_with_gate, prepare_source_session_with_rid,
-                test_consumer_session_key, test_consumer_session_key_on_worker,
-                test_source_session_key,
+                remote_source_control, test_consumer_session_key,
+                test_consumer_session_key_on_worker, test_source_session_key,
             },
         },
     },
@@ -196,16 +194,23 @@ impl RemoteVideoRoute {
         let mut state = PacketLoopState::default();
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
-        let (control_tx, control_rx) = mpsc::channel(1);
+        let (control_tx, mut control_rx) = mpsc::channel(1);
         let source = TransportSourceKey::new(source_session.clone(), src_media);
         assert!(
             state
                 .routes
                 .register_remote_source(
                     &source,
-                    RemoteSourceControl::new(control_tx, target_id, Arc::clone(&rtc_metrics)),
+                    remote_source_control(control_tx, target_id, Arc::clone(&rtc_metrics)),
                 )
                 .is_ok()
+        );
+        assert_relay_target_add_command(
+            &mut control_rx,
+            &source_session,
+            src_media,
+            target_id,
+            PacketLayerGate::Block,
         );
         assert_eq!(
             state.routes.apply_source_activity(

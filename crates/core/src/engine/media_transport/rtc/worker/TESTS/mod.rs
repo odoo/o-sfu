@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 use super::{
     super::{
         RtcWorker, RtcWorkerConfig, RtpProfile, bootstrap, codec,
-        commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
+        commands::{RouteControlRequest, RtcWorkerCommand},
         consumer_egress::test_support::{SourceRtpIdentity, project_identity},
         egress::RtcEgress,
         packet_loop::{
@@ -76,18 +76,19 @@ use super::{
             bitrate::BitrateRegistry,
             keyframe_tracker::KEYFRAME_REQUEST_RETRY_DELAY,
             media_registry::RegisteredMediaHandle,
-            relay_registry::{RelayPacketMailbox, RelayTargetId},
+            relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
             route_control::PacketLayerGate,
             slots::ConsumerStreamHandle,
             source_route::{DecoderDelivery, MediaRouteDestination},
         },
         test_support::{
             DebugProbe, DebugProbeRequest, collect_ready_session_keys,
-            prepare_source_session_with_rid, sample_already_relayed_audio_packet_at,
-            sample_already_relayed_packet, sample_forwarded_packet,
-            sample_forwarded_packet_with_audio_activity, sample_forwarded_packet_with_rid,
-            sample_local_forwarded_packet, sample_local_repaired_packet, sample_rtp_packet,
-            serialize_stun_message, test_transport_session_key,
+            prepare_source_session_with_rid, remote_source_control,
+            sample_already_relayed_audio_packet_at, sample_already_relayed_packet,
+            sample_forwarded_packet, sample_forwarded_packet_with_audio_activity,
+            sample_forwarded_packet_with_rid, sample_local_forwarded_packet,
+            sample_local_repaired_packet, sample_rtp_packet, serialize_stun_message,
+            test_transport_session_key,
         },
     },
     buffers::{MAX_RELAY_PACKETS_PER_ITERATION, PacketLoopBuffers},
@@ -533,11 +534,11 @@ fn set_source_route_active(
 fn drain_remote_packet_gate_setup(control_rx: &mut mpsc::Receiver<RtcWorkerCommand>) {
     loop {
         match control_rx.try_recv() {
-            Ok(RtcWorkerCommand::RouteControl {
-                request: RouteControlRequest::SetRemoteSourcePacketGate { .. },
-                response: None,
-            }) => {}
-            Ok(_) => panic!("expected only remote packet-gate setup commands"),
+            Ok(RtcWorkerCommand::RouteControl(
+                RouteControlRequest::AddRelayTarget { .. }
+                | RouteControlRequest::SetRemoteSourcePacketGate { .. },
+            )) => {}
+            Ok(_) => panic!("expected only relay target and packet-gate setup commands"),
             Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
                 break;
             }
@@ -555,20 +556,16 @@ fn recv_remote_keyframe_request(
 ) {
     loop {
         match control_rx.try_recv() {
-            Ok(RtcWorkerCommand::RouteControl {
-                request:
-                    RouteControlRequest::RequestRemoteKeyframe {
-                        source,
-                        target_id,
-                        rid,
-                        kind,
-                    },
-                response: None,
-            }) => return (source, target_id, rid, kind),
-            Ok(RtcWorkerCommand::RouteControl {
-                request: RouteControlRequest::SetRemoteSourcePacketGate { .. },
-                response: None,
-            }) => {}
+            Ok(RtcWorkerCommand::RouteControl(RouteControlRequest::RequestRemoteKeyframe {
+                source,
+                target_id,
+                rid,
+                kind,
+            })) => return (source, target_id, rid, kind),
+            Ok(RtcWorkerCommand::RouteControl(
+                RouteControlRequest::AddRelayTarget { .. }
+                | RouteControlRequest::SetRemoteSourcePacketGate { .. },
+            )) => {}
             Ok(_) => panic!("expected a remote keyframe request"),
             Err(mpsc::error::TryRecvError::Empty) => {
                 panic!("expected a remote keyframe request but channel was empty")
@@ -790,7 +787,7 @@ impl PacketLoopHarness {
             .routes
             .register_remote_source(
                 &source,
-                RemoteSourceControl::new(control_tx, target_id, Arc::clone(&self.rtc_metrics)),
+                remote_source_control(control_tx, target_id, Arc::clone(&self.rtc_metrics)),
             )
             .expect("remote source should register");
         assert_eq!(
@@ -824,8 +821,13 @@ impl PacketLoopHarness {
 
     fn add_relay(&mut self, src_media: TransportMediaId, target: RelayPacketMailbox) {
         self.assert_only_packet();
-        self.forwards
-            .push(ForwardingDestination::from_relay_target(src_media, target));
+        self.forwards.push(ForwardingDestination::from_relay_target(
+            src_media,
+            ActiveRelayTarget {
+                target_id: RelayTargetId::new(1),
+                target,
+            },
+        ));
     }
 
     fn add_local(&mut self, src_media: TransportMediaId, dst_idx: usize) {
@@ -1850,6 +1852,43 @@ fn packet_loop_wakes_immediately_when_forwarding_marks_a_session_dirty() {
 }
 
 #[test]
+fn idle_worker_schedules_pending_relay_removal_at_the_retry_deadline() {
+    let mut state = PacketLoopState::default();
+    let config = packet_loop_config_for_test();
+    let source = TransportSourceKey::new(
+        test_transport_session_key(319, 0, 320, UserId::Integer(321)),
+        TransportMediaId::new(319),
+    );
+    let (tx, mut rx) = mpsc::channel(1);
+    let registration = state
+        .routes
+        .register_remote_source(
+            &source,
+            remote_source_control(tx, RelayTargetId::new(1), Arc::clone(&config.rtc_metrics)),
+        )
+        .expect("registration should fill the source queue")
+        .expect("new registration should create a rollback token");
+    state.routes.rollback_remote_source(registration);
+    let now = Instant::now();
+    assert_eq!(
+        super::loop_driver::next_timeout_deadline_at(&mut state, now),
+        Some(now + super::super::state::route_table::REMOTE_CONTROL_RETRY_INTERVAL)
+    );
+    assert!(rx.try_recv().is_ok());
+    state.routes.flush_remote_control(&config.rtc_metrics);
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(RtcWorkerCommand::RouteControl(
+            RouteControlRequest::RemoveRelayTarget { .. }
+        ))
+    ));
+    assert_eq!(
+        super::loop_driver::next_timeout_deadline_at(&mut state, now),
+        None
+    );
+}
+
+#[test]
 fn due_relay_observation_expires_in_same_pump() -> Result<(), &'static str> {
     run_packet_loop_io_test(async {
         let mut state = PacketLoopState::default();
@@ -1865,7 +1904,7 @@ fn due_relay_observation_expires_in_same_pump() -> Result<(), &'static str> {
             .routes
             .register_remote_source(
                 &TransportSourceKey::new(session.clone(), source_id),
-                RemoteSourceControl::new(
+                remote_source_control(
                     control_tx,
                     RelayTargetId::new(1),
                     Arc::clone(&config.rtc_metrics),
@@ -2944,7 +2983,7 @@ fn packet_loop_observes_keyframe_before_draining_due_retry() -> Result<(), &'sta
         .routes
         .register_remote_source(
             &TransportSourceKey::new(source_session.clone(), src_media),
-            RemoteSourceControl::new(control_tx, target_id, Arc::clone(&config.rtc_metrics)),
+            remote_source_control(control_tx, target_id, Arc::clone(&config.rtc_metrics)),
         )
         .map_err(|_error| "remote source should register")?;
     assert!(set_source_route_active(&mut state, src_media, true));
@@ -2962,7 +3001,7 @@ fn packet_loop_observes_keyframe_before_draining_due_retry() -> Result<(), &'sta
         ),
     );
     register_open_consumer_route_fixture(&mut state, &consumer_session, "cam-down", src_media);
-    state.routes.flush_remote_pkt_gates();
+    state.routes.flush_remote_control(&config.rtc_metrics);
     drain_remote_packet_gate_setup(&mut control_rx);
 
     let mut buffers = PacketLoopBuffers::new();

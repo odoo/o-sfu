@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use o_sfu_model::UserId;
-use o_sfu_telemetry::metrics::RuntimeMetrics;
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use str0m::media::Mid;
 use tokio::sync::mpsc;
 
@@ -28,6 +28,7 @@ pub const REMOTE_GATE_RETRY_TURNS: usize = 8;
 pub struct RemoteGateRetryBenchFixture {
     state: PacketLoopState,
     sources: Vec<TransportMediaId>,
+    rtc_metrics: Arc<RtcMetricsRecorder>,
     _metrics: RuntimeMetrics,
     _control_rxs: Vec<mpsc::Receiver<RtcWorkerCommand>>,
 }
@@ -86,6 +87,7 @@ impl RemoteGateRetryBenchFixture {
         Self {
             state,
             sources,
+            rtc_metrics,
             _metrics: metrics,
             _control_rxs: control_rxs,
         }
@@ -102,7 +104,7 @@ impl RemoteGateRetryBenchFixture {
             for source_id in &self.sources {
                 self.state.routes.publish_remote_pkt_gate(*source_id, gate);
             }
-            self.state.routes.flush_remote_pkt_gates();
+            self.state.routes.flush_remote_control(&self.rtc_metrics);
         }
 
         self.sources

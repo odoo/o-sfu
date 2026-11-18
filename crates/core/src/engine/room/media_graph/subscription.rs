@@ -12,7 +12,7 @@ use crate::{
     ConnectionId,
     engine::{
         director,
-        media_transport::{TransportMediaId, TransportRelayRouteEffect, TransportTeardown},
+        media_transport::{TransportMediaId, TransportTeardown},
         room::outbound::{OutboundSender, RemoteTrackSnapshot},
         source_model::{
             ConsumerSourceSelection, PolicyPauseReason, PublishedSourceId,
@@ -54,7 +54,6 @@ pub enum ConsumerRouteState {
 pub struct ReceiverRouteWork {
     pub(in crate::engine::room) activities: Vec<ReceiverRouteActivity>,
     pub(in crate::engine::room) setups: Vec<PendingConsumerSetup>,
-    pub(in crate::engine::room) relays: Vec<TransportRelayRouteEffect>,
     pub(in crate::engine::room) teardown: Vec<TransportTeardown>,
     pub(in crate::engine::room) evictions: usize,
 }
@@ -111,7 +110,6 @@ impl RoomState {
         intents: &BTreeMap<UserStreamId, SourceSubscriptionIntent>,
     ) -> ReceiverRouteWork {
         let mut activities = Vec::new();
-        let mut relays = Vec::new();
         let mut evictions = 0;
         let receiver_deafened = self
             .user_for_connection(user_id, connection_id)
@@ -125,7 +123,6 @@ impl RoomState {
                 self.users.contains_key(target_user_id),
             );
             evictions += commit.evictions;
-            relays.extend(commit.relay_effects);
             activities.extend(commit.update);
         }
         let ReceiverRouteWork { setups, .. } = self.plan_missing_receiver_routes(
@@ -134,7 +131,6 @@ impl RoomState {
         ReceiverRouteWork {
             activities,
             setups,
-            relays,
             evictions,
             ..Default::default()
         }
@@ -158,10 +154,9 @@ impl RoomState {
         // immediately recreate the same media lines.
         let mut work =
             self.plan_missing_receiver_routes(ReceiverRouteScope::Receiver(user_id, connection_id));
-        let (relays, teardown, detached) = self
+        let (teardown, detached) = self
             .topology
             .detach_declined_consumers(&session, declined_consumers);
-        work.relays.extend(relays);
         work.teardown.extend(teardown);
         let track_snapshots = sender
             .filter(|_| detached)

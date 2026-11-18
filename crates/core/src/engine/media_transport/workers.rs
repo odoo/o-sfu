@@ -1,27 +1,25 @@
 //! RTC worker ownership below the media transport boundary.
 //!
-//! `MediaTransport` owns the process-local RTC worker topology, maps each
-//! transport session to the worker selected by its media-worker id and
-//! coordinates cross-worker relay cleanup. Packet-loop hot paths live inside
-//! `engine::media_transport::rtc`.
+//! `MediaTransport` owns the process-local RTC worker topology and maps each
+//! transport session to the worker selected by its media-worker id. Consumer
+//! workers set up cross-worker relays themselves. Packet-loop hot paths live
+//! inside `engine::media_transport::rtc`.
 
 #[cfg(any(test, feature = "testing-transport"))]
 use std::sync::atomic::Ordering;
-use std::{cmp::Reverse, collections::BTreeMap, ptr};
+use std::{cmp::Reverse, collections::BTreeMap};
 
 use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use str0m::media::MediaKind as Str0mMediaKind;
 
-use super::rtc::{RtcWorker, RtcWorkerCommand};
+use super::rtc::RtcWorker;
 use crate::{
     MediaWorkerId,
     engine::media_transport::{
         ActiveSpeakerSource, MediaTransport, ReceiverBandwidthSnapshot, TransportAdapterError,
         TransportBitrateSnapshot, TransportHealthSnapshot, TransportMediaId,
-        TransportQualitySnapshot, TransportRelayRouteAction, TransportRelayRouteEffect,
-        TransportSessionHealth, TransportSessionKey, TransportSourceActivityEffect,
-        TransportSourceDiagnosticsSnapshot, TransportSourceKey, TransportTeardown,
-        TransportWorkerPressureSnapshot,
+        TransportQualitySnapshot, TransportSessionHealth, TransportSessionKey,
+        TransportSourceDiagnosticsSnapshot, TransportSourceKey, TransportWorkerPressureSnapshot,
     },
 };
 
@@ -259,54 +257,6 @@ impl MediaTransport {
             .await
     }
 
-    /// Applies one cross-worker relay mutation on the source worker.
-    ///
-    /// The target worker contributes its relay identity and mailbox. The source
-    /// packet loop owns registration and activity because it decides fanout before
-    /// packets cross workers.
-    pub(super) async fn execute_relay_route_effect(
-        &self,
-        effect: &TransportRelayRouteEffect,
-    ) -> Result<(), TransportAdapterError> {
-        if effect.action == TransportRelayRouteAction::Release {
-            self.teardown([TransportTeardown::release_relay_route(
-                effect.source.clone(),
-                effect.target_media_worker_id,
-            )])
-            .await;
-            return Ok(());
-        }
-        let source_worker = self.require_worker_for_user(effect.source.session_key())?;
-        let target_worker =
-            self.require_worker_for_media_worker_id(effect.target_media_worker_id)?;
-        if ptr::eq(source_worker, target_worker) {
-            return Ok(());
-        }
-        let request = target_worker.relay_route_request(effect.source.clone(), effect.action);
-        source_worker
-            .request_worker(|response| RtcWorkerCommand::RouteControl {
-                request,
-                response: Some(response),
-            })
-            .await
-    }
-
-    pub(super) async fn execute_remote_source_activity_effect(
-        &self,
-        effect: &TransportSourceActivityEffect,
-    ) -> Result<(), TransportAdapterError> {
-        let target_worker =
-            self.require_worker_for_media_worker_id(effect.target_media_worker_id)?;
-        let request =
-            RtcWorker::remote_source_activity_request(effect.source.clone(), effect.update);
-        target_worker
-            .request_worker(|response| RtcWorkerCommand::RouteControl {
-                request,
-                response: Some(response),
-            })
-            .await
-    }
-
     /// Returns the MID stored by the current transport media handle.
     ///
     /// `None` means `transport_media_id` has no registered handle.
@@ -322,7 +272,7 @@ impl MediaTransport {
         transport_media_id: TransportMediaId,
     ) -> Result<Option<String>, TransportAdapterError> {
         self.require_worker_for_user(session_key)?
-            .request_worker(|response| RtcWorkerCommand::ResolveMediaMid {
+            .request_worker(|response| super::rtc::RtcWorkerCommand::ResolveMediaMid {
                 transport_media_id,
                 response,
             })
@@ -352,15 +302,6 @@ impl MediaTransport {
         session_key: &TransportSessionKey,
     ) -> Result<&RtcWorker, TransportAdapterError> {
         self.worker_for_user(session_key)
-            .filter(|worker| worker.is_usable())
-            .ok_or(TransportAdapterError::TransportUnavailable)
-    }
-
-    pub(super) fn require_worker_for_media_worker_id(
-        &self,
-        media_worker_id: MediaWorkerId,
-    ) -> Result<&RtcWorker, TransportAdapterError> {
-        self.worker_for_index(media_worker_id.as_usize())
             .filter(|worker| worker.is_usable())
             .ok_or(TransportAdapterError::TransportUnavailable)
     }

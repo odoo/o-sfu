@@ -418,6 +418,8 @@ pub trait RuntimeMetricsSnapshotTestExt: RuntimeMetricsSnapshotLookup {
         u64;
         rtc_remote_control_keyframe_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::Keyframe),
         rtc_remote_control_packet_gate_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::PacketGate),
+        rtc_remote_control_relay_target_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::RelayTarget),
+        rtc_remote_control_source_activity_drops => rtc_remote_control_drops(RtcRemoteControlDropKind::SourceActivity),
     }
 
     fn rtc_remote_packet_gate_convergence(&self, outcome: RtcRemotePacketGateConvergence) -> u64 {

@@ -611,43 +611,6 @@ pub enum SourcePacketGate {
     Rid(String),
 }
 
-/// Relay route mutation applied by the media transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransportRelayRouteEffect {
-    pub source: TransportSourceKey,
-    pub target_media_worker_id: MediaWorkerId,
-    pub action: TransportRelayRouteAction,
-}
-
-/// relay-route transport activity state
-///
-/// inactive relay routes keep their target registration but stop source-worker
-/// fanout to that target
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelayRouteActivity {
-    Active,
-    Inactive,
-}
-
-impl RelayRouteActivity {
-    #[must_use]
-    pub const fn from_active(active: bool) -> Self {
-        if active { Self::Active } else { Self::Inactive }
-    }
-
-    #[must_use]
-    pub const fn is_active(self) -> bool {
-        matches!(self, Self::Active)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportRelayRouteAction {
-    Install,
-    Release,
-    SetActivity(RelayRouteActivity),
-}
-
 /// producer-side source identity owned by the transport boundary
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransportSourceKey {

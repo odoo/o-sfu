@@ -64,17 +64,14 @@ use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    commands::{RemoteSourceControl, RouteControlRequest, RtcWorkerCommand},
+    commands::{RelayTarget, RemoteSourceControl, RtcWorkerCommand},
     state::{
         RtcSnapshotState,
         bitrate::BitrateRegistry,
         relay_registry::{RelayPacketMailbox, RelayTargetId},
     },
 };
-use crate::engine::media_transport::{
-    SourceActivityUpdate, TransportRelayRouteAction, TransportSourceKey,
-    rtc::packet_loop::IngressPacket,
-};
+use crate::engine::media_transport::rtc::packet_loop::IngressPacket;
 
 static NEXT_RELAY_TARGET_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -113,50 +110,19 @@ pub struct RtcWorker {
 impl RtcWorker {
     /// Builds the handle `consumer` stores for a producer owned by `self`.
     ///
-    /// The returned handle lets the consumer worker send best-effort keyframe
-    /// and packet-gate updates back to the worker that owns the producer.
+    /// The handle lets the consumer worker register itself as a relay target
+    /// and send keyframe and packet-gate updates back to the worker that owns
+    /// the producer, which answers with source activity.
     pub fn remote_source_control(&self, consumer: &Self) -> RemoteSourceControl {
         RemoteSourceControl::new(
             self.handle.command_tx.clone(),
-            consumer.relay_target_id,
+            RelayTarget {
+                id: consumer.relay_target_id,
+                mailbox: consumer.handle.relay_mailbox.clone(),
+                control: consumer.handle.command_tx.clone(),
+            },
             Arc::clone(&consumer.rtc_metrics),
         )
-    }
-
-    /// Builds source-worker route control for `self` as the relay target.
-    ///
-    /// Dispatch the request to the worker that owns `source`. Install requests
-    /// carry `self`'s relay mailbox and every action carries `self`'s target ID.
-    pub fn relay_route_request(
-        &self,
-        source: TransportSourceKey,
-        action: TransportRelayRouteAction,
-    ) -> RouteControlRequest {
-        match action {
-            TransportRelayRouteAction::Install => RouteControlRequest::AddRelayTarget {
-                source,
-                target_id: self.relay_target_id,
-                target: self.handle.relay_mailbox.clone(),
-            },
-            TransportRelayRouteAction::Release => RouteControlRequest::RemoveRelayTarget {
-                source,
-                target_id: self.relay_target_id,
-            },
-            TransportRelayRouteAction::SetActivity(activity) => {
-                RouteControlRequest::SetRelayTargetActive {
-                    source,
-                    target_id: self.relay_target_id,
-                    active: activity.is_active(),
-                }
-            }
-        }
-    }
-
-    pub(crate) fn remote_source_activity_request(
-        source: TransportSourceKey,
-        update: SourceActivityUpdate,
-    ) -> RouteControlRequest {
-        RouteControlRequest::SetRemoteSourceActivity { source, update }
     }
 }
 

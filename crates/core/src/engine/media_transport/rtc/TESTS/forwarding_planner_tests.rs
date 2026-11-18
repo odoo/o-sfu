@@ -282,18 +282,14 @@ fn plan_forwards_plans_relay_destinations_without_displacing_local_rtc_flush_ord
         Arc::new(PlannerSink),
         PacketSinkKind::Recording,
     );
-    state
-        .routes
-        .add_relay_target(src_media, RelayTargetId::new(1), first_relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, RelayTargetId::new(1), true);
-    state
-        .routes
-        .add_relay_target(src_media, RelayTargetId::new(2), second_relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, RelayTargetId::new(2), true);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, RelayTargetId::new(1), first_relay_mailbox);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, RelayTargetId::new(2), second_relay_mailbox);
     let forwards = plan_forwards(
         &state,
         &packet_sink_registry,
@@ -326,12 +322,10 @@ fn plan_forwards_gates_relay_only_sources_without_removing_targets() {
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let src_media =
         MediaWorkerScenario::new(&mut state).source(producer_session.clone(), Mid::from("cam-up"));
-    state
-        .routes
-        .add_relay_target(src_media, RelayTargetId::new(1), relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, RelayTargetId::new(1), true);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, RelayTargetId::new(1), relay_mailbox);
 
     assert!(state.routes.set_source_active(src_media, false).is_ok());
     assert!(state.routes.local_route(src_media).is_none());
@@ -385,12 +379,10 @@ fn plan_forwards_keeps_relay_packets_out_of_recording_and_second_hop_relay_sinks
         Arc::new(PlannerSink),
         PacketSinkKind::Recording,
     );
-    state
-        .routes
-        .add_relay_target(src_media, RelayTargetId::new(1), relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, RelayTargetId::new(1), true);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, RelayTargetId::new(1), relay_mailbox);
     let forwards = plan_forwards(
         &state,
         &packet_sink_registry,
@@ -427,12 +419,10 @@ fn plan_forwards_only_relays_the_registered_source_media() {
         remote_consumer_session,
         Mid::from("aud-down"),
     );
-    state
-        .routes
-        .add_relay_target(first_src_media, RelayTargetId::new(1), relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(first_src_media, RelayTargetId::new(1), true);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(first_src_media, RelayTargetId::new(1), relay_mailbox);
     let pending_packets = vec![
         sample_forwarded_packet(first_producer_session, "aud-up-1", b"payload-1"),
         sample_forwarded_packet(second_producer_session, "aud-up-2", b"payload-2"),
@@ -530,18 +520,12 @@ fn plan_forwards_enforces_per_relay_target_gates_after_aggregate_admits() {
     let src_media = scenario.source(producer_session.clone(), Mid::from("cam-up"));
     let hi_target_id = RelayTargetId::new(1);
     let lo_target_id = RelayTargetId::new(2);
-    state
+    let _activity = state
         .routes
-        .add_relay_target(src_media, hi_target_id, hi_mailbox);
-    state
+        .add_open_relay_target(src_media, hi_target_id, hi_mailbox);
+    let _activity = state
         .routes
-        .set_relay_target_active(src_media, hi_target_id, true);
-    state
-        .routes
-        .add_relay_target(src_media, lo_target_id, lo_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, lo_target_id, true);
+        .add_open_relay_target(src_media, lo_target_id, lo_mailbox);
     state
         .routes
         .set_relay_pkt_gate(src_media, hi_target_id, PacketLayerGate::Rid("hi".into()));
@@ -581,7 +565,7 @@ fn plan_forwards_enforces_per_relay_target_gates_after_aggregate_admits() {
 }
 
 #[test]
-fn plan_forwards_keeps_staged_relay_gates_through_activation() {
+fn plan_forwards_activates_relay_targets_from_their_gates() {
     let producer_session = test_transport_session_key(94, 0, 95, UserId::Integer(96));
     let mut state = PacketLoopState::default();
     let packet_sink_registry = RoomPacketSinkRegistry::default();
@@ -589,41 +573,28 @@ fn plan_forwards_keeps_staged_relay_gates_through_activation() {
     let src_media =
         MediaWorkerScenario::new(&mut state).source(producer_session.clone(), Mid::from("cam-up"));
     let hi_target_id = RelayTargetId::new(1);
-    let lo_target_id = RelayTargetId::new(2);
     let unrestricted_target_id = RelayTargetId::new(3);
     let (hi_mailbox, mut hi_rx) = RelayPacketMailbox::channel_for_test();
     let (unrestricted_mailbox, mut unrestricted_rx) = RelayPacketMailbox::channel_for_test();
-    state
+    let _unrestricted_activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, unrestricted_target_id, unrestricted_mailbox);
+    let _hi_activity = state
         .routes
-        .set_relay_pkt_gate(src_media, hi_target_id, PacketLayerGate::Rid("hi".into()));
-    state
-        .routes
-        .add_relay_target(src_media, unrestricted_target_id, unrestricted_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, unrestricted_target_id, true);
-    assert_eq!(
-        state.routes.effective_packet_gate(src_media),
-        Some(PacketLayerGate::Rid("hi".into()))
-    );
-    state
-        .routes
-        .set_relay_pkt_gate(src_media, lo_target_id, PacketLayerGate::Rid("lo".into()));
-    assert_eq!(
-        state.routes.effective_packet_gate(src_media),
-        Some(PacketLayerGate::Open)
-    );
-    state
-        .routes
-        .add_relay_target(src_media, hi_target_id, hi_mailbox);
-    for (active, rid, expect_hi) in [
-        (false, "hi", false),
-        (true, "hi", true),
-        (true, "lo", false),
+        .add_open_relay_target(src_media, hi_target_id, hi_mailbox);
+    for (gate, rid, expect_hi) in [
+        (PacketLayerGate::Block, "hi", false),
+        (PacketLayerGate::Rid("hi".into()), "hi", true),
+        (PacketLayerGate::Rid("hi".into()), "lo", false),
     ] {
         state
             .routes
-            .set_relay_target_active(src_media, hi_target_id, active);
+            .set_relay_pkt_gate(src_media, hi_target_id, gate);
+        assert_eq!(
+            state.routes.active_relay_target_count(src_media),
+            1 + usize::from(gate != PacketLayerGate::Block)
+        );
         let mut packet = sample_forwarded_packet_with_rid(
             producer_session.clone(),
             "cam-up",
@@ -688,12 +659,15 @@ fn plan_forwards_gates_only_the_selected_source_media() {
         Arc::new(PlannerSink),
         PacketSinkKind::Recording,
     );
-    state
-        .routes
-        .add_relay_target(gated_src_media, RelayTargetId::new(1), relay_mailbox);
-    state
-        .routes
-        .set_relay_target_active(gated_src_media, RelayTargetId::new(1), true);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(gated_src_media, RelayTargetId::new(1), relay_mailbox);
+    state.routes.set_relay_pkt_gate(
+        gated_src_media,
+        RelayTargetId::new(1),
+        PacketLayerGate::Rid("hi".into()),
+    );
     let forwards = plan_forwards(
         &state,
         &packet_sink_registry,

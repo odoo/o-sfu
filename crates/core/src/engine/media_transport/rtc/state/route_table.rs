@@ -24,7 +24,7 @@ mod source;
 
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     mem,
     sync::Arc,
     time::{Duration, Instant},
@@ -32,6 +32,7 @@ use std::{
 
 use itertools::Itertools;
 use o_sfu_router::rtp::MediaStream;
+use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 use str0m::{
     media::{KeyframeRequestKind, Mid, Pt, Rid},
     rtp::Ssrc,
@@ -48,13 +49,16 @@ pub(in super::super) use self::{
     source::{RidReadinessRouteUpdate, RidReadinessSelectedGateUpdate},
 };
 use super::{
-    super::{codec, commands::RemoteSourceControl},
+    super::{
+        codec,
+        commands::{RelayTarget, RemoteControlSendOutcome, RemoteSourceControl},
+    },
     bitrate::MediaBitrateCounter,
     keyframe_tracker::{
         KeyframeRequestDecision, KeyframeRequestOrigin, KeyframeRequestTracker,
         PublisherKeyframeLimiter, PublisherRequestDemand, SourceKeyframeRequest,
     },
-    relay_registry::{ActiveRelayTarget, RelayPacketMailbox, RelayTargetId},
+    relay_registry::{ActiveRelayTarget, RelayTargetId},
     route_control::PacketLayerGate,
     slots::{ConsumerStreamHandle, RouteDestinationHandle},
     source_route::{MediaRouteDestination, MediaRouteEntry},
@@ -121,23 +125,26 @@ impl<'a> RelayForwardView<'a> {
         self.targets.len()
     }
 
-    /// Yields active mailboxes whose target gate permits the packet RID.
+    /// Yields active targets whose gate permits the packet RID.
     ///
     /// A missing target gate imposes no restriction beyond the source gate.
     pub(in super::super) fn targets_for_packet(
         self,
         rid: Option<Rid>,
-    ) -> impl Iterator<Item = &'a RelayPacketMailbox> {
-        self.targets
-            .iter()
-            .filter(move |target| {
-                self.gates
-                    .get(&target.target_id)
-                    .is_none_or(|gate| gate.permits(rid))
-            })
-            .map(|target| &target.target)
+    ) -> impl Iterator<Item = &'a ActiveRelayTarget> {
+        self.targets.iter().filter(move |target| {
+            self.gates
+                .get(&target.target_id)
+                .is_none_or(|gate| gate.permits(rid))
+        })
     }
 }
+
+/// Wake interval while cross-worker route control waits for queue capacity.
+///
+/// Room commands waiting for a full worker queue take released permits before
+/// `try_send` can, so an idle worker must retry without other input.
+pub(in super::super) const REMOTE_CONTROL_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Default)]
 pub(in super::super) struct RouteTable {
@@ -145,11 +152,20 @@ pub(in super::super) struct RouteTable {
     forwarding_sources: usize,
     active: ActiveSpeakerRank,
     remote: RemoteSources,
+    /// Relay targets owed the current activity of a local source.
+    relay_activity: BTreeSet<(TransportMediaId, RelayTargetId)>,
     keyframe_requests: KeyframeRequestTracker,
     pub(in super::super) publisher_keyframes: PublisherKeyframeLimiter,
 }
 
 impl RouteTable {
+    #[cfg(any(test, feature = "testing-transport"))]
+    pub(in super::super) fn relay_target_count(&self, source_id: TransportMediaId) -> usize {
+        self.sources
+            .get(&source_id)
+            .map_or(0, |source| source.relay_target_ids().count())
+    }
+
     pub(in super::super) fn forward_view(
         &self,
         source_id: TransportMediaId,
@@ -239,8 +255,8 @@ impl RouteTable {
         if !self.has_local_kf_demand(source_id, None) {
             self.publisher_keyframes.retire_local(source_id);
         }
-        self.refresh_src_pkt_gate(source_id);
         self.prune_unrouted_remote_src(source_id);
+        self.refresh_src_pkt_gate(source_id);
         self.prune_empty(source_id);
         Some(removed)
     }
@@ -250,11 +266,18 @@ impl RouteTable {
         source_id: TransportMediaId,
         update: SourceActivityUpdate,
     ) -> Result<bool, TransportAdapterError> {
-        let accepted = self
+        let source = self
             .sources
             .get_mut(&source_id)
-            .ok_or(TransportAdapterError::TransportUnavailable)?
-            .apply_source_activity(update);
+            .ok_or(TransportAdapterError::TransportUnavailable)?;
+        let accepted = source.apply_source_activity(update);
+        if accepted {
+            self.relay_activity.extend(
+                source
+                    .relay_target_ids()
+                    .map(|target_id| (source_id, target_id)),
+            );
+        }
         if accepted && !update.activity().is_active() {
             self.keyframe_requests.forget_source(source_id);
             self.publisher_keyframes.cancel_source(source_id);
@@ -341,8 +364,8 @@ impl RouteTable {
         if removed.stopped_forwarding {
             self.forwarding_sources -= 1;
         }
-        self.refresh_src_pkt_gate(source_id);
         self.prune_unrouted_remote_src(source_id);
+        self.refresh_src_pkt_gate(source_id);
         self.prune_empty(source_id);
         Some(removed.route)
     }
@@ -358,8 +381,8 @@ impl RouteTable {
         }
         self.forwarding_sources -= removed_forwarding_sources;
         for source_id in affected {
-            self.refresh_src_pkt_gate(source_id);
             self.prune_unrouted_remote_src(source_id);
+            self.refresh_src_pkt_gate(source_id);
             self.prune_empty(source_id);
         }
     }
@@ -468,10 +491,11 @@ impl RouteTable {
         (!source.producer.is_empty()).then(|| mem::take(&mut source.producer.ssrcs))
     }
 
-    /// Registers or replaces the control path.
+    /// Registers the control path and announces this worker as relay target.
     ///
-    /// A first registration starts inactive until `SetRemoteSourceActivity`.
-    /// A replacement preserves learned activity.
+    /// A new registration starts inactive until the source worker answers with
+    /// `SetRemoteSourceActivity`. A current registration keeps its state and
+    /// returns `None` because it needs no rollback.
     ///
     /// Drop the transaction to commit or pass it to `rollback_remote_source`
     /// before another registration change for this source.
@@ -479,29 +503,31 @@ impl RouteTable {
     /// # Errors
     ///
     /// Returns [`TransportAdapterError::InvalidInput`] when the media id already
-    /// belongs to a different remote source identity.
+    /// belongs to a different remote source identity and
+    /// [`TransportAdapterError::TransportUnavailable`] when the source worker
+    /// queue is closed.
     pub(in super::super) fn register_remote_source(
         &mut self,
         source: &TransportSourceKey,
         source_control: RemoteSourceControl,
-    ) -> Result<RemoteSourceTransaction, TransportAdapterError> {
+    ) -> Result<Option<RemoteSourceTransaction>, TransportAdapterError> {
         let transaction = self.remote.register(source, source_control)?;
-        if transaction.previous.is_none() {
+        if transaction.is_some() {
             self.source_mut(source.transport_media_id())
                 .set_source_active(false);
         }
         Ok(transaction)
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "rollback consumes the registration token so it cannot be reused"
+    )]
     pub(in super::super) fn rollback_remote_source(
         &mut self,
         transaction: RemoteSourceTransaction,
     ) {
-        if transaction.previous.is_some() {
-            self.remote.rollback(transaction);
-        } else {
-            self.remove_remote_source(transaction.source_id);
-        }
+        self.remove_remote_source(transaction.source_id);
     }
 
     pub(in super::super) fn remote_source(
@@ -520,10 +546,41 @@ impl RouteTable {
         self.remote.publish_gate(source_id, packet_gate);
     }
 
-    pub(in super::super) fn flush_remote_pkt_gates(&mut self) {
+    /// Retries cross-worker route control that found a full queue.
+    ///
+    /// Relay targets that report a closed queue are removed.
+    pub(in super::super) fn flush_remote_control(&mut self, rtc_metrics: &RtcMetricsRecorder) {
         self.remote.flush();
+        if self.relay_activity.is_empty() {
+            return;
+        }
+        let mut closed = Vec::new();
+        let sources = &self.sources;
+        self.relay_activity.retain(|&(source_id, target_id)| {
+            match sources
+                .get(&source_id)
+                .and_then(|source| source.send_relay_activity(target_id, rtc_metrics))
+            {
+                Some(RemoteControlSendOutcome::Full) => true,
+                Some(RemoteControlSendOutcome::Closed) => {
+                    closed.push((source_id, target_id));
+                    false
+                }
+                Some(RemoteControlSendOutcome::Forwarded) | None => false,
+            }
+        });
+        for (source_id, target_id) in closed {
+            self.remove_relay_target(source_id, target_id);
+        }
     }
 
+    pub(in super::super) fn next_remote_control_retry(&self, now: Instant) -> Option<Instant> {
+        (self.remote.has_pending() || !self.relay_activity.is_empty())
+            .then(|| now + REMOTE_CONTROL_RETRY_INTERVAL)
+    }
+
+    // Prune before refreshing gates so the last route spends no queue slot
+    // on Block ahead of its withdrawal.
     pub(in super::super) fn prune_unrouted_remote_src(&mut self, source_id: TransportMediaId) {
         if self
             .local_route(source_id)
@@ -723,16 +780,20 @@ impl RouteTable {
             || packet_gate_changed
     }
 
+    /// Applies a target's remote gate. A `Block` gate deactivates the target.
     pub(in super::super) fn set_relay_pkt_gate(
         &mut self,
         source_id: TransportMediaId,
         target_id: RelayTargetId,
         packet_gate: PacketLayerGate,
     ) {
-        self.sources
-            .entry(source_id)
-            .or_default()
-            .set_relay_pkt_gate(target_id, packet_gate);
+        let active = self
+            .sources
+            .get_mut(&source_id)
+            .and_then(|source| source.set_relay_pkt_gate(target_id, packet_gate));
+        if active == Some(false) {
+            self.publisher_keyframes.retire_relay(source_id, target_id);
+        }
     }
 
     pub(in super::super) fn active_speaker_sources(
@@ -787,20 +848,27 @@ impl RouteTable {
             .and_then(RouteSource::effective_packet_gate)
     }
 
+    /// Registers `target` for a local source and owes it the current activity.
+    ///
+    /// Every add answers a new consumer registration, which stays inactive
+    /// until this activity arrives.
     pub(in super::super) fn add_relay_target(
         &mut self,
-        source_id: TransportMediaId,
-        target_id: RelayTargetId,
-        target: RelayPacketMailbox,
+        source: &TransportSourceKey,
+        target: RelayTarget,
+        packet_gate: PacketLayerGate,
     ) {
+        let source_id = source.transport_media_id();
+        let target_id = target.id;
         if self
             .sources
             .entry(source_id)
             .or_default()
-            .add_relay_target(target_id, target)
+            .add_relay_target(source, target, packet_gate)
         {
             self.forwarding_sources += 1;
         }
+        self.relay_activity.insert((source_id, target_id));
     }
 
     pub(in super::super) fn remove_relay_target(
@@ -820,20 +888,6 @@ impl RouteTable {
         }
         self.publisher_keyframes.retire_relay(source_id, target_id);
         self.prune_empty(source_id);
-    }
-
-    pub(in super::super) fn set_relay_target_active(
-        &mut self,
-        source_id: TransportMediaId,
-        target_id: RelayTargetId,
-        active: bool,
-    ) {
-        if let Some(source) = self.sources.get_mut(&source_id) {
-            source.set_relay_target_active(target_id, active);
-        }
-        if !active {
-            self.publisher_keyframes.retire_relay(source_id, target_id);
-        }
     }
 
     pub(in super::super) fn source_relay_target_is_active(

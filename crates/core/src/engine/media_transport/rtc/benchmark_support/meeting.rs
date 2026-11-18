@@ -108,7 +108,7 @@ use tokio::sync::mpsc;
 
 use super::super::{
     RtcWorkerConfig, RtpProfile, bootstrap, codec,
-    commands::WorkerMediaControlBatch,
+    commands::{RelayTarget, RtcWorkerCommand, WorkerMediaControlBatch},
     control::apply_media_control_batch,
     packet_loop::{
         event_observation::observe_rtc_event_for_benchmark, forwarded_packet::ForwardedPacket,
@@ -481,6 +481,7 @@ pub struct MeetingFlowBenchFixture<const SAMPLED: bool = false> {
     staged_streams: Vec<(usize, usize)>,
     audio_plan: Vec<(Option<bool>, Option<i8>)>,
     relay_receivers: Vec<mpsc::Receiver<ForwardedPacket>>,
+    relay_activity_receivers: Vec<mpsc::Receiver<RtcWorkerCommand>>,
     activity_revision: SourceActivityRevision,
     admitted_audio: Vec<usize>,
     /// participants the route table was last seen forwarding audio for
@@ -886,7 +887,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
         }
     }
 
-    /// consumes relayed packets on behalf of the peer worker
+    /// consumes relayed packets and source activity on behalf of the peer worker
     ///
     /// this fixture models one worker, so cross-worker packets leave the
     /// measured loop here instead of being forwarded a second time
@@ -896,6 +897,9 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
             while receiver.try_recv().is_ok() {
                 consumed = consumed.saturating_add(1);
             }
+        }
+        for receiver in &mut self.relay_activity_receivers {
+            while receiver.try_recv().is_ok() {}
         }
         self.profile.relay_packets_consumed =
             self.profile.relay_packets_consumed.saturating_add(consumed);
@@ -1231,6 +1235,7 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
             staged_streams: Vec::new(),
             audio_plan: vec![(None, None); MEETING_PARTICIPANTS],
             relay_receivers: Vec::with_capacity(RELAY_TARGETS),
+            relay_activity_receivers: Vec::with_capacity(RELAY_TARGETS),
             activity_revision: SourceActivityRevision::default(),
             admitted_audio: Vec::with_capacity(MEETING_ADMITTED_AUDIO_SOURCES),
             forwarding_audio_sources: 0,
@@ -1602,28 +1607,30 @@ impl<const SAMPLED: bool> MeetingFlowBenchFixture<SAMPLED> {
         let relay_sources = self
             .video_publishers
             .iter()
-            .map(|publisher| publisher.source.transport_media_id())
+            .map(|publisher| publisher.source.clone())
             .chain(
                 self.participants
                     .iter()
                     .take(MEETING_ADMITTED_AUDIO_SOURCES)
-                    .map(|participant| participant.audio_source.transport_media_id()),
+                    .map(|participant| participant.audio_source.clone()),
             )
             .collect::<Vec<_>>();
         for target in 0..RELAY_TARGETS {
             let (sender, receiver) = mpsc::channel(RELAY_MAILBOX_CAPACITY);
-            let target_id = RelayTargetId::new(u64::try_from(target).unwrap_or(0));
-            for src_media in relay_sources.iter().copied() {
+            let (relay_target, activity_receiver) = RelayTarget::with_control_queue(
+                RelayTargetId::new(u64::try_from(target).unwrap_or(0)),
+                RelayPacketMailbox::new(sender),
+                RELAY_MAILBOX_CAPACITY,
+            );
+            for source in &relay_sources {
                 self.state.routes.add_relay_target(
-                    src_media,
-                    target_id,
-                    RelayPacketMailbox::new(sender.clone()),
+                    source,
+                    relay_target.clone(),
+                    PacketLayerGate::Open,
                 );
-                self.state
-                    .routes
-                    .set_relay_target_active(src_media, target_id, true);
             }
             self.relay_receivers.push(receiver);
+            self.relay_activity_receivers.push(activity_receiver);
         }
     }
 }

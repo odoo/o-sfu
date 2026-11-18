@@ -1,40 +1,30 @@
 //! Test hooks and fixtures for the media transport facade.
 
-#[cfg(any(test, feature = "internal-benchmarks"))]
 use std::{
     net::{IpAddr, Ipv4Addr},
-    sync::Arc,
-};
-use std::{
-    sync::{atomic::Ordering, mpsc},
+    sync::{Arc, atomic::Ordering, mpsc},
     time::Instant,
 };
 
 use o_sfu_rfc::port as rfc_port;
-#[cfg(any(test, feature = "internal-benchmarks"))]
+use o_sfu_router::{MediaKind, rtp::MediaStream};
 use o_sfu_telemetry::metrics::RuntimeMetrics;
 use str0m::media::Mid;
 #[cfg(test)]
-use {
-    super::{MediaTransportBuildError, rtc::WorkerMediaControlBatch},
-    crate::engine::sync::lock_unpoisoned,
-    std::sync::Mutex,
-};
+use {super::rtc::WorkerMediaControlBatch, crate::engine::sync::lock_unpoisoned, std::sync::Mutex};
 
 pub use super::rtc::test_support::{
     DebugPacketGate, DebugProbeUnavailable, DebugRouteDestination, DebugRouteEntry,
 };
 use super::{
-    MediaTransport, TransportMediaId, TransportQualitySample, TransportSessionHealth,
-    TransportSessionKey, TransportSourceKey,
+    ConsumerActivity, MediaTransport, MediaTransportBuildError, MediaTransportConfig,
+    MediaTransportDeps, TransportAdapterError, TransportMediaId, TransportQualitySample,
+    TransportSessionHealth, TransportSessionKey, TransportSourceKey,
 };
-#[cfg(any(test, feature = "internal-benchmarks"))]
-use super::{MediaTransportConfig, MediaTransportDeps};
-use crate::RtcPortRange;
-#[cfg(any(test, feature = "internal-benchmarks"))]
 use crate::{
-    Bitrate, CodecPreferences, MediaCodecFlags, RtcUdpIoBackend, SessionBitrateLimits,
-    VideoBitrateLimits, engine::packet_sink_registry::RoomPacketSinkRegistry,
+    Bitrate, CodecPreferences, MediaCodecFlags, RtcPortRange, RtcUdpIoBackend,
+    SessionBitrateLimits, VideoBitrateLimits,
+    engine::{packet_sink_registry::RoomPacketSinkRegistry, source_model::SourceSyncPolicy},
 };
 
 #[cfg(test)]
@@ -70,6 +60,45 @@ impl MediaTransport {
 }
 
 impl MediaTransportTestApi<'_> {
+    /// Removes media through the session worker's command queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError`] when the worker is unavailable or
+    /// rejects the removal.
+    pub async fn remove_media(
+        self,
+        session: &TransportSessionKey,
+        media: TransportMediaId,
+    ) -> Result<(), TransportAdapterError> {
+        self.transport.remove_media(session, media).await
+    }
+
+    /// Creates an active consumer with independent source synchronization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransportAdapterError`] when the sessions belong to different
+    /// rooms, a worker is unavailable or the worker rejects the consumer.
+    pub async fn consume_media(
+        self,
+        consumer: &TransportSessionKey,
+        media_kind: MediaKind,
+        source: &TransportSourceKey,
+        parameters: &MediaStream,
+    ) -> Result<TransportMediaId, TransportAdapterError> {
+        self.transport
+            .consume_media(
+                consumer,
+                media_kind,
+                source,
+                SourceSyncPolicy::Independent,
+                parameters,
+                ConsumerActivity::Active,
+            )
+            .await
+    }
+
     /// Pauses the first RTC worker until the returned sender receives a value.
     pub async fn pause_first_worker(self) -> Option<mpsc::Sender<()>> {
         let (release, _probe) = self
@@ -263,7 +292,6 @@ impl MediaTransportTestApi<'_> {
             .await
     }
 
-    #[cfg(test)]
     /// Counts the source's relay targets.
     ///
     /// # Errors
@@ -346,8 +374,12 @@ pub fn test_rtc_port_range() -> RtcPortRange {
         .expect("RFC dynamic port range should be a valid RTC range")
 }
 
-#[cfg(test)]
-pub(crate) fn test_media_transport(
+/// Builds a transport with the test worker configuration and dependencies.
+///
+/// # Errors
+///
+/// Returns [`MediaTransportBuildError`] if configuration or worker startup fails.
+pub fn test_media_transport(
     worker_count: usize,
     rtc_port_range: RtcPortRange,
 ) -> Result<MediaTransport, MediaTransportBuildError> {
@@ -357,7 +389,6 @@ pub(crate) fn test_media_transport(
     )
 }
 
-#[cfg(any(test, feature = "internal-benchmarks"))]
 pub(crate) fn test_media_transport_config(
     worker_count: usize,
     rtc_port_range: RtcPortRange,
@@ -376,7 +407,6 @@ pub(crate) fn test_media_transport_config(
     }
 }
 
-#[cfg(any(test, feature = "internal-benchmarks"))]
 pub(crate) fn test_media_transport_deps() -> MediaTransportDeps {
     MediaTransportDeps {
         packet_sink_registry: Arc::new(RoomPacketSinkRegistry::default()),

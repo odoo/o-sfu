@@ -273,7 +273,7 @@ fn successive_batches_refresh_added_replaced_and_removed_sinks() {
 }
 
 #[test]
-fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scratch()
+fn batch_keeps_remote_demand_open_and_reuses_completed_observation_scratch()
 -> Result<(), &'static str> {
     const DELTA: &[u8] = &[0x10, 0x31, 0, 0, 0x9d, 1, 0x2a, 0x80, 2, 0x68, 1];
     const KEYFRAME: &[u8] = &[0x10, 0x30, 0, 0, 0x9d, 1, 0x2a, 0x80, 2, 0x68, 1];
@@ -292,15 +292,11 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
     let src_media = harness.register_video_with_pending_consumer(&producer, consumer, selected_rid);
     let (relay, mut relay_rx) = RelayPacketMailbox::channel_for_test();
     let target_id = RelayTargetId::new(1);
-    // The relay shares local demand, so the pending decoder gate blocks both.
-    harness
+    // Remote demand stays open while the local decoder waits for refresh.
+    let _activity = harness
         .state
         .routes
-        .add_relay_target(src_media, target_id, relay);
-    harness
-        .state
-        .routes
-        .set_relay_target_active(src_media, target_id, true);
+        .add_open_relay_target(src_media, target_id, relay);
     let sink = Arc::new(CapturingSink::default());
     harness.packet_sinks.register_room(
         producer.room_instance_id(),
@@ -313,6 +309,10 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
         sample_forwarded_packet_with_rid(producer.clone(), "cam-up", Some("hi"), KEYFRAME),
     ];
     harness.forward(&mut packets);
+    let forwarded = relay_rx
+        .try_recv()
+        .or(Err("remote demand should pass the delta"))?;
+    assert_eq!(forwarded.payload(), DELTA);
     let forwarded = relay_rx
         .try_recv()
         .or(Err("selected keyframe should reach the relay"))?;
@@ -330,9 +330,9 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
         BTreeSet::from([producer.room_instance_id()])
     );
     let snapshot = harness.metrics.snapshot();
-    assert_eq!(snapshot.rtc_route_control_layer_dropped(), 1);
-    assert_eq!(snapshot.rtc_route_control_layer_allowed(), 1);
-    assert_eq!(snapshot.rtp_forwarded_packets_intra_node_relay(), 1);
+    assert_eq!(snapshot.rtc_route_control_layer_dropped(), 0);
+    assert_eq!(snapshot.rtc_route_control_layer_allowed(), 2);
+    assert_eq!(snapshot.rtp_forwarded_packets_intra_node_relay(), 2);
     let scratch_capacities = harness.completed_scratch_capacities();
     assert!(scratch_capacities.into_iter().all(|capacity| capacity > 0));
     let [mut delta, _] = packets;
@@ -350,7 +350,7 @@ fn batch_keeps_delta_before_refresh_blocked_and_reuses_completed_observation_scr
             .metrics
             .snapshot()
             .rtp_forwarded_packets_intra_node_relay(),
-        2
+        3
     );
     assert!(updates.take_pending_updates().is_empty());
     assert_eq!(harness.completed_scratch_capacities(), scratch_capacities);
