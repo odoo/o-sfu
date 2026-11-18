@@ -28,8 +28,7 @@ use crate::{
     Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId, RoomMediaLimits, VideoAdaptationTuning,
     engine::{
         media_transport::{
-            ProducerActivity, SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
-            TransportConsumerRoute, TransportMediaId, TransportSessionKey,
+            SessionUploadEncoding, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
         },
         room::{
             RoomAdmissionPolicy, RoomRuntimeContext, RouterPlacement, UserOutboundSender,
@@ -534,7 +533,6 @@ fn consumer_setup_commit_uses_latest_room_state() {
 
     let ConsumerSetupOutcome::Committed {
         track_snapshot: snapshot,
-        remote_source_activity,
         transport_activity_update,
         ..
     } = commit_setup(&mut state, setup)
@@ -545,16 +543,6 @@ fn consumer_setup_commit_uses_latest_room_state() {
     let transport_activity_update =
         transport_activity_update.expect("transport declaration should be corrected");
     assert!(!transport_activity_update);
-    let remote_source_activity =
-        remote_source_activity.expect("remote setup should reconcile source activity");
-    assert_eq!(remote_source_activity.target_media_worker_id, target_worker);
-    assert_eq!(
-        remote_source_activity.update,
-        SourceActivityUpdate::new(
-            ProducerActivity::Inactive,
-            SourceActivityRevision::default().next(),
-        )
-    );
     assert_eq!(
         state.consumer_route_state(&subscriber_user_id, &publisher_user_id, &stream_id),
         Some(ConsumerRouteState::Inactive)

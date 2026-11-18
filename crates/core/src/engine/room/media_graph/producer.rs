@@ -21,7 +21,7 @@ use crate::{
     engine::{
         media_transport::{
             ProducerActivity, SessionUploadEncoding, SourceActivityUpdate, TransportMediaId,
-            TransportSessionKey, TransportSourceActivityEffect, TransportSourceKey,
+            TransportSessionKey, TransportSourceKey,
         },
         source_model::{
             PublishedSourceDescriptor, PublishedSourceDescriptorParts, PublishedSourceId,
@@ -56,7 +56,6 @@ pub struct ProducerActivityCommit {
     pub source: TransportSourceKey,
     pub stream_id: UserStreamId,
     pub update: SourceActivityUpdate,
-    pub remote_activity_effects: Vec<TransportSourceActivityEffect>,
     pub track_snapshots: Vec<(OutboundSender, RemoteTrackSnapshot)>,
     pub presence: Option<PresenceCommit>,
 }
@@ -306,14 +305,12 @@ impl RoomState {
             .transport
             .clone();
         let update = SourceActivityUpdate::new(ProducerActivity::from_active(active), revision);
-        let remote_activity_effects = self.topology.source_activity_effects(&source, update);
         let presence =
             presence.and_then(|info| self.apply_presence_update(user_id, connection_id, info));
         Ok(ProducerActivityCommit {
             source,
             stream_id: stream_id.clone(),
             update,
-            remote_activity_effects,
             track_snapshots: self.remote_track_snapshots_for_users(source_recipients, false),
             presence,
         })

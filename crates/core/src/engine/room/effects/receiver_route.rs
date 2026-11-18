@@ -1,9 +1,7 @@
 use o_sfu_telemetry::schema::event as telemetry_event;
 use tracing::info;
 
-use super::transport::{
-    RoomRouteEffects, execute_relays_and_teardown, execute_remote_source_activity_effects,
-};
+use super::transport::RoomRouteEffects;
 use crate::engine::{
     media_transport::{MediaTransport, TransportTeardown},
     room::{
@@ -24,18 +22,14 @@ impl ReceiverSetupTurn {
     }
 
     pub(super) async fn execute(self, room: &Room, media_transport: &MediaTransport) {
-        let Self {
-            setup: mut pending,
-            origin,
-        } = self;
-        if !execute_relays_and_teardown(media_transport, pending.take_relays(), []).await {
-            Self::release_pending_setup(room, pending, media_transport).await;
-            return;
-        }
-        let setup = match pending.declare(media_transport, origin).await {
+        let Self { setup, origin } = self;
+        let setup = match setup.declare(media_transport, origin).await {
             Ok(setup) => setup,
             Err(pending) => {
-                Self::release_pending_setup(room, pending, media_transport).await;
+                room.state
+                    .write()
+                    .await
+                    .release_pending_consumer_setup(pending);
                 return;
             }
         };
@@ -49,7 +43,6 @@ impl ReceiverSetupTurn {
                 route,
                 sender,
                 track_snapshot,
-                remote_source_activity,
                 transport_activity_update,
                 readiness_keyframe,
             } => {
@@ -68,9 +61,6 @@ impl ReceiverSetupTurn {
                     origin = origin.as_diagnostic_str(),
                     "subscription committed"
                 );
-                if let Some(effect) = remote_source_activity {
-                    execute_remote_source_activity_effects(media_transport, [effect]).await;
-                }
                 let mut route_effects = RoomRouteEffects::default();
                 if let Some(active) = transport_activity_update {
                     route_effects.setup_activity(route, target.kind, active);
@@ -83,25 +73,14 @@ impl ReceiverSetupTurn {
                 }
                 let _ = sender.send_remote_tracks(track_snapshot);
             }
-            ConsumerSetupOutcome::Released(route, relays) => {
-                let teardown = [TransportTeardown::remove_media(
-                    route.consumer_session_key().clone(),
-                    route.consumer_transport_media_id(),
-                )];
-                execute_relays_and_teardown(media_transport, relays, teardown).await;
+            ConsumerSetupOutcome::Released(route) => {
+                media_transport
+                    .teardown([TransportTeardown::remove_media(
+                        route.consumer_session_key().clone(),
+                        route.consumer_transport_media_id(),
+                    )])
+                    .await;
             }
         }
-    }
-
-    async fn release_pending_setup(
-        room: &Room,
-        setup: PendingConsumerSetup,
-        media_transport: &MediaTransport,
-    ) {
-        let relays = {
-            let mut state = room.state.write().await;
-            state.release_pending_consumer_setup(setup)
-        };
-        execute_relays_and_teardown(media_transport, relays, []).await;
     }
 }

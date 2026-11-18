@@ -9,7 +9,7 @@
 //! The boundary exposes the opaque [`MediaTransport`] handle, narrow
 //! construction inputs for the server runtime and transport operations that let
 //! higher layers express intent without knowing about RTC workers, Str0m state,
-//! UDP sockets or worker-local relay routing
+//! UDP sockets or cross-worker relays
 //!
 //! Code above this module should depend on [`MediaTransport`]. Code below this
 //! module, especially the RTC engine, may deal with worker-local state machines
@@ -42,7 +42,6 @@ use o_sfu_telemetry::metrics::RuntimeMetrics;
 pub use policy_invalidation::{SourcePolicySignal, SourcePolicyUpdateSubscription};
 pub(crate) use route_control::{
     ConsumerRouteControl, ConsumerRouteControlOutcome, MediaControlPlan,
-    TransportSourceActivityEffect,
 };
 pub(in crate::engine::media_transport) use route_control::{
     ConsumerRouteControlFailure, ProducerRouteControl,
@@ -60,11 +59,10 @@ use tracing::warn;
 pub use types::{
     ActiveSpeakerActivityReason, ActiveSpeakerActivityState, ActiveSpeakerSource,
     ActiveSpeakerSourceDiagnostic, AppliedProducer, AppliedSessionAnswer, ConsumerActivity,
-    ProducerActivity, ReceiverBandwidthSnapshot, ReceiverBweTargetUpdate, RelayRouteActivity,
-    SessionOffer, SessionUploadEncoding, SessionUploadSlot, SourcePacketGate,
-    TransportAdapterError, TransportBitrateSnapshot, TransportConsumerRoute,
-    TransportHealthSnapshot, TransportMediaId, TransportQualitySample, TransportQualitySnapshot,
-    TransportRelayRouteAction, TransportRelayRouteEffect, TransportResult, TransportRidActivity,
+    ProducerActivity, ReceiverBandwidthSnapshot, ReceiverBweTargetUpdate, SessionOffer,
+    SessionUploadEncoding, SessionUploadSlot, SourcePacketGate, TransportAdapterError,
+    TransportBitrateSnapshot, TransportConsumerRoute, TransportHealthSnapshot, TransportMediaId,
+    TransportQualitySample, TransportQualitySnapshot, TransportResult, TransportRidActivity,
     TransportSessionHealth, TransportSessionKey, TransportSourceActivity,
     TransportSourceDiagnosticsSnapshot, TransportSourceKey, TransportWorkerPressureSnapshot,
 };
@@ -375,55 +373,6 @@ impl MediaTransport {
             );
         }
         result
-    }
-
-    /// Applies a room relay route mutation.
-    ///
-    /// The transport may install, release or gate the packet-loop relay target.
-    /// Room state remains the lifecycle owner.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportAdapterError`] when the referenced route cannot be
-    /// addressed or the active backend cannot apply the relay mutation.
-    pub(crate) async fn apply_relay_route_effect(
-        &self,
-        effect: &TransportRelayRouteEffect,
-    ) -> Result<(), TransportAdapterError> {
-        self.execute_relay_route_effect(effect)
-            .await
-            .inspect_err(|error| {
-                warn!(
-                source = ?effect.source,
-                target_media_worker_id = effect.target_media_worker_id.as_usize(),
-                action = ?effect.action,
-                ?error,
-                "media transport failed to apply relay route effect"
-                );
-            })
-    }
-
-    /// Applies one activity revision to a remote source.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportAdapterError`] when the target worker is unavailable
-    /// or rejects the update.
-    pub(crate) async fn apply_remote_source_activity_effect(
-        &self,
-        effect: &TransportSourceActivityEffect,
-    ) -> Result<(), TransportAdapterError> {
-        self.execute_remote_source_activity_effect(effect)
-            .await
-            .inspect_err(|error| {
-                warn!(
-                    source = ?effect.source,
-                    target_media_worker_id = effect.target_media_worker_id.as_usize(),
-                    update = ?effect.update,
-                    ?error,
-                    "media transport failed to apply remote source activity"
-                );
-            })
     }
 
     /// Subscribes to source-policy invalidation signals emitted by transport

@@ -47,30 +47,26 @@ impl PacketLoopState {
 
     /// Applies registered remote-source activity before retiring previous repair.
     ///
-    /// Missing registrations and obsolete revisions are unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TransportAdapterError::InvalidInput`] when the source identity
-    /// differs from the current remote registration.
+    /// Missing or mismatched registrations and obsolete revisions are unchanged.
     pub fn set_remote_source_activity(
         &mut self,
         source: &TransportSourceKey,
         update: SourceActivityUpdate,
-    ) -> Result<(), TransportAdapterError> {
+    ) {
         let src_media = source.transport_media_id();
         match self.routes.remote_source(src_media) {
             Some(registration) if registration.source() == source => {}
-            Some(_) => return Err(TransportAdapterError::InvalidInput),
-            None => return Ok(()),
+            Some(_) | None => return,
         }
         let activity_changed =
             self.routes.source_is_active(src_media) != update.activity().is_active();
-        let accepted = self.routes.apply_source_activity(src_media, update)?;
-        if accepted && activity_changed {
+        if matches!(
+            self.routes.apply_source_activity(src_media, update),
+            Ok(true)
+        ) && activity_changed
+        {
             self.invalidate_source_repair(src_media);
         }
-        Ok(())
     }
 
     /// Commits decoder gates and invalidates affected repair before feedback dispatch.

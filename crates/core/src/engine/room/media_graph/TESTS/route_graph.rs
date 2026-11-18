@@ -18,9 +18,7 @@ use crate::{
     Bitrate, ConnectionId, MediaWorkerId, RoomInstanceId,
     engine::{
         media_transport::{
-            RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
-            TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
-            TransportSourceKey,
+            TransportConsumerRoute, TransportMediaId, TransportSessionKey, TransportSourceKey,
         },
         source_model::{
             PolicyPauseReason, PublishedSourceId, ReceiverVideoBudgetDiagnostics, SourceEncodingId,
@@ -100,16 +98,13 @@ fn commit_route(
     selection: ConsumerSourceSelection,
 ) -> TransportConsumerRoute {
     let route = route(target, media);
-    graph
-        .commit(reservation, route.clone(), selection, || {
+    assert!(
+        graph.commit(reservation, route.clone(), selection, || {
             Some(routed_consumer(target, media))
-        })
-        .expect("current reservation should commit");
+        }),
+        "current reservation should commit"
+    );
     route
-}
-
-fn actions(effects: Vec<TransportRelayRouteEffect>) -> Vec<TransportRelayRouteAction> {
-    effects.into_iter().map(|effect| effect.action).collect()
 }
 
 #[test]
@@ -176,19 +171,15 @@ fn receiver_reset_rejects_stale_reservation_for_same_publication() {
         ConsumerSourceSelection::open(false),
     );
     let mut accepted = false;
-    assert!(
-        graph
-            .commit(
-                stale,
-                route(&target, 100),
-                ConsumerSourceSelection::open(true),
-                || {
-                    accepted = true;
-                    Some(routed_consumer(&target, 100))
-                },
-            )
-            .is_err()
-    );
+    assert!(!graph.commit(
+        stale,
+        route(&target, 100),
+        ConsumerSourceSelection::open(true),
+        || {
+            accepted = true;
+            Some(routed_consumer(&target, 100))
+        },
+    ));
     assert!(!accepted);
     commit_route(
         &mut graph,
@@ -253,7 +244,7 @@ fn pending_and_committed_counts_follow_realization_state() {
         "committed realization should be projected"
     );
 
-    assert!(graph.release_consumer_setup(pending).is_empty());
+    graph.release_consumer_setup(&pending);
     assert_eq!(graph.subscription_count(), 1);
     graph.detach_source(SOURCE_ONE);
     assert_eq!(graph.subscription_count(), 0);
@@ -312,19 +303,15 @@ fn stale_source_or_route_cannot_commit_after_reattach() {
         ConsumerSourceSelection::open(true),
     );
     let mut router_called = false;
-    assert!(
-        graph
-            .commit(
-                stale,
-                route(&old_target, 100),
-                ConsumerSourceSelection::open(true),
-                || {
-                    router_called = true;
-                    Some(routed_consumer(&old_target, 100))
-                },
-            )
-            .is_err()
-    );
+    assert!(!graph.commit(
+        stale,
+        route(&old_target, 100),
+        ConsumerSourceSelection::open(true),
+        || {
+            router_called = true;
+            Some(routed_consumer(&old_target, 100))
+        },
+    ));
     assert!(!router_called);
 
     let current_route = commit_route(
@@ -334,11 +321,7 @@ fn stale_source_or_route_cannot_commit_after_reattach() {
         101,
         ConsumerSourceSelection::open(true),
     );
-    assert!(
-        graph
-            .set_activity(&key, SOURCE_TWO, ConnectionId::from_raw(20), false, None)
-            .is_none()
-    );
+    assert!(!graph.set_activity(&key, SOURCE_TWO, ConnectionId::from_raw(20), false, None));
     assert_eq!(
         graph.selection(&key, SOURCE_TWO),
         Some(ConsumerSourceSelection::open(true))
@@ -353,7 +336,7 @@ fn stale_source_or_route_cannot_commit_after_reattach() {
 }
 
 #[test]
-fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
+fn policy_pause_stamps_the_selection_and_keeps_intent() {
     let mut graph = RouteGraph::new(4);
     let key = key(2);
     let target = target(2, 20, SOURCE_ONE);
@@ -362,11 +345,6 @@ fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
         &key,
         SOURCE_ONE,
         ConsumerSourceSelection::open(false),
-    );
-    let worker = MediaWorkerId::from_raw(1);
-    assert_eq!(
-        actions(graph.reserve_relay(&reservation, &target, worker, false)),
-        [TransportRelayRouteAction::Install]
     );
     let _ = commit_route(
         &mut graph,
@@ -377,24 +355,14 @@ fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
     );
 
     // Reactivating while the receiver is deaf stamps the pause so the consumer
-    // destination stays closed, and still raises the relay: source policy resumes
-    // the destination only, so a relay left inactive here could never come back.
-    assert_eq!(
-        actions(
-            graph
-                .set_activity(
-                    &key,
-                    SOURCE_ONE,
-                    ConnectionId::from_raw(20),
-                    true,
-                    Some(PolicyPauseReason::ReceiverDeafened),
-                )
-                .expect("activity update should apply to the committed route")
-        ),
-        [TransportRelayRouteAction::SetActivity(
-            RelayRouteActivity::Active
-        )]
-    );
+    // destination stays closed until source policy resumes it.
+    assert!(graph.set_activity(
+        &key,
+        SOURCE_ONE,
+        ConnectionId::from_raw(20),
+        true,
+        Some(PolicyPauseReason::ReceiverDeafened),
+    ));
     let selection = graph
         .selection(&key, SOURCE_ONE)
         .expect("committed route should expose its selection");
@@ -407,91 +375,25 @@ fn policy_pause_stamps_the_selection_but_leaves_the_relay_on_intent() {
 }
 
 #[test]
-fn rejected_route_preserves_selection_and_shared_relay() {
+fn rejected_route_preserves_selection() {
     let mut graph = RouteGraph::new(4);
-    let inactive_target = target(2, 20, SOURCE_ONE);
     let active_target = target(3, 30, SOURCE_ONE);
-    let inactive_key = key(2);
     let active_key = key(3);
-    let inactive = reserve(
-        &mut graph,
-        &inactive_key,
-        SOURCE_ONE,
-        ConsumerSourceSelection::open(false),
-    );
     let active = reserve(
         &mut graph,
         &active_key,
         SOURCE_ONE,
         ConsumerSourceSelection::open(true),
     );
-    let worker = MediaWorkerId::from_raw(1);
-    assert_eq!(
-        actions(graph.reserve_relay(&inactive, &inactive_target, worker, false)),
-        [TransportRelayRouteAction::Install]
-    );
-    assert_eq!(
-        actions(graph.reserve_relay(&active, &active_target, worker, true)),
-        [TransportRelayRouteAction::SetActivity(
-            RelayRouteActivity::Active
-        )]
-    );
-
-    assert_eq!(
-        actions(
-            graph
-                .commit(
-                    active,
-                    route(&active_target, 101),
-                    ConsumerSourceSelection::open(true),
-                    || None,
-                )
-                .expect_err("router rejection should release the active relay owner")
-        ),
-        [TransportRelayRouteAction::SetActivity(
-            RelayRouteActivity::Inactive
-        )]
-    );
+    assert!(!graph.commit(
+        active,
+        route(&active_target, 101),
+        ConsumerSourceSelection::open(true),
+        || None,
+    ));
     assert_eq!(
         graph.selection(&active_key, SOURCE_ONE),
         Some(ConsumerSourceSelection::open(true))
     );
-    assert_eq!(
-        actions(graph.release_consumer_setup(inactive)),
-        [TransportRelayRouteAction::Release]
-    );
-}
-
-#[test]
-fn source_activity_targets_pending_and_committed_relay_workers() {
-    let mut graph = RouteGraph::new(4);
-    let target = target(2, 20, SOURCE_ONE);
-    let key = key(2);
-    let reservation = reserve(
-        &mut graph,
-        &key,
-        SOURCE_ONE,
-        ConsumerSourceSelection::open(true),
-    );
-    let worker = MediaWorkerId::from_raw(1);
-    let _ = graph.reserve_relay(&reservation, &target, worker, true);
-    assert_eq!(
-        graph
-            .source_activity_target_workers(&target.source)
-            .collect::<Vec<_>>(),
-        [worker]
-    );
-    commit_route(
-        &mut graph,
-        reservation,
-        &target,
-        101,
-        ConsumerSourceSelection::open(true),
-    );
-    assert_eq!(
-        graph
-            .source_activity_target_workers(&target.source)
-            .collect::<Vec<_>>(),
-        [worker]
-    );
+    assert_eq!(graph.subscription_count(), 0);
 }

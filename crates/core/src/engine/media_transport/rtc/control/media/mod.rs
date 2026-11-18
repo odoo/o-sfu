@@ -6,8 +6,7 @@
 //! Media changes queue for the next renegotiation offer.
 //! [`negotiation`](super::super::negotiation) builds that offer and applies answers.
 //!
-//! [`responses`] handles media batches and relay commands. [`routes`] adjusts
-//! activity and packet gates, coupling delivery changes to RTX invalidation.
+//! [`responses`] handles media batches and relay commands.
 //! Receiver bandwidth targets use [`super::bwe`]. Keyframe feedback uses shared
 //! [`recovery`](crate::engine::media_transport::rtc::recovery) dispatch.
 
@@ -16,7 +15,6 @@
 mod TESTS;
 mod lifecycle;
 mod responses;
-mod routes;
 
 use o_sfu_router::rtp::MediaStream as RouterRtpParameters;
 use str0m::media::MediaKind;

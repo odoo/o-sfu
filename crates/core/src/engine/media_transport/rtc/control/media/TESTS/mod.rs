@@ -52,7 +52,7 @@ use crate::{
             rtc::{
                 RtpProfile, bootstrap, codec,
                 commands::{
-                    RemoteSourceControl, RouteControlRequest, RtcWorkerCommand,
+                    RelayTarget, RemoteSourceControl, RouteControlRequest, RtcWorkerCommand,
                     WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
                 },
                 consumer_egress::test_support::{
@@ -78,12 +78,14 @@ use crate::{
                 },
                 test_support::{
                     MediaWorkerScenario, add_source_rid_stream, assert_consumer_packet_gate,
+                    assert_relay_target_add_command, assert_relay_target_remove_command,
                     assert_remote_keyframe_command, assert_remote_packet_gate_command,
                     drain_ready_sessions, install_video_route_with_gate, prepare_source_session,
                     prepare_source_session_with_rid, register_remote_source_control,
-                    register_saturated_remote_source, sample_rtp_packet, saturated_remote_control,
-                    test_consumer_session_key, test_consumer_session_key_on_worker,
-                    test_source_session_key, test_transport_session_key,
+                    register_saturated_remote_source, remote_source_control, sample_rtp_packet,
+                    saturated_remote_control, test_consumer_session_key,
+                    test_consumer_session_key_on_worker, test_source_session_key,
+                    test_transport_session_key,
                 },
             },
         },
@@ -587,7 +589,6 @@ fn remote_keyframe_requests_drop_when_the_relay_target_is_inactive() {
             rid: None,
             kind: KeyframeRequestKind::Pli,
         },
-        None,
     );
 
     assert!(drain_ready_sessions(&mut state).is_empty());
@@ -631,7 +632,6 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
             source: source.clone(),
             update: SourceActivityUpdate::new(ProducerActivity::Inactive, second_revision),
         },
-        None,
     );
 
     assert!(!route.state.routes.source_is_active(route.src_media));
@@ -655,9 +655,27 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
             source: source.clone(),
             update: SourceActivityUpdate::new(ProducerActivity::Active, first_revision),
         },
-        None,
     );
     assert!(!route.state.routes.source_is_active(route.src_media));
+
+    for wrong_source in [
+        TransportSourceKey::new(test_source_session_key(107), route.src_media),
+        TransportSourceKey::new(
+            route.source_session.clone(),
+            TransportMediaId::new(u64::MAX),
+        ),
+    ] {
+        apply_route_control_request(
+            &mut route.state,
+            &route.rtc_metrics,
+            Instant::now(),
+            RouteControlRequest::SetRemoteSourceActivity {
+                source: wrong_source,
+                update: SourceActivityUpdate::new(ProducerActivity::Active, third_revision),
+            },
+        );
+        assert!(!route.state.routes.source_is_active(route.src_media));
+    }
 
     apply_route_control_request(
         &mut route.state,
@@ -667,7 +685,6 @@ fn remote_source_activity_gates_feedback_and_rejects_stale_reconciliation() {
             source,
             update: SourceActivityUpdate::new(ProducerActivity::Active, third_revision),
         },
-        None,
     );
     assert!(route.state.routes.source_is_active(route.src_media));
     assert!(route.control_rx.try_recv().is_err());
@@ -686,18 +703,13 @@ fn source_worker_defers_coalesced_remote_keyframe_requests() {
     let other_relay_target_id = RelayTargetId::new(9);
     let (other_mailbox, _other_relay_rx) = RelayPacketMailbox::channel_for_test();
 
-    state
+    let _activity = state
         .routes
-        .add_relay_target(src_media, relay_target_id, mailbox);
-    state
-        .routes
-        .add_relay_target(src_media, other_relay_target_id, other_mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, relay_target_id, true);
-    state
-        .routes
-        .set_relay_target_active(src_media, other_relay_target_id, true);
+        .add_open_relay_target(src_media, relay_target_id, mailbox);
+    let _activity =
+        state
+            .routes
+            .add_open_relay_target(src_media, other_relay_target_id, other_mailbox);
 
     apply_route_control_request(
         &mut state,
@@ -709,7 +721,6 @@ fn source_worker_defers_coalesced_remote_keyframe_requests() {
             rid: None,
             kind: KeyframeRequestKind::Pli,
         },
-        None,
     );
     apply_route_control_request(
         &mut state,
@@ -721,7 +732,6 @@ fn source_worker_defers_coalesced_remote_keyframe_requests() {
             rid: None,
             kind: KeyframeRequestKind::Pli,
         },
-        None,
     );
     apply_route_control_request(
         &mut state,
@@ -733,7 +743,6 @@ fn source_worker_defers_coalesced_remote_keyframe_requests() {
             rid: None,
             kind: KeyframeRequestKind::Fir,
         },
-        None,
     );
 
     assert_eq!(
@@ -941,14 +950,10 @@ fn open_consumer_keyframe_request_refreshes_simulcast_video_source() {
 
     let target_id = RelayTargetId::new(225);
     let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
-    route
+    let _activity = route
         .state
         .routes
-        .add_relay_target(route.src_media, target_id, mailbox);
-    route
-        .state
-        .routes
-        .set_relay_target_active(route.src_media, target_id, true);
+        .add_open_relay_target(route.src_media, target_id, mailbox);
     let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
     worker_request_remote_kf(
         &mut route.state,
@@ -981,14 +986,10 @@ fn relay_demand_does_not_keep_local_publisher_feedback_alive() {
     let mut route = LocalVideoRoute::new(226, 88_203);
     let target_id = RelayTargetId::new(226);
     let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
-    route
+    let _activity = route
         .state
         .routes
-        .add_relay_target(route.src_media, target_id, mailbox);
-    route
-        .state
-        .routes
-        .set_relay_target_active(route.src_media, target_id, true);
+        .add_open_relay_target(route.src_media, target_id, mailbox);
     assert!(route.state.routes.has_kf_demand(route.src_media, None));
     assert!(
         route
@@ -1640,13 +1641,20 @@ fn batched_consumer_packet_gates_keep_remote_relay_open_during_rid_bootstrap() {
             .routes
             .register_remote_source(
                 &source,
-                RemoteSourceControl::new(
+                remote_source_control(
                     command_tx,
                     RelayTargetId::new(16),
                     Arc::clone(&rtc_metrics),
                 ),
             )
             .is_ok()
+    );
+    assert_relay_target_add_command(
+        &mut command_rx,
+        &source_session,
+        src_media,
+        RelayTargetId::new(16),
+        PacketLayerGate::Block,
     );
     let mut scenario = MediaWorkerScenario::new(&mut state);
     let first_consumer_media = scenario.destination(
@@ -1687,15 +1695,13 @@ fn batched_consumer_packet_gates_keep_remote_relay_open_during_rid_bootstrap() {
     let mut open_gate_commands = 0;
     loop {
         match command_rx.try_recv() {
-            Ok(RtcWorkerCommand::RouteControl {
-                request:
-                    RouteControlRequest::SetRemoteSourcePacketGate {
-                        source: forwarded_source,
-                        target_id,
-                        packet_gate,
-                    },
-                response: None,
-            }) => {
+            Ok(RtcWorkerCommand::RouteControl(
+                RouteControlRequest::SetRemoteSourcePacketGate {
+                    source: forwarded_source,
+                    target_id,
+                    packet_gate,
+                },
+            )) => {
                 assert_eq!(forwarded_source.session_key(), &source_session);
                 assert_eq!(forwarded_source.transport_media_id(), src_media);
                 assert_eq!(target_id, RelayTargetId::new(16));
@@ -1724,14 +1730,16 @@ fn explicit_consumer_block_still_blocks_remote_relay() {
 
     route.state.routes.refresh_src_pkt_gate(route.src_media);
 
-    assert_remote_packet_gate_command(
-        &mut route.control_rx,
-        &route.source_session,
-        route.src_media,
-        route.target_id,
-        PacketLayerGate::Block,
-    );
+    // The relay target add already carried the blocking gate.
     assert!(route.control_rx.try_recv().is_err());
+    assert_eq!(
+        route
+            .state
+            .routes
+            .remote_source(route.src_media)
+            .and_then(RemoteSourceRegistration::pending_gate),
+        None
+    );
 }
 
 #[test]
@@ -1878,14 +1886,10 @@ fn source_wide_deferred_request_survives_open_gate_after_relay_retirement() {
     add_open_gate_rid_stream(&mut route, 88_205);
     let relay_id = RelayTargetId::new(227);
     let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
-    route
+    let _activity = route
         .state
         .routes
-        .add_relay_target(route.src_media, relay_id, mailbox);
-    route
-        .state
-        .routes
-        .set_relay_target_active(route.src_media, relay_id, true);
+        .add_open_relay_target(route.src_media, relay_id, mailbox);
     let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
     let now = Instant::now();
     worker_request_remote_kf(
@@ -1921,14 +1925,10 @@ fn source_wide_local_fir_remains_strongest_with_relay_pli() {
     add_open_gate_rid_stream(&mut route, 88_206);
     let relay_id = RelayTargetId::new(228);
     let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
-    route
+    let _activity = route
         .state
         .routes
-        .add_relay_target(route.src_media, relay_id, mailbox);
-    route
-        .state
-        .routes
-        .set_relay_target_active(route.src_media, relay_id, true);
+        .add_open_relay_target(route.src_media, relay_id, mailbox);
     let source = TransportSourceKey::new(route.source_session.clone(), route.src_media);
     let now = Instant::now();
     worker_request_remote_kf(
@@ -2016,7 +2016,7 @@ fn remote_keyframe_retry_clears_tracking_when_feedback_closes() {
 }
 
 #[test]
-fn mutual_remote_packet_gates_converge_after_mailbox_pressure_clears() {
+fn pending_relay_target_adds_carry_the_latest_gate() {
     let metrics = RuntimeMetrics::default();
     let rtc_metrics = metrics.register_rtc_worker();
     let first_source = TransportSourceKey::new(
@@ -2059,9 +2059,7 @@ fn mutual_remote_packet_gates_converge_after_mailbox_pressure_clears() {
         (&mut first_state, &second_source),
         (&mut second_state, &first_source),
     ] {
-        state
-            .routes
-            .publish_remote_pkt_gate(source.transport_media_id(), PacketLayerGate::Block);
+        assert_eq!(pending_gate(state, source), Some(PacketLayerGate::Block));
         state
             .routes
             .publish_remote_pkt_gate(source.transport_media_id(), PacketLayerGate::Open);
@@ -2069,16 +2067,16 @@ fn mutual_remote_packet_gates_converge_after_mailbox_pressure_clears() {
     }
     assert!(first_rx.try_recv().is_ok());
     assert!(second_rx.try_recv().is_ok());
-    first_state.routes.flush_remote_pkt_gates();
-    second_state.routes.flush_remote_pkt_gates();
-    assert_remote_packet_gate_command(
+    first_state.routes.flush_remote_control(&rtc_metrics);
+    second_state.routes.flush_remote_control(&rtc_metrics);
+    assert_relay_target_add_command(
         &mut first_rx,
         first_source.session_key(),
         first_source.transport_media_id(),
         first_target,
         PacketLayerGate::Open,
     );
-    assert_remote_packet_gate_command(
+    assert_relay_target_add_command(
         &mut second_rx,
         second_source.session_key(),
         second_source.transport_media_id(),
@@ -2088,7 +2086,8 @@ fn mutual_remote_packet_gates_converge_after_mailbox_pressure_clears() {
     assert_eq!(pending_gate(&first_state, &second_source), None);
     assert_eq!(pending_gate(&second_state, &first_source), None);
     let snapshot = metrics.snapshot();
-    assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 4);
+    assert_eq!(snapshot.rtc_remote_control_relay_target_drops(), 4);
+    assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 0);
     assert_eq!(snapshot.rtc_remote_packet_gate_retries(), 2);
     assert_eq!(snapshot.rtc_remote_packet_gate_flushes(), 2);
 }
@@ -2111,28 +2110,34 @@ fn flushed_remote_packet_gate_can_queue_again_under_later_pressure() {
 
     state
         .routes
-        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
-    assert!(command_rx.try_recv().is_ok());
-    state.routes.flush_remote_pkt_gates();
-
-    state
-        .routes
         .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
-    assert_remote_packet_gate_command(
+    assert_relay_target_add_command(
         &mut command_rx,
         &source_session,
         src_media,
         target_id,
         PacketLayerGate::Block,
     );
-    state.routes.flush_remote_pkt_gates();
+    state.routes.flush_remote_control(&rtc_metrics);
 
+    state
+        .routes
+        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
     assert_remote_packet_gate_command(
         &mut command_rx,
         &source_session,
         src_media,
         target_id,
         PacketLayerGate::Open,
+    );
+    state.routes.flush_remote_control(&rtc_metrics);
+
+    assert_remote_packet_gate_command(
+        &mut command_rx,
+        &source_session,
+        src_media,
+        target_id,
+        PacketLayerGate::Block,
     );
     assert_eq!(
         state
@@ -2148,6 +2153,55 @@ fn flushed_remote_packet_gate_can_queue_again_under_later_pressure() {
 }
 
 #[test]
+fn delivered_remote_packet_gate_is_not_sent_again() {
+    let source_session = test_source_session_key(175);
+    let mut state = PacketLoopState::default();
+    let metrics = RuntimeMetrics::default();
+    let rtc_metrics = metrics.register_rtc_worker();
+    let src_media = TransportMediaId::new(68);
+    let target_id = RelayTargetId::new(26);
+    let (control_tx, mut command_rx) = mpsc::channel(1);
+    register_remote_source_control(
+        &mut state,
+        &TransportSourceKey::new(source_session.clone(), src_media),
+        control_tx,
+        target_id,
+        rtc_metrics,
+    );
+    for gate in [
+        PacketLayerGate::Block,
+        PacketLayerGate::Open,
+        PacketLayerGate::Open,
+    ] {
+        state.routes.publish_remote_pkt_gate(src_media, gate);
+    }
+    assert_relay_target_add_command(
+        &mut command_rx,
+        &source_session,
+        src_media,
+        target_id,
+        PacketLayerGate::Block,
+    );
+    state
+        .routes
+        .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
+    assert!(
+        state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+    assert_remote_packet_gate_command(
+        &mut command_rx,
+        &source_session,
+        src_media,
+        target_id,
+        PacketLayerGate::Open,
+    );
+    assert!(command_rx.try_recv().is_err());
+}
+
+#[test]
 fn closed_remote_packet_gate_is_not_queued_for_retry() {
     let source_session = test_source_session_key(176);
     let mut state = PacketLoopState::default();
@@ -2159,12 +2213,12 @@ fn closed_remote_packet_gate_is_not_queued_for_retry() {
         src_media,
         &source_session,
         RelayTargetId::new(23),
-        rtc_metrics,
+        Arc::clone(&rtc_metrics),
     );
     command_rx.close();
     state
         .routes
-        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+        .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
     assert_eq!(
         state
             .routes
@@ -2173,8 +2227,14 @@ fn closed_remote_packet_gate_is_not_queued_for_retry() {
         None
     );
     for _ in 0..3 {
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&rtc_metrics);
     }
+    assert!(
+        state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 1);
     assert_eq!(snapshot.rtc_remote_packet_gate_retries(), 0);
@@ -2194,25 +2254,31 @@ fn pending_remote_packet_gate_is_retired_when_receiver_closes() {
             src_media,
             &source_session,
             RelayTargetId::new(24),
-            rtc_metrics,
+            Arc::clone(&rtc_metrics),
         );
         state
             .routes
-            .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+            .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
         assert_eq!(
             state
                 .routes
                 .remote_source(src_media)
                 .and_then(RemoteSourceRegistration::pending_gate),
-            Some(PacketLayerGate::Block)
+            Some(PacketLayerGate::Open)
         );
         command_rx.close();
         if republish_after_close {
             state
                 .routes
-                .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
+                .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+            assert!(
+                state
+                    .routes
+                    .next_remote_control_retry(Instant::now())
+                    .is_none()
+            );
         }
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&rtc_metrics);
         assert_eq!(
             state
                 .routes
@@ -2221,7 +2287,7 @@ fn pending_remote_packet_gate_is_retired_when_receiver_closes() {
             None
         );
         for _ in 0..3 {
-            state.routes.flush_remote_pkt_gates();
+            state.routes.flush_remote_control(&rtc_metrics);
         }
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.rtc_remote_control_packet_gate_drops(), 2);
@@ -2250,25 +2316,25 @@ fn remote_packet_gate_retries_visit_each_source_once_per_pass() {
             target,
             Arc::clone(&rtc_metrics),
         );
-        for gate in [PacketLayerGate::Block, PacketLayerGate::Open] {
+        for gate in [PacketLayerGate::Open, PacketLayerGate::Block] {
             state.routes.publish_remote_pkt_gate(media, gate);
         }
         sources.push((session, media, target, receiver));
     }
-    state.routes.flush_remote_pkt_gates();
+    state.routes.flush_remote_control(&rtc_metrics);
     assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 3);
     assert_eq!(metrics.snapshot().rtc_remote_control_packet_gate_drops(), 9);
     for (_, _, _, receiver) in &mut sources[1..] {
         assert!(receiver.try_recv().is_ok());
     }
-    state.routes.flush_remote_pkt_gates();
+    state.routes.flush_remote_control(&rtc_metrics);
     for (session, media, target, receiver) in &mut sources[1..] {
         assert_remote_packet_gate_command(
             receiver,
             session,
             *media,
             *target,
-            PacketLayerGate::Open,
+            PacketLayerGate::Block,
         );
         assert!(receiver.try_recv().is_err());
     }
@@ -2280,15 +2346,15 @@ fn remote_packet_gate_retries_visit_each_source_once_per_pass() {
     assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 2);
     let (session, media, target, receiver) = &mut sources[0];
     assert!(receiver.try_recv().is_ok());
-    state.routes.flush_remote_pkt_gates();
-    assert_remote_packet_gate_command(receiver, session, *media, *target, PacketLayerGate::Open);
-    state.routes.flush_remote_pkt_gates();
+    state.routes.flush_remote_control(&rtc_metrics);
+    assert_remote_packet_gate_command(receiver, session, *media, *target, PacketLayerGate::Block);
+    state.routes.flush_remote_control(&rtc_metrics);
     assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 7);
     assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 3);
 }
 
 #[test]
-fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
+fn remote_source_reregistration_keeps_its_control_and_rejects_conflicting_identity() {
     for conflicting_identity in [false, true] {
         let mut state = PacketLoopState::default();
         let metrics = RuntimeMetrics::default();
@@ -2305,18 +2371,13 @@ fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
             Arc::clone(&rtc_metrics),
         );
         state.routes.set_local_pkt_gate(media, None);
-        state
-            .set_remote_source_activity(
-                &source,
-                SourceActivityUpdate::new(
-                    ProducerActivity::Active,
-                    SourceActivityRevision::default(),
-                ),
-            )
-            .expect("clearing a local gate must preserve remote source activity");
+        state.set_remote_source_activity(
+            &source,
+            SourceActivityUpdate::new(ProducerActivity::Active, SourceActivityRevision::default()),
+        );
         state
             .routes
-            .publish_remote_pkt_gate(media, PacketLayerGate::Block);
+            .publish_remote_pkt_gate(media, PacketLayerGate::Open);
         let replacement_source = if conflicting_identity {
             TransportSourceKey::new(test_source_session_key(185), media)
         } else {
@@ -2326,15 +2387,15 @@ fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
         let (new_tx, mut new_rx) = saturated_remote_control(&replacement_source, new_target);
         let result = state.routes.register_remote_source(
             &replacement_source,
-            RemoteSourceControl::new(new_tx, new_target, Arc::clone(&rtc_metrics)),
+            remote_source_control(new_tx, new_target, Arc::clone(&rtc_metrics)),
         );
         if conflicting_identity {
             assert!(matches!(result, Err(TransportAdapterError::InvalidInput)));
         } else {
-            assert!(result.is_ok());
+            assert!(matches!(result, Ok(None)));
             state
                 .routes
-                .publish_remote_pkt_gate(media, PacketLayerGate::Open);
+                .publish_remote_pkt_gate(media, PacketLayerGate::Block);
         }
         assert_eq!(
             state
@@ -2346,27 +2407,21 @@ fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
         assert!(state.routes.source_is_active(media));
         assert!(old_rx.try_recv().is_ok());
         assert!(new_rx.try_recv().is_ok());
-        state.routes.flush_remote_pkt_gates();
-        if conflicting_identity {
-            assert_remote_packet_gate_command(
-                &mut old_rx,
-                &session,
-                media,
-                old_target,
-                PacketLayerGate::Block,
-            );
-        } else {
-            assert_remote_packet_gate_command(
-                &mut new_rx,
-                &session,
-                media,
-                new_target,
-                PacketLayerGate::Open,
-            );
-        }
+        state.routes.flush_remote_control(&rtc_metrics);
+        assert_remote_packet_gate_command(
+            &mut old_rx,
+            &session,
+            media,
+            old_target,
+            if conflicting_identity {
+                PacketLayerGate::Open
+            } else {
+                PacketLayerGate::Block
+            },
+        );
         assert!(old_rx.try_recv().is_err());
         assert!(new_rx.try_recv().is_err());
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&rtc_metrics);
         assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 1);
         assert_eq!(metrics.snapshot().rtc_remote_packet_gate_flushes(), 1);
         assert_eq!(
@@ -2377,60 +2432,83 @@ fn remote_source_replacement_rejects_conflicting_identity_and_stale_gates() {
 }
 
 #[test]
-fn remote_source_teardown_drops_pending_gate_state() {
+fn remote_source_removal_withdraws_its_target_unless_registered_again() {
     for reregister in [false, true] {
         let source_session = test_transport_session_key(141, 0, 170, UserId::Integer(171));
         let mut state = PacketLoopState::default();
         let metrics = RuntimeMetrics::default();
         let rtc_metrics = metrics.register_rtc_worker();
         let src_media = TransportMediaId::new(64);
+        let old_target = RelayTargetId::new(21);
         let mut old_rx = register_saturated_remote_source(
             &mut state,
             src_media,
             &source_session,
-            RelayTargetId::new(21),
+            old_target,
             Arc::clone(&rtc_metrics),
         );
         state
             .routes
-            .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+            .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
+        state.routes.prune_unrouted_remote_src(src_media);
+        assert!(state.routes.remote_source(src_media).is_none());
         assert!(
             state
                 .routes
-                .remote_source(src_media)
-                .is_some_and(RemoteSourceRegistration::has_pending_gate)
+                .next_remote_control_retry(Instant::now())
+                .is_some()
         );
-        state.routes.prune_unrouted_remote_src(src_media);
-        assert!(state.routes.remote_source(src_media).is_none());
         assert!(old_rx.try_recv().is_ok());
         if reregister {
-            let target = RelayTargetId::new(25);
+            let new_target = RelayTargetId::new(25);
             let mut new_rx = register_saturated_remote_source(
                 &mut state,
                 src_media,
                 &source_session,
-                target,
+                new_target,
                 Arc::clone(&rtc_metrics),
+            );
+            assert!(
+                state
+                    .routes
+                    .next_remote_control_retry(Instant::now())
+                    .is_none()
             );
             state
                 .routes
                 .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
-            state.routes.flush_remote_pkt_gates();
-            assert_eq!(metrics.snapshot().rtc_remote_packet_gate_retries(), 1);
-            assert!(new_rx.try_recv().is_ok());
-            state.routes.flush_remote_pkt_gates();
+            state.routes.flush_remote_control(&rtc_metrics);
+            assert!(old_rx.try_recv().is_err());
+            assert_relay_target_add_command(
+                &mut new_rx,
+                &source_session,
+                src_media,
+                new_target,
+                PacketLayerGate::Block,
+            );
+            state.routes.flush_remote_control(&rtc_metrics);
             assert_remote_packet_gate_command(
                 &mut new_rx,
                 &source_session,
                 src_media,
-                target,
+                new_target,
                 PacketLayerGate::Open,
             );
             assert!(new_rx.try_recv().is_err());
+        } else {
+            state.routes.flush_remote_control(&rtc_metrics);
+            assert_relay_target_remove_command(&mut old_rx, src_media, old_target);
         }
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&rtc_metrics);
         assert!(old_rx.try_recv().is_err());
+        assert!(
+            state
+                .routes
+                .next_remote_control_retry(Instant::now())
+                .is_none()
+        );
         let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.rtc_remote_control_relay_target_drops(), 1);
         assert_eq!(
             snapshot.rtc_remote_control_packet_gate_drops(),
             if reregister { 3 } else { 1 }
@@ -2456,6 +2534,7 @@ fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_f
         let rtc_metrics = metrics.register_rtc_worker();
         let src_media = TransportMediaId::new(33);
         let old_target = RelayTargetId::new(10);
+        let new_target = RelayTargetId::new(11);
         let mut old_rx = existing_registration.then(|| {
             let receiver = register_saturated_remote_source(
                 &mut state,
@@ -2466,12 +2545,11 @@ fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_f
             );
             state
                 .routes
-                .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+                .publish_remote_pkt_gate(src_media, PacketLayerGate::Open);
             receiver
         });
-        let (command_tx, mut new_rx) = mpsc::channel(1);
-        let control =
-            RemoteSourceControl::new(command_tx, RelayTargetId::new(11), Arc::clone(&rtc_metrics));
+        let (command_tx, mut new_rx) = mpsc::channel(2);
+        let control = remote_source_control(command_tx, new_target, Arc::clone(&rtc_metrics));
         let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
         let source = TransportSourceKey::new(source_session.clone(), src_media);
         let result = worker_add_send_media(
@@ -2490,19 +2568,29 @@ fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_f
         assert_eq!(result, Err(TransportAdapterError::TransportUnavailable));
         if let Some(receiver) = &mut old_rx {
             assert!(receiver.try_recv().is_ok());
-            state.routes.flush_remote_pkt_gates();
+            state.routes.flush_remote_control(&rtc_metrics);
             assert_remote_packet_gate_command(
                 receiver,
                 &source_session,
                 src_media,
                 old_target,
-                PacketLayerGate::Block,
+                PacketLayerGate::Open,
             );
             assert!(receiver.try_recv().is_err());
+            assert!(new_rx.try_recv().is_err());
         } else {
+            // The rolled-back add reached the source worker, which must forget it.
             assert!(state.routes.remote_source(src_media).is_none());
+            assert_relay_target_add_command(
+                &mut new_rx,
+                &source_session,
+                src_media,
+                new_target,
+                PacketLayerGate::Block,
+            );
+            assert_relay_target_remove_command(&mut new_rx, src_media, new_target);
         }
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&rtc_metrics);
         assert!(new_rx.try_recv().is_err());
         assert_eq!(
             metrics.snapshot().rtc_remote_control_packet_gate_drops(),
@@ -2517,6 +2605,337 @@ fn add_send_media_rolls_back_remote_source_registration_when_media_declaration_f
             u64::from(existing_registration)
         );
     }
+}
+
+#[test]
+fn add_send_media_fails_when_the_source_worker_is_closed() {
+    let source_session = test_source_session_key(152);
+    let consumer_session = test_consumer_session_key_on_worker(152, 1);
+    let mut state = PacketLoopState::default();
+    let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
+    let src_media = TransportMediaId::new(34);
+    let (command_tx, command_rx) = mpsc::channel(1);
+    drop(command_rx);
+    let parameters = RouterRtpParameters::new(vec![], vec![], vec![]);
+    let result = worker_add_send_media(
+        &mut state,
+        AddSendMediaRequest {
+            consumer_key: &consumer_session,
+            media_kind: MediaKind::Video,
+            sync: SourceSyncPolicy::Independent,
+            source: &TransportSourceKey::new(source_session, src_media),
+            remote_source_control: Some(remote_source_control(
+                command_tx,
+                RelayTargetId::new(12),
+                rtc_metrics,
+            )),
+            consumer_rtp_parameters: &parameters,
+            active: true,
+        },
+    );
+    assert_eq!(result, Err(TransportAdapterError::TransportUnavailable));
+    assert!(state.routes.remote_source(src_media).is_none());
+    assert!(
+        state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+}
+
+/// Applies every route control waiting in `queue` on the receiving worker.
+fn deliver_route_controls(
+    queue: &mut mpsc::Receiver<RtcWorkerCommand>,
+    state: &mut PacketLoopState,
+    rtc_metrics: &RtcMetricsRecorder,
+) {
+    while let Ok(command) = queue.try_recv() {
+        let RtcWorkerCommand::RouteControl(request) = command else {
+            panic!("relay workers exchange only route controls");
+        };
+        apply_route_control_request(state, rtc_metrics, Instant::now(), request);
+    }
+}
+
+#[test]
+fn relay_targets_follow_consumer_routes_and_receive_source_activity() {
+    enum Removal {
+        Consumer,
+        Route,
+        Session,
+    }
+    for removal in [Removal::Consumer, Removal::Route, Removal::Session] {
+        let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
+        let source_session = test_source_session_key(190);
+        let consumer_session = test_consumer_session_key_on_worker(190, 1);
+        let mut source_state = PacketLoopState::default();
+        let src_media = prepare_source_session(
+            &mut source_state,
+            &source_session,
+            Mid::from("cam-up"),
+            190_000,
+        );
+        let source = TransportSourceKey::new(source_session, src_media);
+        let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+        let (target, mut consumer_queue) =
+            RelayTarget::with_control_queue(RelayTargetId::new(190), mailbox, 4);
+        let (source_tx, mut source_queue) = mpsc::channel(4);
+        let mut consumer_state = PacketLoopState::default();
+        assert!(
+            consumer_state
+                .routes
+                .register_remote_source(
+                    &source,
+                    RemoteSourceControl::new(source_tx.clone(), target, Arc::clone(&rtc_metrics)),
+                )
+                .is_ok()
+        );
+        let consumer_media = MediaWorkerScenario::new(&mut consumer_state).destination(
+            src_media,
+            consumer_session.clone(),
+            Mid::from("cam-down"),
+        );
+
+        deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+        assert_eq!(source_state.routes.relay_target_count(src_media), 1);
+        assert_eq!(source_state.routes.active_relay_target_count(src_media), 1);
+        // A new registration delivers nothing until the source worker answers.
+        assert!(!consumer_state.routes.source_is_active(src_media));
+        source_state.routes.flush_remote_control(&rtc_metrics);
+        deliver_route_controls(&mut consumer_queue, &mut consumer_state, &rtc_metrics);
+        assert!(consumer_state.routes.source_is_active(src_media));
+
+        apply_source_activity(
+            &mut source_state,
+            &rtc_metrics,
+            source.clone(),
+            SourceActivityUpdate::new(
+                ProducerActivity::Inactive,
+                SourceActivityRevision::default().next(),
+            ),
+            Instant::now(),
+        );
+        source_state.routes.flush_remote_control(&rtc_metrics);
+        deliver_route_controls(&mut consumer_queue, &mut consumer_state, &rtc_metrics);
+        assert!(!consumer_state.routes.source_is_active(src_media));
+
+        let route = TransportConsumerRoute::new(consumer_session.clone(), consumer_media, source);
+        assert!(consumer_state.set_consumer_active(&route, false).is_ok());
+        deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+        assert_eq!(source_state.routes.relay_target_count(src_media), 1);
+        assert_eq!(source_state.routes.active_relay_target_count(src_media), 0);
+
+        assert!(consumer_state.set_consumer_active(&route, true).is_ok());
+        deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+        // A last-route withdrawal must use the only free slot, without a prior gate.
+        let _reserved = source_tx
+            .try_reserve_many(3)
+            .expect("three slots should be free");
+        match removal {
+            Removal::Consumer => {
+                consumer_state.remove_consumer_route(&consumer_session, consumer_media, src_media);
+            }
+            Removal::Route => {
+                consumer_state.routes.take_route(src_media);
+            }
+            Removal::Session => consumer_state
+                .routes
+                .remove_dsts_for_session(&consumer_session),
+        }
+        assert!(
+            consumer_state
+                .routes
+                .next_remote_control_retry(Instant::now())
+                .is_none()
+        );
+        assert!(consumer_state.routes.remote_source(src_media).is_none());
+        deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+        assert_eq!(source_state.routes.relay_target_count(src_media), 0);
+    }
+}
+
+#[test]
+fn reregistration_replaces_a_pending_removal_and_asks_for_activity_again() {
+    let rtc_metrics = RuntimeMetrics::default().register_rtc_worker();
+    let source_session = test_source_session_key(191);
+    let consumer_session = test_consumer_session_key_on_worker(191, 1);
+    let mut source_state = PacketLoopState::default();
+    let src_media = prepare_source_session(
+        &mut source_state,
+        &source_session,
+        Mid::from("cam-up"),
+        191_000,
+    );
+    let source = TransportSourceKey::new(source_session, src_media);
+    let (mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
+    let (target, mut consumer_queue) =
+        RelayTarget::with_control_queue(RelayTargetId::new(191), mailbox, 4);
+    // The first add fills the source queue, so every later control waits.
+    let (source_tx, mut source_queue) = mpsc::channel(1);
+    let control = RemoteSourceControl::new(source_tx, target, Arc::clone(&rtc_metrics));
+    let mut consumer_state = PacketLoopState::default();
+    assert!(
+        consumer_state
+            .routes
+            .register_remote_source(&source, control.clone())
+            .is_ok()
+    );
+    let first_media = MediaWorkerScenario::new(&mut consumer_state).destination(
+        src_media,
+        consumer_session.clone(),
+        Mid::from("cam-down"),
+    );
+    consumer_state.remove_consumer_route(&consumer_session, first_media, src_media);
+    assert!(consumer_state.routes.remote_source(src_media).is_none());
+    assert!(
+        consumer_state
+            .routes
+            .register_remote_source(&source, control.clone())
+            .is_ok()
+    );
+    let second_media = MediaWorkerScenario::new(&mut consumer_state).destination(
+        src_media,
+        consumer_session.clone(),
+        Mid::from("cam-down-2"),
+    );
+
+    deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+    consumer_state.routes.flush_remote_control(&rtc_metrics);
+    deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+    // The withdrawal never left the consumer worker and the target stays.
+    assert_eq!(source_state.routes.relay_target_count(src_media), 1);
+    assert_eq!(source_state.routes.active_relay_target_count(src_media), 1);
+    assert!(!consumer_state.routes.source_is_active(src_media));
+    source_state.routes.flush_remote_control(&rtc_metrics);
+    deliver_route_controls(&mut consumer_queue, &mut consumer_state, &rtc_metrics);
+    assert!(consumer_state.routes.source_is_active(src_media));
+    assert!(
+        consumer_state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+    // Fill the queue, then cancel a re-registration before its add is accepted.
+    consumer_state
+        .routes
+        .publish_remote_pkt_gate(src_media, PacketLayerGate::Block);
+    consumer_state.remove_consumer_route(&consumer_session, second_media, src_media);
+    let registration = consumer_state
+        .routes
+        .register_remote_source(&source, control.clone())
+        .expect("re-registration should wait for capacity")
+        .expect("re-registration should create a rollback token");
+    consumer_state.routes.rollback_remote_source(registration);
+    deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+    consumer_state.routes.flush_remote_control(&rtc_metrics);
+    deliver_route_controls(&mut source_queue, &mut source_state, &rtc_metrics);
+    assert_eq!(source_state.routes.relay_target_count(src_media), 0);
+    // Cancelling an initial add must not accumulate withdrawals under pressure.
+    let _ = control.set_pkt_gate(&source, PacketLayerGate::Block);
+    let registration = consumer_state
+        .routes
+        .register_remote_source(&source, control)
+        .expect("initial add should wait for capacity")
+        .expect("initial add should create a rollback token");
+    consumer_state.routes.rollback_remote_source(registration);
+    assert!(
+        consumer_state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+    assert!(source_queue.try_recv().is_ok());
+    consumer_state.routes.flush_remote_control(&rtc_metrics);
+    assert!(source_queue.try_recv().is_err());
+    assert!(
+        consumer_state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+}
+
+#[test]
+fn relay_activity_retries_latest_revision_for_every_target_and_retires_closed_targets() {
+    let metrics = RuntimeMetrics::default().register_rtc_worker();
+    let session = test_source_session_key(192);
+    let mut state = PacketLoopState::default();
+    let media = prepare_source_session(&mut state, &session, Mid::from("cam-up"), 192_000);
+    let source = TransportSourceKey::new(session, media);
+    let mut queues = Vec::new();
+    let mut mailboxes = Vec::new();
+    for id in [192, 193] {
+        let (mailbox, packets) = RelayPacketMailbox::channel_for_test();
+        let (target, queue) = RelayTarget::with_control_queue(RelayTargetId::new(id), mailbox, 1);
+        state
+            .routes
+            .add_relay_target(&source, target, PacketLayerGate::Open);
+        queues.push(queue);
+        mailboxes.push(packets);
+    }
+    // Initial activity fills both target queues.
+    state.routes.flush_remote_control(&metrics);
+    let inactive = SourceActivityRevision::default().next();
+    let latest = inactive.next();
+    for (activity, revision) in [
+        (ProducerActivity::Inactive, inactive),
+        (ProducerActivity::Active, latest),
+    ] {
+        assert_eq!(
+            state
+                .routes
+                .apply_source_activity(media, SourceActivityUpdate::new(activity, revision)),
+            Ok(true)
+        );
+        state.routes.flush_remote_control(&metrics);
+    }
+    assert!(
+        state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_some()
+    );
+    for queue in &mut queues {
+        assert!(queue.try_recv().is_ok());
+    }
+    state.routes.flush_remote_control(&metrics);
+    for queue in &mut queues {
+        let Ok(RtcWorkerCommand::RouteControl(RouteControlRequest::SetRemoteSourceActivity {
+            update,
+            ..
+        })) = queue.try_recv()
+        else {
+            panic!("each target must receive the latest revision");
+        };
+        assert_eq!(
+            update,
+            SourceActivityUpdate::new(ProducerActivity::Active, latest)
+        );
+        assert!(queue.try_recv().is_err());
+    }
+    assert!(
+        state
+            .routes
+            .next_remote_control_retry(Instant::now())
+            .is_none()
+    );
+    assert_eq!(
+        state.routes.apply_source_activity(
+            media,
+            SourceActivityUpdate::new(ProducerActivity::Inactive, inactive)
+        ),
+        Ok(false)
+    );
+    drop(queues.pop());
+    assert_eq!(
+        state.routes.apply_source_activity(
+            media,
+            SourceActivityUpdate::new(ProducerActivity::Inactive, latest.next())
+        ),
+        Ok(true)
+    );
+    state.routes.flush_remote_control(&metrics);
+    assert_eq!(state.routes.relay_target_count(media), 1);
 }
 
 #[test]
@@ -2899,7 +3318,6 @@ fn remote_source_packet_gate_ignores_wrong_source_owner() {
             target_id: RelayTargetId::new(9),
             packet_gate: PacketLayerGate::Rid("hi".into()),
         },
-        None,
     );
 
     assert_eq!(state.routes.effective_packet_gate(src_media), None);

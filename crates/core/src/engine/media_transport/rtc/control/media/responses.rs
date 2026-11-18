@@ -4,15 +4,13 @@ use std::time::Instant;
 
 use o_sfu_telemetry::metrics::RtcMetricsRecorder;
 
-use super::routes;
 use crate::{
     Bitrate,
     engine::media_transport::{
-        ConsumerRouteControlFailure, ConsumerRouteControlOutcome,
+        ConsumerRouteControlFailure, ConsumerRouteControlOutcome, TransportSourceKey,
         rtc::{
             commands::{
-                RouteControlRequest, RtcWorkerResponse, WorkerMediaControlBatch,
-                WorkerMediaControlBatchOutcome,
+                RouteControlRequest, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome,
             },
             control::bwe,
             recovery::{
@@ -33,45 +31,48 @@ pub fn apply_route_control_request(
     metrics: &RtcMetricsRecorder,
     now: Instant,
     request: RouteControlRequest,
-    response: Option<RtcWorkerResponse<()>>,
 ) {
-    let result = match request {
+    match request {
         RouteControlRequest::AddRelayTarget {
             source,
-            target_id,
             target,
-        } => routes::worker_add_relay_target(state, &source, target_id, target),
-        RouteControlRequest::RemoveRelayTarget { source, target_id } => {
-            routes::worker_remove_relay_target(state, &source, target_id)
+            packet_gate,
+        } => {
+            if is_local_producer(state, &source) {
+                state.routes.add_relay_target(&source, target, packet_gate);
+            }
         }
-        RouteControlRequest::SetRelayTargetActive {
-            source,
-            target_id,
-            active,
-        } => routes::worker_set_relay_target_active(state, &source, target_id, active),
+        RouteControlRequest::RemoveRelayTarget { source, target_id } => {
+            if is_local_producer(state, &source) {
+                state
+                    .routes
+                    .remove_relay_target(source.transport_media_id(), target_id);
+            }
+        }
         RouteControlRequest::SetRemoteSourceActivity { source, update } => {
-            routes::worker_set_remote_source_activity(state, &source, update)
+            // Nothing waits for this answer. A stale or misaddressed one
+            // changes no route.
+            state.set_remote_source_activity(&source, update);
         }
         RouteControlRequest::RequestRemoteKeyframe {
             source,
             target_id,
             rid,
             kind,
-        } => {
-            worker_request_remote_kf(state, metrics, &source, target_id, rid, kind, now);
-            Ok(())
-        }
+        } => worker_request_remote_kf(state, metrics, &source, target_id, rid, kind, now),
         RouteControlRequest::SetRemoteSourcePacketGate {
             source,
             target_id,
             packet_gate,
         } => {
-            routes::set_remote_src_pkt_gate(state, &source, target_id, packet_gate);
-            Ok(())
+            if is_local_producer(state, &source) {
+                state.routes.set_relay_pkt_gate(
+                    source.transport_media_id(),
+                    target_id,
+                    packet_gate,
+                );
+            }
         }
-    };
-    if let Some(response) = response {
-        let _ = response.send(result);
     }
 }
 
@@ -90,8 +91,7 @@ pub fn apply_media_control_batch(
             bwe::apply_receiver_bwe_target(&mut state.users, max_bitrate_out, &update)
         })),
         ProducerActivity(updates) => Applied(map_updates(updates, |control| {
-            let accepted =
-                routes::worker_apply_producer_activity(state, &control.source, control.update)?;
+            let accepted = state.apply_producer_activity(&control.source, control.update)?;
             if accepted && control.update.activity().is_active() {
                 worker_request_resumed_video_kf(state, metrics, &control.source, now);
             }
@@ -121,4 +121,12 @@ pub fn apply_media_control_batch(
             ConsumerRouteControlOutcome::default()
         })),
     }
+}
+
+/// Relay control from consumer workers can lag producer removal. Commands for
+/// a missing producer are stale and change nothing.
+fn is_local_producer(state: &PacketLoopState, source: &TransportSourceKey) -> bool {
+    state
+        .ensure_local_producer_mid(source.session_key(), source.transport_media_id())
+        .is_ok()
 }

@@ -79,22 +79,18 @@ pub fn assert_remote_keyframe_command(
 ) {
     loop {
         match control_rx.try_recv().ok() {
-            Some(RtcWorkerCommand::RouteControl {
-                request: RouteControlRequest::SetRemoteSourcePacketGate { .. },
-                response: None,
-            }) => {}
+            Some(RtcWorkerCommand::RouteControl(
+                RouteControlRequest::SetRemoteSourcePacketGate { .. },
+            )) => {}
             command => {
                 assert!(matches!(
                     command,
-                    Some(RtcWorkerCommand::RouteControl {
-                        request: RouteControlRequest::RequestRemoteKeyframe {
+                    Some(RtcWorkerCommand::RouteControl(RouteControlRequest::RequestRemoteKeyframe {
                             source,
                             target_id: forwarded_target_id,
                             rid: forwarded_rid,
                             kind: KeyframeRequestKind::Pli,
-                        },
-                        response: None,
-                    }) if source.session_key() == src_key
+                        })) if source.session_key() == src_key
                         && source.transport_media_id() == src_media
                         && forwarded_target_id == target_id
                         && forwarded_rid == rid
@@ -103,6 +99,40 @@ pub fn assert_remote_keyframe_command(
             }
         }
     }
+}
+
+pub fn assert_relay_target_add_command(
+    control_rx: &mut mpsc::Receiver<RtcWorkerCommand>,
+    src_key: &TransportSessionKey,
+    src_media: TransportMediaId,
+    target_id: RelayTargetId,
+    packet_gate: PacketLayerGate,
+) {
+    assert!(matches!(
+        control_rx.try_recv().ok(),
+        Some(RtcWorkerCommand::RouteControl(RouteControlRequest::AddRelayTarget {
+            source,
+            target,
+            packet_gate: forwarded_packet_gate,
+        })) if source.session_key() == src_key
+            && source.transport_media_id() == src_media
+            && target.id == target_id
+            && forwarded_packet_gate == packet_gate
+    ));
+}
+
+pub fn assert_relay_target_remove_command(
+    control_rx: &mut mpsc::Receiver<RtcWorkerCommand>,
+    src_media: TransportMediaId,
+    target_id: RelayTargetId,
+) {
+    assert!(matches!(
+        control_rx.try_recv().ok(),
+        Some(RtcWorkerCommand::RouteControl(RouteControlRequest::RemoveRelayTarget {
+            source,
+            target_id: removed_target_id,
+        })) if source.transport_media_id() == src_media && removed_target_id == target_id
+    ));
 }
 
 pub fn assert_remote_packet_gate_command(
@@ -114,14 +144,11 @@ pub fn assert_remote_packet_gate_command(
 ) {
     assert!(matches!(
         control_rx.try_recv().ok(),
-        Some(RtcWorkerCommand::RouteControl {
-            request: RouteControlRequest::SetRemoteSourcePacketGate {
+        Some(RtcWorkerCommand::RouteControl(RouteControlRequest::SetRemoteSourcePacketGate {
                 source,
                 target_id: forwarded_target_id,
                 packet_gate: forwarded_packet_gate,
-            },
-            response: None,
-        }) if source.session_key() == src_key
+            })) if source.session_key() == src_key
             && source.transport_media_id() == src_media
             && forwarded_target_id == target_id
             && forwarded_packet_gate == packet_gate

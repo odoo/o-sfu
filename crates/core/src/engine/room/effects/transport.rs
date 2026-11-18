@@ -12,8 +12,7 @@ use crate::engine::{
     media_transport::{
         ConsumerActivity, ConsumerRouteControl, ConsumerRouteControlOutcome, MediaControlPlan,
         MediaTransport, ProducerActivity, ReceiverBweTargetUpdate, SourceActivityUpdate,
-        TransportConsumerRoute, TransportRelayRouteAction, TransportRelayRouteEffect,
-        TransportSourceActivityEffect, TransportSourceKey, TransportTeardown,
+        TransportConsumerRoute, TransportSourceKey, TransportTeardown,
     },
     obligation::{Execute, Obligation, Work},
     room::{
@@ -31,8 +30,6 @@ pub(in crate::engine) struct RoomTransportPlan(Obligation<RoomTransportWork>);
 
 #[derive(Debug, Default)]
 struct RoomTransportWork {
-    relays: Vec<TransportRelayRouteEffect>,
-    remote_source_activity: Vec<TransportSourceActivityEffect>,
     teardown: Vec<TransportTeardown>,
     route_control: RoomRouteEffects,
     setup_turns: Vec<ReceiverSetupTurn>,
@@ -44,16 +41,11 @@ enum TransportUpdate {
 }
 
 impl RoomTransportPlan {
-    pub(in crate::engine::room) fn from_relays_and_teardown(
-        mut relays: Vec<TransportRelayRouteEffect>,
-        additional_teardown: impl IntoIterator<Item = TransportTeardown>,
+    pub(in crate::engine::room) fn from_teardown(
+        teardown: impl IntoIterator<Item = TransportTeardown>,
     ) -> Self {
-        let mut teardown = Vec::new();
-        extract_relay_teardown(&mut relays, &mut teardown);
-        teardown.extend(additional_teardown);
         Self(Obligation::new(RoomTransportWork {
-            relays,
-            teardown,
+            teardown: teardown.into_iter().collect(),
             ..RoomTransportWork::default()
         }))
     }
@@ -78,13 +70,6 @@ impl RoomTransportPlan {
         self.0.extend(iter::once(TransportUpdate::Producer(
             source, stream_id, update,
         )));
-    }
-
-    pub(super) fn extend_remote_source_activity(
-        &mut self,
-        effects: impl IntoIterator<Item = TransportSourceActivityEffect>,
-    ) {
-        self.0.extend(effects);
     }
 
     pub(super) fn push_receiver_work(
@@ -112,11 +97,8 @@ impl RoomTransportPlan {
     }
 
     #[cfg(test)]
-    pub(in crate::engine::room) fn relays_and_teardown(
-        &self,
-    ) -> (&[TransportRelayRouteEffect], &[TransportTeardown]) {
-        let work = self.0.work();
-        (&work.relays, &work.teardown)
+    pub(in crate::engine::room) fn teardown(&self) -> &[TransportTeardown] {
+        &self.0.work().teardown
     }
 }
 
@@ -126,11 +108,7 @@ impl Work for RoomTransportWork {
     }
 
     fn is_pending(&self) -> bool {
-        !self.relays.is_empty()
-            || !self.remote_source_activity.is_empty()
-            || !self.teardown.is_empty()
-            || !self.route_control.is_empty()
-            || !self.setup_turns.is_empty()
+        !self.teardown.is_empty() || !self.route_control.is_empty() || !self.setup_turns.is_empty()
     }
 }
 
@@ -142,9 +120,7 @@ impl Extend<TransportUpdate> for RoomTransportWork {
                     self.route_control
                         .producer_activity(source, stream_id, update);
                 }
-                TransportUpdate::Receiver(mut work, origin) => {
-                    extract_relay_teardown(&mut work.relays, &mut self.teardown);
-                    self.relays.extend(work.relays);
+                TransportUpdate::Receiver(work, origin) => {
                     self.teardown.extend(work.teardown);
                     for activity in work.activities {
                         self.route_control.receiver_activity(activity);
@@ -164,18 +140,9 @@ impl Extend<TransportTeardown> for RoomTransportWork {
     }
 }
 
-impl Extend<TransportSourceActivityEffect> for RoomTransportWork {
-    fn extend<T: IntoIterator<Item = TransportSourceActivityEffect>>(&mut self, effects: T) {
-        self.remote_source_activity.extend(effects);
-    }
-}
-
 impl Extend<Self> for RoomTransportWork {
     fn extend<T: IntoIterator<Item = Self>>(&mut self, work: T) {
         for other in work {
-            self.relays.extend(other.relays);
-            self.remote_source_activity
-                .extend(other.remote_source_activity);
             self.teardown.extend(other.teardown);
             self.route_control.append(other.route_control);
             self.setup_turns.extend(other.setup_turns);
@@ -187,8 +154,6 @@ impl Execute<(&Room, &MediaTransport)> for RoomTransportWork {
     type Output = ();
 
     async fn execute(self, (room, media_transport): (&Room, &MediaTransport)) {
-        execute_relay_route_effects(media_transport, self.relays).await;
-        execute_remote_source_activity_effects(media_transport, self.remote_source_activity).await;
         self.route_control
             .execute(room.uuid(), media_transport)
             .await;
@@ -438,63 +403,6 @@ impl ConsumerRouteFinish {
                 accepted_policy_updates.push(update);
             }
         }
-    }
-}
-
-pub(super) async fn execute_relays_and_teardown(
-    media_transport: &MediaTransport,
-    mut relays: Vec<TransportRelayRouteEffect>,
-    additional_teardown: impl IntoIterator<Item = TransportTeardown>,
-) -> bool {
-    let mut teardown = Vec::new();
-    extract_relay_teardown(&mut relays, &mut teardown);
-    teardown.extend(additional_teardown);
-    let relays_applied = execute_relay_route_effects(media_transport, relays).await;
-    media_transport.teardown(teardown).await;
-    relays_applied
-}
-
-fn extract_relay_teardown(
-    relays: &mut Vec<TransportRelayRouteEffect>,
-    teardown: &mut Vec<TransportTeardown>,
-) {
-    teardown.extend(
-        relays
-            .extract_if(.., |effect| {
-                effect.action == TransportRelayRouteAction::Release
-            })
-            .map(|effect| {
-                TransportTeardown::release_relay_route(effect.source, effect.target_media_worker_id)
-            }),
-    );
-}
-
-async fn execute_relay_route_effects(
-    media_transport: &MediaTransport,
-    effects: impl IntoIterator<Item = TransportRelayRouteEffect>,
-) -> bool {
-    let mut applied = true;
-    for effect in effects {
-        if let Err(error) = media_transport.apply_relay_route_effect(&effect).await {
-            applied = false;
-            warn!(
-                ?effect,
-                ?error,
-                "media transport failed to apply relay route effect"
-            );
-        }
-    }
-    applied
-}
-
-pub(super) async fn execute_remote_source_activity_effects(
-    media_transport: &MediaTransport,
-    effects: impl IntoIterator<Item = TransportSourceActivityEffect>,
-) {
-    for effect in effects {
-        let _ = media_transport
-            .apply_remote_source_activity_effect(&effect)
-            .await;
     }
 }
 

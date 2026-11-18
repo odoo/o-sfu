@@ -1,8 +1,8 @@
 //! Source-scoped relay registrations and bounded packet mailboxes.
 //!
-//! [`RelaySourceRegistration`] exposes active targets to packet planning. New
-//! targets remain inactive until route control enables them and packet gates
-//! still apply to active targets.
+//! Consumer workers register themselves as relay targets of a source.
+//! [`RelaySourceRegistration`] exposes the targets whose remote packet gate
+//! differs from `Block` to packet planning, and those gates still filter RIDs.
 //!
 //! [`RelayPacketMailbox`] reserves capacity before sharing a packet with another
 //! worker. Full or closed mailboxes report rejection without waiting, leaving
@@ -12,8 +12,15 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use tokio::sync::mpsc;
 
-use super::{super::packet_loop::forwarded_packet::ForwardedPacket, PacketLoopState};
-use crate::engine::media_transport::TransportMediaId;
+use super::{
+    super::{
+        commands::{RelayTarget, RtcWorkerCommand},
+        packet_loop::forwarded_packet::ForwardedPacket,
+    },
+    PacketLoopState,
+    route_control::PacketLayerGate,
+};
+use crate::engine::media_transport::{TransportMediaId, TransportSourceKey};
 
 #[cfg(test)]
 #[path = "TESTS/support.rs"]
@@ -94,29 +101,47 @@ impl RelayTargetId {
 
 #[derive(Debug, Clone)]
 struct RelayTargetRegistration {
-    target: RelayPacketMailbox,
+    mailbox: RelayPacketMailbox,
+    control: mpsc::Sender<RtcWorkerCommand>,
     active: bool,
 }
 
 /// Source-worker cache for relay target handles and active bits.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub(in super::super) struct RelaySourceRegistration {
+    source: TransportSourceKey,
     targets: BTreeMap<RelayTargetId, RelayTargetRegistration>,
     active_targets: Arc<[ActiveRelayTarget]>,
 }
 
 impl RelaySourceRegistration {
-    pub(in super::super) fn add_target(
-        &mut self,
-        target_id: RelayTargetId,
-        target: RelayPacketMailbox,
-    ) {
-        self.targets
-            .entry(target_id)
-            .or_insert(RelayTargetRegistration {
-                target,
-                active: false,
-            });
+    pub(in super::super) fn new(source: TransportSourceKey) -> Self {
+        Self {
+            source,
+            targets: BTreeMap::new(),
+            active_targets: Arc::default(),
+        }
+    }
+
+    pub(in super::super) const fn source(&self) -> &TransportSourceKey {
+        &self.source
+    }
+
+    /// Registers `target` or updates the gate of a registered one.
+    ///
+    /// A target id names one consumer worker, so its handles never change.
+    pub(in super::super) fn add_target(&mut self, target: RelayTarget, gate: PacketLayerGate) {
+        let RelayTarget {
+            id,
+            mailbox,
+            control,
+        } = target;
+        self.targets.entry(id).or_insert(RelayTargetRegistration {
+            mailbox,
+            control,
+            active: false,
+        });
+        self.set_target_gate(id, gate);
     }
 
     pub(in super::super) fn remove_target(&mut self, target_id: RelayTargetId) -> Option<bool> {
@@ -127,14 +152,34 @@ impl RelaySourceRegistration {
         Some(self.targets.is_empty())
     }
 
-    pub(in super::super) fn set_target_active(&mut self, target_id: RelayTargetId, active: bool) {
-        let Some(registration) = self.targets.get_mut(&target_id) else {
-            return;
-        };
+    /// Activates a registered target unless `gate` blocks it.
+    ///
+    /// Returns `None` for an unknown target.
+    pub(in super::super) fn set_target_gate(
+        &mut self,
+        target_id: RelayTargetId,
+        gate: PacketLayerGate,
+    ) -> Option<bool> {
+        let registration = self.targets.get_mut(&target_id)?;
+        let active = gate != PacketLayerGate::Block;
         if registration.active != active {
             registration.active = active;
             self.rebuild_mailboxes();
         }
+        Some(active)
+    }
+
+    pub(in super::super) fn target_ids(&self) -> impl Iterator<Item = RelayTargetId> + '_ {
+        self.targets.keys().copied()
+    }
+
+    pub(in super::super) fn target_control(
+        &self,
+        target_id: RelayTargetId,
+    ) -> Option<&mpsc::Sender<RtcWorkerCommand>> {
+        self.targets
+            .get(&target_id)
+            .map(|registration| &registration.control)
     }
 
     #[must_use]
@@ -155,17 +200,8 @@ impl RelaySourceRegistration {
 
     #[cfg(test)]
     #[must_use]
-    pub(in super::super) fn target_count(&self) -> usize {
-        self.targets.len()
-    }
-
-    #[cfg(test)]
-    #[must_use]
     pub(in super::super) fn active_target_count(&self) -> usize {
-        self.targets
-            .values()
-            .filter(|registration| registration.active)
-            .count()
+        self.active_targets.len()
     }
 
     fn rebuild_mailboxes(&mut self) {
@@ -175,7 +211,7 @@ impl RelaySourceRegistration {
             .filter(|(_target_id, registration)| registration.active)
             .map(|(target_id, registration)| ActiveRelayTarget {
                 target_id: *target_id,
-                target: registration.target.clone(),
+                target: registration.mailbox.clone(),
             })
             .collect();
     }

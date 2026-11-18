@@ -4,6 +4,7 @@ use super::super::{
     state::{
         PacketLoopState,
         relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox, RelayTargetId},
+        route_control::PacketLayerGate,
     },
     test_support::{sample_forwarded_packet, test_transport_session_key},
 };
@@ -16,13 +17,10 @@ fn worker_local_relay_targets_track_active_sources() {
     let src_media = TransportMediaId::new(8);
     let relay_target = RelayTargetId::new(1);
 
-    state
+    let _activity = state
         .routes
-        .add_relay_target(src_media, relay_target, mailbox);
+        .add_open_relay_target(src_media, relay_target, mailbox);
     assert!(state.routes.has_forwarding_sources());
-    state
-        .routes
-        .set_relay_target_active(src_media, relay_target, true);
     assert!(state.routes.relay_targets_for_source(src_media).is_some());
 
     state.routes.remove_relay_target(src_media, relay_target);
@@ -31,24 +29,18 @@ fn worker_local_relay_targets_track_active_sources() {
 }
 
 #[test]
-fn worker_local_relay_targets_do_not_reference_count_room_owners() {
+fn repeated_relay_target_adds_keep_one_registration() {
     let mut state = PacketLoopState::default();
     let (mailbox, _rx) = RelayPacketMailbox::channel_for_test();
     let src_media = TransportMediaId::new(12);
     let relay_target = RelayTargetId::new(1);
 
-    state
+    let _first = state
         .routes
-        .add_relay_target(src_media, relay_target, mailbox.clone());
-    state
+        .add_open_relay_target(src_media, relay_target, mailbox.clone());
+    let _second = state
         .routes
-        .add_relay_target(src_media, relay_target, mailbox);
-    state
-        .routes
-        .set_relay_target_active(src_media, relay_target, true);
-    state
-        .routes
-        .set_relay_target_active(src_media, relay_target, true);
+        .add_open_relay_target(src_media, relay_target, mailbox);
     assert_eq!(state.routes.relay_target_count(src_media), 1);
     assert_eq!(state.routes.active_relay_target_count(src_media), 1);
 
@@ -64,18 +56,14 @@ fn worker_local_relay_targets_keep_sources_independent() {
     let (first_mailbox, _first_rx) = RelayPacketMailbox::channel_for_test();
     let (second_mailbox, _second_rx) = RelayPacketMailbox::channel_for_test();
 
-    state
-        .routes
-        .add_relay_target(first_src_media, RelayTargetId::new(1), first_mailbox);
-    state
-        .routes
-        .set_relay_target_active(first_src_media, RelayTargetId::new(1), true);
-    state
-        .routes
-        .add_relay_target(second_src_media, RelayTargetId::new(2), second_mailbox);
-    state
-        .routes
-        .set_relay_target_active(second_src_media, RelayTargetId::new(2), true);
+    let _first =
+        state
+            .routes
+            .add_open_relay_target(first_src_media, RelayTargetId::new(1), first_mailbox);
+    let _second =
+        state
+            .routes
+            .add_open_relay_target(second_src_media, RelayTargetId::new(2), second_mailbox);
 
     assert_eq!(state.routes.relay_target_count(first_src_media), 1);
     assert_eq!(state.routes.relay_target_count(second_src_media), 1);
@@ -97,7 +85,7 @@ fn worker_local_relay_targets_keep_sources_independent() {
 }
 
 #[test]
-fn worker_local_relay_targets_only_forward_to_targets_with_active_routes() {
+fn relay_targets_are_active_while_their_gate_admits_packets() {
     let mut state = PacketLoopState::default();
     let (first_mailbox, _first_rx) = RelayPacketMailbox::channel_for_test();
     let (second_mailbox, _second_rx) = RelayPacketMailbox::channel_for_test();
@@ -105,30 +93,32 @@ fn worker_local_relay_targets_only_forward_to_targets_with_active_routes() {
     let first_target = RelayTargetId::new(1);
     let second_target = RelayTargetId::new(2);
 
+    let _first = state
+        .routes
+        .add_open_relay_target(src_media, first_target, first_mailbox);
+    let _second = state
+        .routes
+        .add_open_relay_target(src_media, second_target, second_mailbox);
     state
         .routes
-        .add_relay_target(src_media, first_target, first_mailbox);
-    state
-        .routes
-        .add_relay_target(src_media, second_target, second_mailbox);
-    assert!(state.routes.relay_targets_for_source(src_media).is_none());
-
-    state
-        .routes
-        .set_relay_target_active(src_media, second_target, true);
-    let relay_targets = state.routes.relay_targets_for_source(src_media);
-    assert!(relay_targets.is_some());
-    let Some(relay_targets) = relay_targets else {
-        return;
-    };
-    assert_eq!(relay_targets.len(), 1);
+        .set_relay_pkt_gate(src_media, first_target, PacketLayerGate::Block);
     assert_eq!(state.routes.active_relay_target_count(src_media), 1);
 
     state
         .routes
-        .set_relay_target_active(src_media, second_target, false);
+        .set_relay_pkt_gate(src_media, second_target, PacketLayerGate::Block);
     assert!(state.routes.relay_targets_for_source(src_media).is_none());
-    assert_eq!(state.routes.active_relay_target_count(src_media), 0);
+    assert_eq!(state.routes.relay_target_count(src_media), 2);
+
+    state
+        .routes
+        .set_relay_pkt_gate(src_media, second_target, PacketLayerGate::Rid("hi".into()));
+    assert_eq!(state.routes.active_relay_target_count(src_media), 1);
+    // A gate for an unknown target neither registers nor activates it.
+    state
+        .routes
+        .set_relay_pkt_gate(src_media, RelayTargetId::new(3), PacketLayerGate::Open);
+    assert_eq!(state.routes.relay_target_count(src_media), 2);
 }
 
 #[test]

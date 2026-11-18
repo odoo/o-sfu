@@ -20,11 +20,10 @@ use crate::{
     engine::{
         media_transport::{
             ActiveSpeakerSource, ConsumerActivity, ConsumerRouteControl, MediaControlPlan,
-            ProducerActivity, ReceiverBweTargetUpdate, RelayRouteActivity, SessionOffer,
-            SourceActivityRevision, SourceActivityUpdate, SourcePacketGate, TransportAdapterError,
-            TransportConsumerRoute, TransportMediaId, TransportRelayRouteAction,
-            TransportRelayRouteEffect, TransportResult, TransportSessionHealth,
-            TransportSessionKey, TransportSourceKey,
+            ProducerActivity, ReceiverBweTargetUpdate, SessionOffer, SourceActivityRevision,
+            SourceActivityUpdate, SourcePacketGate, TransportAdapterError, TransportConsumerRoute,
+            TransportMediaId, TransportResult, TransportSessionHealth, TransportSessionKey,
+            TransportSourceKey,
             rtc::{RtcWorker, WorkerMediaControlBatchOutcome},
             test_support::{
                 DebugPacketGate, test_media_transport as build_test_media_transport,
@@ -92,64 +91,17 @@ async fn consume_audio(
         .unwrap_or_else(|error| panic!("test audio consumption should succeed: {error:?}"))
 }
 
-async fn apply_relay_route_effect(
+async fn set_consumer_active(
     adapter: &MediaTransport,
-    source_session_key: &TransportSessionKey,
-    source_media_id: TransportMediaId,
-    target_session_key: &TransportSessionKey,
-    action: TransportRelayRouteAction,
-) {
-    let effect = TransportRelayRouteEffect {
-        source: TransportSourceKey::new(source_session_key.clone(), source_media_id),
-        target_media_worker_id: target_session_key.media_worker_id(),
-        action,
-    };
-    assert!(adapter.apply_relay_route_effect(&effect).await.is_ok());
-}
-
-async fn install_active_relay_route(
-    adapter: &MediaTransport,
-    source_session_key: &TransportSessionKey,
-    source_media_id: TransportMediaId,
-    target_session_key: &TransportSessionKey,
-) {
-    apply_relay_route_effect(
-        adapter,
-        source_session_key,
-        source_media_id,
-        target_session_key,
-        TransportRelayRouteAction::Install,
-    )
-    .await;
-    apply_relay_route_effect(
-        adapter,
-        source_session_key,
-        source_media_id,
-        target_session_key,
-        TransportRelayRouteAction::SetActivity(RelayRouteActivity::Active),
-    )
-    .await;
-}
-
-async fn set_remote_relay_and_consumer_active(
-    adapter: &MediaTransport,
-    remote_consumer_session: &TransportSessionKey,
-    remote_consumer_media_id: TransportMediaId,
+    consumer_session: &TransportSessionKey,
+    consumer_media_id: TransportMediaId,
     source_session: &TransportSessionKey,
     source_media_id: TransportMediaId,
     active: bool,
 ) {
-    apply_relay_route_effect(
-        adapter,
-        source_session,
-        source_media_id,
-        remote_consumer_session,
-        TransportRelayRouteAction::SetActivity(RelayRouteActivity::from_active(active)),
-    )
-    .await;
     let route = TransportConsumerRoute::new(
-        remote_consumer_session.clone(),
-        remote_consumer_media_id,
+        consumer_session.clone(),
+        consumer_media_id,
         TransportSourceKey::new(source_session.clone(), source_media_id),
     );
     let mut plan: MediaControlPlan<(), ()> = MediaControlPlan::default();
@@ -164,6 +116,10 @@ async fn set_remote_relay_and_consumer_active(
     assert!(!consumer_outcome.activity_failed());
 }
 
+/// Reads relay targets after every command the source queue holds.
+///
+/// Consumer workers enqueue relay control before answering their own command,
+/// so a later probe on the source worker observes it.
 async fn assert_relay_target_counts(
     source_worker: &RtcWorker,
     source_media_id: TransportMediaId,
@@ -232,6 +188,19 @@ async fn assert_remote_route_activity(
             && destination.dest_transport_media_id == remote_consumer_media_id
             && destination.active == active
     }));
+}
+
+async fn assert_remote_source_active(
+    consumer_worker: &RtcWorker,
+    source_media_id: TransportMediaId,
+) {
+    assert!(
+        consumer_worker
+            .debug_route_entry_by_media_id(source_media_id)
+            .await
+            .expect("test probe must complete")
+            .is_some_and(|route| route.source_active)
+    );
 }
 
 fn test_media_transport(worker_count: usize, rtc_port_range: RtcPortRange) -> MediaTransport {
@@ -986,7 +955,7 @@ async fn media_transport_terminal_teardown_falls_back_and_continues_batch() {
 }
 
 #[tokio::test]
-async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> TransportResult<()> {
+async fn consumer_workers_drive_relay_targets_on_source_workers() -> TransportResult<()> {
     let adapter = test_media_transport(2, test_rtc_port_range());
     let source_session = test_session_key(40, 0, 1, UserId::Integer(1));
     let local_consumer_session = test_session_key(40, 0, 2, UserId::Integer(2));
@@ -1003,13 +972,6 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
     prepare_rtc_sessions(&adapter, &sessions).await;
 
     let source_media_id = publish_audio(&adapter, &source_session, &producer_rtp_parameters).await;
-    install_active_relay_route(
-        &adapter,
-        &source_session,
-        source_media_id,
-        &remote_consumer_session,
-    )
-    .await;
     let local_consumer_media_id = consume_audio(
         &adapter,
         &local_consumer_session,
@@ -1018,6 +980,10 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
         &local_consumer_rtp_parameters,
     )
     .await;
+    let source_worker = expect_worker_for_user(&adapter, &source_session);
+    let remote_consumer_worker = expect_worker_for_user(&adapter, &remote_consumer_session);
+    assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
+
     let remote_consumer_media_id = consume_audio(
         &adapter,
         &remote_consumer_session,
@@ -1026,13 +992,11 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
         &remote_consumer_rtp_parameters,
     )
     .await;
-
-    let source_worker = expect_worker_for_user(&adapter, &source_session);
-    let remote_consumer_worker = expect_worker_for_user(&adapter, &remote_consumer_session);
-
     assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
+    // The source answered the add before this probe reaches the consumer worker.
+    assert_remote_source_active(remote_consumer_worker, source_media_id).await;
 
-    set_remote_relay_and_consumer_active(
+    set_consumer_active(
         &adapter,
         &remote_consumer_session,
         remote_consumer_media_id,
@@ -1041,7 +1005,6 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
         false,
     )
     .await;
-
     assert_relay_target_counts(source_worker, source_media_id, 1, 0).await;
     assert_local_route_active(
         source_worker,
@@ -1059,7 +1022,7 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
     )
     .await;
 
-    set_remote_relay_and_consumer_active(
+    set_consumer_active(
         &adapter,
         &remote_consumer_session,
         remote_consumer_media_id,
@@ -1073,31 +1036,30 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
     adapter
         .remove_media(&remote_consumer_session, remote_consumer_media_id)
         .await?;
+    assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
+
+    let _ = consume_audio(
+        &adapter,
+        &remote_consumer_session,
+        &source_session,
+        source_media_id,
+        &remote_consumer_rtp_parameters,
+    )
+    .await;
     assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
-    let release = |session_key| {
-        let source = TransportSourceKey::new(session_key, source_media_id);
-        TransportTeardown::release_relay_route(source, remote_consumer_session.media_worker_id())
-    };
-    adapter
-        .teardown([release(local_consumer_session.clone())])
-        .await;
-    assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
-    let _offer = adapter
-        .create_initial_session_offer("test-room", &local_consumer_session, true)
-        .await?;
+    assert_remote_source_active(remote_consumer_worker, source_media_id).await;
+
     source_worker
         .debug_fail_session(&source_session)
         .await
         .expect("test probe must complete");
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
-    adapter.teardown([release(source_session)]).await;
-    assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
-    assert_eq!(transport_cleanup_failures(&adapter), 1);
+    assert_eq!(transport_cleanup_failures(&adapter), 0);
     Ok(())
 }
 
 #[tokio::test]
-async fn dead_relay_target_teardown_preserves_healthy_source() {
+async fn closed_relay_target_worker_is_removed_from_healthy_source() {
     let adapter = test_media_transport(2, test_rtc_port_range());
     let source_session = test_session_key(41, 0, 1, UserId::Integer(1));
     let target_session = test_session_key(41, 1, 2, UserId::Integer(2));
@@ -1108,19 +1070,32 @@ async fn dead_relay_target_teardown_preserves_healthy_source() {
         &sample_rtp_parameters("relay-source", 64_000),
     )
     .await;
-    install_active_relay_route(&adapter, &source_session, source_media_id, &target_session).await;
+    let _ = consume_audio(
+        &adapter,
+        &target_session,
+        &source_session,
+        source_media_id,
+        &sample_rtp_parameters("relay-target", 65_000),
+    )
+    .await;
     let source_worker = expect_worker_for_user(&adapter, &source_session);
     let target_worker = expect_worker_for_user(&adapter, &target_session);
     assert_relay_target_counts(source_worker, source_media_id, 1, 1).await;
     target_worker.cancel();
     target_worker.wait_for_shutdown().await;
 
-    adapter
-        .teardown([TransportTeardown::release_relay_route(
-            TransportSourceKey::new(source_session.clone(), source_media_id),
-            target_session.media_worker_id(),
-        )])
-        .await;
+    // Forwarding the next activity revision finds the target queue closed.
+    let mut plan: MediaControlPlan<(), ()> = MediaControlPlan::default();
+    plan.push_producer(
+        TransportSourceKey::new(source_session.clone(), source_media_id),
+        SourceActivityUpdate::new(
+            ProducerActivity::Inactive,
+            SourceActivityRevision::default().next(),
+        ),
+        (),
+    );
+    let outcome = adapter.apply_media_control(plan).await;
+    assert!(matches!(outcome.producers.as_slice(), [((), Ok(()))]));
 
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
     assert!(

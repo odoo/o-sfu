@@ -159,7 +159,6 @@ impl RtcWorker {
         send_debug_probe(&self.handle.command_tx, probe).await
     }
 
-    #[cfg(test)]
     pub(super) async fn read_debug_worker<F, Output>(
         &self,
         read: F,
@@ -405,7 +404,6 @@ impl RtcWorker {
         .await
     }
 
-    #[cfg(test)]
     pub async fn debug_relay_target_count(
         &self,
         src_media: TransportMediaId,

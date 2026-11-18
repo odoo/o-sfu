@@ -1,14 +1,6 @@
 use super::{Duration, Instant, ProducerSourceState, RelaySourceRegistration, Rid, RouteSource};
 
 impl RouteSource {
-    pub(in crate::engine::media_transport::rtc::state::route_table) fn relay_target_count(
-        &self,
-    ) -> usize {
-        self.relay
-            .as_ref()
-            .map_or(0, RelaySourceRegistration::target_count)
-    }
-
     pub(in crate::engine::media_transport::rtc::state::route_table) fn active_relay_target_count(
         &self,
     ) -> usize {

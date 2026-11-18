@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use super::{super::relay_registry::RelayTargetId, *};
 use crate::engine::media_transport::{
     TransportSourceKey,
-    rtc::{commands::RemoteSourceControl, test_support::test_transport_session_key},
+    rtc::test_support::{remote_source_control, test_transport_session_key},
 };
 
 fn rtp_parameters_with_ssrc(mid: Mid, ssrc: u32) -> RouterRtpParameters {
@@ -453,7 +453,7 @@ fn expired_local_and_relay_speakers_resolve_the_same_room_once() {
             .routes
             .register_remote_source(
                 &TransportSourceKey::new(session.clone(), relay_id),
-                RemoteSourceControl::new(control_tx, RelayTargetId::new(1), rtc_metrics),
+                remote_source_control(control_tx, RelayTargetId::new(1), rtc_metrics,),
             )
             .is_ok()
     );

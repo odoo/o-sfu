@@ -387,6 +387,13 @@ fn route_control_combines_local_and_remote_target_gates() {
     let mut state = RouteTable::default();
     let src_media = TransportMediaId::new(21);
 
+    let (first_mailbox, _first_rx) = RelayPacketMailbox::channel_for_test();
+    let (second_mailbox, _second_rx) = RelayPacketMailbox::channel_for_test();
+    let _first_activity =
+        state.add_open_relay_target(src_media, RelayTargetId::new(1), first_mailbox);
+    let _second_activity =
+        state.add_open_relay_target(src_media, RelayTargetId::new(2), second_mailbox);
+    state.set_relay_pkt_gate(src_media, RelayTargetId::new(2), PacketLayerGate::Block);
     state.set_local_pkt_gate(src_media, Some(PacketLayerGate::Rid("hi".into())));
     state.set_relay_pkt_gate(
         src_media,
@@ -433,7 +440,7 @@ fn route_control_refreshes_source_gate_after_relay_gate_removal() {
         },
     );
     state.set_local_pkt_gate(src_media, Some(PacketLayerGate::Rid("hi".into())));
-    state.add_relay_target(src_media, relay_target, relay_mailbox);
+    let _activity = state.add_open_relay_target(src_media, relay_target, relay_mailbox);
     state.set_relay_pkt_gate(src_media, relay_target, PacketLayerGate::Rid("lo".into()));
 
     assert_eq!(
@@ -462,7 +469,7 @@ fn route_control_refreshes_source_gate_after_local_gate_clear() {
     let (relay_mailbox, _relay_rx) = RelayPacketMailbox::channel_for_test();
     let relay_target = RelayTargetId::new(1);
     state.set_local_pkt_gate(src_media, Some(PacketLayerGate::Rid("hi".into())));
-    state.add_relay_target(src_media, relay_target, relay_mailbox);
+    let _activity = state.add_open_relay_target(src_media, relay_target, relay_mailbox);
     state.set_relay_pkt_gate(src_media, relay_target, PacketLayerGate::Rid("hi".into()));
 
     state.set_local_pkt_gate(src_media, None);

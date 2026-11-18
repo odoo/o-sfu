@@ -1,5 +1,3 @@
-use std::mem;
-
 use o_sfu_router::{
     MediaKind as RouterMediaKind, rtp::MediaStream as RouterRtpParameters,
     topology::RoutedProducerId,
@@ -12,18 +10,14 @@ use super::{
         state::RoomState,
     },
     ConsumerId, ConsumerRouteTarget, PublishedSource, SubscriptionKey,
-    route_graph::{ConsumerRouteReservation, RelayRouteKey},
+    route_graph::ConsumerRouteReservation,
 };
-use crate::{
-    MediaWorkerId,
-    engine::{
-        media_transport::{
-            MediaTransport, ProducerActivity, SourceActivityUpdate, TransportConsumerRoute,
-            TransportMediaId, TransportRelayRouteEffect, TransportSessionKey,
-            TransportSourceActivityEffect, TransportSourceKey,
-        },
-        source_model::{PublishedSourceId, SourceSyncPolicy, UserStreamId},
+use crate::engine::{
+    media_transport::{
+        MediaTransport, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
+        TransportSourceKey,
     },
+    source_model::{PublishedSourceId, SourceSyncPolicy, UserStreamId},
 };
 
 #[derive(Debug)]
@@ -39,8 +33,8 @@ pub struct ConsumerSetupTarget {
 
 /// Consumer-route reservation awaiting transport declaration.
 ///
-/// It carries graph and optional relay ownership across work performed without
-/// the room lock. Callers must commit or release it after declaration.
+/// It carries graph ownership across work performed without the room lock.
+/// Callers must commit or release it after declaration.
 #[derive(Debug)]
 #[must_use = "pending consumer setups reserve route graph state and must be committed or released"]
 pub struct PendingConsumerSetup {
@@ -49,7 +43,6 @@ pub struct PendingConsumerSetup {
     pub(super) reservation: ConsumerRouteReservation,
     pub(super) sender: OutboundSender,
     pub(super) rtp: RouterRtpParameters,
-    pub(super) relays: Vec<TransportRelayRouteEffect>,
 }
 
 pub struct DeclaredConsumerSetup {
@@ -75,11 +68,10 @@ pub enum ConsumerSetupOutcome {
         route: TransportConsumerRoute,
         sender: OutboundSender,
         track_snapshot: RemoteTrackSnapshot,
-        remote_source_activity: Option<TransportSourceActivityEffect>,
         transport_activity_update: Option<bool>,
         readiness_keyframe: Option<ConsumerRouteTarget>,
     },
-    Released(TransportConsumerRoute, Vec<TransportRelayRouteEffect>),
+    Released(TransportConsumerRoute),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -114,11 +106,11 @@ impl RoomState {
         if self
             .user_for_connection(session.user_id(), session.connection_id())
             .is_some_and(|user| user.parsed_client_rtp_capabilities.is_some())
-            && let Some((source_active, source_activity_revision)) = self
+            && let Some(source_active) = self
                 .topology
                 .published_source(target.source_id)
                 .filter(|source| target.matches_identity(source))
-                .map(|source| (source.active, source.activity_revision))
+                .map(|source| source.active)
         {
             // Transport declaration ran without the room lock. Recompute from
             // current intent and policy before committing the pending route.
@@ -126,22 +118,6 @@ impl RoomState {
             let delivery_active = selection.delivery_active();
             match self.topology.commit_consumer_setup(setup, selection) {
                 Ok(commit) => {
-                    // A consumer on another media worker must be told the source
-                    // activity because that worker does not host the producer.
-                    let remote_source_activity =
-                        (commit.route.source().session_key().media_worker_id()
-                            != commit.route.consumer_session_key().media_worker_id())
-                        .then(|| TransportSourceActivityEffect {
-                            source: commit.route.source().clone(),
-                            target_media_worker_id: commit
-                                .route
-                                .consumer_session_key()
-                                .media_worker_id(),
-                            update: SourceActivityUpdate::new(
-                                ProducerActivity::from_active(source_active),
-                                source_activity_revision,
-                            ),
-                        });
                     let track_snapshot =
                         self.remote_track_snapshot_for_user(commit.target.session.user_id(), true);
                     // A pending activity correction to active already requests a
@@ -163,32 +139,28 @@ impl RoomState {
                         route: commit.route,
                         sender: commit.sender,
                         track_snapshot,
-                        remote_source_activity,
                         transport_activity_update: commit.transport_activity_update,
                         readiness_keyframe,
                     }
                 }
-                Err((route, relays)) => ConsumerSetupOutcome::Released(route, relays),
+                Err(route) => ConsumerSetupOutcome::Released(route),
             }
         } else {
-            let DeclaredConsumerSetup { pending, route, .. } = setup;
-            ConsumerSetupOutcome::Released(route, self.topology.release_consumer_setup(pending))
+            self.topology.release_consumer_setup(&setup.pending);
+            ConsumerSetupOutcome::Released(setup.route)
         }
     }
 
-    pub fn release_pending_consumer_setup(
-        &mut self,
-        setup: PendingConsumerSetup,
-    ) -> Vec<TransportRelayRouteEffect> {
-        self.topology.release_consumer_setup(setup)
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "release consumes the pending setup so it cannot be declared later"
+    )]
+    pub fn release_pending_consumer_setup(&mut self, setup: PendingConsumerSetup) {
+        self.topology.release_consumer_setup(&setup);
     }
 }
 
 impl PendingConsumerSetup {
-    pub(in crate::engine::room) fn take_relays(&mut self) -> Vec<TransportRelayRouteEffect> {
-        mem::take(&mut self.relays)
-    }
-
     pub(in crate::engine::room) async fn declare(
         self,
         media_transport: &MediaTransport,
@@ -257,13 +229,6 @@ impl ConsumerSetupTarget {
 
     fn route_target(&self, route: TransportConsumerRoute) -> ConsumerRouteTarget {
         ConsumerRouteTarget::new(route, self.stream.clone(), self.kind)
-    }
-
-    pub(super) fn relay_route_key(&self, target_worker: MediaWorkerId) -> RelayRouteKey {
-        RelayRouteKey {
-            source: self.source.clone(),
-            target_worker,
-        }
     }
 
     pub(super) fn matches_identity(&self, source: &PublishedSource) -> bool {

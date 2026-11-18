@@ -514,7 +514,14 @@ pub(in super::super) fn flush_packet_forwards(
                     RelayEnqueueOutcome::Overloaded => {
                         metrics.record_rtp_relay_overload_drop(RtpRelayDropKind::IntraNodeRelay);
                     }
-                    RelayEnqueueOutcome::Closed => {}
+                    // Only an exited worker closes its relay mailbox.
+                    RelayEnqueueOutcome::Closed => {
+                        cold_path();
+                        state.routes.remove_relay_target(
+                            destination.transport_media_id,
+                            destination.target.target_id,
+                        );
+                    }
                 }
             }
         }
