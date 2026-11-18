@@ -1,132 +1,191 @@
-//! Pure topology and capability negotiation engine for O-SFU.
+//! Sans-IO room-local media topology and RTP capability negotiation.
 //!
-//! `o-sfu-router` is the isolated, deterministic brain of the SFU. It models room
-//! membership, multi-worker router placements, producer-consumer dependency graphs,
-//! and typed RTP codec negotiation without touching networks, threads, or raw wire protocols.
+//! Alice, Bob and Carol join a call. The caller registers their connections and worker
+//! placements with [`Router`]. Alice publishes camera video, so the caller adds one
+//! producer for Alice and a consumer for each viewer, Bob and Carol. The router records
+//! these dependencies and returns routed IDs for the publication and subscriptions.
 //!
-//! # Why is the Router Isolated?
+//! If Bob stops watching, removing his consumer leaves Carol subscribed. Removing
+//! Alice's session removes the producer and any consumers that depend on it.
 //!
-//! Traditional SFU architectures often interleave signaling protocols (SDP offer/answer),
-//! routing topology, and RTP packet loops into monolithic async engines. `o-sfu-router`
-//! enforces a strict architectural boundary:
+//! The [`negotiation`] module in this crate derives RTP parameters for the publication,
+//! then matches them against receiver capabilities separately for Bob and Carol.
+//! Each successful match returns a [`MediaStream`](rtp::MediaStream) describing compatible
+//! RTP parameters. Adding producers and consumers to the topology does not run negotiation.
 //!
-//! 1. **Complete Determinism (Zero I/O)**: Contains zero async runtimes, zero threads,
-//!    and zero socket syscalls. All state transitions are synchronous and deterministic.
-//! 2. **SDP-Free Domain Modeling**: Sits cleanly behind `o-sfu-core`'s SDP edge. It does not
-//!    parse raw SDP text or manage ICE candidates; it operates on strongly-typed topology
-//!    and RTP models ([`rtp::MediaStream`], [`rtp::MediaCapabilities`]).
-//! 3. **Isolated Placement & Teardowns**: Tracks cross-router subscriptions via foreign session
-//!    shadows. When a client reconnects or leaves, the router cleans its dependent graph
-//!    without affecting other active publishers.
-//! 4. **Direct Testability**: Because the crate has zero I/O, complex multi-router reconnects,
-//!    cascading disconnects, and codec negotiation edge cases can be tested directly.
-//!
-//! # System Architecture
+//! Both APIs are synchronous and perform no I/O. The caller supplies identifiers,
+//! chooses media workers and uses the returned IDs and RTP parameters to set up packet
+//! forwarding. Transport cleanup when removing topology entries is up to the caller too.
 //!
 //! ```text
-//!                       +------------------------------------------+
-//!                       |       Signaling Edge / Clients           |
-//!                       | (HTTP, WebSocket, SDP Offer/Answer Bags) |
-//!                       +------------------------------------------+
-//!                                            |
-//!                     core adapts SDP to     |  request placement,
-//!                     MediaStream / Caps     |  publish, subscribe
-//!                                            v
-//! +===================================================================================+
-//! |                              o-sfu-router (Pure Core)                             |
-//! |                                                                                   |
-//! |  * 100% Synchronous & Deterministic (Zero async, Zero I/O, Zero RTP transport)    |
-//! |                                                                                   |
-//! |  +-------------------------------------+   +------------------------------------+ |
-//! |  | Multi-Router Routing Topology       |   | Typed RTP Capability Matching      | |
-//! |  | - User -> Connection -> Home Router |   | - Ingress normalization            | |
-//! |  | - Producer -> Dependent Consumers   |   | - Egress codec intersection        | |
-//! |  | - Cross-Router Session Shadows      |   | - RFC 4588 RTX `apt` remapping     | |
-//! |  +-------------------------------------+   +------------------------------------+ |
-//! +===================================================================================+
-//!                                            |
-//!                  routed identities, worker |  deterministic
-//!                     lookups, RTP specs     |  graph mutations
-//!                                            v
-//! +-----------------------------------------------------------------------------------+
-//! |                            o-sfu-core (Runtime & Engine)                          |
-//! |                                                                                   |
-//! |  * Async Tokio Runtimes, Media Transport Workers, UDP Demuxing, str0m Packet Loop |
-//! +-----------------------------------------------------------------------------------+
+//!     IDs, placements and           MediaStream and
+//!     media dependencies            MediaCapabilities
+//!              |                          |
+//!              v                          v
+//! +--------------------- o-sfu-router ---------------------+
+//! |            Router                 negotiation          |
+//! |       connection topology       RTP compatibility      |
+//! +------------|--------------------------|----------------+
+//!              v                          v
+//!    routed IDs and placements        MediaStream
 //! ```
 //!
-//! The [`Router`] struct is the sole stateful facade. It owns the exact user-to-connection
-//! placement relation and manages local and foreign session graphs across attached routers.
+//! # Placements and media identities
 //!
-//! # Examples
+//! One [`Router`] manages topology for a room across multiple logical [`RouterId`]s.
+//! A [`RouterPlacement`](topology::RouterPlacement) maps a logical router to a
+//! [`MediaWorkerId`]. Worker selection and load measurements belong to the caller.
+//!
+//! Each admitted user has a current [`ConnectionId`] and a home placement. Producers
+//! live on that home router, while consumers live on their producer's router even when
+//! receivers sit on another worker. For those receivers, the source router keeps a foreign
+//! session containing their consumer dependencies.
+//!
+//! [`RoutedProducerId`](topology::RoutedProducerId) combines the source router, publisher
+//! connection and producer ID. [`RoutedConsumerId`](topology::RoutedConsumerId) combines
+//! the source router, receiver connection and consumer ID. To locate a receiver's worker,
+//! use [`Router::committed_media_worker_id`] with its user and connection IDs.
+//! The consumer's `router_id()` identifies the source topology, not the receiver's worker.
+//!
+//! # Use the topology API
+//!
+//! Start with [`Router::with_placements`] when worker assignments are known.
+//! [`Router::new`] accepts only a primary router ID and RTP capabilities, so its first
+//! session commit must assign that primary router to a worker. Later commits can add
+//! placements, but cannot change an existing router's worker assignment.
+//!
+//! | Operation | Use |
+//! | --- | --- |
+//! | [`Router::commit_session_placement`] | Register a user connection and its placement before adding media. A new connection for an existing user replaces its previous session and media dependencies. |
+//! | [`Router::add_producer`] | Register published media for a committed user and keep the returned routed producer ID. |
+//! | [`Router::add_consumer`] | Connect a committed receiver to a routed producer and keep the returned routed consumer ID. |
+//! | [`Router::remove_consumer`] | Remove a subscription by routed ID. The producer remains registered. |
+//! | [`Router::retire_committed_placement`] | Remove a session only if its connection is still current. Returns `None` for an obsolete connection. |
+//! | [`Router::remove_session`] | Remove the current session by user ID, including its producers and their dependent consumers. |
+//! | [`Router::placement_snapshot`], [`Router::primary_worker`] | Read assigned placements for caller-side worker selection. |
+//! | [`Router::rtp_capabilities`] | Read the capability baseline supplied at construction for RTP negotiation. |
+//!
+//! Mutations fail with [`RouterError`] for duplicate identities, missing sessions or
+//! media, or inconsistent placement assignments. IDs come from the caller. Use a fresh
+//! [`ConnectionId`] for each reconnect and keep routed IDs rather than reconstructing
+//! them from bare producer or consumer numbers.
+//!
+//! For delayed disconnect handling, pass the original connection ID to
+//! [`Router::retire_committed_placement`]. [`Router::remove_session`] targets whichever
+//! connection is current. Neither operation closes transport sessions or returns a
+//! transport cleanup plan, so callers must save the information needed for cleanup
+//! before mutating topology.
+//!
+//! ## A receiver reconnects
+//!
+//! Replacing a connection removes its publications and consumer dependencies across routers.
+//! In this example the receiver publishes nothing, so its replacement leaves the source
+//! producer available. An obsolete connection cannot retire the replacement session:
 //!
 //! ```
-//! # use o_sfu_model::UserId;
-//! # use o_sfu_router::{
-//! #     ConnectionId, ConsumerId, MediaWorkerId, ProducerId, Router, RouterError, RouterId,
-//! #     rtp::MediaCapabilities,
-//! #     topology::{RouterPlacement, RouterPlacements},
-//! # };
+//! use o_sfu_model::UserId;
+//! use o_sfu_router::{
+//!     ConnectionId, ConsumerId, MediaWorkerId, ProducerId, Router, RouterError, RouterId,
+//!     rtp::MediaCapabilities,
+//!     topology::{RouterPlacement, RouterPlacements},
+//! };
 //!
 //! # fn main() -> Result<(), RouterError> {
-//! # fn placement(router: u64, worker: usize) -> RouterPlacement {
-//! #     RouterPlacement {
-//! #         router: RouterId(router),
-//! #         media_worker: MediaWorkerId::from_raw(worker),
-//! #     }
-//! # }
-//! let source = placement(1, 0);
-//! let first_receiver = placement(2, 1);
-//! let next_receiver = placement(3, 2);
-//! let placements = RouterPlacements::new(source, vec![first_receiver, next_receiver]);
-//! let mut router = Router::with_placements(placements, MediaCapabilities::default());
+//! let source = RouterPlacement {
+//!     router: RouterId(1),
+//!     media_worker: MediaWorkerId::from_raw(0),
+//! };
+//! let destination = RouterPlacement {
+//!     router: RouterId(2),
+//!     media_worker: MediaWorkerId::from_raw(1),
+//! };
+//! let mut router = Router::with_placements(
+//!     RouterPlacements::new(source, vec![destination]),
+//!     MediaCapabilities::default(),
+//! );
 //! let publisher = UserId::from(1_i64);
 //! let receiver = UserId::from(2_i64);
-//! let publisher_connection = ConnectionId::from_raw(10);
-//! let first_receiver_connection = ConnectionId::from_raw(20);
-//! router.commit_session_placement(&publisher, publisher_connection, source)?;
-//! router.commit_session_placement(&receiver, first_receiver_connection, first_receiver)?;
+//! let old_connection = ConnectionId::from_raw(20);
+//! router.commit_session_placement(&publisher, ConnectionId::from_raw(10), source)?;
+//! router.commit_session_placement(&receiver, old_connection, destination)?;
 //! let producer = router.add_producer(&publisher, ProducerId(30))?;
-//! let stale = router.add_consumer(&receiver, ConsumerId(40), producer)?;
+//! let consumer = router.add_consumer(&receiver, ConsumerId(40), producer)?;
 //!
-//! assert_eq!(stale.router_id(), producer.router_id());
-//! assert_eq!(stale.connection_id(), first_receiver_connection);
-//!
-//! let next_receiver_connection = ConnectionId::from_raw(21);
-//! router.commit_session_placement(&receiver, next_receiver_connection, next_receiver)?;
+//! assert_eq!(consumer.router_id(), source.router);
+//! assert_eq!(consumer.connection_id(), old_connection);
 //! assert_eq!(
-//!     router.remove_consumer(stale),
-//!     Err(RouterError::MissingConsumer(stale)),
+//!     router.committed_media_worker_id(&receiver, old_connection),
+//!     Some(destination.media_worker),
 //! );
 //!
-//! let current = router.add_consumer(&receiver, ConsumerId(41), producer)?;
-//! assert_eq!(current.router_id(), producer.router_id());
-//! assert_eq!(current.connection_id(), next_receiver_connection);
+//! let new_connection = ConnectionId::from_raw(21);
+//! router.commit_session_placement(&receiver, new_connection, destination)?;
+//! assert_eq!(router.retire_committed_placement(&receiver, old_connection), None);
+//! assert_eq!(router.remove_consumer(consumer), Err(RouterError::MissingConsumer(consumer)));
+//!
+//! let replacement = router.add_consumer(&receiver, ConsumerId(41), producer)?;
+//! assert_eq!(replacement.connection_id(), new_connection);
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! The empty capabilities above are enough for topology operations. Media forwarding
+//! also requires negotiated RTP parameters and transport setup.
+//!
+//! # Negotiate RTP parameters
+//!
+//! [`rtp::MediaCapabilities`] describes supported codecs and header extensions.
+//! [`rtp::MediaStream`] describes concrete formats, payload types and stream bindings.
+//! Convert transport negotiation results into these types before calling the matching APIs:
+//!
+//! 1. [`derive_consumable_rtp_parameters`](negotiation::derive_consumable_rtp_parameters)
+//!    matches producer formats against router capabilities and maps payload types into the
+//!    router's forwarding model. Keep this consumable stream with the publication.
+//! 2. [`negotiate_consumer_rtp_parameters`](negotiation::negotiate_consumer_rtp_parameters)
+//!    selects compatible formats and feedback for each receiver. Pass the consumable stream
+//!    from step 1 and the receiver's capabilities. The result preserves consumable payload types.
+//!
+//! Negotiation fails with [`RtpNegotiationError`](negotiation::RtpNegotiationError).
+//! Producer derivation rejects unsupported media codecs and invalid repair associations.
+//! Consumer negotiation rejects receivers with no compatible media codec. See
+//! [`negotiation`] for an example with payload-type remapping and retransmission formats.
 
 mod model;
 #[cfg(any(test, feature = "test-support"))]
 #[path = "TESTS/test_support/mod.rs"]
 pub mod test_support;
 
-/// typed router and media identifiers
+/// Logical router, worker, connection and media identifiers.
+///
+/// These values identify topology entries. Creating an ID allocates no transport
+/// resources. Keep [`topology::RoutedProducerId`] and [`topology::RoutedConsumerId`]
+/// from router mutations when an operation needs to name a specific connection.
 pub mod ids {
     pub use crate::model::ids::*;
 }
 
-/// typed RTP values used at the router boundary
+/// Codec capabilities and concrete media parameters accepted by [`negotiation`].
+///
+/// [`MediaCapabilities`](rtp::MediaCapabilities) describes supported codecs and
+/// extensions. [`MediaStream`](rtp::MediaStream) describes formats and bindings
+/// for negotiated media. SDP parsing and packet rewriting belong to the caller.
 pub mod rtp {
     pub use crate::model::{MediaKind, rtp::*};
 }
 
-/// producer and consumer RTP negotiation
+/// Match producer media to router capabilities, then to receiver capabilities.
 ///
-/// Producer parameters are first normalized against router capabilities. The
-/// consumer is then negotiated from that router-visible stream
+/// Call [`derive_consumable_rtp_parameters`](negotiation::derive_consumable_rtp_parameters)
+/// once for a publication, then
+/// [`negotiate_consumer_rtp_parameters`](negotiation::negotiate_consumer_rtp_parameters)
+/// for each receiver using that consumable stream. These functions return media
+/// descriptions without modifying [`Router`] or doing transport I/O.
 ///
-/// # Examples
+/// # Payload-type remapping
+///
+/// Here the producer uses payload types 96 and 97, while the router uses 100 and
+/// 101. Derivation resolves the repair association even though RTX appears before
+/// VP8 in the producer formats. Consumer negotiation preserves the mapped pair.
 ///
 /// ```
 /// # use o_sfu_rfc::rtp::{
@@ -199,7 +258,11 @@ pub mod negotiation {
     pub use crate::model::rtp_negotiation::*;
 }
 
-/// placement and routed media identifiers used by [`Router`]
+/// Worker assignments and connection-scoped media identities used by [`Router`].
+///
+/// [`RouterPlacement`](topology::RouterPlacement) maps a logical router to a worker.
+/// Both routed media IDs name the producer's router. A routed consumer names the
+/// receiver's connection, whose worker can differ from the producer's worker.
 pub mod topology {
     pub use crate::model::topology::{
         PlacementSnapshot, RoutedConsumerId, RoutedProducerId, RouterPlacement, RouterPlacements,
