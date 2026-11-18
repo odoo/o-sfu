@@ -36,7 +36,10 @@ use super::super::{
     state::{PacketLoopState, route_control::PacketLayerGate},
 };
 #[cfg(test)]
-use crate::engine::media_transport::rtc::state::demux::RemoteTransportAddr;
+use crate::engine::media_transport::rtc::{
+    control::{SessionCloseDisposition, worker_close_session},
+    state::demux::RemoteTransportAddr,
+};
 use crate::{
     Bitrate,
     engine::media_transport::{TransportMediaId, TransportSessionKey},
@@ -336,6 +339,32 @@ impl DebugProbe for ObserveAudioActivityProbe {
             self.voice_activity,
             self.audio_level_dbov,
             self.now,
+        );
+    }
+}
+
+/// Closes a session as a terminal drain failure does, without an owner command.
+#[cfg(test)]
+pub struct FailSessionProbe {
+    pub session_key: TransportSessionKey,
+}
+
+#[cfg(test)]
+impl DebugProbe for FailSessionProbe {
+    type Output = ();
+
+    fn inspect(
+        self,
+        state: &mut PacketLoopState,
+        context: &WorkerCommandContext<'_>,
+    ) -> Self::Output {
+        worker_close_session(
+            state,
+            context.bitrate_registry,
+            context.snapshot_state,
+            &self.session_key,
+            SessionCloseDisposition::TerminalFailure,
+            context.runtime_metrics,
         );
     }
 }
