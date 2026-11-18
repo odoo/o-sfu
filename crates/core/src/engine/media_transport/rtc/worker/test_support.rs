@@ -12,7 +12,8 @@ use {
         RtpProfile, WorkerAssignment,
         state::demux::RemoteTransportAddr,
         test_support::{
-            RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
+            FailSessionProbe, RememberRemoteAddrProbe, SessionStreamRxSsrcProbe,
+            SessionStreamTxSsrcProbe,
         },
     },
     crate::{
@@ -389,6 +390,17 @@ impl RtcWorker {
             voice_activity,
             audio_level_dbov,
             now,
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub async fn debug_fail_session(
+        &self,
+        session_key: &TransportSessionKey,
+    ) -> Result<(), DebugProbeUnavailable> {
+        self.probe_debug_worker(FailSessionProbe {
+            session_key: session_key.clone(),
         })
         .await
     }

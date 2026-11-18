@@ -1085,11 +1085,11 @@ async fn rtc_gates_remote_relay_mailboxes_without_touching_local_routes() -> Tra
     let _offer = adapter
         .create_initial_session_offer("test-room", &local_consumer_session, true)
         .await?;
-    adapter.teardown([release(source_session.clone())]).await;
+    source_worker
+        .debug_fail_session(&source_session)
+        .await
+        .expect("test probe must complete");
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
-    adapter
-        .remove_media(&source_session, source_media_id)
-        .await?;
     adapter.teardown([release(source_session)]).await;
     assert_relay_target_counts(source_worker, source_media_id, 0, 0).await;
     assert_eq!(transport_cleanup_failures(&adapter), 1);

@@ -41,7 +41,7 @@ use tracing::debug;
 use self::{
     active_rank::ActiveSpeakerRank,
     remote::RemoteSources,
-    source::{RemovedConsumerRoute, RouteSource},
+    source::{ForwardingChange, RemovedConsumerRoute, RouteSource},
 };
 pub(in super::super) use self::{
     remote::{RemoteSourceRegistration, RemoteSourceTransaction},
@@ -428,6 +428,16 @@ impl RouteTable {
     }
 
     pub(in super::super) fn unregister_local_source(&mut self, source_id: TransportMediaId) {
+        // Worker-initiated session closes retire producers without a room
+        // release. Relay targets end with their producer.
+        if self
+            .sources
+            .get_mut(&source_id)
+            .and_then(RouteSource::remove_relay)
+            .is_some_and(ForwardingChange::stopped_forwarding)
+        {
+            self.forwarding_sources -= 1;
+        }
         self.forget_packet_state(source_id);
         self.keyframe_requests.forget_source(source_id);
         self.publisher_keyframes.forget_source(source_id);

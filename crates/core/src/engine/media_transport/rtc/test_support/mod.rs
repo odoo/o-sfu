@@ -31,7 +31,7 @@ pub(super) use probe::{
 };
 #[cfg(test)]
 pub(super) use probe::{
-    RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
+    FailSessionProbe, RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
 };
 #[cfg(any(test, feature = "internal-benchmarks"))]
 pub(super) use remote_control::register_saturated_remote_source;
