@@ -15,7 +15,7 @@ use super::{
         consumer_egress::LocalPacketDestination,
         state::{
             PacketLoopState,
-            relay_registry::{RelayEnqueueOutcome, RelayEnqueueReport, RelayPacketMailbox},
+            relay_registry::{ActiveRelayTarget, RelayEnqueueOutcome, RelayEnqueueReport},
         },
     },
     forwarded_packet::ForwardedPacket,
@@ -65,8 +65,8 @@ pub(in super::super) struct PacketSinkDestination {
 
 /// relay destination tied to the source transport media id
 pub(in super::super) struct RelayPacketDestination {
-    transport_media_id: TransportMediaId,
-    target: RelayPacketMailbox,
+    pub(super) transport_media_id: TransportMediaId,
+    pub(super) target: ActiveRelayTarget,
 }
 
 impl ForwardingDestination {
@@ -96,7 +96,7 @@ impl ForwardingDestination {
     /// builds a relay destination for the source side of a route
     pub(in super::super) fn from_relay_target(
         transport_media_id: TransportMediaId,
-        target: RelayPacketMailbox,
+        target: ActiveRelayTarget,
     ) -> Self {
         Self::Relay(RelayPacketDestination {
             transport_media_id,
@@ -204,6 +204,7 @@ impl RelayPacketDestination {
         packet: &ForwardedPacket,
     ) -> Option<RelayEnqueueReport> {
         self.target
+            .target
             .forward_packet(state, packet, self.transport_media_id)
     }
 }

@@ -22,9 +22,8 @@ use crate::{
     ConnectionId, MediaWorkerId, RoomInstanceId,
     engine::{
         media_transport::{
-            ConsumerActivity, ProducerActivity, RelayRouteActivity, SourceActivityRevision,
-            SourceActivityUpdate, TransportAdapterError, TransportMediaId,
-            TransportRelayRouteAction, TransportSessionKey, TransportTeardownAction,
+            ConsumerActivity, ProducerActivity, SourceActivityRevision, SourceActivityUpdate,
+            TransportAdapterError, TransportMediaId, TransportSessionKey,
             test_support::{
                 DebugRouteEntry, test_media_transport, test_media_transport_config,
                 test_media_transport_deps, test_rtc_port_range,
@@ -44,54 +43,10 @@ use crate::{
 };
 
 #[test]
-fn room_transport_plan_moves_relay_release_to_teardown() {
-    let source_session = session_key(3, UserId::Integer(3));
-    let source = TransportSourceKey::new(source_session, TransportMediaId::new(31));
-    let target_media_worker_id = MediaWorkerId::from_raw(2);
-    let activity = TransportRelayRouteAction::SetActivity(RelayRouteActivity::Inactive);
-    let plan = RoomTransportPlan::from_relays_and_teardown(
-        vec![
-            TransportRelayRouteEffect {
-                source: source.clone(),
-                target_media_worker_id,
-                action: TransportRelayRouteAction::Release,
-            },
-            TransportRelayRouteEffect {
-                source: source.clone(),
-                target_media_worker_id,
-                action: activity,
-            },
-        ],
-        [],
-    );
-    let (relays, teardown) = plan.relays_and_teardown();
-    assert_eq!(
-        relays,
-        [TransportRelayRouteEffect {
-            source: source.clone(),
-            target_media_worker_id,
-            action: activity,
-        }]
-    );
-    let [operation] = teardown else {
-        panic!("the plan should contain exactly one relay teardown");
-    };
-    assert!(matches!(
-        operation.action(),
-        TransportTeardownAction::ReleaseRelayRoute {
-            source: teardown_source,
-            target_media_worker_id: teardown_target,
-        } if teardown_source == &source && *teardown_target == target_media_worker_id
-    ));
-    plan.discard_for_test();
-}
-
-#[test]
 fn empty_room_transport_plans_need_no_execution() {
-    let mut plan = RoomTransportPlan::from_relays_and_teardown(Vec::new(), []);
+    let mut plan = RoomTransportPlan::from_teardown([]);
     plan.extend(RoomTransportPlan::default());
     plan.extend_teardown([]);
-    plan.extend_remote_source_activity([]);
     plan.push_receiver_work(ReceiverRouteWork::default(), ConsumerSetupOrigin::Subscribe);
     drop(plan);
 }
@@ -247,8 +202,6 @@ async fn cancelled_final_consumer_setup_diagnoses_unfinished_transport_plan()
     );
     let work = plan.0.work();
     assert_eq!(work.setup_turns.len(), 1);
-    assert!(work.relays.is_empty());
-    assert!(work.remote_source_activity.is_empty());
     assert!(work.route_control.is_empty());
     assert!(work.teardown.is_empty());
     let release_worker = media_transport

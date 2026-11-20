@@ -66,8 +66,7 @@ impl<'a> RoomEffectContext<'a> {
 ///             |
 ///             v  step 1: transport execution
 ///   +-----------------------------------------------------------+
-///   | - create/remove local consumer routes on workers          |
-///   | - register/remove cross-worker relay route targets        |
+///   | - create/remove consumer routes on workers                |
 ///   | - dispatch session teardowns                              |
 ///   +-----------------------------------------------------------+
 ///             |
@@ -185,15 +184,11 @@ impl RoomEffects {
             source,
             stream_id,
             update,
-            remote_activity_effects,
             track_snapshots,
             presence,
         } = commit;
         let policy_before_transport = update.activity().is_active();
         let mut batch = RoomEffectWork::default();
-        batch
-            .transport
-            .extend_remote_source_activity(remote_activity_effects);
         batch.transport.push_producer(source, stream_id, update);
         batch.output.track_snapshots = track_snapshots;
         batch.output.user_info_before_policy = presence.map(|presence| presence.fanout);

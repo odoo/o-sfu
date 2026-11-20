@@ -893,7 +893,7 @@ metric_catalog! {
     },
     RtcRemoteControlDropsTotal {
         name: "osfu_rtc_remote_control_drops_total",
-        help: "Total remote-source control commands dropped before enqueue by command kind.",
+        help: "Total cross-worker route control commands dropped before enqueue by command kind.",
         kind: Counter,
         samples: |metrics, capture, output| write_snapshot_counters(output,
             &capture.rtc,

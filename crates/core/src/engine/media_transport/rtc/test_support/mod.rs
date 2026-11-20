@@ -17,7 +17,8 @@ use std::time::Instant;
 
 #[cfg(test)]
 pub(super) use media_routes::{
-    add_source_rid_stream, assert_consumer_packet_gate, assert_remote_keyframe_command,
+    add_source_rid_stream, assert_consumer_packet_gate, assert_relay_target_add_command,
+    assert_relay_target_remove_command, assert_remote_keyframe_command,
     assert_remote_packet_gate_command, drain_ready_sessions, install_video_route_with_gate,
     test_consumer_session_key, test_consumer_session_key_on_worker, test_source_session_key,
 };
@@ -31,12 +32,12 @@ pub(super) use probe::{
 };
 #[cfg(test)]
 pub(super) use probe::{
-    RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
+    FailSessionProbe, RememberRemoteAddrProbe, SessionStreamRxSsrcProbe, SessionStreamTxSsrcProbe,
 };
-#[cfg(any(test, feature = "internal-benchmarks"))]
-pub(super) use remote_control::register_saturated_remote_source;
 #[cfg(test)]
 pub(super) use remote_control::{register_remote_source_control, saturated_remote_control};
+#[cfg(any(test, feature = "internal-benchmarks"))]
+pub(super) use remote_control::{register_saturated_remote_source, remote_source_control};
 #[cfg(test)]
 pub(super) use rtc_peer::{MAX_FIXTURE_STEPS, Peer};
 #[cfg(test)]

@@ -281,7 +281,7 @@ impl PacketLoopTurn {
             MAX_RELAY_PACKETS_PER_ITERATION,
             &config.rtc_metrics,
         );
-        state.routes.flush_remote_pkt_gates();
+        state.routes.flush_remote_control(&config.rtc_metrics);
         flush_pending_kf_reqs_at(
             state,
             &config.rtc_metrics,
@@ -637,14 +637,17 @@ pub fn route_queued_ingress_datagrams_for_benchmark(
 ///
 /// dirty sessions are always due immediately because a previous input or local
 /// send has queued more `str0m` output
-/// otherwise returns the earliest `str0m`, keyframe retry or active-speaker
-/// expiry deadline
+/// otherwise returns the earliest `str0m`, keyframe retry, active-speaker
+/// expiry or cross-worker route control retry deadline
 #[cfg(test)]
 pub(super) fn next_timeout_deadline(state: &mut PacketLoopState) -> Option<Instant> {
     next_timeout_deadline_at(state, Instant::now())
 }
 
-fn next_timeout_deadline_at(state: &mut PacketLoopState, now: Instant) -> Option<Instant> {
+pub(super) fn next_timeout_deadline_at(
+    state: &mut PacketLoopState,
+    now: Instant,
+) -> Option<Instant> {
     if state.has_dirty_sessions() {
         return Some(now);
     }
@@ -653,6 +656,7 @@ fn next_timeout_deadline_at(state: &mut PacketLoopState, now: Instant) -> Option
         state.routes.next_kf_deadline(),
         state.routes.publisher_keyframes.next_deadline(),
         state.routes.next_active_speaker_deadline(now),
+        state.routes.next_remote_control_retry(now),
     ]
     .into_iter()
     .flatten()

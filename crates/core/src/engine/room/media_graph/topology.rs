@@ -24,10 +24,8 @@ use crate::{
     ConnectionId, MediaWorkerId, RoomInstanceId,
     engine::{
         media_transport::{
-            SessionUploadEncoding, SourceActivityRevision, SourceActivityUpdate,
-            TransportConsumerRoute, TransportMediaId, TransportRelayRouteEffect,
-            TransportSessionKey, TransportSourceActivityEffect, TransportSourceKey,
-            TransportTeardown,
+            SessionUploadEncoding, SourceActivityRevision, TransportConsumerRoute,
+            TransportMediaId, TransportSessionKey, TransportSourceKey, TransportTeardown,
         },
         room::{
             RoomMediaCounts, RoomRuntimeContext, RouterPlacement,
@@ -77,7 +75,6 @@ pub struct SessionPlacementCommit {
 #[derive(Debug)]
 pub(in crate::engine::room) struct ConsumerActivityCommit {
     pub(super) update: Option<ReceiverRouteActivity>,
-    pub(super) relay_effects: Vec<TransportRelayRouteEffect>,
     pub(super) evictions: usize,
 }
 
@@ -314,12 +311,8 @@ impl RoomTopology {
         &mut self,
         session: &TransportSessionKey,
         declined: &[TransportMediaId],
-    ) -> (Vec<TransportRelayRouteEffect>, Vec<TransportTeardown>, bool) {
-        let RemovedRoutes {
-            routes,
-            consumers,
-            relays,
-        } = self
+    ) -> (Vec<TransportTeardown>, bool) {
+        let RemovedRoutes { routes, consumers } = self
             .route_graph
             .detach_declined_consumers(session, declined);
         let detached = !routes.is_empty();
@@ -332,7 +325,7 @@ impl RoomTopology {
             }
         }
         let teardown = Self::media_teardowns([], routes).collect();
-        (relays, teardown, detached)
+        (teardown, detached)
     }
 
     pub(in crate::engine::room) fn pending_consumer_routes_for_user(
@@ -630,21 +623,6 @@ impl RoomTopology {
         Some(revision)
     }
 
-    pub(super) fn source_activity_effects(
-        &self,
-        source: &TransportSourceKey,
-        update: SourceActivityUpdate,
-    ) -> Vec<TransportSourceActivityEffect> {
-        self.route_graph
-            .source_activity_target_workers(source)
-            .map(|target_media_worker_id| TransportSourceActivityEffect {
-                source: source.clone(),
-                target_media_worker_id,
-                update,
-            })
-            .collect()
-    }
-
     /// Commits the new placement before returning cleanup for `previous_connection`.
     ///
     /// Replacement joins must pass the currently committed `previous_connection`.
@@ -688,13 +666,10 @@ impl RoomTopology {
                 // Session close removes source media while subscriber routes need
                 // explicit teardown.
                 let (_, removed_sources) = self.detach_user_sources(user_id);
-                let receiver_relays = self.route_graph.reset_receiver_for_replacement(user_id);
-                let RemovedRoutes {
-                    routes, mut relays, ..
-                } = removed_sources;
-                relays.extend(receiver_relays);
-                let teardown = Self::media_teardowns([], routes).chain([close_session]);
-                RoomTransportPlan::from_relays_and_teardown(relays, teardown)
+                self.route_graph.reset_receiver_for_replacement(user_id);
+                let teardown =
+                    Self::media_teardowns([], removed_sources.routes).chain([close_session]);
+                RoomTransportPlan::from_teardown(teardown)
             },
         );
         if previous_session_key.is_some() {
@@ -716,22 +691,18 @@ impl RoomTopology {
         if let Some(error) = self.router.remove_session(user_id).err() {
             error!(?user_id, ?error, "failed to remove user from room router");
         }
-        (
-            RoomTransportPlan::from_relays_and_teardown(removed.relays, teardown),
-            evictions,
-        )
+        (RoomTransportPlan::from_teardown(teardown), evictions)
     }
 
     /// # Errors
     ///
-    /// Returns the declared route and relay release effects when the reservation
-    /// is stale or the router rejects the consumer dependency.
+    /// Returns the declared route when the reservation is stale or the router
+    /// rejects the consumer dependency.
     pub(super) fn commit_consumer_setup(
         &mut self,
         setup: DeclaredConsumerSetup,
         selection: ConsumerSourceSelection,
-    ) -> Result<CommittedConsumerSetup, (TransportConsumerRoute, Vec<TransportRelayRouteEffect>)>
-    {
+    ) -> Result<CommittedConsumerSetup, TransportConsumerRoute> {
         let DeclaredConsumerSetup {
             pending:
                 PendingConsumerSetup {
@@ -740,7 +711,6 @@ impl RoomTopology {
                     reservation,
                     sender,
                     rtp: _,
-                    relays: _,
                 },
             route,
         } = setup;
@@ -748,7 +718,7 @@ impl RoomTopology {
         let declared_active = reservation.declared_activity().is_active();
         let (route_graph, room_router) = (&mut self.route_graph, &mut self.router);
         // Remove pending state first so router rejection cannot strand a reservation.
-        let result =
+        let committed =
             route_graph.commit(reservation, route.clone(), selection, || match room_router
                 .add_consumer(target.session.user_id(), consumer, target.routed)
             {
@@ -763,8 +733,8 @@ impl RoomTopology {
                     None
                 }
             });
-        if let Err(relays) = result {
-            return Err((route, relays));
+        if !committed {
+            return Err(route);
         }
         self.invalidate_video_allocation();
         Ok(CommittedConsumerSetup {
@@ -776,8 +746,6 @@ impl RoomTopology {
     }
 
     /// Returns `None` unless the route realization remains absent.
-    ///
-    /// A cross-worker reservation also claims relay ownership.
     pub(super) fn reserve_consumer_setup(
         &mut self,
         target: ConsumerSetupTarget,
@@ -786,38 +754,22 @@ impl RoomTopology {
         sender: OutboundSender,
         rtp: RouterRtpParameters,
     ) -> Option<PendingConsumerSetup> {
-        let key = target.subscription_key();
-        // Relay activity follows receiver intent rather than policy-gated delivery.
-        // A temporary policy pause must remain resumable without rebuilding the
-        // shared cross-worker source path.
-        let relay_active = selection.active();
-        let reservation =
-            self.route_graph
-                .reserve_consumer_setup(key, target.source_id, selection)?;
-        let source_worker = target.source.session_key().media_worker_id();
-        let target_worker = target.session.media_worker_id();
-        let relays = if source_worker == target_worker {
-            Vec::new()
-        } else {
-            self.route_graph
-                .reserve_relay(&reservation, &target, target_worker, relay_active)
-        };
+        let reservation = self.route_graph.reserve_consumer_setup(
+            target.subscription_key(),
+            target.source_id,
+            selection,
+        )?;
         Some(PendingConsumerSetup {
             target,
             consumer,
             reservation,
             sender,
             rtp,
-            relays,
         })
     }
 
-    /// A stale reservation releases no relay ownership.
-    pub(super) fn release_consumer_setup(
-        &mut self,
-        setup: PendingConsumerSetup,
-    ) -> Vec<TransportRelayRouteEffect> {
-        self.route_graph.release_consumer_setup(setup.reservation)
+    pub(super) fn release_consumer_setup(&mut self, setup: &PendingConsumerSetup) {
+        self.route_graph.release_consumer_setup(&setup.reservation);
     }
 
     /// Merges sparse intent before projecting activity to an attached route.
@@ -835,7 +787,6 @@ impl RoomTopology {
     ) -> ConsumerActivityCommit {
         let mut commit = ConsumerActivityCommit {
             update: None,
-            relay_effects: Vec::new(),
             evictions: 0,
         };
         if intent.is_empty() {
@@ -858,23 +809,21 @@ impl RoomTopology {
                 .source_descriptor(source_id)
                 .is_some_and(|source| source.media_kind() == MediaKind::Audio))
         .then_some(PolicyPauseReason::ReceiverDeafened);
-        let Some(relay_effects) = self.route_graph.set_activity(
+        if !self.route_graph.set_activity(
             key,
             source_id,
             connection_id,
             active,
             policy_pause_reason,
-        ) else {
+        ) {
             return commit;
-        };
-        let update = self
+        }
+        commit.update = self
             .committed_consumer_route_for_key(key)
             .filter(|route| route.route.consumer_session_key().connection_id() == connection_id)
             .map(|route| {
                 ReceiverRouteActivity::new(route.target(), route.selection.delivery_active())
             });
-        commit.update = update;
-        commit.relay_effects = relay_effects;
         commit
     }
 }

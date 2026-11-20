@@ -1,11 +1,37 @@
+use o_sfu_model::UserId;
+use tokio::sync::mpsc;
 use tracing::debug;
 
 use super::{
-    ActiveRelayTarget, Duration, Instant, PacketLayerGate, Rid, RouteSource, RouteTable,
-    TransportAdapterError, TransportMediaId,
+    super::{
+        super::{
+            commands::{RelayTarget, RtcWorkerCommand},
+            test_support::test_transport_session_key,
+        },
+        relay_registry::RelayPacketMailbox,
+    },
+    ActiveRelayTarget, Duration, Instant, PacketLayerGate, RelayTargetId, Rid, RouteSource,
+    RouteTable, TransportAdapterError, TransportMediaId, TransportSourceKey,
 };
 
 impl RouteTable {
+    /// Registers an open relay target whose source activity arrives on the
+    /// returned queue.
+    pub(in crate::engine::media_transport::rtc) fn add_open_relay_target(
+        &mut self,
+        source_id: TransportMediaId,
+        target_id: RelayTargetId,
+        mailbox: RelayPacketMailbox,
+    ) -> mpsc::Receiver<RtcWorkerCommand> {
+        let (target, activity) = RelayTarget::with_control_queue(target_id, mailbox, 8);
+        let source = TransportSourceKey::new(
+            test_transport_session_key(0, 0, 0, UserId::Integer(0)),
+            source_id,
+        );
+        self.add_relay_target(&source, target, PacketLayerGate::Open);
+        activity
+    }
+
     pub(in crate::engine::media_transport::rtc) fn set_source_active(
         &mut self,
         source_id: TransportMediaId,
@@ -58,15 +84,6 @@ impl RouteTable {
         self.sources
             .get(&source_id)
             .and_then(RouteSource::active_relay_targets)
-    }
-
-    pub(in crate::engine::media_transport::rtc) fn relay_target_count(
-        &self,
-        source_id: TransportMediaId,
-    ) -> usize {
-        self.sources
-            .get(&source_id)
-            .map_or(0, RouteSource::relay_target_count)
     }
 
     pub(in crate::engine::media_transport::rtc) fn active_relay_target_count(

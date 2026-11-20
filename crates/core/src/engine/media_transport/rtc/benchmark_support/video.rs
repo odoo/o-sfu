@@ -9,10 +9,10 @@ use str0m::media::{KeyframeRequestKind, Mid, Rid};
 use tokio::sync::mpsc;
 
 use super::super::{
-    commands::{RemoteSourceControl, RtcWorkerCommand},
+    commands::RtcWorkerCommand,
     recovery::{PendingKeyframeRequest, apply_src_decoder_ready, flush_pending_kf_reqs_at},
     state::{PacketLoopState, relay_registry::RelayTargetId, route_control::PacketLayerGate},
-    test_support::{MediaWorkerScenario, test_transport_session_key},
+    test_support::{MediaWorkerScenario, remote_source_control, test_transport_session_key},
     worker::buffers::PacketLoopBuffers,
 };
 use crate::engine::media_transport::{
@@ -54,7 +54,7 @@ impl RidReadinessBenchFixture {
         let source = TransportSourceKey::new(source_session.clone(), src_media);
         let _ = state.routes.register_remote_source(
             &source,
-            RemoteSourceControl::new(control_tx, RelayTargetId::new(1), Arc::clone(&rtc_metrics)),
+            remote_source_control(control_tx, RelayTargetId::new(1), Arc::clone(&rtc_metrics)),
         );
         let _ = state.routes.apply_source_activity(
             src_media,
@@ -128,7 +128,7 @@ impl KeyframeCoalescingBenchFixture {
         let source = TransportSourceKey::new(source_session, src_media);
         let _ = state.routes.register_remote_source(
             &source,
-            RemoteSourceControl::new(control_tx, RelayTargetId::new(2), Arc::clone(&rtc_metrics)),
+            remote_source_control(control_tx, RelayTargetId::new(2), Arc::clone(&rtc_metrics)),
         );
         let _ = state.routes.apply_source_activity(
             src_media,

@@ -1,9 +1,12 @@
-//! Remote identities and their latest-gate outbox share one lifecycle.
+//! Remote identities and their latest-control outbox share one lifecycle.
 //!
-//! Gate changes publish immediately. Retry passes run between packet-loop turns
-//! and visit each queued registration at most once.
+//! A registration announces this worker as a relay target of its source, then
+//! publishes gate changes. Sends never wait. A full source queue keeps the
+//! latest add or gate for retry passes between packet-loop turns and a closed
+//! one ends delivery. A removal outlives its registration until the source
+//! worker accepts it, unless a new registration of the source replaces it.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use super::super::{
     super::commands::{RemoteControlSendOutcome, RemoteSourceControl},
@@ -14,141 +17,182 @@ use crate::engine::media_transport::{TransportAdapterError, TransportMediaId, Tr
 #[derive(Debug, Default)]
 pub(super) struct RemoteSources {
     registrations: BTreeMap<TransportMediaId, RemoteSourceRegistration>,
-    queue: VecDeque<TransportMediaId>,
+    /// Removed registrations whose withdrawal the source queue has not
+    /// accepted yet.
+    releases: BTreeMap<TransportMediaId, RemoteSourceRegistration>,
+    /// Sources with an undelivered add, gate or removal. Membership must clear
+    /// on immediate completion too, since it schedules idle retry wakes.
+    pending: BTreeSet<TransportMediaId>,
 }
 
-/// Previous registry state for rolling back a registration or replacement.
+/// Registration created by one consumer setup.
 ///
-/// Dropping the transaction keeps the new registration. Rollback requires the
-/// same registry before another registration change for this source.
+/// Rollback requires the same registry before another registration change for
+/// this source. Dropping the transaction keeps the registration.
 pub struct RemoteSourceTransaction {
     pub(super) source_id: TransportMediaId,
-    pub(super) previous: Option<RemoteSourceRegistration>,
 }
 
 #[derive(Debug)]
 pub struct RemoteSourceRegistration {
     source: TransportSourceKey,
     control: RemoteSourceControl,
-    pending_gate: Option<PacketLayerGate>,
-    // Queue membership can outlast pending_gate until the next flush.
-    queued: bool,
+    gate: PacketLayerGate,
+    delivery: Delivery,
+}
+
+/// Control the source worker has not accepted yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    Add { replacing: bool },
+    Gate,
+    Done,
 }
 
 impl RemoteSources {
+    /// Registers `source` and announces its relay target, or keeps a current
+    /// registration of the same source.
+    ///
     /// # Errors
     ///
-    /// Returns [`TransportAdapterError::InvalidInput`] for conflicting source identity.
+    /// Returns [`TransportAdapterError::InvalidInput`] for conflicting source
+    /// identity and [`TransportAdapterError::TransportUnavailable`] when the
+    /// source worker queue is closed.
     pub(super) fn register(
         &mut self,
         source: &TransportSourceKey,
         control: RemoteSourceControl,
-    ) -> Result<RemoteSourceTransaction, TransportAdapterError> {
+    ) -> Result<Option<RemoteSourceTransaction>, TransportAdapterError> {
         let source_id = source.transport_media_id();
-        if self
-            .get(source_id)
-            .is_some_and(|current| current.source != *source)
-        {
-            return Err(TransportAdapterError::InvalidInput);
-        }
-        // Queue entries belong to a registration, not a reusable media id.
-        // Replacement and removal retire them before the id can be reused.
-        let previous = self.remove(source_id);
-        self.registrations.insert(
-            source_id,
-            RemoteSourceRegistration {
-                source: source.clone(),
-                control,
-                pending_gate: None,
-                queued: false,
-            },
-        );
-        Ok(RemoteSourceTransaction {
-            source_id,
-            previous,
-        })
-    }
-
-    pub(super) fn rollback(&mut self, transaction: RemoteSourceTransaction) {
-        let RemoteSourceTransaction {
-            source_id,
-            previous,
-        } = transaction;
-        self.remove(source_id);
-        if let Some(mut registration) = previous {
-            registration.queued = registration.pending_gate.is_some();
-            if registration.queued {
-                self.queue.push_back(source_id);
+        if let Some(current) = self.get(source_id) {
+            if current.source != *source {
+                return Err(TransportAdapterError::InvalidInput);
             }
-            self.registrations.insert(source_id, registration);
+            return Ok(None);
         }
+        // The source worker still holds the target of an undelivered removal.
+        // The new add keeps it and asks again for the current activity.
+        let replacing = self.releases.remove(&source_id).is_some();
+        self.pending.remove(&source_id);
+        // Routes need a registration, so a new one has none and blocks.
+        let mut registration = RemoteSourceRegistration {
+            source: source.clone(),
+            control,
+            gate: PacketLayerGate::Block,
+            delivery: Delivery::Add { replacing },
+        };
+        match registration.deliver() {
+            RemoteControlSendOutcome::Forwarded => {}
+            RemoteControlSendOutcome::Full => {
+                self.pending.insert(source_id);
+            }
+            RemoteControlSendOutcome::Closed => {
+                return Err(TransportAdapterError::TransportUnavailable);
+            }
+        }
+        self.registrations.insert(source_id, registration);
+        Ok(Some(RemoteSourceTransaction { source_id }))
     }
 
     pub(super) fn get(&self, source_id: TransportMediaId) -> Option<&RemoteSourceRegistration> {
         self.registrations.get(&source_id)
     }
 
-    pub(super) fn remove(
-        &mut self,
-        source_id: TransportMediaId,
-    ) -> Option<RemoteSourceRegistration> {
-        let registration = self.registrations.remove(&source_id)?;
-        if registration.queued {
-            self.queue.retain(|queued| *queued != source_id);
+    /// Removes a registration and withdraws its relay target if announced.
+    pub(super) fn remove(&mut self, source_id: TransportMediaId) {
+        let Some(registration) = self.registrations.remove(&source_id) else {
+            return;
+        };
+        self.pending.remove(&source_id);
+        // A replacement add still owes withdrawal of the earlier target.
+        // An initial add that never arrived has nothing to release.
+        if matches!(registration.delivery, Delivery::Add { replacing: false }) {
+            return;
         }
-        Some(registration)
+        if registration.withdraw() == RemoteControlSendOutcome::Full {
+            self.releases.insert(source_id, registration);
+            self.pending.insert(source_id);
+        }
     }
 
     pub(super) fn publish_gate(&mut self, source_id: TransportMediaId, gate: PacketLayerGate) {
         let Some(registration) = self.registrations.get_mut(&source_id) else {
             return;
         };
-        registration.pending_gate = match registration
-            .control
-            .set_pkt_gate(&registration.source, gate)
-        {
-            RemoteControlSendOutcome::Forwarded | RemoteControlSendOutcome::Closed => None,
-            RemoteControlSendOutcome::Full => Some(gate),
-        };
-        if registration.pending_gate.is_some() && !registration.queued {
-            registration.queued = true;
-            self.queue.push_back(source_id);
+        if registration.delivery == Delivery::Done {
+            if registration.gate == gate {
+                return;
+            }
+            registration.delivery = Delivery::Gate;
+        }
+        registration.gate = gate;
+        if registration.deliver() == RemoteControlSendOutcome::Full {
+            self.pending.insert(source_id);
+        } else {
+            self.pending.remove(&source_id);
         }
     }
 
+    pub(super) fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Retries each pending source once.
     pub(super) fn flush(&mut self) {
-        if self.queue.is_empty() {
+        if self.pending.is_empty() {
             return;
         }
-        // Visit each queued source once in order without cycling saturated
-        // entries through pop/push on every pass.
-        self.queue.retain(|source_id| {
-            self.registrations
-                .get_mut(source_id)
-                .is_some_and(RemoteSourceRegistration::retry_pending_gate)
+        let (registrations, releases) = (&mut self.registrations, &mut self.releases);
+        self.pending.retain(|source_id| {
+            if let Some(registration) = registrations.get_mut(source_id) {
+                return registration.retry();
+            }
+            match releases.entry(*source_id) {
+                Entry::Occupied(release)
+                    if release.get().withdraw() == RemoteControlSendOutcome::Full =>
+                {
+                    true
+                }
+                Entry::Occupied(release) => {
+                    release.remove();
+                    false
+                }
+                Entry::Vacant(_) => false,
+            }
         });
     }
 }
 
 impl RemoteSourceRegistration {
-    fn retry_pending_gate(&mut self) -> bool {
-        let Some(gate) = self.pending_gate else {
-            self.queued = false;
-            return false;
+    /// Sends undelivered control. Full queues keep it pending.
+    fn deliver(&mut self) -> RemoteControlSendOutcome {
+        let outcome = match self.delivery {
+            Delivery::Add { .. } => self.control.add_target(&self.source, self.gate),
+            Delivery::Gate => self.control.set_pkt_gate(&self.source, self.gate),
+            Delivery::Done => return RemoteControlSendOutcome::Forwarded,
         };
+        // A closed worker cannot accept another retry.
+        if outcome != RemoteControlSendOutcome::Full {
+            self.delivery = Delivery::Done;
+        }
+        outcome
+    }
+
+    fn withdraw(&self) -> RemoteControlSendOutcome {
+        self.control.remove_target(&self.source)
+    }
+
+    /// Returns whether delivery still waits for queue capacity.
+    fn retry(&mut self) -> bool {
+        if self.delivery == Delivery::Done {
+            return false;
+        }
         self.control.record_pkt_gate_retry();
-        match self.control.set_pkt_gate(&self.source, gate) {
-            RemoteControlSendOutcome::Forwarded => {
-                self.control.record_pkt_gate_flushed();
-            }
-            // Sustained pressure must not clear and restore retry state each turn.
+        match self.deliver() {
+            RemoteControlSendOutcome::Forwarded => self.control.record_pkt_gate_flushed(),
             RemoteControlSendOutcome::Full => return true,
-            // A closed worker cannot accept another retry. Retiring its gate
-            // prevents repeated retry and drop accounting on later turns.
             RemoteControlSendOutcome::Closed => {}
         }
-        self.pending_gate = None;
-        self.queued = false;
         false
     }
 
@@ -160,13 +204,17 @@ impl RemoteSourceRegistration {
         (self.source.clone(), self.control.clone())
     }
 
+    /// Returns the gate the source worker has not accepted yet.
     #[cfg(test)]
     pub const fn pending_gate(&self) -> Option<PacketLayerGate> {
-        self.pending_gate
+        match self.delivery {
+            Delivery::Add { .. } | Delivery::Gate => Some(self.gate),
+            Delivery::Done => None,
+        }
     }
 
-    #[cfg(any(test, feature = "internal-benchmarks"))]
+    #[cfg(feature = "internal-benchmarks")]
     pub const fn has_pending_gate(&self) -> bool {
-        self.pending_gate.is_some()
+        !matches!(self.delivery, Delivery::Done)
     }
 }

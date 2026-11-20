@@ -1,8 +1,9 @@
 //! Sequential room-control and packet work on one RTC worker state.
 //!
 //! Production command dispatch changes the source state read by the next
-//! production packet-loop turn. A relay receiver checks actual delivery while
-//! no mailbox wait or separate worker thread enters the instruction count.
+//! production packet-loop turn, which forwards each accepted revision to the
+//! relay target. Relay and activity receivers check actual delivery while no
+//! mailbox wait or separate worker thread enters the instruction count.
 //! The opaque payload isolates activity-gated relay forwarding rather than
 //! video codec parsing, sockets or concurrent scheduling.
 
@@ -21,13 +22,17 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::super::{
     RtcWorkerConfig, RtpProfile,
-    commands::{RtcWorkerCommand, WorkerMediaControlBatch, WorkerMediaControlBatchOutcome},
+    commands::{
+        RelayTarget, RouteControlRequest, RtcWorkerCommand, WorkerMediaControlBatch,
+        WorkerMediaControlBatchOutcome,
+    },
     control::{WorkerCommandContext, handle_worker_command},
     packet_loop::forwarded_packet::ForwardedPacket,
     state::{
         PacketLoopState, RtcSnapshotState,
         bitrate::BitrateRegistry,
         relay_registry::{RelayPacketMailbox, RelayTargetId},
+        route_control::PacketLayerGate,
         slots::SessionHandle,
     },
     test_support::{
@@ -76,6 +81,7 @@ pub struct InterleavedRelayActivityBenchFixture {
     inbound_relay_rx: mpsc::Receiver<ForwardedPacket>,
     _inbound_relay_tx: mpsc::Sender<ForwardedPacket>,
     outbound_relay_rx: mpsc::Receiver<ForwardedPacket>,
+    relay_activity_rx: mpsc::Receiver<RtcWorkerCommand>,
     source_media_id: TransportMediaId,
     commands: VecDeque<RtcWorkerCommand>,
     responses: Vec<ActivityResponse>,
@@ -124,15 +130,15 @@ impl InterleavedRelayActivityBenchFixture {
             bitrate_registry.register_incoming_media(&source_session, source_media_id, now);
         state.register_incoming_bitrate_counter(source_media_id, counter);
         let (outbound_tx, outbound_relay_rx) = mpsc::channel(INTERLEAVED_RELAY_PACKETS);
-        let target_id = RelayTargetId::new(1);
-        state.routes.add_relay_target(
-            source_media_id,
-            target_id,
+        // One answer to the add, two warm-up revisions and every measured one.
+        let (target, relay_activity_rx) = RelayTarget::with_control_queue(
+            RelayTargetId::new(1),
             RelayPacketMailbox::new(outbound_tx),
+            3 + ROUNDS * 2,
         );
         state
             .routes
-            .set_relay_target_active(source_media_id, target_id, true);
+            .add_relay_target(&source, target, PacketLayerGate::Open);
         let (inbound_relay_tx, inbound_relay_rx) = mpsc::channel(1);
         let metrics = Arc::new(RuntimeMetrics::default());
         let config = PacketLoopConfig {
@@ -166,12 +172,18 @@ impl InterleavedRelayActivityBenchFixture {
             inbound_relay_rx,
             _inbound_relay_tx: inbound_relay_tx,
             outbound_relay_rx,
+            relay_activity_rx,
             source_media_id,
             commands: VecDeque::with_capacity(ROUNDS * 2),
             responses: Vec::with_capacity(ROUNDS * 2),
             packets: VecDeque::with_capacity(ROUNDS * 2),
             now,
         };
+        // Deliver registration activity before warm-up revisions can replace it.
+        fixture
+            .state
+            .routes
+            .flush_remote_control(&fixture.config.rtc_metrics);
         let mut revision = SourceActivityRevision::default();
         // Exercise both turn branches before measurement, then empty the relay.
         for (activity, sequence) in [
@@ -190,6 +202,12 @@ impl InterleavedRelayActivityBenchFixture {
                 panic!("benchmark warm-up activity update failed");
             };
             assert!(matches!(results.as_slice(), [Ok(())]));
+        }
+        for _ in 0..3 {
+            fixture
+                .relay_activity_rx
+                .try_recv()
+                .expect("warm-up activity must reach the relay target");
         }
         let warm_packet = fixture
             .outbound_relay_rx
@@ -268,14 +286,26 @@ impl InterleavedRelayActivityBenchFixture {
         }
     }
 
-    /// Checks command outcomes and exact active-phase relay payload and order.
-    /// Call this once per fixture because it consumes command outcomes and relay packets.
+    /// Checks command outcomes, forwarded activity and exact active-phase relay
+    /// payload and order. Call this once per fixture because it consumes
+    /// command outcomes, activity and relay packets.
     ///
     /// # Panics
     ///
-    /// Panics if this method is called again or if a command failed or a packet
-    /// was lost, reordered or forwarded while the source was inactive.
+    /// Panics if this method is called again, if a command failed, if the relay
+    /// target missed a revision or if a packet was lost, reordered or forwarded
+    /// while the source was inactive.
     pub fn assert_coverage(&mut self) {
+        for phase in 0..ROUNDS * 2 {
+            let Ok(RtcWorkerCommand::RouteControl(RouteControlRequest::SetRemoteSourceActivity {
+                update,
+                ..
+            })) = self.relay_activity_rx.try_recv()
+            else {
+                panic!("every measured revision must reach the relay target");
+            };
+            assert_eq!(update.activity().is_active(), phase % 2 == 1);
+        }
         assert!(self.state.routes.source_is_active(self.source_media_id));
         for response in &mut self.responses {
             let Ok(Ok(WorkerMediaControlBatchOutcome::Applied(results))) = response.try_recv()

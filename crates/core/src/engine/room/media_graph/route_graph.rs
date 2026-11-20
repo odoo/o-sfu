@@ -12,26 +12,15 @@
 //!              |
 //!              v
 //!   +--------------------+  reserve setup
-//!   | ConsumerRealization| ------------------> +-------------------------------------+
-//!   |      Absent        |                     | ConsumerRealization::Pending        |
-//!   +--------------------+ <------------------ | (RouteReservationId, Option<Relay>) |
-//!              ^       setup fails/rejected    +-------------------------------------+
+//!   | ConsumerRealization| ------------------> +-------------------------------+
+//!   |      Absent        |                     | ConsumerRealization::Pending  |
+//!   +--------------------+ <------------------ | (RouteReservationId)          |
+//!              ^       setup fails/rejected    +-------------------------------+
 //!              |                                                  |
 //!              |              decline/replace                     v setup accepted
 //!              +---------------------------------- +---------------------------------+
 //!                                                  | ConsumerRealization::Committed  |
 //!                                                  +---------------------------------+
-//!
-//! cross-worker relay sharing:
-//!   receiver 1 (worker B) \
-//!   receiver 2 (worker B)  --> [ RelayRouteKey (source worker A -> worker B) ]
-//!   receiver 3 (worker B) /               |
-//!                                         v
-//!                         shared relay channel (worker A -> B)
-//!                                         |
-//!                             +-----------+-----------+
-//!                             v           v           v
-//!                          recv 1      recv 2      recv 3 (local fanout on worker B)
 //! ```
 //!
 //! Intent without a current publication keeps `Subscription.current` at `None`.
@@ -44,15 +33,9 @@
 //! every stream preference of the oldest absent target. Present members do not
 //! consume this allowance, including members with no publications. Joining
 //! promotes existing intent and departure enters the allowance as a new target.
-//!
-//! Cross-worker relays are shared by subscriptions with the same source and
-//! target worker. A relay remains active while any owner has active receiver
-//! intent. An active first owner emits `Install` followed by
-//! `SetActivity(Active)`. Later aggregate activity changes emit `SetActivity`.
-//! Removing the last owner emits `Release`.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     mem,
     time::Instant,
 };
@@ -60,17 +43,12 @@ use std::{
 use o_sfu_model::UserId;
 use o_sfu_router::topology::RoutedConsumerId;
 
-use super::{
-    ConsumerSourceSelection, SubscriptionKey, consumer_setup::ConsumerSetupTarget,
-    remove_from_index_set,
-};
+use super::{ConsumerSourceSelection, SubscriptionKey, remove_from_index_set};
 use crate::{
-    ConnectionId, MediaWorkerId,
+    ConnectionId,
     engine::{
         media_transport::{
-            ConsumerActivity, RelayRouteActivity, TransportConsumerRoute, TransportMediaId,
-            TransportRelayRouteAction, TransportRelayRouteEffect, TransportSessionKey,
-            TransportSourceKey,
+            ConsumerActivity, TransportConsumerRoute, TransportMediaId, TransportSessionKey,
         },
         source_model::{
             PolicyPauseReason, PublishedSourceId, SourceSelector, SourceSubscriptionIntent,
@@ -83,13 +61,10 @@ pub(super) struct RouteGraph {
     entries: BTreeMap<SubscriptionKey, Subscription>,
     by_receiver: BTreeMap<UserId, BTreeSet<SubscriptionKey>>,
     by_source: BTreeMap<PublishedSourceId, BTreeSet<SubscriptionKey>>,
-    relays: BTreeMap<RelayRouteKey, RelayOwners>,
     next_reservation: RouteReservationId,
     pending_targets: BTreeMap<UserId, VecDeque<UserId>>,
     pending_target_limit: usize,
 }
-
-type RelayOwners = BTreeMap<SubscriptionKey, RelayRouteActivity>;
 
 #[derive(Debug, Default)]
 struct Subscription {
@@ -108,7 +83,7 @@ pub(super) struct CurrentPublication {
 enum ConsumerRealization {
     #[default]
     Absent,
-    Pending(RouteReservationId, Option<RouteRelay>),
+    Pending(RouteReservationId),
     Committed(CommittedConsumerRoute),
 }
 
@@ -117,7 +92,6 @@ enum ConsumerRealization {
 pub(super) struct CommittedConsumerRoute {
     pub route: TransportConsumerRoute,
     routed: RoutedConsumerId,
-    relay: Option<RouteRelay>,
     pub pending_upgrade: Option<PendingUpgrade>,
 }
 
@@ -139,35 +113,23 @@ pub struct ConsumerRouteReservation {
     id: RouteReservationId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RouteRelay {
-    route: RelayRouteKey,
-    activity: RelayRouteActivity,
-}
-
-struct TakenPending {
-    relay: Option<RouteRelay>,
-}
-
-/// Captured source placement survives replacement until its relay owners release it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RelayRouteKey {
-    pub source: TransportSourceKey,
-    pub target_worker: MediaWorkerId,
-}
-
 #[derive(Debug, Default)]
 pub(super) struct RemovedRoutes {
     pub routes: Vec<TransportConsumerRoute>,
     pub consumers: Vec<RoutedConsumerId>,
-    pub relays: Vec<TransportRelayRouteEffect>,
 }
 
 impl RemovedRoutes {
     pub(super) fn extend(&mut self, mut other: Self) {
         self.routes.append(&mut other.routes);
         self.consumers.append(&mut other.consumers);
-        self.relays.append(&mut other.relays);
+    }
+
+    fn collect(&mut self, realization: ConsumerRealization) {
+        if let ConsumerRealization::Committed(committed) = realization {
+            self.routes.push(committed.route);
+            self.consumers.push(committed.routed);
+        }
     }
 }
 
@@ -177,7 +139,6 @@ impl RouteGraph {
             entries: BTreeMap::new(),
             by_receiver: BTreeMap::new(),
             by_source: BTreeMap::new(),
-            relays: BTreeMap::new(),
             next_reservation: RouteReservationId::default(),
             pending_targets: BTreeMap::new(),
             pending_target_limit,
@@ -225,7 +186,7 @@ impl RouteGraph {
             self.pending_targets.remove(receiver);
         }
         // Only absent publishers enter this index. Their detached records have
-        // no transport or relay ownership, so eviction removes intent alone.
+        // no transport ownership, so eviction removes intent alone.
         if let Some(keys) = self.by_receiver.get_mut(receiver) {
             keys.retain(|key| {
                 if key.publisher != evicted {
@@ -306,6 +267,7 @@ impl RouteGraph {
         true
     }
 
+    /// Returns whether the attachment matches `source_id` and `connection_id`.
     pub(super) fn set_activity(
         &mut self,
         key: &SubscriptionKey,
@@ -313,27 +275,20 @@ impl RouteGraph {
         connection_id: ConnectionId,
         active: bool,
         policy_pause_reason: Option<PolicyPauseReason>,
-    ) -> Option<Vec<TransportRelayRouteEffect>> {
-        let relay = {
-            let current = self
-                .entries
-                .get_mut(key)
-                .and_then(|entry| entry.current.as_mut())
-                .filter(|current| current.source_id == source_id)?;
-            if let ConsumerRealization::Committed(committed) = &current.realization
-                && committed.route.consumer_session_key().connection_id() != connection_id
-            {
-                return None;
-            }
-            current.set_active(active);
-            if let Some(reason) = policy_pause_reason {
-                current.selection.set_policy_pause_reason(Some(reason));
-            }
-            current
-                .realization
-                .set_relay_activity(RelayRouteActivity::from_active(active))
+    ) -> bool {
+        let Some(current) = self.current_mut(key, source_id) else {
+            return false;
         };
-        Some(relay.map_or_else(Vec::new, |relay| self.set_relay_owner(key, &relay, false)))
+        if let ConsumerRealization::Committed(committed) = &current.realization
+            && committed.route.consumer_session_key().connection_id() != connection_id
+        {
+            return false;
+        }
+        current.set_active(active);
+        if let Some(reason) = policy_pause_reason {
+            current.selection.set_policy_pause_reason(Some(reason));
+        }
+        true
     }
 
     pub(super) fn reserve_consumer_setup(
@@ -351,7 +306,7 @@ impl RouteGraph {
         self.next_reservation.0 += 1;
         let id = self.next_reservation;
         current.selection = selection;
-        current.realization = ConsumerRealization::Pending(id, None);
+        current.realization = ConsumerRealization::Pending(id);
         Some(ConsumerRouteReservation {
             key,
             source_id,
@@ -360,45 +315,41 @@ impl RouteGraph {
         })
     }
 
-    pub(super) fn release_consumer_setup(
-        &mut self,
-        reservation: ConsumerRouteReservation,
-    ) -> Vec<TransportRelayRouteEffect> {
-        let Some(TakenPending { relay }) = self.take_pending(&reservation) else {
-            return Vec::new();
-        };
-        let key = reservation.key;
-        relay.map_or_else(Vec::new, |relay| self.release_relay(&key, &relay))
+    pub(super) fn release_consumer_setup(&mut self, reservation: &ConsumerRouteReservation) {
+        self.take_pending(reservation);
     }
 
+    /// Returns whether the route committed.
+    #[must_use]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "commit consumes the reservation on both success and failure"
+    )]
     pub(super) fn commit(
         &mut self,
         reservation: ConsumerRouteReservation,
         route: TransportConsumerRoute,
         selection: ConsumerSourceSelection,
         accept: impl FnOnce() -> Option<RoutedConsumerId>,
-    ) -> Result<(), Vec<TransportRelayRouteEffect>> {
+    ) -> bool {
         // Consume the reservation before router acceptance so every async
         // completion is terminal and cannot reuse its identity after failure.
-        let pending = self.take_pending(&reservation);
-        let ConsumerRouteReservation { key, source_id, .. } = reservation;
-        let Some(TakenPending { relay }) = pending else {
-            return Err(Vec::new());
-        };
-        let Some(current) = self.current_mut(&key, source_id) else {
-            return Err(relay.map_or_else(Vec::new, |relay| self.release_relay(&key, &relay)));
+        if !self.take_pending(&reservation) {
+            return false;
+        }
+        let Some(current) = self.current_mut(&reservation.key, reservation.source_id) else {
+            return false;
         };
         let Some(routed) = accept() else {
-            return Err(relay.map_or_else(Vec::new, |relay| self.release_relay(&key, &relay)));
+            return false;
         };
         current.selection = selection;
         current.realization = ConsumerRealization::Committed(CommittedConsumerRoute {
             route,
             routed,
-            relay,
             pending_upgrade: None,
         });
-        Ok(())
+        true
     }
 
     pub(super) fn update_selection(
@@ -515,7 +466,7 @@ impl RouteGraph {
                 debug_assert_eq!(current.source_id, source_id);
                 (current.realization, entry.intent.is_empty())
             };
-            self.collect_removed_realization(&key, realization, &mut removed);
+            removed.collect(realization);
             if prune {
                 self.entries.remove(&key);
                 remove_from_index_set(&mut self.by_receiver, &key.receiver, &key);
@@ -524,33 +475,18 @@ impl RouteGraph {
         removed
     }
 
-    pub(super) fn reset_receiver_for_replacement(
-        &mut self,
-        receiver: &UserId,
-    ) -> Vec<TransportRelayRouteEffect> {
-        let keys = self.by_receiver.get(receiver).cloned().unwrap_or_default();
-        let mut relays = Vec::new();
-        for key in keys {
-            let relay = {
-                let Some(entry) = self.entries.get_mut(&key) else {
-                    continue;
-                };
-                let Some(current) = entry.current.as_mut() else {
-                    continue;
-                };
-                current.selection =
-                    ConsumerSourceSelection::open(entry.intent.active().unwrap_or(true));
-                match mem::take(&mut current.realization) {
-                    ConsumerRealization::Absent => None,
-                    ConsumerRealization::Pending(_, relay) => relay,
-                    ConsumerRealization::Committed(committed) => committed.relay,
-                }
+    pub(super) fn reset_receiver_for_replacement(&mut self, receiver: &UserId) {
+        for key in self.by_receiver.get(receiver).into_iter().flatten() {
+            let Some(entry) = self.entries.get_mut(key) else {
+                continue;
             };
-            if let Some(relay) = relay {
-                relays.extend(self.release_relay(&key, &relay));
-            }
+            let Some(current) = entry.current.as_mut() else {
+                continue;
+            };
+            current.selection =
+                ConsumerSourceSelection::open(entry.intent.active().unwrap_or(true));
+            current.realization = ConsumerRealization::Absent;
         }
-        relays
     }
 
     pub(super) fn remove_receiver(&mut self, receiver: &UserId) -> RemovedRoutes {
@@ -565,7 +501,7 @@ impl RouteGraph {
                 continue;
             };
             remove_from_index_set(&mut self.by_source, &current.source_id, &key);
-            self.collect_removed_realization(&key, current.realization, &mut removed);
+            removed.collect(current.realization);
         }
         removed
     }
@@ -600,48 +536,9 @@ impl RouteGraph {
                 }
                 mem::take(&mut current.realization)
             };
-            self.collect_removed_realization(&key, realization, &mut removed);
+            removed.collect(realization);
         }
         removed
-    }
-
-    pub(super) fn reserve_relay(
-        &mut self,
-        reservation: &ConsumerRouteReservation,
-        target: &ConsumerSetupTarget,
-        target_worker: MediaWorkerId,
-        active: bool,
-    ) -> Vec<TransportRelayRouteEffect> {
-        let (previous, relay) = {
-            let Some(current) = self.current_mut_for(reservation) else {
-                return Vec::new();
-            };
-            let ConsumerRealization::Pending(id, relay) = &mut current.realization else {
-                return Vec::new();
-            };
-            if *id != reservation.id {
-                return Vec::new();
-            }
-            let next = RouteRelay {
-                route: target.relay_route_key(target_worker),
-                activity: RelayRouteActivity::from_active(active),
-            };
-            if relay.as_ref() == Some(&next) {
-                return Vec::new();
-            }
-            (relay.replace(next.clone()), next)
-        };
-        self.replace_relay(&reservation.key, previous, &relay)
-    }
-
-    pub(super) fn source_activity_target_workers<'a>(
-        &'a self,
-        source: &'a TransportSourceKey,
-    ) -> impl Iterator<Item = MediaWorkerId> + 'a {
-        self.relays
-            .keys()
-            .filter(move |route| &route.source == source)
-            .map(|route| route.target_worker)
     }
 
     fn entry(&mut self, key: SubscriptionKey) -> &mut Subscription {
@@ -661,101 +558,17 @@ impl RouteGraph {
         (current.source_id == source_id).then_some(current)
     }
 
-    fn current_mut_for(
-        &mut self,
-        reservation: &ConsumerRouteReservation,
-    ) -> Option<&mut CurrentPublication> {
-        self.current_mut(&reservation.key, reservation.source_id)
-    }
-
-    fn take_pending(&mut self, reservation: &ConsumerRouteReservation) -> Option<TakenPending> {
-        let current = self.current_mut_for(reservation)?;
-        let pending = mem::take(&mut current.realization);
-        match pending {
-            ConsumerRealization::Pending(id, relay) if id == reservation.id => {
-                Some(TakenPending { relay })
-            }
-            other => {
-                current.realization = other;
-                None
-            }
-        }
-    }
-
-    fn collect_removed_realization(
-        &mut self,
-        key: &SubscriptionKey,
-        realization: ConsumerRealization,
-        removed: &mut RemovedRoutes,
-    ) {
-        let relay = match realization {
-            ConsumerRealization::Absent => None,
-            ConsumerRealization::Pending(_, relay) => relay,
-            ConsumerRealization::Committed(committed) => {
-                removed.routes.push(committed.route);
-                removed.consumers.push(committed.routed);
-                committed.relay
-            }
+    /// Returns whether `reservation` was pending.
+    fn take_pending(&mut self, reservation: &ConsumerRouteReservation) -> bool {
+        let Some(current) = self.current_mut(&reservation.key, reservation.source_id) else {
+            return false;
         };
-        if let Some(relay) = relay {
-            removed.relays.extend(self.release_relay(key, &relay));
+        let pending =
+            matches!(current.realization, ConsumerRealization::Pending(id) if id == reservation.id);
+        if pending {
+            current.realization = ConsumerRealization::Absent;
         }
-    }
-
-    fn replace_relay(
-        &mut self,
-        key: &SubscriptionKey,
-        previous: Option<RouteRelay>,
-        relay: &RouteRelay,
-    ) -> Vec<TransportRelayRouteEffect> {
-        match previous {
-            None => self.set_relay_owner(key, relay, true),
-            Some(previous) if previous.route == relay.route => {
-                self.set_relay_owner(key, relay, false)
-            }
-            Some(previous) => {
-                let mut effects = self.release_relay(key, &previous);
-                effects.extend(self.set_relay_owner(key, relay, true));
-                effects
-            }
-        }
-    }
-
-    fn set_relay_owner(
-        &mut self,
-        key: &SubscriptionKey,
-        relay: &RouteRelay,
-        insert_missing: bool,
-    ) -> Vec<TransportRelayRouteEffect> {
-        let route = relay.route.clone();
-        let owners = match self.relays.entry(route.clone()) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) if insert_missing => entry.insert(RelayOwners::default()),
-            Entry::Vacant(_) => return Vec::new(),
-        };
-        let before = relay_aggregate(owners);
-        owners.insert(key.clone(), relay.activity);
-        relay_effects_for(route, before, relay_aggregate(owners))
-    }
-
-    fn release_relay(
-        &mut self,
-        key: &SubscriptionKey,
-        relay: &RouteRelay,
-    ) -> Vec<TransportRelayRouteEffect> {
-        let route = relay.route.clone();
-        let Some(owners) = self.relays.get_mut(&route) else {
-            return Vec::new();
-        };
-        let before = relay_aggregate(owners);
-        if owners.remove(key).is_none() {
-            return Vec::new();
-        }
-        let after = relay_aggregate(owners);
-        if after.is_none() {
-            self.relays.remove(&route);
-        }
-        relay_effects_for(route, before, after)
+        pending
     }
 }
 
@@ -797,55 +610,4 @@ impl CurrentPublication {
             ConsumerRealization::Absent | ConsumerRealization::Pending(..) => None,
         }
     }
-}
-
-impl ConsumerRealization {
-    fn set_relay_activity(&mut self, activity: RelayRouteActivity) -> Option<RouteRelay> {
-        let relay = match self {
-            Self::Absent => return None,
-            Self::Pending(_, relay) => relay.as_mut()?,
-            Self::Committed(committed) => committed.relay.as_mut()?,
-        };
-        if relay.activity == activity {
-            return None;
-        }
-        relay.activity = activity;
-        Some(relay.clone())
-    }
-}
-
-fn relay_aggregate(owners: &RelayOwners) -> Option<RelayRouteActivity> {
-    (!owners.is_empty()).then(|| {
-        RelayRouteActivity::from_active(owners.values().copied().any(RelayRouteActivity::is_active))
-    })
-}
-
-fn relay_effects_for(
-    route: RelayRouteKey,
-    before: Option<RelayRouteActivity>,
-    after: Option<RelayRouteActivity>,
-) -> Vec<TransportRelayRouteEffect> {
-    let Some(activity) = after else {
-        return vec![TransportRelayRouteEffect {
-            source: route.source,
-            target_media_worker_id: route.target_worker,
-            action: TransportRelayRouteAction::Release,
-        }];
-    };
-    let mut effects = Vec::new();
-    if before.is_none() {
-        effects.push(TransportRelayRouteEffect {
-            source: route.source.clone(),
-            target_media_worker_id: route.target_worker,
-            action: TransportRelayRouteAction::Install,
-        });
-    }
-    if before.unwrap_or(RelayRouteActivity::Inactive) != activity {
-        effects.push(TransportRelayRouteEffect {
-            source: route.source,
-            target_media_worker_id: route.target_worker,
-            action: TransportRelayRouteAction::SetActivity(activity),
-        });
-    }
-    effects
 }

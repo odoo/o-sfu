@@ -58,7 +58,7 @@ impl PacketLoopState {
         let transaction = self
             .routes
             .register_remote_source(source, remote_source_control)?;
-        Ok((RouteSourceKind::Remote, Some(transaction)))
+        Ok((RouteSourceKind::Remote, transaction))
     }
 
     /// Validates source ownership without creating remote-source state.

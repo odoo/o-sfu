@@ -27,8 +27,7 @@ use crate::{
     ConnectionId, RoomWorkerPolicy, RuntimeFeatureFlags,
     engine::{
         media_transport::{
-            AppliedSessionAnswer, MediaTransport, TransportMediaId, TransportRelayRouteAction,
-            TransportTeardown,
+            AppliedSessionAnswer, MediaTransport, TransportMediaId,
             test_support::{test_media_transport, test_rtc_port_range},
         },
         source_model::{
@@ -625,11 +624,13 @@ async fn relay_setup_failure_releases_pending_setup_for_retry() {
         publisher_connection_id,
     )
     .await;
-    let publisher_session_key = room
+    let publisher_worker = room
         .transport_user_key(&publisher_id, publisher_connection_id)
-        .await;
+        .await
+        .media_worker_id();
     media_transport
-        .teardown([TransportTeardown::close_session(publisher_session_key)])
+        .test_api()
+        .stop_worker(publisher_worker.as_usize())
         .await;
 
     commit_scalable_video(
@@ -642,22 +643,15 @@ async fn relay_setup_failure_releases_pending_setup_for_retry() {
     .await;
 
     assert_eq!(room.test_api().consumer_count().await, 0);
-    let release_relays = {
-        let mut state = room.state.write().await;
-        let mut setups = state
-            .refresh_consumer_readiness(&subscriber_id, subscriber_connection_id, &[])
-            .expect("subscriber session should still be current")
-            .work
-            .setups;
-        let setup = setups.pop().expect("retry setup should be planned");
-        assert!(setups.is_empty());
-        state.release_pending_consumer_setup(setup)
-    };
-    assert_eq!(release_relays.len(), 1);
-    assert_eq!(
-        release_relays.first().map(|effect| effect.action),
-        Some(TransportRelayRouteAction::Release)
-    );
+    let mut state = room.state.write().await;
+    let mut setups = state
+        .refresh_consumer_readiness(&subscriber_id, subscriber_connection_id, &[])
+        .expect("subscriber session should still be current")
+        .work
+        .setups;
+    let setup = setups.pop().expect("retry setup should be planned");
+    assert!(setups.is_empty());
+    state.release_pending_consumer_setup(setup);
 }
 
 #[tokio::test]

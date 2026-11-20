@@ -4,8 +4,8 @@
 //! transport intent into these values before the packet-loop task dispatches
 //! them while it owns mutable rtc state
 //! request commands carry a oneshot response
-//! fire-and-forget route controls are best-effort because they may target a
-//! worker that has already torn down the corresponding relay or session
+//! route controls travel between workers without a response because they may
+//! target a worker that has already torn down the corresponding relay or session
 
 use std::{fmt::Write as _, net::SocketAddr, sync::Arc};
 
@@ -41,20 +41,50 @@ use crate::engine::{
     source_model::SourceSyncPolicy,
 };
 
+/// Consumer-worker handles a source worker uses to relay one source there.
+#[derive(Debug, Clone)]
+pub struct RelayTarget {
+    pub(super) id: RelayTargetId,
+    pub(super) mailbox: RelayPacketMailbox,
+    /// Command queue of the consumer worker, which receives source activity.
+    pub(super) control: mpsc::Sender<RtcWorkerCommand>,
+}
+
+#[cfg(any(test, feature = "internal-benchmarks"))]
+impl RelayTarget {
+    /// Builds a target whose source activity arrives on the returned queue.
+    pub(super) fn with_control_queue(
+        id: RelayTargetId,
+        mailbox: RelayPacketMailbox,
+        capacity: usize,
+    ) -> (Self, mpsc::Receiver<RtcWorkerCommand>) {
+        let (control, control_rx) = mpsc::channel(capacity);
+        (
+            Self {
+                id,
+                mailbox,
+                control,
+            },
+            control_rx,
+        )
+    }
+}
+
 /// command handle used by remote consumers to push control back to a source worker
 ///
 /// a route that consumes media from another worker keeps this handle beside the
 /// remote-source registration
-/// later keyframe or layer-gate requests can then reach the worker that owns
-/// the producer without exposing the source worker internals
+/// it announces the consumer worker as a relay target, then carries keyframe
+/// and layer-gate requests to the worker that owns the producer without
+/// exposing the source worker internals
 ///
-/// sends are deliberately best-effort
+/// sends never wait
 /// stale remote routes, closed workers and full mailboxes are normal during
 /// teardown or topology churn
 #[derive(Debug, Clone)]
 pub struct RemoteSourceControl {
     tx: mpsc::Sender<RtcWorkerCommand>,
-    target_id: RelayTargetId,
+    target: RelayTarget,
     rtc_metrics: Arc<RtcMetricsRecorder>,
 }
 
@@ -69,14 +99,43 @@ impl RemoteSourceControl {
     /// creates a source-control handle for one relay target on a worker mailbox
     pub(super) fn new(
         tx: mpsc::Sender<RtcWorkerCommand>,
-        target_id: RelayTargetId,
+        target: RelayTarget,
         rtc_metrics: Arc<RtcMetricsRecorder>,
     ) -> Self {
         Self {
             tx,
-            target_id,
+            target,
             rtc_metrics,
         }
+    }
+
+    /// announces this worker as a relay target with its current packet gate
+    ///
+    /// the source worker answers every delivered announcement with the current
+    /// source activity
+    pub(super) fn add_target(
+        &self,
+        source: &TransportSourceKey,
+        packet_gate: PacketLayerGate,
+    ) -> RemoteControlSendOutcome {
+        self.send_command(
+            RouteControlRequest::AddRelayTarget {
+                source: source.clone(),
+                target: self.target.clone(),
+                packet_gate,
+            },
+            RtcRemoteControlDropKind::RelayTarget,
+        )
+    }
+
+    pub(super) fn remove_target(&self, source: &TransportSourceKey) -> RemoteControlSendOutcome {
+        self.send_command(
+            RouteControlRequest::RemoveRelayTarget {
+                source: source.clone(),
+                target_id: self.target.id,
+            },
+            RtcRemoteControlDropKind::RelayTarget,
+        )
     }
 
     /// asks the source worker to request a keyframe for a remote consumer
@@ -92,7 +151,7 @@ impl RemoteSourceControl {
         self.send_command(
             RouteControlRequest::RequestRemoteKeyframe {
                 source: source.clone(),
-                target_id: self.target_id,
+                target_id: self.target.id,
                 rid,
                 kind,
             },
@@ -111,7 +170,7 @@ impl RemoteSourceControl {
         self.send_command(
             RouteControlRequest::SetRemoteSourcePacketGate {
                 source: source.clone(),
-                target_id: self.target_id,
+                target_id: self.target.id,
                 packet_gate,
             },
             RtcRemoteControlDropKind::PacketGate,
@@ -134,19 +193,28 @@ impl RemoteSourceControl {
         request: RouteControlRequest,
         drop_kind: RtcRemoteControlDropKind,
     ) -> RemoteControlSendOutcome {
-        match self.tx.try_send(RtcWorkerCommand::RouteControl {
-            request,
-            response: None,
-        }) {
-            Ok(()) => RemoteControlSendOutcome::Forwarded,
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                self.rtc_metrics.record_rtc_remote_control_drop(drop_kind);
-                RemoteControlSendOutcome::Full
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.rtc_metrics.record_rtc_remote_control_drop(drop_kind);
-                RemoteControlSendOutcome::Closed
-            }
+        send_route_control(&self.tx, request, &self.rtc_metrics, drop_kind)
+    }
+}
+
+/// Enqueues `request` on another worker without waiting.
+///
+/// `Full` and `Closed` count as drops of `drop_kind`.
+pub(super) fn send_route_control(
+    tx: &mpsc::Sender<RtcWorkerCommand>,
+    request: RouteControlRequest,
+    rtc_metrics: &RtcMetricsRecorder,
+    drop_kind: RtcRemoteControlDropKind,
+) -> RemoteControlSendOutcome {
+    match tx.try_send(RtcWorkerCommand::RouteControl(request)) {
+        Ok(()) => RemoteControlSendOutcome::Forwarded,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            rtc_metrics.record_rtc_remote_control_drop(drop_kind);
+            RemoteControlSendOutcome::Full
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            rtc_metrics.record_rtc_remote_control_drop(drop_kind);
+            RemoteControlSendOutcome::Closed
         }
     }
 }
@@ -238,20 +306,19 @@ pub enum WorkerMediaControlBatchOutcome {
     Consumers(Vec<ConsumerRouteControlOutcome>),
 }
 
+/// Fire-and-forget control between the workers of one relay.
+///
+/// Consumer workers send every variant except `SetRemoteSourceActivity`, which
+/// source workers send back to their relay targets.
 pub enum RouteControlRequest {
     AddRelayTarget {
         source: TransportSourceKey,
-        target_id: RelayTargetId,
-        target: RelayPacketMailbox,
+        target: RelayTarget,
+        packet_gate: PacketLayerGate,
     },
     RemoveRelayTarget {
         source: TransportSourceKey,
         target_id: RelayTargetId,
-    },
-    SetRelayTargetActive {
-        source: TransportSourceKey,
-        target_id: RelayTargetId,
-        active: bool,
     },
     SetRemoteSourceActivity {
         source: TransportSourceKey,
@@ -388,10 +455,7 @@ pub enum RtcWorkerCommand {
         batch: WorkerMediaControlBatch,
         response: RtcWorkerResponse<WorkerMediaControlBatchOutcome>,
     },
-    RouteControl {
-        request: RouteControlRequest,
-        response: Option<RtcWorkerResponse<()>>,
-    },
+    RouteControl(RouteControlRequest),
     RegisterTcpOutbox {
         peer_addr: SocketAddr,
         ufrag: String,
@@ -423,7 +487,7 @@ impl RtcWorkerCommand {
             | Self::AddRecvMedia { .. }
             | Self::AddSendMedia { .. }
             | Self::ApplyMediaControlBatch { .. }
-            | Self::RouteControl { .. }
+            | Self::RouteControl(_)
             | Self::RegisterTcpOutbox { .. } => None,
             #[cfg(any(test, feature = "testing-transport"))]
             Self::DebugProbe(_) => None,
@@ -442,7 +506,7 @@ impl RtcWorkerCommand {
             | Self::AddRecvMedia { .. }
             | Self::AddSendMedia { .. }
             | Self::ApplyMediaControlBatch { .. }
-            | Self::RouteControl { .. }
+            | Self::RouteControl(_)
             | Self::RegisterTcpOutbox { .. } => false,
             #[cfg(test)]
             Self::ResolveMediaMid { .. } => false,

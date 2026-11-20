@@ -368,6 +368,8 @@ impl ExportedMetricLabelPair for RtcRelayEnqueueResult {
 impl_exported_metric_label!(pub enum RtcRemoteControlDropKind {
     Keyframe => (0, "keyframe"),
     PacketGate => (1, "packet_gate"),
+    RelayTarget => (2, "relay_target"),
+    SourceActivity => (3, "source_activity"),
 });
 
 impl_exported_metric_label!(pub enum RtcRemotePacketGateConvergence {

@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtcRemoteControlDropKind};
 use str0m::{
     media::{Mid, Rid},
     rtp::Ssrc,
@@ -11,9 +12,8 @@ use tracing::debug;
 
 use super::{
     super::{
-        relay_registry::{
-            ActiveRelayTarget, RelayPacketMailbox, RelaySourceRegistration, RelayTargetId,
-        },
+        super::commands::{self, RelayTarget, RemoteControlSendOutcome, RouteControlRequest},
+        relay_registry::{ActiveRelayTarget, RelaySourceRegistration, RelayTargetId},
         route_control::{
             PacketLayerGate, SourceAudioPolicyState, aggregate_packet_gates, intersect_packet_gates,
         },
@@ -23,9 +23,9 @@ use super::{
     ConsumerRouteUpdate, RelayForwardView, RidReadinessScratch,
 };
 use crate::engine::media_transport::{
-    ActiveSpeakerSource, ActiveSpeakerSourceDiagnostic, SourceActivityRevision,
+    ActiveSpeakerSource, ActiveSpeakerSourceDiagnostic, ProducerActivity, SourceActivityRevision,
     SourceActivityUpdate, TransportAdapterError, TransportMediaId, TransportRidActivity,
-    TransportSessionKey, TransportSourceActivity, rtc::codec,
+    TransportSessionKey, TransportSourceActivity, TransportSourceKey, rtc::codec,
 };
 
 #[derive(Default)]
@@ -403,8 +403,15 @@ impl RouteSource {
         self.packet.set_local_gate(gate);
     }
 
-    pub(super) fn set_relay_pkt_gate(&mut self, target_id: RelayTargetId, gate: PacketLayerGate) {
+    /// Returns whether a registered target is active under `gate`.
+    pub(super) fn set_relay_pkt_gate(
+        &mut self,
+        target_id: RelayTargetId,
+        gate: PacketLayerGate,
+    ) -> Option<bool> {
+        let active = self.relay.as_mut()?.set_target_gate(target_id, gate)?;
         self.packet.set_relay_gate(target_id, gate);
+        Some(active)
     }
 
     pub(super) fn next_active_speaker_deadline(&self, now: Instant) -> Option<Instant> {
@@ -427,14 +434,47 @@ impl RouteSource {
 
     pub(super) fn add_relay_target(
         &mut self,
-        target_id: RelayTargetId,
-        target: RelayPacketMailbox,
+        source: &TransportSourceKey,
+        target: RelayTarget,
+        gate: PacketLayerGate,
     ) -> bool {
         let became_forwarding = self.local_route.is_none() && self.relay.is_none();
+        let target_id = target.id;
         self.relay
-            .get_or_insert_with(RelaySourceRegistration::default)
-            .add_target(target_id, target);
+            .get_or_insert_with(|| RelaySourceRegistration::new(source.clone()))
+            .add_target(target, gate);
+        self.packet.set_relay_gate(target_id, gate);
         became_forwarding
+    }
+
+    pub(super) fn relay_target_ids(&self) -> impl Iterator<Item = RelayTargetId> + '_ {
+        self.relay
+            .iter()
+            .flat_map(RelaySourceRegistration::target_ids)
+    }
+
+    /// Sends the current source activity to one relay target.
+    ///
+    /// Returns `None` when the target is not registered.
+    pub(super) fn send_relay_activity(
+        &self,
+        target_id: RelayTargetId,
+        rtc_metrics: &RtcMetricsRecorder,
+    ) -> Option<RemoteControlSendOutcome> {
+        let relay = self.relay.as_ref()?;
+        let update = SourceActivityUpdate::new(
+            ProducerActivity::from_active(self.source_active),
+            self.source_activity_revision,
+        );
+        Some(commands::send_route_control(
+            relay.target_control(target_id)?,
+            RouteControlRequest::SetRemoteSourceActivity {
+                source: relay.source().clone(),
+                update,
+            },
+            rtc_metrics,
+            RtcRemoteControlDropKind::SourceActivity,
+        ))
     }
 
     pub(super) fn remove_relay_target(
@@ -445,18 +485,20 @@ impl RouteSource {
         if registration.remove_target(target_id)? {
             self.relay = None;
         }
-        let change = if self.relay.is_none() && self.local_route.is_none() {
+        self.packet.forget_relay_gate(target_id);
+        Some(self.forwarding_change())
+    }
+
+    pub(super) fn remove_relay(&mut self) -> Option<ForwardingChange> {
+        self.relay.take()?;
+        Some(self.forwarding_change())
+    }
+
+    const fn forwarding_change(&self) -> ForwardingChange {
+        if self.relay.is_none() && self.local_route.is_none() {
             ForwardingChange::StoppedForwarding
         } else {
             ForwardingChange::StillForwarding
-        };
-        self.packet.forget_relay_gate(target_id);
-        Some(change)
-    }
-
-    pub(super) fn set_relay_target_active(&mut self, target_id: RelayTargetId, active: bool) {
-        if let Some(registration) = self.relay.as_mut() {
-            registration.set_target_active(target_id, active);
         }
     }
 

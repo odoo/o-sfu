@@ -177,20 +177,18 @@ fn install_relayed_source(state: &mut RoomState) -> RelayedSource {
     }
 }
 
-fn source_relay_teardown_count(teardown: &[TransportTeardown], relay: &RelayedSource) -> usize {
-    teardown
-        .iter()
-        .filter(|operation| {
-            matches!(
-                operation.action(),
-                TransportTeardownAction::ReleaseRelayRoute {
-                    source,
-                    target_media_worker_id,
-                } if source == relay.route.source()
-                    && *target_media_worker_id == relay.target_media_worker_id
-            )
-        })
-        .count()
+/// The consumer worker withdraws its relay target when this media goes away.
+fn removes_relayed_consumer(teardown: &[TransportTeardown], relay: &RelayedSource) -> bool {
+    teardown.iter().any(|operation| {
+        matches!(
+            operation.action(),
+            TransportTeardownAction::RemoveMedia {
+                session_key,
+                transport_media_id,
+            } if session_key == relay.route.consumer_session_key()
+                && *transport_media_id == relay.route.consumer_transport_media_id()
+        )
+    })
 }
 
 #[test]
@@ -329,16 +327,13 @@ fn presence_update_returns_none_for_stale_connection() {
 fn disconnect_sessions_ignores_missing_members() {
     let mut state = test_state();
     let outcome = state.apply_disconnect_users(&[UserId::Integer(1)]);
-    let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
-
-    assert!(relays.is_empty());
-    assert!(teardown.is_empty());
+    assert!(outcome.transport_plan.teardown().is_empty());
     assert!(outcome.effects.close_requests.is_empty());
     assert!(outcome.effects.fanouts.is_empty());
 }
 
 #[test]
-fn replacement_join_releases_relay_with_displaced_source_session() {
+fn replacement_join_removes_relayed_consumers_of_displaced_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
     let outcome = state
@@ -360,9 +355,8 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
         outcome.transport_session_key.media_worker_id(),
         relay.route.source_session_key().media_worker_id()
     );
-    let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
-    assert!(relays.is_empty());
-    assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
+    let teardown = outcome.transport_plan.teardown();
+    assert!(removes_relayed_consumer(teardown, &relay));
     assert!(teardown.iter().any(|operation| {
         matches!(
             operation.action(),
@@ -378,21 +372,11 @@ fn replacement_join_releases_relay_with_displaced_source_session() {
                 if session_key == relay.route.source_session_key()
         )
     }));
-    assert!(teardown.iter().any(|operation| {
-        matches!(
-            operation.action(),
-            TransportTeardownAction::RemoveMedia {
-                session_key,
-                transport_media_id,
-            } if session_key == relay.route.consumer_session_key()
-                && *transport_media_id == relay.route.consumer_transport_media_id()
-        )
-    }));
     outcome.transport_plan.discard_for_test();
 }
 
 #[test]
-fn leave_releases_relay_before_forgetting_source_session() {
+fn leave_removes_relayed_consumers_of_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
     let outcome = state
@@ -404,21 +388,20 @@ fn leave_releases_relay_before_forgetting_source_session() {
     let ConnectionCloseCommit::Current { transport_plan, .. } = &outcome else {
         panic!("publisher leave should remove the current user");
     };
-    let (relays, teardown) = transport_plan.relays_and_teardown();
-    assert!(relays.is_empty());
-    assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
+    assert!(removes_relayed_consumer(transport_plan.teardown(), &relay));
     discard_close_commit(outcome);
 }
 
 #[test]
-fn disconnect_releases_relay_before_forgetting_source_session() {
+fn disconnect_removes_relayed_consumers_of_source_session() {
     let mut state = test_state();
     let relay = install_relayed_source(&mut state);
     let outcome =
         state.apply_disconnect_users(from_ref(relay.route.source_session_key().user_id()));
-    let (relays, teardown) = outcome.transport_plan.relays_and_teardown();
-    assert!(relays.is_empty());
-    assert_eq!(source_relay_teardown_count(teardown, &relay), 1);
+    assert!(removes_relayed_consumer(
+        outcome.transport_plan.teardown(),
+        &relay
+    ));
     for teardown in outcome.session_teardowns {
         teardown.discard_for_test();
     }
