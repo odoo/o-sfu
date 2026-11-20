@@ -11,7 +11,7 @@ with `#[source]`.
 Where failures are reported rather than matched, such as startup and
 configuration, use [`anyhow`](https://docs.rs/anyhow/latest/anyhow/). Add
 `Context` when it identifies an operation or resource the existing error does
-not name, keeping chains short and stating each fact once.
+not name. Keep chains short and state each fact once.
 
 > [!NOTE]
 > Further reading: **[error types in the Rust API Guidelines](https://rust-lang.github.io/api-guidelines/interoperability.html#error-types-are-meaningful-and-well-behaved-c-good-err)**, **[`thiserror` attributes](https://docs.rs/thiserror/latest/thiserror/#details)**, **[`anyhow::Context`](https://docs.rs/anyhow/latest/anyhow/trait.Context.html)** and **[`Error::source` in the standard library](https://doc.rust-lang.org/std/error/trait.Error.html#error-source)**.

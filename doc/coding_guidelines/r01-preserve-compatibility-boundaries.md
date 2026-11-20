@@ -1,8 +1,9 @@
 # R1. Preserve compatibility between versions
 
 Clients and servers may deploy at different times, so preserve compatibility
-through mixed-version upgrades. This contract covers published
-APIs, wire (sfu_client -> server) messages, documented Odoo-facing behavior.
+through mixed-version upgrades. This contract covers published APIs, wire
+messages from `sfu_client` to the server and documented Odoo-facing
+behavior.
 
 Prefer additive changes that old peers can tolerate: give absent new fields
 defaults, ignore unknown optional data where permitted and negotiate tags that
@@ -14,7 +15,8 @@ and tests with mixed versions cover the remaining upgrades and rollbacks. An
 unavoidable wire break requires an explicit migration coordinated across the
 server, client and compiled Odoo bundle.
 
-(you should probably talk to the internal team when doing deployment-critical changes)
+You should probably talk to the internal team before making
+deployment-critical changes.
 
 > [!NOTE]
 > Further reading: **[SemVer compatibility in The Cargo Book](https://doc.rust-lang.org/cargo/reference/semver.html)** and **[protocol extension guidance in RFC 6709](https://www.rfc-editor.org/rfc/rfc6709.html)**.

@@ -73,6 +73,6 @@ mod test_support;
 ```
 
 **Rationale:** Separate files keep production modules focused and keep
-verification scaffolding out of runtime code. This also allows easy exclusion
-of tests when grepping files. A file under `TESTS/` never enters the build of
+verification scaffolding out of runtime code. They also make tests easy to
+exclude when grepping files. A file under `TESTS/` never enters the build of
 another crate.

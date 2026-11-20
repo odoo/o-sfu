@@ -6,9 +6,9 @@ has a clear responsibility of its own. Separating item kinds or shortening a
 file is not sufficient reason.
 
 Within a module, lead with the main types and entry points before introducing
-private helpers. Keep inherent `impl`s beside their types unless a large owner
-needs to be split by responsibility and expose one coherent interface at the
-module root.
+private helpers. Keep inherent `impl`s beside their types. A large owner may
+split its `impl`s by responsibility when the module root still exposes one
+coherent interface.
 
 **Example:** `SourceModelError` belongs beside `PublishedSourceDescriptor`
 because its meaning comes from the constructor that returns it.

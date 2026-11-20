@@ -1,5 +1,7 @@
 //! Odoo's Selective Forwarding Unit (SFU) for audio/video calls.
 //!
+//! _for a more general introduction to the SFU, see [*Hello?? Can you see my screen?*](https://github.com/odoo/o-sfu/blob/master/doc/hello.md)._
+//!
 //! `o-sfu` receives participants' audio and video and forwards selected streams
 //! to other participants in the same room. Each sender uploads media to the SFU
 //! instead of sending a separate copy to every receiver.

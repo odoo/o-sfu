@@ -21,7 +21,8 @@ cancellation safe.
 waits for the result before honoring later shutdown.
 
 The one-shot shutdown policy in `ingress_should_stop` permits a different
-choice: it deliberately drops one received datagram when shutdown wins.
+choice: it deliberately drops one received datagram when shutdown completes
+first.
 
 **Avoid**
 
@@ -57,5 +58,5 @@ let should_stop = tokio::select! {
 ```
 
 **Rationale:** Dropping an unfinished future stops its local work, but effects
-already handed to another task can continue without a caller to observe the
+already passed to another task can continue without a caller to observe the
 result.

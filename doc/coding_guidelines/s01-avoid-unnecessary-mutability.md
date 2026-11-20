@@ -47,4 +47,5 @@ fn create_session(auth: &AuthPayload) -> Session {
 }
 ```
 
-**Rationale:** Keeping mutation local makes state transitions and ownership easier to audit/understand.
+**Rationale:** Keeping mutation local makes state transitions and ownership
+easier to audit and understand.

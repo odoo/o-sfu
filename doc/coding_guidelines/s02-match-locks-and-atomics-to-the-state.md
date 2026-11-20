@@ -1,4 +1,4 @@
-# S2. Choose the right synchronzation primitives
+# S2. Choose the right synchronization primitives
 
 Prefer one lock for fields that must remain consistent. Atomics suit
 independent scalars, but dependent values require an explicit publication

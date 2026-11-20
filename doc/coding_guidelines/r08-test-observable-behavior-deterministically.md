@@ -18,7 +18,7 @@ fixed expectations written independently of its implementation.
 > Further reading: **[async testing with paused time in Tokio](https://tokio.rs/tokio/topics/testing)**.
 
 **Example:** `websocket_rejects_batches_over_protocol_envelope_limit` drives the
-real WebSocket boundary then observes its close code and metrics.
+real WebSocket boundary and then observes its close code and metrics.
 
 **Avoid**
 
