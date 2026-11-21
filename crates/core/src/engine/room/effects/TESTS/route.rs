@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     io,
+    net::Ipv4Addr,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
 };
@@ -125,7 +126,7 @@ async fn cancelled_merged_transport_plan_diagnoses_unacknowledged_activity()
             "room-transport-obligation",
             b"room".to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await?;
     for receiver_has_work in [false, true] {
@@ -187,7 +188,7 @@ async fn cancelled_final_consumer_setup_diagnoses_unfinished_transport_plan()
             "room-setup-obligation",
             b"room".to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await?;
     let publisher = UserId::Integer(1);

@@ -1,4 +1,4 @@
-use std::{cell::Cell, time::Duration};
+use std::{cell::Cell, net::Ipv4Addr, time::Duration};
 pub(super) use std::{sync::Arc, time::Instant};
 
 pub(super) use o_sfu_model::{UserId, UserInfo, UserPermissions, VideoLayoutIntent};
@@ -261,7 +261,7 @@ async fn setup_joined_users_with_ready_publisher(adapter: MediaTransport) -> Joi
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -355,7 +355,7 @@ async fn setup_ready_users_with_manager(
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -382,7 +382,7 @@ pub(super) async fn setup_ready_users_with_transport_receivers(
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");

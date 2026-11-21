@@ -212,7 +212,7 @@ fn room_summary(
             .map_or(0, MediaWorkerId::as_usize),
         publication_count: counts.publications,
         recording_state: capture.recording_state,
-        remote_address: entry.remote_address,
+        remote_address: entry.remote_address.to_string(),
         source_count: counts.publications,
         user_count: capture.session_keys.len(),
         subscription_count: counts.subscriptions,

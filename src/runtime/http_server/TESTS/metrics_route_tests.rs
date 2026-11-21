@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
 use tokio::{sync::Barrier, task::yield_now, time::timeout};
 
@@ -186,7 +186,12 @@ async fn metrics_route_completes_during_room_mutations() -> TestResult {
             let room = require_ok(
                 test_state
                     .room_manager
-                    .serve_room("metrics", test_room_key(), &RoomConfig::default(), None)
+                    .serve_room(
+                        "metrics",
+                        test_room_key(),
+                        &RoomConfig::default(),
+                        Ipv4Addr::LOCALHOST.into(),
+                    )
                     .await,
                 "test room should be served",
             )?;

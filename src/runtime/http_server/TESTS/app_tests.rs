@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use o_sfu_protocol::wire::StreamType;
 use o_sfu_router::{
     rtp::MediaStream,
@@ -73,7 +75,7 @@ async fn stats_returns_live_room_data() -> TestResult {
                     web_rtc_enabled: query.web_rtc_enabled(),
                     recording_address: query.recording_address.clone(),
                 },
-                Some("203.0.113.10"),
+                Ipv4Addr::new(203, 0, 113, 10).into(),
             )
             .await,
         "test room should be served",

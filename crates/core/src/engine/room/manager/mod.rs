@@ -1,9 +1,10 @@
 //! Current-room registry and lifecycle coordinator.
 //!
-//! [`RoomManager`] publishes one current room per issuer, admits WebSocket
-//! sessions and runs background room work. Lease admission holds the directory
-//! read guard to prove currentness and releases it before room work begins.
-//! Empty-room removal waits for every accepted lease to finish.
+//! [`RoomManager`] publishes one current room per requester address and
+//! issuer, admits WebSocket sessions and runs background room work. Lease
+//! admission holds the directory read guard to prove currentness and releases
+//! it before room work begins. Empty-room removal waits for every accepted
+//! lease to finish.
 
 #[cfg(any(test, feature = "testing-transport"))]
 use std::sync::Mutex;
@@ -11,6 +12,7 @@ use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet},
     future::Future,
+    net::IpAddr,
     sync::Arc,
     time::Duration,
 };
@@ -66,8 +68,8 @@ pub struct RuntimeRoomStatsSnapshot {
     pub create_date: String,
     /// room uuid returned by `/v1/channel`
     pub uuid: String,
-    /// first create request address or `unknown` when unavailable
-    pub remote_address: String,
+    /// address of the requester that reserved the room
+    pub remote_address: IpAddr,
     /// live user, stream and bitrate stats read after the directory snapshot
     pub users_stats: RoomUserStatsSnapshot,
     /// room creation flag exposed by `/v1/stats`
@@ -93,8 +95,8 @@ pub struct RuntimeRoomDirectorySnapshot {
     pub room: Arc<Room>,
     /// room publication timestamp in RFC 3339 UTC format
     pub create_date: String,
-    /// first create request address or `unknown` when unavailable
-    pub remote_address: String,
+    /// address of the requester that reserved the room
+    pub remote_address: IpAddr,
 }
 
 fn retrieve_room_reservation(
@@ -102,8 +104,9 @@ fn retrieve_room_reservation(
     issuer: &str,
     key: &SecretSlice<u8>,
     config: &RoomConfig,
+    remote_address: IpAddr,
 ) -> Result<Option<Arc<Room>>, RoomManagerServeError> {
-    let Some(entry) = directory.entry_by_issuer(issuer) else {
+    let Some(entry) = directory.entry_by_reservation(remote_address, issuer) else {
         return Ok(None);
     };
     if !entry.room.definition.matches_reservation(key, config) {
@@ -192,10 +195,13 @@ impl RoomManager {
         }
     }
 
-    /// Returns the current room for `issuer` or publishes a new reservation.
+    /// Returns the current room that `remote_address` reserved for `issuer` or
+    /// publishes a new reservation.
     ///
-    /// The first reservation fixes decoded key bytes, config and remote address.
-    /// The admitting runtime validates key encoding and strength before this call.
+    /// Each requester address has its own issuer namespace, and an
+    /// IPv4-mapped IPv6 address shares the namespace of its IPv4 form. The
+    /// first reservation fixes decoded key bytes and config. The admitting
+    /// runtime validates key encoding and strength before this call.
     /// Matching requests return the same room and renew an outstanding
     /// reservation without rearming one retired by a successful join.
     ///
@@ -208,16 +214,21 @@ impl RoomManager {
         issuer: &str,
         key: SecretSlice<u8>,
         config: &RoomConfig,
-        remote_address: Option<&str>,
+        remote_address: IpAddr,
     ) -> Result<Arc<Room>, RoomManagerServeError> {
+        let remote_address = remote_address.to_canonical();
         {
             let directory = self.directory.read().await;
-            if let Some(room) = retrieve_room_reservation(&directory, issuer, &key, config)? {
+            if let Some(room) =
+                retrieve_room_reservation(&directory, issuer, &key, config, remote_address)?
+            {
                 return Ok(room);
             }
         }
         let mut directory = self.directory.write().await;
-        if let Some(room) = retrieve_room_reservation(&directory, issuer, &key, config)? {
+        if let Some(room) =
+            retrieve_room_reservation(&directory, issuer, &key, config, remote_address)?
+        {
             return Ok(room);
         }
         let room = self.factory.create(issuer, key, config);
@@ -231,7 +242,7 @@ impl RoomManager {
         info!(
             event = telemetry_event::ROOM_CREATED,
             room_id = room.uuid(),
-            remote_address = remote_address.unwrap_or("unknown"),
+            remote_address = %remote_address,
             web_rtc_enabled = config.web_rtc_enabled,
             "room created"
         );

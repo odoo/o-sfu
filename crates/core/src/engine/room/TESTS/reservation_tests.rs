@@ -10,7 +10,12 @@
 //! explicitly instead of sleeping. they spawn no tasks, which keeps paused-time
 //! auto-advance from reaching any other timer
 
-use std::{panic, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    panic,
+    sync::Arc,
+    time::Duration,
+};
 
 use o_sfu_telemetry::metrics::RuntimeMetrics;
 use tokio::time::advance;
@@ -151,6 +156,7 @@ async fn empty_room_removal_wins_over_a_later_expiry_claim() {
 #[tokio::test(start_paused = true)]
 async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
     const ISSUER: &str = "issuer-stale-expiry";
+    const REMOTE_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
     let factory = test_factory();
     let mut directory = RoomDirectory::default();
@@ -161,7 +167,7 @@ async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
     );
     directory.insert(
         Arc::clone(&stale),
-        None,
+        REMOTE_ADDRESS,
         TEST_RESERVATION_TTL,
         TEST_DEPARTURE_GRACE,
     );
@@ -182,7 +188,7 @@ async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
     );
     directory.insert(
         Arc::clone(&current),
-        None,
+        REMOTE_ADDRESS,
         TEST_RESERVATION_TTL,
         TEST_DEPARTURE_GRACE,
     );
@@ -197,7 +203,7 @@ async fn stale_expiry_never_removes_a_newer_room_for_the_same_issuer() {
 
     assert_eq!(
         directory
-            .entry_by_issuer(ISSUER)
+            .entry_by_reservation(REMOTE_ADDRESS, ISSUER)
             .map(|entry| entry.room.uuid().to_owned())
             .as_deref(),
         Some(current.uuid()),

@@ -1,5 +1,6 @@
 use std::{
     mem,
+    net::Ipv4Addr,
     num::{NonZeroU64, NonZeroUsize},
     time::Duration,
 };
@@ -778,7 +779,7 @@ async fn build_publisher_fixture_with(
             "issuer-sfu-core",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
