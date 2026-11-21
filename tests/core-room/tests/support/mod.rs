@@ -96,7 +96,7 @@ pub async fn serve_room(manager: &RoomManager, issuer: &str) -> Result<Arc<Room>
             issuer,
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await?)
 }

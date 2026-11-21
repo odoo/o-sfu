@@ -5,6 +5,7 @@
 
 use std::{
     collections::BTreeMap,
+    net::Ipv4Addr,
     num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
 };
@@ -243,7 +244,7 @@ async fn setup_subscription_room_with_sender(
             issuer,
             b"room".to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -381,7 +382,7 @@ async fn stored_receiver_intent_applies_before_publish_and_across_activity() {
             "issuer-transition-subscription-intent",
             b"room".to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");

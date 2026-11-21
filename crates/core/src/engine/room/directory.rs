@@ -1,12 +1,14 @@
 //! Current-room indexes and lifecycle leases.
 //!
-//! [`RoomDirectory`] indexes one current room by UUID, issuer and instance ID.
+//! [`RoomDirectory`] indexes one current room by UUID, instance ID and
+//! reservation, the requester's remote address paired with its issuer.
 //! Each entry shares a [`RoomLifecycle`] gate. Accepted leases defer empty-room
 //! removal until the final mutation finishes. Reservation expiry removes only
 //! idle entries claimed by that gate.
 
 use std::{
     collections::BTreeMap,
+    net::IpAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -26,8 +28,6 @@ use crate::{
 #[cfg(any(test, feature = "testing-transport"))]
 mod test_support;
 
-const UNKNOWN_REMOTE_ADDRESS: &str = "unknown";
-
 fn rfc3339_now() -> String {
     match OffsetDateTime::now_utc().format(&Rfc3339) {
         Ok(timestamp) => timestamp,
@@ -44,13 +44,13 @@ pub(crate) struct RoomDirectoryEntry {
     pub room: Arc<Room>,
     pub lifecycle: RoomLifecycle,
     pub create_date: String,
-    pub remote_address: String,
+    pub remote_address: IpAddr,
 }
 
 impl RoomDirectoryEntry {
     fn new(
         room: Arc<Room>,
-        remote_address: Option<&str>,
+        remote_address: IpAddr,
         reservation_ttl: Duration,
         departure_grace: Duration,
     ) -> Self {
@@ -58,7 +58,7 @@ impl RoomDirectoryEntry {
             room,
             lifecycle: RoomLifecycle::new(reservation_ttl, departure_grace),
             create_date: rfc3339_now(),
-            remote_address: remote_address.unwrap_or(UNKNOWN_REMOTE_ADDRESS).to_owned(),
+            remote_address,
         }
     }
 }
@@ -306,7 +306,9 @@ impl Drop for LeaseWork {
 pub(crate) struct RoomDirectory {
     by_uuid: BTreeMap<String, RoomDirectoryEntry>,
     uuid_by_instance: BTreeMap<RoomInstanceId, String>,
-    uuid_by_issuer: BTreeMap<String, String>,
+    /// Requesters choose their issuer tag without authenticating as a tenant,
+    /// so indexing issuers alone would let one requester claim another's room.
+    uuid_by_reservation: BTreeMap<(IpAddr, String), String>,
 }
 
 impl RoomDirectory {
@@ -321,8 +323,14 @@ impl RoomDirectory {
     }
 
     #[must_use]
-    pub(crate) fn entry_by_issuer(&self, issuer: &str) -> Option<&RoomDirectoryEntry> {
-        let uuid = self.uuid_by_issuer.get(issuer)?;
+    pub(crate) fn entry_by_reservation(
+        &self,
+        remote_address: IpAddr,
+        issuer: &str,
+    ) -> Option<&RoomDirectoryEntry> {
+        let uuid = self
+            .uuid_by_reservation
+            .get(&(remote_address, issuer.to_owned()))?;
         self.by_uuid.get(uuid)
     }
 
@@ -348,13 +356,13 @@ impl RoomDirectory {
     pub(crate) fn insert(
         &mut self,
         room: Arc<Room>,
-        remote_address: Option<&str>,
+        remote_address: IpAddr,
         reservation_ttl: Duration,
         departure_grace: Duration,
     ) {
         let room_id = room.uuid().to_owned();
-        self.uuid_by_issuer
-            .insert(room.issuer().to_owned(), room_id.clone());
+        self.uuid_by_reservation
+            .insert((remote_address, room.issuer().to_owned()), room_id.clone());
         self.uuid_by_instance
             .insert(room.instance_id(), room_id.clone());
         self.by_uuid.insert(
@@ -363,20 +371,19 @@ impl RoomDirectory {
         );
     }
 
-    #[must_use]
-    pub(crate) fn contains_current(&self, uuid: &str, room: &Arc<Room>) -> bool {
-        self.by_uuid
-            .get(uuid)
-            .is_some_and(|entry| Arc::ptr_eq(&entry.room, room))
-    }
-
     pub(crate) fn remove_if_current(&mut self, uuid: &str, room: &Arc<Room>) -> bool {
-        if self.contains_current(uuid, room) {
-            self.by_uuid.remove(uuid);
-            self.uuid_by_issuer.remove(room.issuer());
-            self.uuid_by_instance.remove(&room.instance_id());
-            return true;
-        }
-        false
+        let Some(remote_address) = self
+            .by_uuid
+            .get(uuid)
+            .filter(|entry| Arc::ptr_eq(&entry.room, room))
+            .map(|entry| entry.remote_address)
+        else {
+            return false;
+        };
+        self.by_uuid.remove(uuid);
+        self.uuid_by_reservation
+            .remove(&(remote_address, room.issuer().to_owned()));
+        self.uuid_by_instance.remove(&room.instance_id());
+        true
     }
 }

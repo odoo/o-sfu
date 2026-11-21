@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    net::{IpAddr, Ipv4Addr},
     num::{NonZeroU64, NonZeroUsize},
     slice,
     sync::Arc,
@@ -90,7 +91,7 @@ async fn serve_test_room(manager: &RoomManager, issuer: &str) -> Arc<TestRoom> {
             issuer,
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served")
@@ -368,7 +369,7 @@ async fn room_and_user_lifecycle_events_preserve_contract_fields() {
             "issuer-lifecycle-events",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            Some("203.0.113.1"),
+            Ipv4Addr::new(203, 0, 113, 1).into(),
         )
         .await
         .expect("test room should be served");
@@ -450,7 +451,7 @@ async fn users_bulk_disconnected_event_preserves_contract_fields() {
             "issuer-bulk-disconnect",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            Some("203.0.113.1"),
+            Ipv4Addr::new(203, 0, 113, 1).into(),
         )
         .await
         .expect("test room should be served");
@@ -484,18 +485,39 @@ async fn users_bulk_disconnected_event_preserves_contract_fields() {
 }
 
 #[tokio::test]
-async fn room_manager_concurrent_create_and_cleanup_are_idempotent() {
+async fn room_manager_concurrent_create_and_cleanup_are_idempotent_per_requester() {
     let manager = RoomManager::for_test_with_admission_policy(RoomAdmissionPolicy::new(2));
     let config = RoomConfig::default();
+    let requester = IpAddr::from(Ipv4Addr::LOCALHOST);
+    let other_requester = IpAddr::from([198, 51, 100, 7]);
+    let serve = |remote_address| {
+        manager.serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.to_vec().into(),
+            &config,
+            remote_address,
+        )
+    };
 
-    let (first, second) = tokio::join!(
-        manager.serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None),
-        manager.serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None),
+    let (first, second, other) = tokio::join!(
+        serve(requester),
+        serve(Ipv4Addr::LOCALHOST.to_ipv6_mapped().into()),
+        serve(other_requester)
     );
 
     let first = first.expect("test room should be served");
     let second = second.expect("test room should be served");
-    assert_eq!(first.uuid(), second.uuid());
+    let other = other.expect("test room should be served");
+    assert_eq!(
+        first.uuid(),
+        second.uuid(),
+        "an IPv4-mapped address should reuse its IPv4 reservation"
+    );
+    assert_ne!(
+        first.uuid(),
+        other.uuid(),
+        "another requester's issuer should reserve its own room"
+    );
     let media_transport = real_adapter();
     manager_join_user(&manager, &first, 1, &media_transport).await;
     let room_id = first.uuid().to_owned();
@@ -507,6 +529,14 @@ async fn room_manager_concurrent_create_and_cleanup_are_idempotent() {
     );
 
     assert!(manager.get_by_uuid(&room_id).await.is_none());
+    assert_eq!(
+        serve(other_requester)
+            .await
+            .expect("test room should be served")
+            .uuid(),
+        other.uuid(),
+        "removing one requester's room should keep another requester's reservation"
+    );
 }
 
 #[tokio::test]
@@ -520,7 +550,7 @@ async fn manager_lifecycle_future_does_not_block_empty_cleanup() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -1104,7 +1134,7 @@ async fn a_conflicting_reservation_leaves_the_current_room_in_place() {
                 "issuer-conflicting-reservation",
                 b"other-key".to_vec().into(),
                 &RoomConfig::default(),
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await,
         Err(RoomManagerServeError::ConflictingReservation)
@@ -1139,7 +1169,7 @@ async fn room_reservation_conflict_event_preserves_contract_fields() {
                 "issuer-reservation-conflict-events",
                 TEST_ROOM_KEY.to_vec().into(),
                 &conflicting_config,
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await,
         Err(RoomManagerServeError::ConflictingReservation)

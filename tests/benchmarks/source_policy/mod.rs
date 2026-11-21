@@ -307,7 +307,7 @@ impl SourcePolicyScenario {
                 "source-policy-benchmark",
                 TEST_ROOM_KEY.to_vec().into(),
                 &RoomConfig::default(),
-                Some("source-policy-benchmark"),
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await?;
         let core = SfuCore::new(media_transport.clone(), Arc::clone(&manager));
@@ -376,7 +376,7 @@ impl SourcePolicyScenario {
                 "foreign-speaker-benchmark",
                 TEST_ROOM_KEY.to_vec().into(),
                 &RoomConfig::default(),
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await?;
         let foreign_user = raw_user_id(PARTICIPANTS);

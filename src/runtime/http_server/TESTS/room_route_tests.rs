@@ -24,6 +24,11 @@ fn room_builder(token: &str, scheme: &str) -> HttpRequestBuilder {
     Request::get(route::v1::CHANNEL)
         .header(header::HOST, "sfu.example.com")
         .header(header::AUTHORIZATION, format!("{scheme} {token}"))
+        .extension(peer([127, 0, 0, 1]))
+}
+
+fn peer(address: [u8; 4]) -> ConnectInfo<SocketAddr> {
+    ConnectInfo(SocketAddr::from((address, 8070)))
 }
 
 async fn assert_room_status(builder: HttpRequestBuilder, expected: StatusCode) -> TestResult {
@@ -125,12 +130,10 @@ async fn room_route_persists_query_config() -> TestResult {
     let recording_address = "https://record.example.com/hook";
     let payload: RoomResponse = route_json(
         &test_state.state,
-        Request::get(format!(
+        room_builder(&token, "Bearer").uri(format!(
             "{}?webRTC=false&recordingAddress=https%3A%2F%2Frecord.example.com%2Fhook",
             route::v1::CHANNEL
-        ))
-        .header(header::HOST, "sfu.example.com")
-        .header(header::AUTHORIZATION, format!("Bearer {token}")),
+        )),
         Body::empty(),
         StatusCode::OK,
         "room request should complete",
@@ -171,8 +174,7 @@ async fn room_ignores_forwarded_headers_when_proxy_trust_is_disabled() -> TestRe
                 "x-forwarded-host",
                 "proxy.example.com, internal.example.com",
             )
-            .header("x-forwarded-proto", "https, http")
-            .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8070)))),
+            .header("x-forwarded-proto", "https, http"),
         Body::empty(),
         StatusCode::OK,
         "room request should complete",
@@ -194,8 +196,7 @@ async fn room_uses_forwarded_headers_when_proxy_trust_is_enabled() -> TestResult
         room_builder(&token, "Bearer")
             .header("x-forwarded-host", "proxy.example.com")
             .header("x-forwarded-proto", "https")
-            .header("x-forwarded-for", "198.51.100.24, 10.0.0.1")
-            .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 8070)))),
+            .header("x-forwarded-for", "198.51.100.24, 10.0.0.1"),
         Body::empty(),
         StatusCode::OK,
         "room request should complete",
@@ -203,6 +204,24 @@ async fn room_uses_forwarded_headers_when_proxy_trust_is_enabled() -> TestResult
     .await?;
     assert_eq!(payload.url, "https://proxy.example.com");
     assert_eq!(stats_first_remote_address(&state).await?, "198.51.100.24");
+    Ok(())
+}
+
+#[tokio::test]
+async fn room_requires_a_remote_address() -> TestResult {
+    let token = room_token(Some("issuer-a"), Some(TEST_ROOM_KEY), None)?;
+    let state = test_state();
+    route_status(
+        &state,
+        Request::get(route::v1::CHANNEL)
+            .header(header::HOST, "sfu.example.com")
+            .header(header::AUTHORIZATION, format!("Bearer {token}")),
+        Body::empty(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "a room request without a remote address should fail",
+    )
+    .await?;
+    assert!(state.room_manager.directory_snapshots().await.is_empty());
     Ok(())
 }
 
@@ -313,10 +332,18 @@ async fn room_route_returns_conflict_for_a_reservation_with_another_key() -> Tes
         "a second key for the same issuer should conflict",
     )
     .await?;
+    route_status(
+        &state,
+        room_builder(&other_key_token, "Bearer").extension(peer([198, 51, 100, 7])),
+        Body::empty(),
+        StatusCode::OK,
+        "another requester should reserve the same issuer with its own key",
+    )
+    .await?;
 
     let metrics = state.metrics.snapshot();
-    assert_eq!(metrics.http_room_requests(), 2);
-    assert_eq!(metrics.http_room_success(), 1);
+    assert_eq!(metrics.http_room_requests(), 3);
+    assert_eq!(metrics.http_room_success(), 2);
     assert_eq!(metrics.http_room_conflict(), 1);
     Ok(())
 }
@@ -336,9 +363,7 @@ async fn room_route_returns_conflict_for_a_reservation_with_another_config() -> 
 
     route_status(
         &state,
-        Request::get(format!("{}?webRTC=false", route::v1::CHANNEL))
-            .header(header::HOST, "sfu.example.com")
-            .header(header::AUTHORIZATION, format!("Bearer {token}")),
+        room_builder(&token, "Bearer").uri(format!("{}?webRTC=false", route::v1::CHANNEL)),
         Body::empty(),
         StatusCode::CONFLICT,
         "a second config for the same issuer should conflict",
@@ -369,10 +394,22 @@ async fn room_route_reuses_a_reservation_that_repeats_key_and_config() -> TestRe
         "repeat room request should complete",
     )
     .await?;
+    let other_requester: RoomResponse = route_json(
+        &test_state.state,
+        room_builder(&token, "Bearer").extension(peer([198, 51, 100, 7])),
+        Body::empty(),
+        StatusCode::OK,
+        "another requester's room request should complete",
+    )
+    .await?;
 
     assert_eq!(
         first.uuid, second.uuid,
         "a repeat request with the same key and config should reuse the reservation"
+    );
+    assert_ne!(
+        first.uuid, other_requester.uuid,
+        "another requester should not reuse the reservation"
     );
     assert_eq!(test_state.state.metrics.snapshot().http_room_conflict(), 0);
     Ok(())

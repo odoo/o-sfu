@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 pub(super) use std::{
     fmt::Debug,
     net::SocketAddr,
@@ -389,7 +390,7 @@ pub(super) async fn create_room(
 ) -> Option<Arc<Room>> {
     server
         .room_manager
-        .serve_room(issuer, test_room_key(), &config, None)
+        .serve_room(issuer, test_room_key(), &config, Ipv4Addr::LOCALHOST.into())
         .await
         .ok()
 }

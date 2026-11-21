@@ -191,7 +191,7 @@ impl GeneralCallScenario {
                 "general-call-benchmark",
                 TEST_ROOM_KEY.to_vec().into(),
                 &RoomConfig::default(),
-                Some("general-call-benchmark"),
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await?;
         let core = SfuCore::new(media_transport.clone(), Arc::clone(&manager));

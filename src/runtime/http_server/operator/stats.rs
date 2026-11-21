@@ -57,7 +57,7 @@ fn http_room_stats(snapshot: RuntimeRoomStatsSnapshot) -> RoomStatsResponse {
     RoomStatsResponse {
         create_date: snapshot.create_date,
         uuid: snapshot.uuid,
-        remote_address: snapshot.remote_address,
+        remote_address: snapshot.remote_address.to_string(),
         users_stats: UsersStatsResponse {
             incoming_bit_rate: IncomingBitRateStatsResponse {
                 total: incoming_bitrate.total,

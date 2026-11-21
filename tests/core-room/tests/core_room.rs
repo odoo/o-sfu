@@ -3,7 +3,7 @@
     reason = "integration tests use panic-based assertions for clear failures"
 )]
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::Ipv4Addr};
 
 use anyhow::{Result, anyhow};
 use o_sfu_core::{
@@ -72,13 +72,28 @@ async fn room_manager_is_idempotent_by_issuer_key_and_config() -> Result<()> {
     let manager = RoomManager::for_test();
     let config = RoomConfig::default();
     let first = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.to_vec().into(),
+            &config,
+            Ipv4Addr::LOCALHOST.into(),
+        )
         .await?;
     let second = manager
-        .serve_room("issuer-a", TEST_ROOM_KEY.to_vec().into(), &config, None)
+        .serve_room(
+            "issuer-a",
+            TEST_ROOM_KEY.to_vec().into(),
+            &config,
+            Ipv4Addr::LOCALHOST.into(),
+        )
         .await?;
     let third = manager
-        .serve_room("issuer-b", TEST_ROOM_KEY.to_vec().into(), &config, None)
+        .serve_room(
+            "issuer-b",
+            TEST_ROOM_KEY.to_vec().into(),
+            &config,
+            Ipv4Addr::LOCALHOST.into(),
+        )
         .await?;
     assert_eq!(
         first.uuid(),

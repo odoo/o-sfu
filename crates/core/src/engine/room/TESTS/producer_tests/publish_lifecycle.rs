@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{net::Ipv4Addr, time::Duration};
 
 use o_sfu_model::UserInfo;
 use tokio::time::timeout;
@@ -182,7 +182,7 @@ async fn late_join_receives_remote_track_snapshot_from_route_state() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
