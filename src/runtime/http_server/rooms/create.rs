@@ -11,7 +11,7 @@ use axum::{
 use o_sfu_core::server::room::RoomManagerServeError;
 use o_sfu_rfc::jwt::RegisteredJwtClaims;
 use secrecy::{ExposeSecret, SecretSlice, SecretString};
-use tracing::Instrument;
+use tracing::{Instrument, warn};
 
 use super::super::{
     access::room_authorization_token,
@@ -70,19 +70,24 @@ struct VerifiedRoomRequest {
 /// Room creation endpoint used by Odoo to bind a channel key to an SFU room.
 ///
 /// [`VerifiedRoomRequest`] owns JWT verification and request-origin projection.
+/// The requester's remote address scopes the issuer reservation. Responds
+/// `409 Conflict` when that reservation holds another key or config and
+/// `500 Internal Server Error` when the request carries no remote address.
 async fn create(State(services): State<Services>, request: VerifiedRoomRequest) -> Response {
     async {
-        let remote_address = request
-            .origin
-            .remote_address
-            .map(|address| address.to_string());
+        // The HTTP server attaches every TCP peer. Serving the router without
+        // `ConnectInfo` must not merge all requesters into one issuer namespace.
+        let Some(remote_address) = request.origin.remote_address else {
+            warn!("room request has no remote address");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
         let serve_result = services
             .room_manager
             .serve_room(
                 &request.issuer,
                 request.room_key,
                 &request.config,
-                remote_address.as_deref(),
+                remote_address,
             )
             .await;
         match serve_result {

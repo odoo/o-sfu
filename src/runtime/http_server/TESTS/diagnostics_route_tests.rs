@@ -4,7 +4,7 @@
 )]
 
 use std::{
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -88,7 +88,7 @@ where
 async fn serve_diagnostics_room(
     test_state: &RuntimeTestState,
     issuer: &str,
-    remote_address: &str,
+    remote_address: Ipv4Addr,
 ) -> TestResult<Arc<Room>> {
     require_ok(
         test_state
@@ -97,7 +97,7 @@ async fn serve_diagnostics_room(
                 issuer,
                 test_room_key(),
                 &RoomConfig::default(),
-                Some(remote_address),
+                remote_address.into(),
             )
             .await,
         "test room should be served",
@@ -215,7 +215,12 @@ async fn diagnostics_routes_require_the_configured_bearer_token() -> TestResult 
 #[tokio::test]
 async fn room_detail_reports_unavailable_worker_observation() -> TestResult {
     let test_state = test_state_with_handles();
-    let room = serve_diagnostics_room(&test_state, "issuer-observation", "203.0.113.20").await?;
+    let room = serve_diagnostics_room(
+        &test_state,
+        "issuer-observation",
+        Ipv4Addr::new(203, 0, 113, 20),
+    )
+    .await?;
     let user_id = UserId::Integer(71);
     let (_session, _receiver) = join_room_user(&test_state.state, &room, user_id.clone()).await?;
     publish_camera(&room, &user_id, &test_state.media_transport).await?;
@@ -250,7 +255,8 @@ async fn room_detail_reports_unavailable_worker_observation() -> TestResult {
 #[tokio::test]
 async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult {
     let test_state = test_state_with_handles();
-    let room = serve_diagnostics_room(&test_state, "issuer-a", "203.0.113.10").await?;
+    let room =
+        serve_diagnostics_room(&test_state, "issuer-a", Ipv4Addr::new(203, 0, 113, 10)).await?;
     let alice_user_id = UserId::Integer(1);
     let bob_user_id = UserId::Integer(2);
     let carol_user_id = UserId::Integer(3);
@@ -455,8 +461,10 @@ async fn diagnostics_routes_return_current_room_and_user_details() -> TestResult
 #[tokio::test]
 async fn diagnostics_user_details_are_scoped_to_the_requested_room() -> TestResult {
     let test_state = test_state_with_handles();
-    let first_room = serve_diagnostics_room(&test_state, "issuer-a", "203.0.113.10").await?;
-    let second_room = serve_diagnostics_room(&test_state, "issuer-b", "203.0.113.11").await?;
+    let first_room =
+        serve_diagnostics_room(&test_state, "issuer-a", Ipv4Addr::new(203, 0, 113, 10)).await?;
+    let second_room =
+        serve_diagnostics_room(&test_state, "issuer-b", Ipv4Addr::new(203, 0, 113, 11)).await?;
     assert_ne!(first_room.uuid(), second_room.uuid());
     let (_, first_rx) = join_room_user(&test_state.state, &first_room, UserId::Integer(7)).await?;
     let (_, second_rx) =
@@ -493,7 +501,12 @@ async fn diagnostics_user_details_are_scoped_to_the_requested_room() -> TestResu
 #[tokio::test]
 async fn diagnostics_user_detail_tracks_replacement_and_teardown() -> TestResult {
     let test_state = test_state_with_handles();
-    let room = serve_diagnostics_room(&test_state, "issuer-replacement", "203.0.113.12").await?;
+    let room = serve_diagnostics_room(
+        &test_state,
+        "issuer-replacement",
+        Ipv4Addr::new(203, 0, 113, 12),
+    )
+    .await?;
     let user_id = UserId::Integer(9);
     let (_, _first_rx) = join_room_user(&test_state.state, &room, user_id.clone()).await?;
     let (replacement_tx, _replacement_rx) = test_outbound_sender(&test_state.state);

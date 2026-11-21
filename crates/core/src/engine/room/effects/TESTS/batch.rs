@@ -5,6 +5,7 @@
 )]
 
 use std::{
+    net::Ipv4Addr,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
     time::Duration,
@@ -181,7 +182,7 @@ impl BatchFixture {
                 "room-effects-obligation",
                 b"room".to_vec().into(),
                 &RoomConfig::default(),
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await
             .expect("test room should be served");

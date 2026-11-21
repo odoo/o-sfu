@@ -5,6 +5,7 @@
 )]
 
 use std::{
+    net::Ipv4Addr,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::Arc,
 };
@@ -82,7 +83,7 @@ async fn staged_room() -> (Arc<Room>, MediaTransport, UserId, ConnectionId) {
             "issuer-transition-publication",
             b"room".to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");

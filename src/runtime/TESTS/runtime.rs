@@ -6,7 +6,7 @@ use std::{
 use std::{
     future::pending,
     io,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     sync::{Arc, Weak},
     time::Duration,
 };
@@ -301,7 +301,12 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     let config = RoomConfig::default();
 
     let room = rooms
-        .serve_room("issuer", test_room_key(), &config, None)
+        .serve_room(
+            "issuer",
+            test_room_key(),
+            &config,
+            Ipv4Addr::LOCALHOST.into(),
+        )
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
     sleep(RESERVATION_TTL * 2).await;
@@ -312,7 +317,12 @@ async fn expired_room_reservation_is_reaped() -> AnyResult<()> {
     );
     assert_eq!(rooms.room_gauges().await, RoomGaugeValues::default());
     let room_again = rooms
-        .serve_room("issuer", test_room_key(), &config, None)
+        .serve_room(
+            "issuer",
+            test_room_key(),
+            &config,
+            Ipv4Addr::LOCALHOST.into(),
+        )
         .await
         .map_err(|error| anyhow!("test room should be served: {error:?}"))?;
 

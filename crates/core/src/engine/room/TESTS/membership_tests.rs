@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use super::fixtures::*;
 
 #[tokio::test]
@@ -8,7 +10,7 @@ async fn join_user_enforces_capacity() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -35,7 +37,7 @@ async fn reconnection_bypasses_capacity_and_replaces_existing_connection() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -100,7 +102,7 @@ async fn leave_user_sends_departure_to_remaining_peers() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -134,7 +136,7 @@ async fn mismatched_stale_close_keeps_other_user_routing() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
@@ -175,7 +177,7 @@ async fn replacement_join_closes_displaced_transport_user() {
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");

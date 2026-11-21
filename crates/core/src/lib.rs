@@ -86,9 +86,10 @@
 //!
 //! ## Create rooms and admit connections
 //!
-//! [`RoomManager::serve_room`](server::room::RoomManager::serve_room) reserves a room for an
-//! issuer from validated key bytes and [`RoomConfig`](server::room::RoomConfig). Matching
-//! reservations reuse the current room, while a conflicting key or configuration returns
+//! [`RoomManager::serve_room`](server::room::RoomManager::serve_room) reserves a room for a
+//! requester address and issuer from validated key bytes and
+//! [`RoomConfig`](server::room::RoomConfig). Matching reservations reuse the current room,
+//! while a conflicting key or configuration returns
 //! [`RoomManagerServeError::ConflictingReservation`](server::room::RoomManagerServeError::ConflictingReservation).
 //! Use [`Room::uuid`](server::room::Room::uuid) as the room ID for admission and lookup.
 //!

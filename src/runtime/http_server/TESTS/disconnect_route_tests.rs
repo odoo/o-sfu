@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{net::Ipv4Addr, time::Duration};
 
 use tokio::{
     sync::oneshot,
@@ -75,7 +75,12 @@ async fn shutdown_drains_lost_disconnect_request_through_all_room_effects() -> T
     for issuer in ["issuer-lost-a", "issuer-lost-b"] {
         rooms.push(require_ok(
             room_manager
-                .serve_room(issuer, test_room_key(), &RoomConfig::default(), None)
+                .serve_room(
+                    issuer,
+                    test_room_key(),
+                    &RoomConfig::default(),
+                    Ipv4Addr::LOCALHOST.into(),
+                )
                 .await,
             "test room should be served",
         )?);
@@ -159,7 +164,7 @@ async fn lost_disconnect_requests_retain_the_mutation_bound() -> TestResult {
                 "issuer-bound",
                 test_room_key(),
                 &RoomConfig::default(),
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await,
         "test room should be served",
@@ -258,7 +263,7 @@ async fn disconnect_route_kicks_live_users() -> TestResult {
                 "issuer-disconnect",
                 test_room_key(),
                 &RoomConfig::default(),
-                None,
+                Ipv4Addr::LOCALHOST.into(),
             )
             .await,
         "test room should be served",

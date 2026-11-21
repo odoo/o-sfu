@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 pub(super) use std::{collections::BTreeSet, net::SocketAddr, time::Instant};
 
 pub(super) use o_sfu_router::{
@@ -334,7 +335,7 @@ pub(super) async fn setup_real_rtc_refresh_scenario() -> RealRtcRefreshScenario 
             "issuer-a",
             TEST_ROOM_KEY.to_vec().into(),
             &RoomConfig::default(),
-            None,
+            Ipv4Addr::LOCALHOST.into(),
         )
         .await
         .expect("test room should be served");
