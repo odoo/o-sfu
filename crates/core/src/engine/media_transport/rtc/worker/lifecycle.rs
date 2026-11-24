@@ -7,6 +7,7 @@
 use std::{
     any::Any,
     cell::Cell,
+    io,
     net::{IpAddr, SocketAddr},
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 #[cfg(target_os = "linux")]
-use std::{future::Future, io, mem::ManuallyDrop};
+use std::{future::Future, mem::ManuallyDrop};
 
 use o_sfu_rfc::tcp_framing::TcpFrame;
 use o_sfu_telemetry::metrics::RtcMetricsRecorder;
@@ -131,76 +132,6 @@ fn spawn_packet_loop(
     startup: PacketLoopStartup,
     backend: RtcUdpIoBackend,
 ) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
-    match backend {
-        RtcUdpIoBackend::Tokio | RtcUdpIoBackend::TokioBatch => {
-            spawn_tokio_packet_loop(thread_name, startup, backend)
-        }
-        RtcUdpIoBackend::IoUring => {
-            #[cfg(target_os = "linux")]
-            {
-                spawn_io_uring_packet_loop(thread_name, startup)
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                Err(TransportAdapterError::TransportUnavailable)
-            }
-        }
-    }
-}
-
-fn spawn_tokio_packet_loop(
-    thread_name: String,
-    startup: PacketLoopStartup,
-    backend: RtcUdpIoBackend,
-) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
-    let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
-    let terminal = Arc::clone(&startup.terminal);
-    let shutdown = startup.shutdown.clone();
-    let rtc_metrics = Arc::clone(&startup.config.rtc_metrics);
-    let media_worker_id = startup.media_worker_id;
-    let thread = thread::Builder::new()
-        .name(thread_name)
-        .spawn(move || {
-            let started = Cell::new(false);
-            let outcome =
-                catch_unwind(AssertUnwindSafe(
-                    || match TokioRuntimeBuilder::new_current_thread()
-                        .enable_io()
-                        .enable_time()
-                        .build()
-                    {
-                        Ok(runtime) => {
-                            runtime.block_on(startup.run(backend, startup_tx, &started));
-                        }
-                        Err(error) => {
-                            warn!(
-                                ?media_worker_id,
-                                ?error,
-                                "failed to boot rtc packet loop Tokio runtime"
-                            );
-                            let _ =
-                                startup_tx.send(Err(TransportAdapterError::TransportUnavailable));
-                        }
-                    },
-                ));
-            mark_thread_exit(
-                &terminal,
-                started.get(),
-                &shutdown,
-                &rtc_metrics,
-                media_worker_id,
-                outcome,
-            );
-        })
-        .map_err(|_error| TransportAdapterError::TransportUnavailable)?;
-    wait_for_packet_loop_startup(thread, &startup_rx)
-}
-
-#[cfg(target_os = "linux")]
-fn spawn_io_uring_packet_loop(
-    thread_name: String,
-    startup: PacketLoopStartup,
-) -> Result<thread::JoinHandle<()>, TransportAdapterError> {
     let (startup_tx, startup_rx) = std_mpsc::sync_channel(1);
     let terminal = Arc::clone(&startup.terminal);
     let shutdown = startup.shutdown.clone();
@@ -211,13 +142,28 @@ fn spawn_io_uring_packet_loop(
         .spawn(move || {
             let started = Cell::new(false);
             let outcome = catch_unwind(AssertUnwindSafe(|| {
-                if let Err(error) =
-                    run_io_uring(startup.run(RtcUdpIoBackend::IoUring, startup_tx, &started))
-                {
+                // A runtime boot failure drops the unpolled loop and its
+                // `startup_tx`, which fails startup.
+                let packet_loop = startup.run(backend, startup_tx, &started);
+                let booted = match backend {
+                    RtcUdpIoBackend::Tokio | RtcUdpIoBackend::TokioBatch => {
+                        TokioRuntimeBuilder::new_current_thread()
+                            .enable_io()
+                            .enable_time()
+                            .build()
+                            .map(|runtime| runtime.block_on(packet_loop))
+                    }
+                    #[cfg(target_os = "linux")]
+                    RtcUdpIoBackend::IoUring => run_io_uring(packet_loop),
+                    #[cfg(not(target_os = "linux"))]
+                    RtcUdpIoBackend::IoUring => Err(io::ErrorKind::Unsupported.into()),
+                };
+                if let Err(error) = booted {
                     warn!(
                         ?media_worker_id,
+                        backend = backend.wire_name(),
                         ?error,
-                        "failed to boot rtc packet loop io_uring runtime"
+                        "failed to boot rtc packet loop runtime"
                     );
                 }
             }));
