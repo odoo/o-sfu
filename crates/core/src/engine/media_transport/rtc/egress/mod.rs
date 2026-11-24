@@ -1,8 +1,8 @@
 //! Complete RTC output dispatched to worker-local network adapters.
 //!
 //! [`RtcEgress::flush`] dispatches each turn after session rollback and mutable
-//! RTC state access finish. UDP transmits retain staging order without a
-//! cross-protocol completion order. A successful send means local socket
+//! RTC state access finish. UDP transmits retain staging order per destination
+//! without a cross-protocol completion order. A successful send means local socket
 //! acceptance, not remote delivery.
 //!
 //! Tuple lookup during flush cannot distinguish output for a replaced connection.
@@ -49,10 +49,11 @@ impl RtcEgress {
     ///
     /// TCP instructions are handed to their connection's outbox and other non-UDP
     /// instructions are rejected, both before any UDP socket wait. The
-    /// remaining UDP instructions retain their relative order across windows.
+    /// remaining UDP instructions retain their relative order per destination
+    /// across windows. `io_uring` can send independent destinations concurrently.
     /// UDP sources must match the announced candidate, including its port.
     /// Rejected instructions and socket failures do not suppress later output.
-    /// Payloads remain owned until socket I/O completes. No output queue
+    /// UDP payloads remain owned until socket I/O completes. No UDP output queue
     /// survives a completed flush.
     ///
     /// # Failure reporting
@@ -64,8 +65,11 @@ impl RtcEgress {
     /// Unexpected UDP send lengths use the same reporting without retrying
     /// potentially accepted bytes.
     ///
-    /// The worker awaits the entire flush before applying its next input.
-    /// Once draining begins, cancellation discards unsubmitted UDP output.
+    /// The worker awaits the entire flush before applying its next input or
+    /// handling shutdown. Once draining begins, cancellation discards unsubmitted
+    /// UDP output. Dropping an unfinished flush is terminal for this adapter.
+    /// `tokio-uring` retains outstanding send buffers while its runtime runs.
+    /// This retention does not extend to runtime teardown.
     pub async fn flush(&mut self, transmits: &mut Vec<Transmit>) {
         for transmit in transmits.extract_if(.., |transmit| transmit.proto != Protocol::Udp) {
             match transmit.proto {

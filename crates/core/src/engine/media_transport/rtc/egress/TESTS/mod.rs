@@ -132,32 +132,22 @@ async fn flush_rejects_bad_instructions_and_continues(
     let bound_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, candidate.port()));
     let wrong_port = SocketAddr::from(([127, 0, 0, 2], candidate.port().wrapping_add(1)));
     let wrong_ip = SocketAddr::from(([127, 0, 0, 3], candidate.port()));
+    let failed_receiver = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+    let failed_destination = failed_receiver.local_addr()?;
+    let udp = |destination, contents| transmit(Protocol::Udp, candidate, destination, contents);
     let mut staged = vec![
-        transmit(
-            Protocol::Udp,
-            candidate,
-            destination,
-            vec![0; MAX_IPV4_UDP_PAYLOAD + 1],
-        ),
-        transmit(Protocol::Udp, candidate, destination, b"before".to_vec()),
-        transmit(
-            Protocol::Udp,
-            candidate,
-            destination,
-            vec![0; MAX_IPV4_UDP_PAYLOAD + 1],
-        ),
+        // An error must not suppress the rest of its destination run.
+        udp(failed_destination, b"leading".to_vec()),
+        udp(failed_destination, vec![0; MAX_IPV4_UDP_PAYLOAD + 1]),
+        udp(failed_destination, b"trailing".to_vec()),
+        udp(destination, b"before".to_vec()),
         transmit(Protocol::Tcp, candidate, destination, b"tcp".to_vec()),
         transmit(Protocol::SslTcp, candidate, destination, b"ssltcp".to_vec()),
         transmit(Protocol::Tls, candidate, destination, b"tls".to_vec()),
         transmit(Protocol::Udp, wrong_port, destination, b"port".to_vec()),
         transmit(Protocol::Udp, wrong_ip, destination, b"ip".to_vec()),
-        transmit(
-            Protocol::Udp,
-            candidate,
-            destination,
-            vec![0; MAX_IPV4_UDP_PAYLOAD + 1],
-        ),
-        transmit(Protocol::Udp, candidate, destination, b"after".to_vec()),
+        udp(destination, vec![0; MAX_IPV4_UDP_PAYLOAD + 1]),
+        udp(destination, b"after".to_vec()),
     ];
     let captured = Arc::new(Mutex::new(Vec::new()));
     let writer_records = Arc::clone(&captured);
@@ -204,23 +194,28 @@ async fn flush_rejects_bad_instructions_and_continues(
         );
         assert!(event.pointer("/fields/error").is_none(), "{event}");
     }
-    assert_sampled_send_failures(&events, destination, &metrics)?;
+    assert_sampled_send_failures(&events, failed_destination, &metrics)?;
     assert!(staged.is_empty());
     receive(&receiver, bound_addr, b"before")?;
     receive(&receiver, bound_addr, b"after")?;
+    assert_receiver_empty(&receiver)?;
+    failed_receiver.set_read_timeout(Some(RECEIVE_TIMEOUT))?;
+    receive(&failed_receiver, bound_addr, b"leading")?;
+    receive(&failed_receiver, bound_addr, b"trailing")?;
+    assert_receiver_empty(&failed_receiver)?;
+    Ok(())
+}
+
+fn assert_receiver_empty(receiver: &UdpSocket) -> io::Result<()> {
     receiver.set_nonblocking(true)?;
     let mut buffer = [0; 256];
     match receiver.recv_from(&mut buffer) {
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-        Err(error) => return Err(error.into()),
-        Ok((length, source)) => {
-            return Err(io::Error::other(format!(
-                "unexpected {length}-byte datagram from {source}"
-            ))
-            .into());
-        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(()),
+        Err(error) => Err(error),
+        Ok((length, source)) => Err(io::Error::other(format!(
+            "unexpected {length}-byte datagram from {source}"
+        ))),
     }
-    Ok(())
 }
 
 fn assert_sampled_send_failures(
@@ -265,7 +260,7 @@ fn assert_sampled_send_failures(
             MetricName::RtcTransportIoFailuresTotal,
             &[("direction", "send"), ("category", "other")],
         ),
-        3
+        2
     );
     Ok(())
 }

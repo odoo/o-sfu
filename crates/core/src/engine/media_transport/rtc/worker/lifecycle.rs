@@ -111,14 +111,16 @@ impl PacketLoopStartup {
             return;
         }
         started.set(true);
-        super::run_packet_loop(
+        // The inline UDP send batch enlarges the packet-loop future. Allocate
+        // it once at worker startup instead of boxing each output flush.
+        Box::pin(super::run_packet_loop(
             self.config,
             shared_socket,
             self.bitrate_registry,
             self.snapshot_state,
             self.inputs,
             self.ufrag_worker_map,
-        )
+        ))
         .await;
     }
 }
