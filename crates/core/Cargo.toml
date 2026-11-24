@@ -47,3 +47,7 @@ o-sfu-telemetry = { workspace = true, features = ["test-support"] }
 o-sfu-router = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { version = "0.3", features = ["json"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+bytes = "1.11"
+tokio-uring = { version = "0.5", features = ["bytes"] }
