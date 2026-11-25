@@ -27,17 +27,12 @@ impl PacketLoopState {
         let mid = registered.mid();
         let keep_mid =
             mid.is_some_and(|mid| self.mid_is_shared(&session_key, mid, transport_media_id));
-        if matches!(registered, RegisteredMediaHandle::Producer { .. }) {
-            let ssrcs = self
-                .routes
-                .producer_ssrcs(transport_media_id)
-                .unwrap_or_default()
-                .to_vec();
-            if let Some(session_state) = self.users.get_mut(&session_key) {
-                let mut api = session_state.rtc.direct_api();
-                for ssrc in ssrcs {
-                    api.remove_stream_rx(ssrc);
-                }
+        if let Some(media) = self.mid_registry.get(&transport_media_id)
+            && let Some(session_state) = self.users.get_mut(&session_key)
+        {
+            let mut api = session_state.rtc.direct_api();
+            for ssrc in media.producer_ssrcs() {
+                api.remove_stream_rx(ssrc);
             }
         }
         let Some(handle) = self.remove_media_handle(transport_media_id) else {

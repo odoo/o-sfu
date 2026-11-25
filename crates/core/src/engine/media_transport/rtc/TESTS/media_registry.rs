@@ -16,6 +16,14 @@ fn rtp_parameters_with_ssrc(mid: Mid, ssrc: u32) -> RouterRtpParameters {
         .with_mid(mid.to_string())
 }
 
+fn producer_ssrcs(state: &PacketLoopState, media: TransportMediaId) -> Vec<Ssrc> {
+    state
+        .mid_registry
+        .get(&media)
+        .map(|registered| registered.producer_ssrcs().collect())
+        .unwrap_or_default()
+}
+
 #[test]
 fn consumer_media_lookup_uses_the_reverse_index() {
     let mut state = PacketLoopState::default();
@@ -387,16 +395,8 @@ fn dynamic_producer_ssrc_binding_cannot_steal_another_media_id() {
         state.src_media_for_ssrc(&producer_session, unbound_primary),
         None
     );
-    assert!(
-        state
-            .routes
-            .producer_ssrcs(second_media_id)
-            .is_some_and(<[Ssrc]>::is_empty)
-    );
-    assert_eq!(
-        state.routes.producer_ssrcs(first_media_id),
-        Some([shared_ssrc].as_slice())
-    );
+    assert!(producer_ssrcs(&state, second_media_id).is_empty());
+    assert_eq!(producer_ssrcs(&state, first_media_id), [shared_ssrc]);
 }
 
 #[test]
@@ -425,7 +425,6 @@ fn rejected_negotiated_ssrc_binding_does_not_clear_existing_owner() {
         second_mid,
         &rtp_parameters_with_ssrc(second_mid, shared_ssrc),
     );
-    state.clear_producer_ssrcs_for_mid(&producer_session, second_mid);
 
     assert_eq!(
         state.src_media_for_ssrc(&producer_session, Ssrc::from(shared_ssrc)),
@@ -502,17 +501,7 @@ fn producer_ssrc_rotation_keeps_only_current_encoding_binding() {
             ProducerSsrcUpdate::Rejected,
         );
     }
-    assert_eq!(
-        state.routes.producer_ssrcs(media),
-        Some([10_000.into()].as_slice())
-    );
-    assert_eq!(
-        state
-            .session_media
-            .get(&session)
-            .map(|lookup| lookup.producer_ssrcs.entries.len()),
-        Some(1)
-    );
+    assert_eq!(producer_ssrcs(&state, media), [Ssrc::from(10_000)]);
     assert_eq!(state.src_media_for_ssrc(&session, 1.into()), None);
     assert_eq!(
         state.src_media_for_ssrc(&session, 10_000.into()),
@@ -521,7 +510,7 @@ fn producer_ssrc_rotation_keeps_only_current_encoding_binding() {
 }
 
 #[test]
-fn producer_encoding_rotation_bounds_primary_and_repair_indexes() {
+fn producer_encoding_rotation_bounds_primary_and_repair_ssrcs() {
     for rids in [vec![None], vec![Some("lo"), Some("mid"), Some("hi")]] {
         let session = test_transport_session_key(54, 0, 55, UserId::Integer(56));
         let source = ForwardedPacketSource::Relayed(session.clone());
@@ -555,21 +544,9 @@ fn producer_encoding_rotation_bounds_primary_and_repair_indexes() {
                     ProducerSsrcUpdate::Rejected
                 );
                 assert_eq!(state.source_rid_for_ssrc(&session, primary), binding.rid);
-                assert!(
-                    state
-                        .routes
-                        .producer_ssrcs(media)
-                        .is_some_and(|ssrcs| ssrcs.len() <= rids.len() * 2)
-                );
-                assert!(
-                    state.session_media.get(&session).is_some_and(|lookup| lookup.producer_ssrcs.entries.len() <= rids.len() * 2)
-                );
             }
         }
-        assert_eq!(
-            state.routes.producer_ssrcs(media).map(<[Ssrc]>::len),
-            Some(rids.len() * 2)
-        );
+        assert_eq!(producer_ssrcs(&state, media).len(), rids.len() * 2);
         assert_eq!(state.src_media_for_ssrc(&session, 10.into()), None);
         assert_eq!(
             state.src_media_for_ssrc(&session, 100_000.into()),
@@ -583,7 +560,7 @@ fn producer_encoding_rotation_bounds_primary_and_repair_indexes() {
 }
 
 #[test]
-fn rejected_producer_binding_preserves_both_indexes() {
+fn rejected_producer_binding_preserves_bound_ssrcs() {
     let session = test_transport_session_key(57, 0, 58, UserId::Integer(59));
     let source = ForwardedPacketSource::Relayed(session.clone());
     let mid = Mid::from("source");
@@ -635,15 +612,8 @@ fn rejected_producer_binding_preserves_both_indexes() {
             ProducerSsrcUpdate::Rejected
         );
         assert_eq!(
-            state.routes.producer_ssrcs(media),
-            Some([3.into(), 4.into()].as_slice())
-        );
-        assert_eq!(
-            state
-                .session_media
-                .get(&session)
-                .map(|lookup| lookup.producer_ssrcs.entries.len()),
-            Some(2)
+            producer_ssrcs(&state, media),
+            [Ssrc::from(3), Ssrc::from(4)]
         );
         assert_eq!(state.src_media_for_ssrc(&session, 1.into()), None);
         assert_eq!(state.src_media_for_ssrc(&session, 5.into()), None);

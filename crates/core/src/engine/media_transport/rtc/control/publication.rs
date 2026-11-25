@@ -2,8 +2,8 @@
 //!
 //! Producers are declared inside the worker before the remote answer confirms
 //! the effective RTP bindings. This module projects the accepted answer back
-//! into router-native RTP parameters and keeps the producer SSRC indexes aligned
-//! with those negotiated bindings.
+//! into router-native RTP parameters and rebinds producer encodings to those
+//! negotiated bindings.
 
 use std::collections::{BTreeMap, BTreeSet};
 

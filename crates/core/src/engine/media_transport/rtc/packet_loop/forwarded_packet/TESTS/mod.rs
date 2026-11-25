@@ -216,7 +216,7 @@ fn producer_packet_inspector_rebuilds_on_renegotiation_and_clear() {
             .inspect_packet(source_id, payload_type, &keyframe, false)
             .decoder_refresh()
     );
-    state.clear_producer_ssrcs_for_mid(&session_key, producer_mid);
+    state.refresh_answer_producer_ssrcs(&session_key, &[producer_mid], &[]);
     assert!(
         !state
             .routes

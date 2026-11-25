@@ -7,9 +7,9 @@
 //! [`RouteTable`] owns source forwarding decisions and keyframe retry state.
 //!
 //! Topology changes that cross these owners belong to [`PacketLoopState`].
-//! Registration and SSRC binding maintain paired media lookups. Consumer removal
-//! repairs destination indexes before retiring its stream. Session teardown also
-//! clears scheduling and demux state while preserving surviving consumers' indexes.
+//! Registration maintains paired media lookups. Consumer removal repairs
+//! destination indexes before retiring its stream. Session teardown also clears
+//! scheduling and demux state while preserving surviving consumers' indexes.
 //! Callers use these complete operations instead of coordinating cleanup steps.
 //!
 //! [`schedule`] validates queued handles and deadlines against current sessions.

@@ -25,7 +25,6 @@ mod source;
 use std::{
     cmp::Reverse,
     collections::{BTreeMap, BTreeSet, btree_map::Entry},
-    mem,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -33,10 +32,7 @@ use std::{
 use itertools::Itertools;
 use o_sfu_router::rtp::MediaStream;
 use o_sfu_telemetry::metrics::RtcMetricsRecorder;
-use str0m::{
-    media::{KeyframeRequestKind, Mid, Pt, Rid},
-    rtp::Ssrc,
-};
+use str0m::media::{KeyframeRequestKind, Mid, Pt, Rid};
 use tracing::debug;
 
 use self::{
@@ -465,30 +461,6 @@ impl RouteTable {
         self.keyframe_requests.forget_source(source_id);
         self.publisher_keyframes.forget_source(source_id);
         self.prune_empty(source_id);
-    }
-
-    pub(in super::super) fn replace_producer_ssrcs(
-        &mut self,
-        source_id: TransportMediaId,
-        ssrcs: impl IntoIterator<Item = Ssrc>,
-    ) {
-        let current = &mut self.source_mut(source_id).producer.ssrcs;
-        current.clear();
-        current.extend(ssrcs);
-    }
-
-    pub(in super::super) fn producer_ssrcs(&self, source_id: TransportMediaId) -> Option<&[Ssrc]> {
-        self.sources
-            .get(&source_id)
-            .map(|source| source.producer.ssrcs.as_slice())
-    }
-
-    pub(in super::super) fn clear_producer_ssrcs(
-        &mut self,
-        source_id: TransportMediaId,
-    ) -> Option<Vec<Ssrc>> {
-        let source = self.sources.get_mut(&source_id)?;
-        (!source.producer.is_empty()).then(|| mem::take(&mut source.producer.ssrcs))
     }
 
     /// Registers the control path and announces this worker as relay target.
