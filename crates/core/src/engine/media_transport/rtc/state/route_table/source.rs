@@ -4,10 +4,7 @@ use std::{
 };
 
 use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RtcRemoteControlDropKind};
-use str0m::{
-    media::{Mid, Rid},
-    rtp::Ssrc,
-};
+use str0m::media::{Mid, Rid};
 use tracing::debug;
 
 use super::{
@@ -594,7 +591,6 @@ impl SourcePacketState {
 #[derive(Debug, Default)]
 pub(super) struct ProducerSourceState {
     pub(super) registered: bool,
-    pub(super) ssrcs: Vec<Ssrc>,
     pub(super) packet_inspector: codec::PacketInspector,
     last_keyframe: Option<Instant>,
     rids: Vec<ProducerRidLiveness>,
@@ -641,7 +637,6 @@ impl ProducerSourceState {
 
     pub(super) fn is_empty(&self) -> bool {
         !self.registered
-            && self.ssrcs.is_empty()
             && self.packet_inspector.is_empty()
             && self.last_keyframe.is_none()
             && self.rids.is_empty()

@@ -397,10 +397,27 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
     let mut state = PacketLoopState::default();
     let source_media =
         prepare_source_session(&mut state, &source_session, source_mid, *primary_ssrc);
-    state.register_media_handle(RegisteredMediaHandle::Producer {
+    state.refresh_producer_ssrcs(
+        &source_session,
+        source_mid,
+        &RouterRtpParameters::new(
+            vec![],
+            vec![],
+            vec![StreamBinding::new().with_ssrc(*primary_ssrc)],
+        ),
+    );
+    let sibling_media = state.register_media_handle(RegisteredMediaHandle::Producer {
         session_key: source_session.clone(),
         mid: Some(source_mid),
     });
+    let sibling_binding = StreamBinding::new()
+        .with_ssrc(*sibling_primary_ssrc)
+        .with_repair_ssrc(*sibling_repair_ssrc);
+    state.refresh_producer_ssrcs(
+        &source_session,
+        source_mid,
+        &RouterRtpParameters::new(vec![], vec![], vec![sibling_binding.clone()]),
+    );
     let parameters = RouterRtpParameters::new(
         vec![],
         vec![],
@@ -408,9 +425,7 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
             StreamBinding::new()
                 .with_ssrc(*primary_ssrc)
                 .with_repair_ssrc(*repair_ssrc),
-            StreamBinding::new()
-                .with_ssrc(*sibling_primary_ssrc)
-                .with_repair_ssrc(*sibling_repair_ssrc),
+            sibling_binding,
         ],
     )
     .with_mid(source_mid.to_string());
@@ -432,9 +447,6 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
         .sdp_negotiation
         .negotiated_producer_parameters
         .insert(source_mid, parameters);
-    state
-        .routes
-        .replace_producer_ssrcs(source_media, [primary_ssrc]);
 
     assert!(
         worker_remove_media(&mut state, &Arc::default(), &source_session, source_media,).is_ok()
@@ -456,6 +468,14 @@ fn producer_removal_preserves_shared_mid_repair_identity() {
             .sdp_negotiation
             .negotiated_producer_parameters
             .contains_key(&source_mid)
+    );
+    assert_eq!(
+        state.src_media_for_mid(&source_session, source_mid),
+        Some(sibling_media)
+    );
+    assert_eq!(
+        state.src_media_for_ssrc(&source_session, sibling_primary_ssrc),
+        Some(sibling_media)
     );
 }
 

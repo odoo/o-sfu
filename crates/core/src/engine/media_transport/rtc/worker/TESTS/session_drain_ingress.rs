@@ -268,8 +268,11 @@ impl ProducerIngressFixture {
             Some(self.rid)
         );
         assert_eq!(
-            self.state.routes.producer_ssrcs(self.media),
-            Some([primary].as_slice())
+            self.state
+                .mid_registry
+                .get(&self.media)
+                .map(|registered| registered.producer_ssrcs().collect::<Vec<_>>()),
+            Some(vec![primary])
         );
     }
 }

@@ -223,12 +223,12 @@ fn admit_producer_packet(
         let Some(binding) = packet.source_binding() else {
             return false;
         };
-        // Remove a resurrected old stream only when it did not retain an index.
+        // Remove a resurrected old stream only when no encoding binds its SSRC.
         // Otherwise a collision could retire the legitimate current owner.
-        let indexed = state
+        let bound = state
             .src_media_for_ssrc(&session_key, binding.primary)
             .is_some();
-        if !indexed && let Some(session) = state.users.get_mut(&session_key) {
+        if !bound && let Some(session) = state.users.get_mut(&session_key) {
             session.rtc.direct_api().remove_stream_rx(binding.primary);
         }
         return false;

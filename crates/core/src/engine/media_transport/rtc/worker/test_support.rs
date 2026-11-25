@@ -10,7 +10,7 @@ use tokio::{
 use {
     super::super::{
         RtpProfile, WorkerAssignment,
-        state::demux::RemoteTransportAddr,
+        state::{demux::RemoteTransportAddr, media_registry::RegisteredMediaHandle},
         test_support::{
             FailSessionProbe, RememberRemoteAddrProbe, SessionStreamRxSsrcProbe,
             SessionStreamTxSsrcProbe,
@@ -175,8 +175,12 @@ impl RtcWorker {
         &self,
         transport_media_id: TransportMediaId,
     ) -> Result<Option<Mid>, DebugProbeUnavailable> {
-        self.read_debug_worker(move |state, _context| state.resolve_mid(transport_media_id))
-            .await
+        self.read_debug_worker(move |state, _context| {
+            state
+                .media_handle(transport_media_id)
+                .and_then(RegisteredMediaHandle::mid)
+        })
+        .await
     }
 
     #[cfg(test)]

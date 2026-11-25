@@ -13,6 +13,8 @@ use std::{
 use o_sfu_telemetry::metrics::{RtcMetricsRecorder, RuntimeMetrics};
 use tokio::sync::oneshot;
 
+#[cfg(test)]
+use super::super::state::media_registry::RegisteredMediaHandle;
 use super::{
     super::{
         RtcWorkerConfig,
@@ -120,7 +122,8 @@ pub fn handle_worker_command(
         } => respond(
             response,
             Ok(state
-                .resolve_mid(transport_media_id)
+                .media_handle(transport_media_id)
+                .and_then(RegisteredMediaHandle::mid)
                 .map(|mid| mid.to_string())),
         ),
         RtcWorkerCommand::CloseSession {
