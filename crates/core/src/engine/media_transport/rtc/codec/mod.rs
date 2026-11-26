@@ -24,7 +24,7 @@ pub(super) use capabilities::{
 };
 use o_sfu_router::rtp::{MediaCodec, MediaStream};
 pub(super) use packet::{
-    Packet, PacketIdentity, PacketInspector, ProjectedPacket, Projection, requires_decoder_refresh,
+    Packet, PacketIdentity, PacketInspector, Projection, requires_decoder_refresh,
 };
 pub(in crate::engine::media_transport) use profile::RtpProfile;
 pub(super) use retransmission::{

@@ -203,9 +203,7 @@ impl RelayPacketDestination {
         state: &PacketLoopState,
         packet: &ForwardedPacket,
     ) -> Option<RelayEnqueueReport> {
-        self.target
-            .target
-            .forward_packet(state, packet, self.transport_media_id)
+        self.target.target.forward_packet(state, packet)
     }
 }
 

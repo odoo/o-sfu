@@ -53,8 +53,7 @@ use super::{
         egress::{RtcEgress, TcpEgress},
         packet_loop::{
             ForwardingEffects, IngressPacket, PacketForwarder, RtcIngress, drain_relay_packets,
-            forwarded_packet::ForwardedPacket,
-            ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+            forwarded_packet::ForwardedPacket, ingress_routing::route_pkt_to_session_at,
             routing_miss::DemuxRecoveryState,
         },
         recovery::{drain_due_kf_retries, drain_due_publisher_kf, flush_pending_kf_reqs_at},
@@ -429,13 +428,13 @@ impl PacketLoopTurn {
                 }
             }
             PacketLoopTurnInput::Datagram(datagram) => {
-                let packet = route_datagram_to_session(
+                route_pkt_to_session_at(
                     context.packet_loop_state,
                     context.demux,
                     &context.config.rtc_metrics,
-                    datagram,
+                    &datagram,
                 );
-                context.ingress.recycle(packet);
+                context.ingress.recycle(datagram.packet);
             }
         }
     }
@@ -585,34 +584,6 @@ pub async fn run_packet_loop(
     }
 }
 
-fn route_datagram_to_session(
-    packet_loop_state: &mut PacketLoopState,
-    demux: &mut DemuxRecoveryState,
-    rtc_metrics: &RtcMetricsRecorder,
-    datagram: IngressPacket,
-) -> Vec<u8> {
-    let IngressPacket {
-        source_addr,
-        candidate_addr,
-        received_at,
-        packet,
-        protocol,
-    } = datagram;
-    route_pkt_to_session_at(
-        packet_loop_state,
-        demux,
-        rtc_metrics,
-        PacketRouteDatagram::new(
-            source_addr,
-            candidate_addr,
-            packet.as_slice(),
-            received_at,
-            protocol,
-        ),
-    );
-    packet
-}
-
 #[cfg(feature = "internal-benchmarks")]
 pub fn route_queued_ingress_datagrams_for_benchmark(
     packet_loop_state: &mut PacketLoopState,
@@ -626,8 +597,8 @@ pub fn route_queued_ingress_datagrams_for_benchmark(
         let Some(datagram) = ingress.try_recv() else {
             break;
         };
-        let packet = route_datagram_to_session(packet_loop_state, demux, rtc_metrics, datagram);
-        ingress.recycle(packet);
+        route_pkt_to_session_at(packet_loop_state, demux, rtc_metrics, &datagram);
+        ingress.recycle(datagram.packet);
         routed += 1;
     }
     routed

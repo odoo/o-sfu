@@ -388,6 +388,7 @@ fn plan_forwards_keeps_relay_packets_out_of_recording_and_second_hop_relay_sinks
         &packet_sink_registry,
         &metrics,
         vec![sample_already_relayed_packet(
+            &PacketLoopState::default(),
             producer_session,
             src_media,
             "aud-up",

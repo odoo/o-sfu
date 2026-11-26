@@ -89,7 +89,6 @@ impl Source {
         let admission = state
             .bind_producer_packet(
                 self.session_handle,
-                Some(self.media),
                 Some(self.mid),
                 &mut binding,
                 ProducerPacketTime {

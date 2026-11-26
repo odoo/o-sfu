@@ -6,9 +6,10 @@ use str0m::{
 };
 
 use super::{ForwardedPacket, ForwardedPacketSource};
-#[cfg(test)]
-use crate::engine::media_transport::TransportMediaId;
-use crate::engine::media_transport::{TransportSessionKey, rtc::state::slots::SessionHandle};
+use crate::engine::media_transport::{
+    TransportMediaId, TransportSessionKey,
+    rtc::state::{PacketLoopState, slots::SessionHandle},
+};
 
 #[must_use]
 pub fn sample_forwarded_packet(
@@ -25,16 +26,18 @@ pub fn sample_forwarded_packet(
     )
 }
 
+/// Builds a relay copy whose origin worker resolved it against `origin`.
 #[cfg(test)]
 #[must_use]
 pub fn sample_already_relayed_packet(
+    origin: &PacketLoopState,
     src_key: TransportSessionKey,
     src_media: TransportMediaId,
     mid: &str,
     payload: &[u8],
 ) -> ForwardedPacket {
     let mut packet = sample_forwarded_packet(src_key, mid, payload);
-    packet.src_media = Some(src_media);
+    resolve_sample_packet(&mut packet, origin, src_media);
     packet.visits_origin_sinks = false;
     packet
 }
@@ -48,10 +51,30 @@ pub fn sample_already_relayed_audio_packet_at(
 ) -> ForwardedPacket {
     let mut packet =
         sample_forwarded_packet_with_audio_activity(src_key, "aud-up", Some(true), Some(-32), b"");
-    packet.src_media = Some(src_media);
+    resolve_sample_packet(&mut packet, &PacketLoopState::default(), src_media);
     packet.visits_origin_sinks = false;
     packet.received_at = received_at;
     packet
+}
+
+/// Caches the facts that `origin` resolves for `packet` as `src_media`.
+///
+/// Stands in for producer admission, which sample packets skip. A packet
+/// whose source session is missing from `origin` stays unresolved.
+#[cfg(any(test, feature = "internal-benchmarks"))]
+pub fn resolve_sample_packet(
+    packet: &mut ForwardedPacket,
+    origin: &PacketLoopState,
+    src_media: TransportMediaId,
+) {
+    let Some(room_instance_id) = packet
+        .src_key(origin)
+        .map(TransportSessionKey::room_instance_id)
+    else {
+        return;
+    };
+    let rid = packet.header.ext_vals.rid;
+    packet.cache_facts(origin, src_media, rid, room_instance_id);
 }
 
 #[cfg(test)]
@@ -185,7 +208,6 @@ pub fn sample_local_forwarded_packet_for_benchmark(
             session_handle: source_session_handle,
             repair_ssrc: None,
         },
-        src_media: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -262,7 +284,6 @@ fn sample_forwarded_packet_with_source(
     let received_at = Instant::now();
     ForwardedPacket {
         source,
-        src_media: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -302,7 +323,6 @@ pub fn sample_forwarded_packet_without_mid(
     let received_at = Instant::now();
     ForwardedPacket {
         source: ForwardedPacketSource::Relayed(src_key),
-        src_media: None,
         facts: None,
         visits_origin_sinks: true,
         was_repair: false,
@@ -331,7 +351,6 @@ pub fn sample_forwarded_packet_without_mid(
 #[cfg(feature = "internal-benchmarks")]
 pub fn reset_packet_resolution(packet: &mut ForwardedPacket) {
     packet.facts = None;
-    packet.src_media = None;
 }
 
 /// restages one reusable packet as the next packet of its producer stream

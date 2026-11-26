@@ -268,6 +268,7 @@ async fn checkpoint_datagram_consumes_the_first_slot_of_the_udp_burst() -> Resul
         harness
             .relay_tx
             .try_send(sample_already_relayed_packet(
+                &PacketLoopState::default(),
                 session,
                 TransportMediaId::new(4),
                 "audio",

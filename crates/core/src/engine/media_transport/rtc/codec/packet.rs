@@ -1,11 +1,11 @@
 //! Codec-neutral packet inspection, projection and rewrite facade.
 
 use o_sfu_router::rtp::MediaStream;
-use str0m::{media::Pt, rtp::RtpWrite};
+use str0m::media::Pt;
 
 use super::vp8;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::engine::media_transport::rtc) struct PacketInspector {
     vp8_payload_types: (u64, u64),
 }
@@ -33,8 +33,12 @@ impl PacketInspector {
         }
     }
 
+    /// Returns whether no codec configuration is retained.
+    ///
+    /// Source pruning uses this, not `decoder_refresh_is_observable`, which is
+    /// codec policy and stays VP8-only when other codecs are inspected.
     pub(in crate::engine::media_transport::rtc) fn is_empty(&self) -> bool {
-        self.vp8_payload_types == (0, 0)
+        *self == Self::default()
     }
 
     pub(in crate::engine::media_transport::rtc) fn decoder_refresh_is_observable(&self) -> bool {
@@ -73,29 +77,20 @@ impl Packet {
         }
     }
 
+    /// `None` forwards the source payload descriptor unchanged.
     pub(in crate::engine::media_transport::rtc) fn rewrite(
         &self,
-        projected: ProjectedPacket,
-    ) -> Option<Rewrite> {
-        self.vp8.rewrite(projected.vp8).map(Rewrite::Vp8)
+        projected: PacketIdentity,
+    ) -> Option<vp8::Rewrite> {
+        self.vp8.rewrite(projected.vp8)
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+/// Codec counters of one packet, as sent by the source or as projected for a
+/// receiver by [`Projection`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::engine::media_transport::rtc) struct PacketIdentity {
     vp8: vp8::Identity,
-}
-
-pub(in crate::engine::media_transport::rtc) enum Rewrite {
-    Vp8(vp8::Rewrite),
-}
-
-impl Rewrite {
-    pub(in crate::engine::media_transport::rtc) fn apply(self, write: RtpWrite) -> RtpWrite {
-        match self {
-            Self::Vp8(rewrite) => rewrite.apply(write),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -110,8 +105,8 @@ impl Projection {
         &mut self,
         identity: PacketIdentity,
         reanchor: bool,
-    ) -> ProjectedPacket {
-        ProjectedPacket {
+    ) -> PacketIdentity {
+        PacketIdentity {
             vp8: if reanchor {
                 self.vp8.reanchor(identity.vp8)
             } else {
@@ -119,9 +114,4 @@ impl Projection {
             },
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(in crate::engine::media_transport::rtc) struct ProjectedPacket {
-    vp8: vp8::Identity,
 }

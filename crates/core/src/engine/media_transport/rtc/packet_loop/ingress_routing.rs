@@ -21,15 +21,16 @@ use o_sfu_rfc::{
     webrtc,
 };
 use o_sfu_telemetry::metrics::{RtcDatagramDropReason, RtcDatagramRoutePath, RtcMetricsRecorder};
-use str0m::{
-    Input,
-    ice::StunMessage,
-    net::{Protocol, Receive},
-};
+use str0m::{Input, ice::StunMessage, net::Receive};
 use tracing::{debug, trace};
 
 use super::{
-    super::state::{PacketLoopState, RtcSessionState, demux::RemoteAddrDemux, slots::SessionStore},
+    super::state::{
+        PacketLoopState, RtcSessionState,
+        demux::RemoteAddrDemux,
+        slots::{SessionHandle, SessionStore},
+    },
+    ingress::IngressPacket,
     io_failures::report_rtc_input_failure,
     routing_miss::{DemuxRecoveryState, PacketLoopRoutingMissKey},
 };
@@ -72,37 +73,6 @@ impl fmt::Display for PacketIndexProbe<'_> {
             Self::RemoteCandidateAddr(remote_candidate_addr) => {
                 write!(formatter, "remote-candidate-addr:{remote_candidate_addr}")
             }
-        }
-    }
-}
-
-/// Preserves the socket receive time through queued ingress.
-///
-/// str0m uses `now` to advance jitter and bandwidth clocks. Sampling it during
-/// routing would include packet-loop queue delay in those measurements.
-#[derive(Clone, Copy)]
-pub struct PacketRouteDatagram<'a> {
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: &'a [u8],
-    now: Instant,
-    protocol: Protocol,
-}
-
-impl<'a> PacketRouteDatagram<'a> {
-    pub const fn new(
-        source_addr: SocketAddr,
-        candidate_addr: SocketAddr,
-        packet: &'a [u8],
-        now: Instant,
-        protocol: Protocol,
-    ) -> Self {
-        Self {
-            source_addr,
-            candidate_addr,
-            packet,
-            now,
-            protocol,
         }
     }
 }
@@ -175,23 +145,15 @@ pub fn route_pkt_to_session_at(
     state: &mut PacketLoopState,
     demux: &mut DemuxRecoveryState,
     metrics: &RtcMetricsRecorder,
-    datagram: PacketRouteDatagram<'_>,
+    datagram: &IngressPacket,
 ) {
-    match route_cached_pkt(
-        state,
-        metrics,
-        datagram.source_addr,
-        datagram.candidate_addr,
-        datagram.packet,
-        datagram.now,
-        datagram.protocol,
-    ) {
+    match route_cached_pkt(state, metrics, datagram) {
         CachedRouteOutcome::Routed => {
             metrics.record_rtc_datagram_route(RtcDatagramRoutePath::Indexed);
             return;
         }
         CachedRouteOutcome::Malformed => {
-            metrics.record_rtc_datagram_drop(RtcDatagramDropReason::Malformed);
+            drop_malformed_datagram(metrics, datagram.source_addr);
             return;
         }
         CachedRouteOutcome::NotMatched => {}
@@ -199,17 +161,17 @@ pub fn route_pkt_to_session_at(
     // Accepted source pins bypass abuse throttling. For unknown sources, check
     // the source-keyed cooldown before packet fingerprinting so blocked traffic
     // avoids fingerprint work and changing packet bytes cannot evade the limit.
-    if demux.is_source_blocked(datagram.source_addr, datagram.now) {
+    if demux.is_source_blocked(datagram.source_addr, datagram.received_at) {
         metrics.record_rtc_datagram_drop(RtcDatagramDropReason::SourceRateLimited);
         return;
     }
     let miss_key = PacketLoopRoutingMissKey::new(
         datagram.source_addr,
         datagram.candidate_addr,
-        datagram.packet,
+        &datagram.packet,
     );
     // A negative answer is valid only for the topology that produced it.
-    if demux.should_skip_scan(miss_key, datagram.packet) {
+    if demux.should_skip_scan(miss_key, &datagram.packet) {
         metrics.record_rtc_datagram_drop(RtcDatagramDropReason::RecentMissCache);
         trace!(
             source = %datagram.source_addr,
@@ -217,33 +179,31 @@ pub fn route_pkt_to_session_at(
         );
         return;
     }
-    let route = PacketRouteContext {
-        metrics,
-        source_addr: datagram.source_addr,
-        candidate_addr: datagram.candidate_addr,
-        packet: datagram.packet,
-        now: datagram.now,
-        protocol: datagram.protocol,
+    let Some(input) = receive_input(datagram) else {
+        drop_malformed_datagram(metrics, datagram.source_addr);
+        return;
     };
     // With one session, packet shape cannot narrow the candidate set. Calling
     // `Rtc::accepts()` directly avoids duplicate classification.
     if state.users.len() == 1 {
-        route_pkt_by_session(state, demux, miss_key, &route);
+        route_pkt_by_session(state, demux, metrics, miss_key, datagram, input);
         return;
     }
-    route_pkt_by_recovery(state, demux, miss_key, &route);
+    route_pkt_by_recovery(state, demux, metrics, miss_key, datagram, input);
 }
 
 /// Attempts routing through a learned source-address pin.
 fn route_cached_pkt(
     state: &mut PacketLoopState,
     metrics: &RtcMetricsRecorder,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: &[u8],
-    now: Instant,
-    protocol: Protocol,
+    datagram: &IngressPacket,
 ) -> CachedRouteOutcome {
+    let IngressPacket {
+        source_addr,
+        candidate_addr,
+        protocol,
+        ..
+    } = *datagram;
     let remote_addr = RemoteTransportAddr::new(source_addr, protocol);
     let Some(session_key) = state
         .remote_addr_demux
@@ -251,18 +211,19 @@ fn route_cached_pkt(
     else {
         return CachedRouteOutcome::NotMatched;
     };
-    let Some(session_state) = state.users.get_mut(session_key) else {
+    let Some(session_handle) = state.users.handle_for_key(session_key) else {
         state.remote_addr_demux.forget_remote_addr(remote_addr);
         return CachedRouteOutcome::NotMatched;
     };
-    let Ok(receive) = Receive::new(protocol, source_addr, candidate_addr, packet) else {
-        log_malformed_datagram(source_addr);
+    let Some(input) = receive_input(datagram) else {
         return CachedRouteOutcome::Malformed;
     };
-    let input = Input::Receive(now, receive);
     // A learned pin is only a hint because ICE state can change. Revalidate it
     // before every use.
-    let accepts_input = session_state.rtc.accepts(&input);
+    let accepts_input = state
+        .users
+        .get_by_handle(session_handle)
+        .is_some_and(|session_state| session_state.rtc.accepts(&input));
     if !accepts_input {
         debug!(
             source_addr = %source_addr,
@@ -274,27 +235,7 @@ fn route_cached_pkt(
         state.remote_addr_demux.forget_remote_addr(remote_addr);
         return CachedRouteOutcome::NotMatched;
     }
-    if !admit_rtcp_datagram(session_state, packet, now) {
-        metrics.record_rtc_rtcp_ingress_budget_drop();
-        return CachedRouteOutcome::Routed;
-    }
-    session_state.prepare_rtp_input(packet);
-    // `Rtc::accepts()` owns the demux decision. A later processing error does
-    // not invalidate the learned pin.
-    if let Err(error) = session_state.rtc.handle_input(input) {
-        session_state.clear_ingress_context();
-        cold_path();
-        report_rtc_input_failure(metrics, session_key, &error);
-    } else {
-        let dirty_session_key = if session_state.packet_loop_dirty {
-            None
-        } else {
-            Some(session_key.clone())
-        };
-        if let Some(dirty_session_key) = dirty_session_key {
-            state.mark_session_dirty(&dirty_session_key);
-        }
-    }
+    deliver_datagram(state, metrics, session_handle, datagram, input);
     CachedRouteOutcome::Routed
 }
 
@@ -302,12 +243,13 @@ fn route_cached_pkt(
 fn indexed_session_for_pkt(
     sessions: &SessionStore,
     remote_addr_demux: &mut RemoteAddrDemux,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
     ufrag_registry: &mut UfragRegistry,
     ufrag_worker_map: &UfragWorkerMap,
     input: &Input<'_>,
 ) -> IndexedSessionRecoveryOutcome {
-    let Some(packet_index_probe) = packet_index_probe(route.source_addr, route.packet) else {
+    let Some(packet_index_probe) = packet_index_probe(datagram.source_addr, &datagram.packet)
+    else {
         return IndexedSessionRecoveryOutcome::Malformed;
     };
     let candidate_session_keys = match &packet_index_probe {
@@ -315,7 +257,7 @@ fn indexed_session_for_pkt(
             CandidateSessionKeys::Single(ufrag_registry.session_for(local_ice_ufrag))
         }
         PacketIndexProbe::RemoteCandidateAddr(remote_candidate_addr) => {
-            let remote_addr = RemoteTransportAddr::new(*remote_candidate_addr, route.protocol);
+            let remote_addr = RemoteTransportAddr::new(*remote_candidate_addr, datagram.protocol);
             remote_addr_demux
                 .candidates_for_src_addr(remote_addr)
                 .map_or(
@@ -356,8 +298,8 @@ fn indexed_session_for_pkt(
     }
     if let Some(matched_session_key) = matched_session_key {
         debug!(
-            source_addr = %route.source_addr,
-            candidate_addr = %route.candidate_addr,
+            source_addr = %datagram.source_addr,
+            candidate_addr = %datagram.candidate_addr,
             probe = %packet_index_probe,
             user_id = ?matched_session_key.user_id(),
             media_worker_id = matched_session_key.media_worker_id().as_usize(),
@@ -370,8 +312,8 @@ fn indexed_session_for_pkt(
         };
     }
     debug!(
-        source_addr = %route.source_addr,
-        candidate_addr = %route.candidate_addr,
+        source_addr = %datagram.source_addr,
+        candidate_addr = %datagram.candidate_addr,
         probe = %packet_index_probe,
         examined_sessions,
         "packet probe did not match any rtc user"
@@ -422,15 +364,45 @@ pub(in crate::engine::media_transport::rtc) fn packet_index_probe(
     None
 }
 
-fn receive_input(
-    now: Instant,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: &[u8],
-    protocol: Protocol,
-) -> Option<Input<'_>> {
-    let receive = Receive::new(protocol, source_addr, candidate_addr, packet).ok()?;
-    Some(Input::Receive(now, receive))
+fn receive_input(datagram: &IngressPacket) -> Option<Input<'_>> {
+    let receive = Receive::new(
+        datagram.protocol,
+        datagram.source_addr,
+        datagram.candidate_addr,
+        &datagram.packet,
+    )
+    .ok()?;
+    Some(Input::Receive(datagram.received_at, receive))
+}
+
+/// Feeds a datagram accepted by `Rtc::accepts()` into its session.
+///
+/// RTCP over the session's ingress budget is dropped before str0m. Neither that
+/// drop nor a str0m processing error revokes the ownership `accepts` decided.
+fn deliver_datagram(
+    state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
+    session_handle: SessionHandle,
+    datagram: &IngressPacket,
+    input: Input<'_>,
+) {
+    let Some((session_key, session_state)) =
+        state.users.get_key_value_mut_by_handle(session_handle)
+    else {
+        return;
+    };
+    if !admit_rtcp_datagram(session_state, &datagram.packet, datagram.received_at) {
+        metrics.record_rtc_rtcp_ingress_budget_drop();
+        return;
+    }
+    session_state.prepare_rtp_input(&datagram.packet);
+    if let Err(error) = session_state.rtc.handle_input(input) {
+        session_state.clear_ingress_context();
+        cold_path();
+        report_rtc_input_failure(metrics, session_key, &error);
+        return;
+    }
+    state.mark_session_dirty_by_handle(session_handle);
 }
 
 fn admit_rtcp_datagram(session_state: &mut RtcSessionState, packet: &[u8], now: Instant) -> bool {
@@ -457,63 +429,40 @@ fn admit_rtcp_datagram(session_state: &mut RtcSessionState, packet: &[u8], now: 
     true
 }
 
-fn log_malformed_datagram(source_addr: SocketAddr) {
-    trace!(
-        source = %source_addr,
-        "ignoring malformed UDP datagram in rtc packet loop"
-    );
-}
-
 fn record_unknown_src_miss(
     demux: &mut DemuxRecoveryState,
     miss_key: PacketLoopRoutingMissKey,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
 ) {
-    if demux.record_miss(miss_key, route.packet, route.source_addr, route.now) {
+    if demux.record_miss(
+        miss_key,
+        &datagram.packet,
+        datagram.source_addr,
+        datagram.received_at,
+    ) {
         trace!(
-            source = %route.source_addr,
+            source = %datagram.source_addr,
             "entering rtc unknown-source recovery cooldown after sustained routing misses"
         );
     }
 }
 
-struct PacketRouteContext<'a> {
-    metrics: &'a RtcMetricsRecorder,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: &'a [u8],
-    now: Instant,
-    protocol: Protocol,
-}
-
-/// Feeds a previously accepted datagram into its session and learns its source
-/// pin.
+/// Delivers a datagram accepted during recovery and learns its source pin.
 ///
 /// Returns `false` if the session disappeared before delivery.
 fn route_packet_to_session(
     state: &mut PacketLoopState,
+    metrics: &RtcMetricsRecorder,
     session_key: &TransportSessionKey,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
     input: Input<'_>,
     route_resolution: &'static str,
 ) -> bool {
-    let Some(session_state) = state.users.get_mut(session_key) else {
+    let Some(session_handle) = state.users.handle_for_key(session_key) else {
         return false;
     };
-    if admit_rtcp_datagram(session_state, route.packet, route.now) {
-        session_state.prepare_rtp_input(route.packet);
-        if let Err(error) = session_state.rtc.handle_input(input) {
-            session_state.clear_ingress_context();
-            report_rtc_input_failure(route.metrics, session_key, &error);
-        } else {
-            state.mark_session_dirty(session_key);
-        }
-    } else {
-        route.metrics.record_rtc_rtcp_ingress_budget_drop();
-    }
-    let remote_transport_addr = RemoteTransportAddr::new(route.source_addr, route.protocol);
-    // `Rtc::accepts()` already decided ownership. Later input processing does
-    // not revise that decision, so retain the source pin on either result.
+    deliver_datagram(state, metrics, session_handle, datagram, input);
+    let remote_transport_addr = RemoteTransportAddr::new(datagram.source_addr, datagram.protocol);
     let previous_session_key = state
         .remote_addr_demux
         .session_key_for_remote_addr(remote_transport_addr)
@@ -524,8 +473,8 @@ fn route_packet_to_session(
     match (source_pin_changed, previous_session_key) {
         (true, Some(previous_session_key)) => {
             debug!(
-                source_addr = %route.source_addr,
-                candidate_addr = %route.candidate_addr,
+                source_addr = %datagram.source_addr,
+                candidate_addr = %datagram.candidate_addr,
                 route_resolution,
                 previous_session_id = ?previous_session_key.user_id(),
                 previous_media_worker_id = previous_session_key.media_worker_id().as_usize(),
@@ -536,8 +485,8 @@ fn route_packet_to_session(
         }
         (true, None) => {
             debug!(
-                source_addr = %route.source_addr,
-                candidate_addr = %route.candidate_addr,
+                source_addr = %datagram.source_addr,
+                candidate_addr = %datagram.candidate_addr,
                 route_resolution,
                 user_id = ?session_key.user_id(),
                 media_worker_id = session_key.media_worker_id().as_usize(),
@@ -546,65 +495,54 @@ fn route_packet_to_session(
         }
         (false, _) => {}
     }
-    route
-        .metrics
-        .record_rtc_datagram_route(RtcDatagramRoutePath::Scan);
+    metrics.record_rtc_datagram_route(RtcDatagramRoutePath::Scan);
     true
 }
 
 fn route_pkt_by_session(
     state: &mut PacketLoopState,
     demux: &mut DemuxRecoveryState,
+    metrics: &RtcMetricsRecorder,
     miss_key: PacketLoopRoutingMissKey,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
+    input: Input<'_>,
 ) {
     let Some(session_key) = state.users.keys().next().cloned() else {
-        return;
-    };
-    let Some(input) = receive_input(
-        route.now,
-        route.source_addr,
-        route.candidate_addr,
-        route.packet,
-        route.protocol,
-    ) else {
-        drop_malformed_fallback(route);
         return;
     };
     let accepts_input = state
         .users
         .get(&session_key)
         .is_some_and(|session_state| session_state.rtc.accepts(&input));
-    route.metrics.record_rtc_datagram_fallback_scan(1);
+    metrics.record_rtc_datagram_fallback_scan(1);
     if !accepts_input {
-        record_no_user_miss(demux, miss_key, route);
+        record_no_user_miss(demux, metrics, miss_key, datagram);
         return;
     }
-    if route_packet_to_session(state, &session_key, route, input, "single-user-scan") {
-        demux.record_fallback_route_success(route.source_addr);
+    if route_packet_to_session(
+        state,
+        metrics,
+        &session_key,
+        datagram,
+        input,
+        "single-user-scan",
+    ) {
+        demux.record_fallback_route_success(datagram.source_addr);
     }
 }
 
 fn route_pkt_by_recovery(
     state: &mut PacketLoopState,
     demux: &mut DemuxRecoveryState,
+    metrics: &RtcMetricsRecorder,
     miss_key: PacketLoopRoutingMissKey,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
+    input: Input<'_>,
 ) {
-    let Some(input) = receive_input(
-        route.now,
-        route.source_addr,
-        route.candidate_addr,
-        route.packet,
-        route.protocol,
-    ) else {
-        drop_malformed_fallback(route);
-        return;
-    };
     let session_key = match indexed_session_for_pkt(
         &state.users,
         &mut state.remote_addr_demux,
-        route,
+        datagram,
         &mut state.ufrag_registry,
         &state.ufrag_worker_map,
         &input,
@@ -613,33 +551,29 @@ fn route_pkt_by_recovery(
             session_key,
             examined_sessions,
         } => {
-            route
-                .metrics
-                .record_rtc_datagram_fallback_scan(examined_sessions);
+            metrics.record_rtc_datagram_fallback_scan(examined_sessions);
             session_key
         }
         IndexedSessionRecoveryOutcome::NoMatch { examined_sessions } => {
             let (overflowed_match, overflowed_examined, complete) =
-                if route.packet.first().is_some_and(|first| *first >= 2) {
+                if datagram.packet.first().is_some_and(|first| *first >= 2) {
                     scan_overflowed_sessions(state, &input)
                 } else {
                     (None, 0, true)
                 };
-            route.metrics.record_rtc_datagram_fallback_scan(
+            metrics.record_rtc_datagram_fallback_scan(
                 examined_sessions.saturating_add(overflowed_examined),
             );
             if let Some(session_key) = overflowed_match {
                 session_key
             } else {
                 if complete {
-                    record_no_user_miss(demux, miss_key, route);
+                    record_no_user_miss(demux, metrics, miss_key, datagram);
                 } else {
-                    route
-                        .metrics
-                        .record_rtc_datagram_drop(RtcDatagramDropReason::NoUser);
-                    if demux.record_incomplete_probe(route.source_addr, route.now) {
+                    metrics.record_rtc_datagram_drop(RtcDatagramDropReason::NoUser);
+                    if demux.record_incomplete_probe(datagram.source_addr, datagram.received_at) {
                         trace!(
-                            source = %route.source_addr,
+                            source = %datagram.source_addr,
                             "entering rtc unknown-source recovery cooldown after incomplete bounded scan"
                         );
                     }
@@ -648,12 +582,19 @@ fn route_pkt_by_recovery(
             }
         }
         IndexedSessionRecoveryOutcome::Malformed => {
-            drop_malformed_fallback(route);
+            drop_malformed_datagram(metrics, datagram.source_addr);
             return;
         }
     };
-    if route_packet_to_session(state, &session_key, route, input, "recovery-index") {
-        demux.record_fallback_route_success(route.source_addr);
+    if route_packet_to_session(
+        state,
+        metrics,
+        &session_key,
+        datagram,
+        input,
+        "recovery-index",
+    ) {
+        demux.record_fallback_route_success(datagram.source_addr);
     }
 }
 
@@ -689,24 +630,24 @@ fn scan_overflowed_sessions(
     (None, probe_count, overflowed <= probe_count)
 }
 
-fn drop_malformed_fallback(route: &PacketRouteContext<'_>) {
-    route
-        .metrics
-        .record_rtc_datagram_drop(RtcDatagramDropReason::Malformed);
-    log_malformed_datagram(route.source_addr);
+fn drop_malformed_datagram(metrics: &RtcMetricsRecorder, source_addr: SocketAddr) {
+    metrics.record_rtc_datagram_drop(RtcDatagramDropReason::Malformed);
+    trace!(
+        source = %source_addr,
+        "ignoring malformed UDP datagram in rtc packet loop"
+    );
 }
 
 fn record_no_user_miss(
     demux: &mut DemuxRecoveryState,
+    metrics: &RtcMetricsRecorder,
     miss_key: PacketLoopRoutingMissKey,
-    route: &PacketRouteContext<'_>,
+    datagram: &IngressPacket,
 ) {
-    route
-        .metrics
-        .record_rtc_datagram_drop(RtcDatagramDropReason::NoUser);
-    record_unknown_src_miss(demux, miss_key, route);
+    metrics.record_rtc_datagram_drop(RtcDatagramDropReason::NoUser);
+    record_unknown_src_miss(demux, miss_key, datagram);
     trace!(
-        source = %route.source_addr,
+        source = %datagram.source_addr,
         "dropping UDP datagram because no rtc user accepted it"
     );
 }

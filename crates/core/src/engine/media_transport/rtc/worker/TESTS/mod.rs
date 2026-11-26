@@ -60,11 +60,11 @@ use super::{
         consumer_egress::test_support::{SourceRtpIdentity, project_identity},
         egress::RtcEgress,
         packet_loop::{
-            ForwardingDestination, PacketForwarder, PacketGateDecision, RtcIngress,
+            ForwardingDestination, IngressPacket, PacketForwarder, PacketGateDecision, RtcIngress,
             drain_relay_packets,
             event_observation::{RtcEventContext, observe_rtc_event},
             finish_incoming_stats, flush_packet_forwards,
-            ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+            ingress_routing::route_pkt_to_session_at,
             plan_forwards, record_incoming_packet, record_incoming_stats,
             routing_miss::PacketLoopRoutingMissKey,
             udp::{RtcUdpSocket, UdpReceiveTask},
@@ -83,7 +83,7 @@ use super::{
         },
         test_support::{
             DebugProbe, DebugProbeRequest, collect_ready_session_keys,
-            prepare_source_session_with_rid, remote_source_control,
+            prepare_source_session_with_rid, remote_source_control, resolve_sample_packet,
             sample_already_relayed_audio_packet_at, sample_already_relayed_packet,
             sample_forwarded_packet, sample_forwarded_packet_with_audio_activity,
             sample_forwarded_packet_with_rid, sample_local_forwarded_packet,
@@ -193,13 +193,13 @@ impl IngressRoutingHarness {
             &mut self.packet_loop_state,
             &mut self.demux,
             &self.rtc_metrics,
-            PacketRouteDatagram::new(
-                self.source_addr,
-                self.candidate_addr,
-                packet,
-                now,
-                Protocol::Udp,
-            ),
+            &IngressPacket {
+                source_addr: self.source_addr,
+                candidate_addr: self.candidate_addr,
+                received_at: now,
+                packet: packet.to_vec(),
+                protocol: Protocol::Udp,
+            },
         );
     }
 }
@@ -1400,6 +1400,7 @@ fn flush_packet_forwards_records_non_local_forwarding_volume_by_destination() {
         .buffers
         .pending_packets
         .push(sample_already_relayed_packet(
+            &PacketLoopState::default(),
             source_session,
             src_media,
             "aud-up",
@@ -1496,6 +1497,7 @@ fn flush_packet_forwards_records_closed_relays_and_keeps_later_destinations() {
         .buffers
         .pending_packets
         .push(sample_already_relayed_packet(
+            &PacketLoopState::default(),
             source_session,
             src_media,
             "aud-up",
@@ -1582,8 +1584,9 @@ fn flush_packet_forwards_queues_normalized_repair_across_destinations() -> Resul
         consumer_stream,
         consumer_mid,
     );
-    let packet =
+    let mut packet =
         sample_local_repaired_packet(source_handle, "cam-up", repair_sequence, normalized_payload);
+    resolve_sample_packet(&mut packet, &harness.state, src_media);
     harness.buffers.pending_packets.push(packet);
     let sink = Arc::new(CountingSink::new());
     let (relay_mailbox, mut relay_rx) = RelayPacketMailbox::channel_for_test();
@@ -2262,6 +2265,7 @@ async fn packet_loop_mailbox_wake_enters_next_pump_with_bounded_relay_drain() {
         assert!(
             relay_tx
                 .send(sample_already_relayed_packet(
+                    &PacketLoopState::default(),
                     source_session.clone(),
                     src_media,
                     "aud-up",
@@ -2479,17 +2483,18 @@ fn active_audio_rank_change_publishes_source_policy_dirty_room() {
 #[test]
 fn drain_relay_packets_ingests_owned_forwarded_packets_from_the_mailbox() {
     let source_session = test_transport_session_key(25, 0, 26, UserId::Integer(27));
-    let packet = sample_forwarded_packet(source_session.clone(), "aud-up", b"payload");
+    let mut packet = sample_forwarded_packet(source_session.clone(), "aud-up", b"payload");
+    resolve_sample_packet(
+        &mut packet,
+        &PacketLoopState::default(),
+        TransportMediaId::new(17),
+    );
     let (mailbox, mut relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut pending_packets = Vec::new();
     let metrics = RuntimeMetrics::default();
     let rtc_metrics = metrics.register_rtc_worker();
 
-    mailbox.forward_packet(
-        &PacketLoopState::default(),
-        &packet,
-        TransportMediaId::new(17),
-    );
+    mailbox.forward_packet(&PacketLoopState::default(), &packet);
     drain_relay_packets(
         &mut relay_rx,
         &mut pending_packets,
@@ -2518,22 +2523,19 @@ fn drain_relay_packets_ingests_owned_forwarded_packets_from_the_mailbox() {
 #[test]
 fn drain_relay_packets_stops_at_the_configured_cap() {
     let source_session = test_transport_session_key(26, 0, 27, UserId::Integer(28));
-    let packet = sample_forwarded_packet(source_session, "aud-up", b"payload");
+    let mut packet = sample_forwarded_packet(source_session, "aud-up", b"payload");
+    resolve_sample_packet(
+        &mut packet,
+        &PacketLoopState::default(),
+        TransportMediaId::new(18),
+    );
     let (mailbox, mut relay_rx) = RelayPacketMailbox::channel_for_test();
     let mut pending_packets = Vec::new();
     let metrics = RuntimeMetrics::default();
     let rtc_metrics = metrics.register_rtc_worker();
 
-    mailbox.forward_packet(
-        &PacketLoopState::default(),
-        &packet,
-        TransportMediaId::new(18),
-    );
-    mailbox.forward_packet(
-        &PacketLoopState::default(),
-        &packet,
-        TransportMediaId::new(18),
-    );
+    mailbox.forward_packet(&PacketLoopState::default(), &packet);
+    mailbox.forward_packet(&PacketLoopState::default(), &packet);
 
     let drained = drain_relay_packets(&mut relay_rx, &mut pending_packets, 1, &rtc_metrics);
 
@@ -2557,6 +2559,7 @@ fn flush_packet_forwards_records_relay_overload_drops() {
         .buffers
         .pending_packets
         .push(sample_already_relayed_packet(
+            &PacketLoopState::default(),
             source_session.clone(),
             src_media,
             "aud-up",
@@ -2565,8 +2568,13 @@ fn flush_packet_forwards_records_relay_overload_drops() {
 
     relay_mailbox.forward_packet(
         &harness.state,
-        &sample_forwarded_packet(source_session, "aud-up", b"prefill"),
-        src_media,
+        &sample_already_relayed_packet(
+            &PacketLoopState::default(),
+            source_session,
+            src_media,
+            "aud-up",
+            b"prefill",
+        ),
     );
     harness.add_relay(src_media, relay_mailbox);
 
@@ -3040,6 +3048,7 @@ fn packet_loop_observes_keyframe_before_draining_due_retry() -> Result<(), &'sta
     let (relay_tx, relay_rx) = mpsc::channel(1);
     relay_tx
         .try_send(sample_already_relayed_packet(
+            &state,
             source_session,
             src_media,
             "cam-up",

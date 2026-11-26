@@ -7,7 +7,7 @@ use super::super::{
         PacketLoopState,
         relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox},
     },
-    test_support::{sample_forwarded_packet, test_transport_session_key},
+    test_support::{resolve_sample_packet, sample_forwarded_packet, test_transport_session_key},
 };
 use crate::engine::media_transport::TransportMediaId;
 
@@ -28,7 +28,6 @@ enum RelayPressureMode {
 pub struct RelayPressureBenchFixture {
     mode: RelayPressureMode,
     target: RelayPacketMailbox,
-    src_media: TransportMediaId,
     packet: ForwardedPacket,
     state: PacketLoopState,
     _rx: mpsc::Receiver<ForwardedPacket>,
@@ -54,14 +53,17 @@ impl RelayPressureBenchFixture {
 
     fn new(capacity: usize, mode: RelayPressureMode) -> Self {
         let capacity = capacity.max(1);
-        let src_media = TransportMediaId::new(1);
         let source_session = test_transport_session_key(2, 0, 3, UserId::Integer(4));
-        let packet = sample_forwarded_packet(source_session, "cam-up", b"payload");
+        let mut packet = sample_forwarded_packet(source_session, "cam-up", b"payload");
+        resolve_sample_packet(
+            &mut packet,
+            &PacketLoopState::default(),
+            TransportMediaId::new(1),
+        );
         let (tx, rx) = mpsc::channel(capacity);
         Self {
             mode,
             target: RelayPacketMailbox::new(tx),
-            src_media,
             packet,
             state: PacketLoopState::default(),
             _rx: rx,
@@ -73,7 +75,7 @@ impl RelayPressureBenchFixture {
         for _ in 0..attempts {
             if self
                 .target
-                .forward_packet(&self.state, &self.packet, self.src_media)
+                .forward_packet(&self.state, &self.packet)
                 .is_some_and(|report| report.outcome == expected)
             {
                 matching_outcomes += 1;

@@ -12,8 +12,7 @@ pub use super::codec::client_rtp_capabilities_from_answer;
 use super::{
     bootstrap,
     packet_loop::{
-        ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
-        routing_miss::DemuxRecoveryState,
+        IngressPacket, ingress_routing::route_pkt_to_session_at, routing_miss::DemuxRecoveryState,
     },
     state::{PacketLoopState, demux::RemoteTransportAddr},
 };
@@ -58,9 +57,7 @@ struct IngressDemuxFuzzFixture {
     demux: DemuxRecoveryState,
     rtc_metrics: Arc<RtcMetricsRecorder>,
     session_key: TransportSessionKey,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    now: Instant,
+    datagram: IngressPacket,
 }
 
 impl IngressDemuxFuzzFixture {
@@ -84,15 +81,19 @@ impl IngressDemuxFuzzFixture {
             demux: DemuxRecoveryState::new(),
             rtc_metrics: metrics.register_rtc_worker(),
             session_key,
-            source_addr,
-            candidate_addr,
-            now: Instant::now() + Duration::from_secs(1),
+            datagram: IngressPacket {
+                source_addr,
+                candidate_addr,
+                received_at: Instant::now() + Duration::from_secs(1),
+                packet: Vec::with_capacity(MAX_PACKET_LEN),
+                protocol: Protocol::Udp,
+            },
         }
     }
 
     fn pin_live_route(&mut self) {
         let _ = self.state.remote_addr_demux.remember_remote_addr(
-            RemoteTransportAddr::new(self.source_addr, Protocol::Udp),
+            RemoteTransportAddr::new(self.datagram.source_addr, Protocol::Udp),
             &self.session_key,
         );
     }
@@ -110,17 +111,13 @@ impl IngressDemuxFuzzFixture {
 
     fn route_once(&mut self, packet: &[u8]) {
         let packet = packet.get(..MAX_PACKET_LEN).unwrap_or(packet);
+        self.datagram.packet.clear();
+        self.datagram.packet.extend_from_slice(packet);
         route_pkt_to_session_at(
             &mut self.state,
             &mut self.demux,
             &self.rtc_metrics,
-            PacketRouteDatagram::new(
-                self.source_addr,
-                self.candidate_addr,
-                packet,
-                self.now,
-                Protocol::Udp,
-            ),
+            &self.datagram,
         );
     }
 }

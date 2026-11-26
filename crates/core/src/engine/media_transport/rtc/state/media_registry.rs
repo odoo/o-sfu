@@ -685,29 +685,20 @@ impl PacketLoopState {
 
     /// Admits an authenticated local packet and prepares its sampling time.
     ///
-    /// Cached media precedes MID and SSRC. An encoding of that media holding
-    /// the primary supplies the current RID, including RID-less after
-    /// renegotiation. Invalid clock metadata uses arrival fallback without
-    /// rejecting media.
+    /// MID precedes SSRC. An encoding of the resolved media holding the primary
+    /// supplies the current RID, including RID-less after renegotiation.
+    /// Invalid clock metadata uses arrival fallback without rejecting media.
     pub(in super::super) fn bind_producer_packet(
         &mut self,
         session_handle: SessionHandle,
-        cached_media: Option<TransportMediaId>,
         mid: Option<Mid>,
         binding: &mut ProducerStreamBinding,
         time: ProducerPacketTime,
     ) -> Option<ProducerPacketAdmission> {
         let session_key = self.users.key_for_handle(session_handle)?;
-        let Some(lookup) = self.session_media.get(session_key) else {
-            return cached_media.map(|media| ProducerPacketAdmission {
-                media,
-                room_instance_id: session_key.room_instance_id(),
-                update: ProducerSsrcUpdate::Rejected,
-                sampled_at: None,
-            });
-        };
-        let media = cached_media
-            .or_else(|| lookup.producer_mids.get(&mid?))
+        let lookup = self.session_media.get(session_key)?;
+        let media = mid
+            .and_then(|mid| lookup.producer_mids.get(&mid))
             .or_else(|| {
                 producer_ssrc_owner(&self.mid_registry, lookup, binding.primary)
                     .map(|owner| owner.transport_media_id)

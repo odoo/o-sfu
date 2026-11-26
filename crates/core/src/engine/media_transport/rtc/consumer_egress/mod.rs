@@ -202,7 +202,11 @@ impl LocalPacketDestination {
         )
         .marker(header.marker)
         .ext_vals(ext_vals);
-        if let Some(csrc) = header.csrc.get(..header.csrc_count) {
+        // `RtpWrite::new` starts without CSRCs, and each builder call moves
+        // the whole write, so skip the common empty list.
+        if let Some(csrc) = header.csrc.get(..header.csrc_count)
+            && !csrc.is_empty()
+        {
             write = write.csrc(csrc);
         }
         if let Some(rewrite) = codec_packet.and_then(|packet| packet.rewrite(identity.codec)) {
