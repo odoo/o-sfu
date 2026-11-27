@@ -1,13 +1,13 @@
 # E4. Rely only on documented dependency behavior
 
 Rely on a dependency's iteration order, timing, private state or error text
-only when its public documentation guarantees that behavior. Where an
-undocumented assumption is unavoidable, isolate it and verify it against the
-pinned version.
+only when public documentation guarantees that behavior. Where an
+undocumented assumption is unavoidable, isolate and verify that assumption
+against the pinned version.
 
 **Example:** `drain_single_session` succeeds once `str0m::Rtc` returns an
 `Output::Timeout` with a future deadline. If the output budget runs out first,
-the caller rolls back staged output and closes the session. Stopping after a
+the caller discards staged output and closes that session. Stopping after a
 fixed number of polls without either policy could leave `Rtc` partly drained.
 
 **Avoid**
@@ -35,7 +35,7 @@ let deadline = loop {
 };
 ```
 
-Budget exhaustion ends the session after discarding its staged output:
+Budget exhaustion closes a session after discarding staged output:
 
 ```rust
 SessionDrainOutcome::Exhausted(session_key, limit) => {
@@ -56,4 +56,4 @@ SessionDrainOutcome::Exhausted(session_key, limit) => {
 ```
 
 **Rationale:** Dependencies may change undocumented behavior without an API
-break, turning hidden assumptions into upgrade failures.
+break, so hidden assumptions become upgrade failures.

@@ -12,9 +12,9 @@ contract permits arbitrary JSON.
 > [!NOTE]
 > Further reading: **[`TryFrom` in the standard library](https://doc.rust-lang.org/std/convert/trait.TryFrom.html)**.
 
-**Example:** `decode_client_batch` converts WebSocket input into
-`ClientEnvelope`, giving domain code a typed enum after rejecting unknown
-tags and malformed payloads.
+**Example:** `decode_client_batch` rejects unknown tags and malformed
+payloads, then converts WebSocket input into `ClientEnvelope` so domain code
+receives a typed enum.
 
 **Avoid**
 

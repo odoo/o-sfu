@@ -1,11 +1,11 @@
 # C5. Do not discard meaningful outcomes
 
 Use `#[must_use]` on a function or type when ignoring a value would skip a
-state change, cleanup or decision. Handle or propagate `Result` and `Option`,
-preserving error distinctions that callers need. Use `.ok()` only when the
+state change, cleanup or decision. Handle or propagate `Result` and `Option`
+and preserve error distinctions that callers need. Use `.ok()` only when the
 contract deliberately treats failure as absence and no caller needs the error.
 Make the outcome clear in its type: use enums for distinct alternatives and
-named types for grouped values or ambiguous booleans, reserving tuples for
+named types for grouped values or ambiguous booleans. Reserve tuples for
 small groups with obvious meanings.
 
 For lifecycle work that must finish, pair `#[must_use]` with a private

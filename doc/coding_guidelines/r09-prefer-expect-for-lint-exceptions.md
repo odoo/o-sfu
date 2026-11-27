@@ -1,6 +1,6 @@
 # R9. Prefer `expect` for lint exceptions
 
-Fix genuine lint problems before considering an exception. When a finding is
+Fix real lint problems before considering an exception. When a finding is
 intentional, prefer `#[expect(...)]` so `unfulfilled_lint_expectations` can
 report an exception that is no longer needed.
 
@@ -45,8 +45,8 @@ pub const fn as_u8(self) -> u8 {
 ```
 
 The [core-room integration tests](../../tests/core-room/tests/core_room.rs)
-allow panic-based assertions as a test policy. No particular panic site must
-remain:
+allow panic-based assertions as a test policy. No particular panic site is
+required to remain:
 
 ```rust
 // Any test may panic on failure, but no specific panic is expected to remain.
