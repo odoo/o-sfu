@@ -49,12 +49,10 @@ pub struct ForwardedPacket {
     /// this also anchors the room instance used by source-policy wakeups and
     /// room-scoped packet sinks
     source: ForwardedPacketSource,
-    /// producer identity resolved from MID, SSRC or relay metadata
-    ///
-    /// once this is known it is cached so later media-registry updates or relay
-    /// delivery cannot bind the packet to a different source
-    src_media: Option<TransportMediaId>,
     /// packet-scoped source observations shared by stats, route planning and egress
+    ///
+    /// once resolved, later media-registry updates or relay delivery cannot bind
+    /// the packet to a different source
     facts: Option<PacketFacts>,
     /// whether source-worker side effects still belong to this packet
     ///
@@ -146,7 +144,6 @@ impl ForwardedPacket {
                 session_handle: source_session_handle,
                 repair_ssrc: binding.repair,
             },
-            src_media: None,
             facts: None,
             visits_origin_sinks: true,
             was_repair,
@@ -301,7 +298,6 @@ impl ForwardedPacket {
         }
         let admission = state.bind_producer_packet(
             session_handle,
-            self.src_media,
             self.header.ext_vals.mid,
             &mut binding,
             ProducerPacketTime {
@@ -311,7 +307,6 @@ impl ForwardedPacket {
                 was_repair: self.was_repair,
             },
         )?;
-        self.src_media = Some(admission.media);
         self.header.ext_vals.rid = binding.rid;
         if admission.update != ProducerSsrcUpdate::Rejected {
             self.sampled_at = admission.sampled_at;
@@ -336,21 +331,16 @@ impl ForwardedPacket {
         }
     }
 
-    /// creates a relay-owned view that shares this packet payload
+    /// creates a relay-owned view of this packet from `src_key` that shares
+    /// its payload
     ///
-    /// the caller supplies the resolved source media id because relay targets
-    /// must not depend on the target worker being able to rediscover source
-    /// identity from local producer registries
-    /// cached facts preserve the resolved RID so the receiving worker can reuse
-    /// source observations
-    pub(in super::super) fn share_for_relay(
-        &self,
-        state: &PacketLoopState,
-        src_media: TransportMediaId,
-    ) -> Option<Self> {
-        Some(Self {
-            source: ForwardedPacketSource::Relayed(self.source.session_key(state)?.clone()),
-            src_media: Some(src_media),
+    /// relay targets must not depend on the target worker being able to
+    /// rediscover source identity from local producer registries, so callers
+    /// share only packets whose facts are resolved and the copy carries them
+    pub(in super::super) fn share_for_relay(&self, src_key: TransportSessionKey) -> Self {
+        debug_assert!(self.facts.is_some(), "relay copies need resolved facts");
+        Self {
+            source: ForwardedPacketSource::Relayed(src_key),
             facts: self.facts,
             visits_origin_sinks: false,
             was_repair: self.was_repair,
@@ -360,7 +350,7 @@ impl ForwardedPacket {
             payload: Arc::clone(&self.payload),
             header: self.header.clone(),
             sequence_number: self.sequence_number,
-        })
+        }
     }
 
     pub(in super::super) const fn visits_origin_sinks(&self) -> bool {
@@ -369,33 +359,24 @@ impl ForwardedPacket {
 
     /// resolves the source producer that owns this packet
     ///
-    /// the lookup prefers cached facts, then an explicit relay media id, then
-    /// source-worker MID and SSRC registries
-    /// a successful lookup is cached on the packet so a later registry update
-    /// cannot split one packet across different source identities
+    /// cached facts take precedence over source-worker MID and SSRC registries
+    /// so a later registry update cannot split one packet across different
+    /// source identities
     pub(in super::super) fn resolve_src_media(
-        &mut self,
+        &self,
         state: &PacketLoopState,
     ) -> Option<TransportMediaId> {
         if let Some(facts) = self.facts {
             return Some(facts.src_media);
         }
-        if let Some(src_media) = self.src_media {
-            return Some(src_media);
-        }
         let src_key = self.source.session_key(state)?;
         let header = &self.header;
-        let resolved = if let Some(source_mid) = header.ext_vals.mid
+        if let Some(source_mid) = header.ext_vals.mid
             && let Some(src_media) = state.src_media_for_mid(src_key, source_mid)
         {
-            Some(src_media)
-        } else {
-            state.src_media_for_ssrc(src_key, header.ssrc)
-        };
-        if let Some(src_media) = resolved {
-            self.src_media = Some(src_media);
+            return Some(src_media);
         }
-        resolved
+        state.src_media_for_ssrc(src_key, header.ssrc)
     }
 
     /// Avoids payload-byte copies during local fanout by borrowing source headers

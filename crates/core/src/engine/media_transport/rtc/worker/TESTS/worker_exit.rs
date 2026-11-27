@@ -48,8 +48,13 @@ async fn assert_terminal_after_sink_panic(backend: RtcUdpIoBackend) {
     let probe_result = failed_worker
         .probe_debug_worker(move |_: &PacketLoopState, _: &WorkerCommandContext<'_>| {
             let src_media = TransportMediaId::new(1);
-            let packet =
-                sample_already_relayed_packet(probe_session, src_media, "aud-up", b"payload");
+            let packet = sample_already_relayed_packet(
+                &PacketLoopState::default(),
+                probe_session,
+                src_media,
+                "aud-up",
+                b"payload",
+            );
             let forwards = [ForwardingDestination::from_packet_sink(src_media, sink)];
             flush_packet_forwards(
                 &mut PacketLoopState::default(),

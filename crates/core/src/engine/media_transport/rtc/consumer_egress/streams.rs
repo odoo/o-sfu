@@ -662,7 +662,7 @@ pub struct ProjectedIdentity {
     /// Time paired with this timestamp for str0m sender reports.
     pub wallclock: Instant,
     /// projected encoded payload identity used by the codec rewrite boundary
-    pub codec: codec::ProjectedPacket,
+    pub codec: codec::PacketIdentity,
     /// source switch observed by local forwarding
     pub transition: SourceTransition,
     pub resets_rtx_cache: bool,

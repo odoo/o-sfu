@@ -20,7 +20,7 @@ use super::{
     PacketLoopState,
     route_control::PacketLayerGate,
 };
-use crate::engine::media_transport::{TransportMediaId, TransportSourceKey};
+use crate::engine::media_transport::TransportSourceKey;
 
 #[cfg(test)]
 #[path = "TESTS/support.rs"]
@@ -59,11 +59,13 @@ impl RelayPacketMailbox {
         &self,
         state: &PacketLoopState,
         packet: &ForwardedPacket,
-        src_media: TransportMediaId,
     ) -> Option<RelayEnqueueReport> {
         let outcome = match self.tx.try_reserve() {
             Ok(permit) => {
-                permit.send(packet.share_for_relay(state, src_media)?);
+                // Build the copy inside `send`. An `Option<ForwardedPacket>`
+                // unwrapped here costs one more packet memcpy per relay.
+                let src_key = packet.src_key(state)?.clone();
+                permit.send(packet.share_for_relay(src_key));
                 RelayEnqueueOutcome::Enqueued
             }
             Err(mpsc::error::TrySendError::Full(())) => RelayEnqueueOutcome::Overloaded,

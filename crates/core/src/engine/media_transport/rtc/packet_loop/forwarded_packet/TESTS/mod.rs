@@ -10,7 +10,7 @@ use str0m::media::{Mid, Rid};
 
 use super::{
     test_support::{
-        sample_forwarded_packet, sample_forwarded_packet_with_rid,
+        resolve_sample_packet, sample_forwarded_packet, sample_forwarded_packet_with_rid,
         sample_forwarded_packet_without_mid, sample_local_forwarded_packet,
     },
     *,
@@ -49,7 +49,7 @@ fn video_format(codec: CodecName, payload_type: u8) -> MediaFormat {
     )
 }
 
-fn project_codec_packet(packet: &codec::Packet) -> codec::ProjectedPacket {
+fn project_codec_packet(packet: &codec::Packet) -> codec::PacketIdentity {
     codec::Projection::default().project(packet.identity(), false)
 }
 
@@ -66,7 +66,7 @@ fn local_forwarded_packet_resolves_transport_media_id_through_session_handle() {
         session_key: session_key.clone(),
         mid: Some(Mid::from("aud-up")),
     });
-    let mut packet = sample_local_forwarded_packet(session_handle, "aud-up", b"payload");
+    let packet = sample_local_forwarded_packet(session_handle, "aud-up", b"payload");
 
     assert_eq!(packet.src_key(&state), Some(&session_key));
     assert_eq!(packet.resolve_src_media(&state), Some(transport_media_id));
@@ -89,15 +89,9 @@ fn stale_local_forwarded_packet_does_not_resolve_through_reused_slot() {
         mid: Some(Mid::from("aud-up")),
     });
     let mut packet = sample_local_forwarded_packet(stale_handle, "aud-up", b"payload");
-    packet.src_media = Some(TransportMediaId::new(99));
     assert_eq!(packet.admit_source(&mut state), None);
     assert!(packet.src_key(&state).is_none());
     assert!(packet.resolve_facts(&state).is_none());
-    assert!(
-        packet
-            .share_for_relay(&state, TransportMediaId::new(99))
-            .is_none()
-    );
 }
 
 #[test]
@@ -257,7 +251,10 @@ fn forwarded_packet_relay_clone_preserves_source_facts() {
     let source_facts = source_packet.resolve_facts(&source_state).copied();
     assert!(source_facts.is_some_and(|facts| facts.codec.decoder_refresh()));
 
-    let relay_packet = source_packet.share_for_relay(&source_state, src_media);
+    let relay_packet = source_packet
+        .src_key(&source_state)
+        .cloned()
+        .map(|src_key| source_packet.share_for_relay(src_key));
     assert!(relay_packet.is_some());
     let Some(mut relay_packet) = relay_packet else {
         return;
@@ -282,20 +279,17 @@ fn forwarded_packet_relay_clone_preserves_source_facts() {
     assert_eq!(relay_packet.received_at(), source_packet.received_at());
     assert!(Arc::ptr_eq(&relay_packet.payload, &source_packet.payload));
     let source_codec = project_codec_packet(&source_facts.codec);
-    assert_ne!(source_codec, codec::ProjectedPacket::default());
+    assert_ne!(source_codec, codec::PacketIdentity::default());
     assert_eq!(project_codec_packet(&relay_facts.codec), source_codec);
 }
 
 #[test]
-fn forwarded_packet_relay_clone_keeps_payload_and_explicit_source_media_id() {
+fn forwarded_packet_relay_clone_keeps_payload_and_resolved_source_media_id() {
     let session_key = test_transport_session_key(43, 0, 11, UserId::Integer(9));
     let state = PacketLoopState::default();
-    let packet = sample_forwarded_packet(session_key.clone(), "aud-up", b"payload");
-    let relay_packet = packet.share_for_relay(&state, TransportMediaId::new(18));
-    assert!(relay_packet.is_some());
-    let Some(mut relay_packet) = relay_packet else {
-        return;
-    };
+    let mut packet = sample_forwarded_packet(session_key.clone(), "aud-up", b"payload");
+    resolve_sample_packet(&mut packet, &state, TransportMediaId::new(18));
+    let relay_packet = packet.share_for_relay(session_key.clone());
 
     assert_eq!(relay_packet.src_key(&state), Some(&session_key));
     assert_eq!(relay_packet.payload(), b"payload");
@@ -330,7 +324,7 @@ fn forwarded_packet_facts_carry_codec_packet() {
     let expected = project_codec_packet(
         &codec::PacketInspector::from_parameters(&parameters).inspect(111.into(), &payload, true),
     );
-    assert_ne!(expected, codec::ProjectedPacket::default());
+    assert_ne!(expected, codec::PacketIdentity::default());
     assert_eq!(project_codec_packet(&facts.codec), expected);
     assert_eq!(
         packet.local_codec_packet().map(project_codec_packet),
@@ -369,11 +363,14 @@ fn forwarded_packet_recovers_rid_from_ssrc_binding_when_extension_is_absent() {
     let expected = project_codec_packet(
         &codec::PacketInspector::from_parameters(&parameters).inspect(96.into(), &payload, true),
     );
-    assert_ne!(expected, codec::ProjectedPacket::default());
+    assert_ne!(expected, codec::PacketIdentity::default());
     assert_eq!(project_codec_packet(&facts.codec), expected);
-    let relay_facts = packet
-        .share_for_relay(&state, facts.src_media)
-        .and_then(|mut relayed| relayed.resolve_facts(&PacketLoopState::default()).copied());
+    let relay_facts = packet.src_key(&state).cloned().and_then(|src_key| {
+        packet
+            .share_for_relay(src_key)
+            .resolve_facts(&PacketLoopState::default())
+            .copied()
+    });
     assert_eq!(relay_facts.map(|facts| facts.rid), Some(facts.rid));
     assert_eq!(
         relay_facts.map(|facts| project_codec_packet(&facts.codec)),
@@ -489,7 +486,8 @@ fn local_packet_keeps_mid_owner_when_ssrc_collides() -> Result<(), &'static str>
         packet.admit_source(&mut state),
         Some(ProducerSsrcUpdate::Rejected)
     );
-    assert_eq!(packet.src_media, Some(first));
+    assert!(packet.cached_facts().is_none());
+    assert_eq!(packet.resolve_src_media(&state), Some(first));
     assert_eq!(packet.header.ext_vals.rid, Some("lo".into()));
     assert_eq!(
         state.producer_binding_for_ssrc(&session_key, 4321.into()),
@@ -518,7 +516,7 @@ fn forwarded_packet_falls_back_to_ssrc_when_mid_is_missing() {
         )
         .with_mid(producer_mid.to_string()),
     );
-    let mut packet = sample_forwarded_packet_without_mid(session_key, producer_ssrc, b"payload");
+    let packet = sample_forwarded_packet_without_mid(session_key, producer_ssrc, b"payload");
 
     assert_eq!(packet.resolve_src_media(&state), Some(transport_media_id));
 }
@@ -533,7 +531,10 @@ fn forwarded_packet_caches_the_resolved_src_media() {
     });
     let mut packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
 
-    assert_eq!(packet.resolve_src_media(&state), Some(transport_media_id));
+    assert_eq!(
+        packet.resolve_facts(&state).map(|facts| facts.src_media),
+        Some(transport_media_id)
+    );
     assert!(
         state
             .unregister_media_handle(&Mutex::new(BitrateRegistry::default()), transport_media_id)

@@ -6,7 +6,7 @@ use super::super::{
         relay_registry::{RelayEnqueueOutcome, RelayPacketMailbox, RelayTargetId},
         route_control::PacketLayerGate,
     },
-    test_support::{sample_forwarded_packet, test_transport_session_key},
+    test_support::{resolve_sample_packet, sample_forwarded_packet, test_transport_session_key},
 };
 use crate::engine::media_transport::TransportMediaId;
 
@@ -126,18 +126,19 @@ fn worker_local_relay_targets_report_overload_when_a_bounded_mailbox_is_full() {
     let (mailbox, _rx) = RelayPacketMailbox::channel_for_test_with_capacity(1);
     let src_media = TransportMediaId::new(42);
     let session_key = test_transport_session_key(36, 0, 37, UserId::Integer(38));
-    let packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
+    let mut packet = sample_forwarded_packet(session_key, "aud-up", b"payload");
     let state = PacketLoopState::default();
+    resolve_sample_packet(&mut packet, &state, src_media);
 
     assert_eq!(
         mailbox
-            .forward_packet(&state, &packet, src_media)
+            .forward_packet(&state, &packet)
             .map(|report| report.outcome),
         Some(RelayEnqueueOutcome::Enqueued)
     );
     assert_eq!(
         mailbox
-            .forward_packet(&state, &packet, src_media)
+            .forward_packet(&state, &packet)
             .map(|report| report.outcome),
         Some(RelayEnqueueOutcome::Overloaded)
     );

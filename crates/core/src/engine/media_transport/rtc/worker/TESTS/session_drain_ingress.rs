@@ -333,7 +333,9 @@ fn authenticated_sender_report_maps_delayed_producer_and_relay_packets() -> Resu
     assert_eq!(packet.received_at(), fixture.now);
     assert!(fixture.now.saturating_duration_since(sampled_at) > Duration::from_millis(400));
     let relay = packet
-        .share_for_relay(&fixture.state, fixture.media)
+        .src_key(&fixture.state)
+        .cloned()
+        .map(|src_key| packet.share_for_relay(src_key))
         .ok_or("admitted packet should preserve its relay metadata")?;
     assert_eq!(relay.sampled_at(), Some(sampled_at));
     Ok(())
@@ -372,7 +374,9 @@ fn authenticated_producer_packets_keep_binding_after_mid_and_rid_are_omitted()
         })
     );
     let mut relay = packet
-        .share_for_relay(&fixture.state, fixture.media)
+        .src_key(&fixture.state)
+        .cloned()
+        .map(|src_key| packet.share_for_relay(src_key))
         .ok_or("authenticated packet should retain its relay identity")?;
     assert!(relay.source_binding().is_none());
     assert_eq!(

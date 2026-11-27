@@ -60,9 +60,8 @@ use crate::{
             consumer_egress::test_support::RTX_CACHE_LIFETIME,
             control::{WorkerCommandContext, handle_worker_command},
             packet_loop::{
-                ForwardingDestination, LocalRtcPacketDestination,
-                forwarded_packet::ForwardedPacket,
-                ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
+                ForwardingDestination, IngressPacket, LocalRtcPacketDestination,
+                forwarded_packet::ForwardedPacket, ingress_routing::route_pkt_to_session_at,
                 routing_miss::DemuxRecoveryState,
             },
             state::{
@@ -436,13 +435,13 @@ impl LocalWriteDrainFixture {
             &mut self.state,
             &mut DemuxRecoveryState::new(),
             &rtc_metrics,
-            PacketRouteDatagram::new(
-                datagram.source,
-                datagram.destination,
-                &datagram.contents,
+            &IngressPacket {
+                source_addr: datagram.source,
+                candidate_addr: datagram.destination,
                 received_at,
-                Protocol::Udp,
-            ),
+                packet: datagram.contents.clone(),
+                protocol: Protocol::Udp,
+            },
         );
         assert!(self.state.has_dirty_sessions());
     }
@@ -806,13 +805,13 @@ impl NackDrainFixture {
             &mut self.state,
             &mut DemuxRecoveryState::new(),
             &self.rtc_metrics,
-            PacketRouteDatagram::new(
-                datagram.source,
-                datagram.destination,
-                &datagram.contents,
-                now,
-                Protocol::Udp,
-            ),
+            &IngressPacket {
+                source_addr: datagram.source,
+                candidate_addr: datagram.destination,
+                received_at: now,
+                packet: datagram.contents.clone(),
+                protocol: Protocol::Udp,
+            },
         );
     }
 

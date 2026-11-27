@@ -106,7 +106,7 @@ impl Packet {
 pub(in crate::engine::media_transport::rtc) struct Rewrite(Vp8Patch);
 
 impl Rewrite {
-    pub(super) fn apply(self, write: RtpWrite) -> RtpWrite {
+    pub(in crate::engine::media_transport::rtc) fn apply(self, write: RtpWrite) -> RtpWrite {
         write.vp8_patch(self.0)
     }
 }

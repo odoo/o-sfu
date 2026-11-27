@@ -14,8 +14,7 @@ use str0m::{
 use super::super::{
     bootstrap,
     packet_loop::{
-        ingress_routing::{PacketRouteDatagram, route_pkt_to_session_at},
-        routing_miss::DemuxRecoveryState,
+        IngressPacket, ingress_routing::route_pkt_to_session_at, routing_miss::DemuxRecoveryState,
         udp::UdpIngressBenchHarness,
     },
     state::{PacketLoopState, demux::RemoteTransportAddr},
@@ -50,10 +49,7 @@ pub struct IngressRoutingBenchFixture {
     demux: DemuxRecoveryState,
     _metrics: RuntimeMetrics,
     rtc_metrics: Arc<RtcMetricsRecorder>,
-    source_addr: SocketAddr,
-    candidate_addr: SocketAddr,
-    packet: Vec<u8>,
-    now: Instant,
+    datagram: IngressPacket,
 }
 
 pub struct IngressBurstBenchFixture {
@@ -105,10 +101,7 @@ impl IngressRoutingBenchFixture {
             demux: DemuxRecoveryState::new(),
             _metrics: metrics,
             rtc_metrics,
-            source_addr,
-            candidate_addr,
-            packet,
-            now: fixed_now(),
+            datagram: udp_datagram(source_addr, candidate_addr, packet),
         }
     }
 
@@ -135,10 +128,7 @@ impl IngressRoutingBenchFixture {
             demux: DemuxRecoveryState::new(),
             _metrics: metrics,
             rtc_metrics,
-            source_addr,
-            candidate_addr,
-            packet,
-            now: fixed_now(),
+            datagram: udp_datagram(source_addr, candidate_addr, packet),
         };
         fixture.route_once();
         fixture
@@ -160,13 +150,7 @@ impl IngressRoutingBenchFixture {
             &mut self.state,
             &mut self.demux,
             &self.rtc_metrics,
-            PacketRouteDatagram::new(
-                self.source_addr,
-                self.candidate_addr,
-                &self.packet,
-                self.now,
-                Protocol::Udp,
-            ),
+            &self.datagram,
         );
     }
 }
@@ -208,11 +192,12 @@ impl IngressBurstBenchFixture {
     fn enqueue_burst(&mut self) -> usize {
         let mut enqueued = 0;
         for _ in 0..INGRESS_COMPLETED_QUEUE_BURST {
+            let datagram = &self.routing.datagram;
             if self.ingress.enqueue_completed_datagram(
-                self.routing.source_addr,
-                self.routing.candidate_addr,
-                self.routing.now,
-                self.routing.packet.as_slice(),
+                datagram.source_addr,
+                datagram.candidate_addr,
+                datagram.received_at,
+                &datagram.packet,
             ) {
                 enqueued += 1;
             }
@@ -221,6 +206,16 @@ impl IngressBurstBenchFixture {
     }
 }
 
-fn fixed_now() -> Instant {
-    Instant::now() + Duration::from_secs(1)
+fn udp_datagram(
+    source_addr: SocketAddr,
+    candidate_addr: SocketAddr,
+    packet: Vec<u8>,
+) -> IngressPacket {
+    IngressPacket {
+        source_addr,
+        candidate_addr,
+        received_at: Instant::now() + Duration::from_secs(1),
+        packet,
+        protocol: Protocol::Udp,
+    }
 }

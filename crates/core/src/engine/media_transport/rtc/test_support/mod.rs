@@ -66,6 +66,8 @@ pub(super) use self::{
     route_graph::{MediaWorkerScenario, prepare_source_session, prepare_source_session_with_rid},
 };
 #[cfg(any(test, feature = "internal-benchmarks"))]
+pub(super) use super::packet_loop::forwarded_packet::test_support::resolve_sample_packet;
+#[cfg(any(test, feature = "internal-benchmarks"))]
 pub use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet;
 #[cfg(test)]
 pub(super) use super::packet_loop::forwarded_packet::test_support::sample_forwarded_packet_without_mid;
